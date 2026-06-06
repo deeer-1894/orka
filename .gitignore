@@ -10,6 +10,7 @@ go.work.sum
 # local data
 /data/
 /cavis_control_layer/data/
+gui_agent/data/
 
 # python
 __pycache__/
