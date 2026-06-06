@@ -1,0 +1,11 @@
+# Versions intentionally unpinned: system Python is 3.14, let pip resolve
+# the newest wheels available. If a package lacks a 3.14 wheel, pin a
+# 3.12-compatible version here or run gui_agent under a 3.12 venv.
+langgraph
+langchain
+langchain-openai
+playwright
+pillow
+fastapi
+uvicorn
+websockets
