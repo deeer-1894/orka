@@ -1,0 +1,23 @@
+# Go
+/bin/
+*.test
+*.out
+go.work.sum
+
+# env / secrets
+.env
+
+# local data
+/data/
+/cavis_control_layer/data/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+gui_agent/.venv/
+
+# editor/os
+.DS_Store
+.idea/
+.vscode/

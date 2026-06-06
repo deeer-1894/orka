@@ -1,0 +1,37 @@
+# Cavis local config. Every value can be overridden by the matching env var
+# (see .env.example). Do NOT put real secrets here; use env in real deploys.
+
+server:
+  control_addr: ":8080"
+  tools_addr: ":8090"
+  cors_allowed_hosts:
+    - "localhost"
+    - "127.0.0.1"
+
+llm:
+  # OpenAI-compatible endpoint. Defaults to DeepSeek; override via env.
+  # API key is NOT stored here — set OPENAI_API_KEY in the environment.
+  openai_base_url: "https://api.deepseek.com/v1"
+  openai_api_key: ""
+  model: "deepseek-v4-flash"
+  mini_model: "deepseek-v4-flash"
+  vlm_model: "deepseek-v4-pro"
+
+storage:
+  mongo_uri: "mongodb://localhost:27017"
+  mongo_db: "cavis"
+  redis_addr: "localhost:6379"
+  base_storage_path: "./data/storage"
+
+agent:
+  run_mode: "adk" # adk | graph
+  checkpoint_ttl_sec: 86400 # 24h: tolerate human delay during clarify
+  gui_agent_ws_url: "ws://localhost:8100/api/v1/exec/gui/ws"
+
+security:
+  ctx_token_secret: "dev-only-change-me" # HMAC secret for signed context tokens
+  ctx_token_ttl_sec: 300
+
+obs:
+  log_level: "info"
+  persist_sampling: 1.0 # 1.0 = persist all; lower to downsample high-freq tool events
