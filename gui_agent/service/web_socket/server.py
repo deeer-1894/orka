@@ -16,9 +16,13 @@ from typing import Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from agent.graph import build
+from agent.macro import MacroStore
 from operators.remote_browser import RemoteBrowserOperator
 
 app = FastAPI(title="cavis-gui-agent")
+
+_macros = MacroStore(os.getenv("MACRO_STORE", "./data/gui_macros.json"))
+_MACRO_ENABLED = os.getenv("MACRO_ENABLE", "1") == "1"
 
 
 @app.get("/health")
@@ -43,6 +47,10 @@ async def run_task(ws: WebSocket, msg: dict[str, Any]) -> None:
         return
 
     try:
+        # Fast path: replay a recorded macro deterministically (no predict/VLM).
+        if _MACRO_ENABLED and await replay_macro(operator, emit, instruction, session_id):
+            return
+
         graph = build(operator, emit)
         init = {
             "instruction": instruction,
@@ -60,11 +68,38 @@ async def run_task(ws: WebSocket, msg: dict[str, Any]) -> None:
         elif status == "ERROR":
             await emit({"type": "error", "error": final.get("error", "error"), "session_id": session_id})
         else:
+            # Record the successful action sequence as a macro for next time.
+            if _MACRO_ENABLED:
+                actions = [h["action"] for h in final.get("history", []) if h.get("action")]
+                _macros.put(instruction, actions)
             await emit({"type": "done", "summary": final.get("result", ""), "session_id": session_id})
     except Exception as e:  # noqa: BLE001
         await emit({"type": "error", "error": str(e), "session_id": session_id})
     finally:
         await operator.close()
+
+
+async def replay_macro(operator, emit, instruction, session_id) -> bool:
+    """Replay a recorded macro. Returns True if it handled the task; on any
+    failure it returns False so the caller falls back to the explore loop."""
+    actions = _macros.get(instruction)
+    if not actions:
+        return False
+    await emit({"type": "observe", "mode": "macro", "tokens": 0, "session_id": session_id})
+    try:
+        for action in actions:
+            result = await operator.execute(action)
+            await emit({
+                "type": "action",
+                "action": action.get("action"),
+                "target": action.get("url") or action.get("selector") or "",
+                "result": result,
+                "session_id": session_id,
+            })
+        await emit({"type": "done", "summary": await operator.dom_snapshot(), "session_id": session_id})
+        return True
+    except Exception:  # noqa: BLE001
+        return False  # fall back to exploration
 
 
 @app.websocket("/api/v1/exec/gui/ws")
