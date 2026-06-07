@@ -11,6 +11,7 @@ import (
 	"github.com/cavis-oss/cavis_core/config"
 	"github.com/cavis-oss/cavis_core/messages"
 	"github.com/cavis-oss/cavis_core/state"
+	"github.com/cavis-oss/cavis_core/trace"
 	"github.com/cavis-oss/cavis_control_layer/api"
 	"github.com/cavis-oss/cavis_control_layer/checkpoint"
 	"github.com/cavis-oss/cavis_control_layer/connectors"
@@ -34,6 +35,14 @@ func main() {
 
 	logger := obs.NewLogger(cfg.Obs.LogLevel)
 	metrics := obs.NewMetrics()
+
+	// OpenTelemetry tracing (OTLP / stdout / no-op per env).
+	shutdownTrace, err := trace.Init(context.Background(), "cavis-control")
+	if err != nil {
+		logger.Error("trace init", "err", err)
+	} else {
+		defer func() { _ = shutdownTrace(context.Background()) }()
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

@@ -51,8 +51,9 @@ type Span struct {
 	Attrs   map[string]any
 }
 
-// StartSpan creates and starts a span.
-func StartSpan(traceID, parent, name string) *Span {
+// NewManualSpan creates and starts a lightweight in-process span (not exported
+// to OTel). For OTel-exported spans use StartSpan in otel.go.
+func NewManualSpan(traceID, parent, name string) *Span {
 	return &Span{
 		TraceID: traceID,
 		SpanID:  NewSpanID(),

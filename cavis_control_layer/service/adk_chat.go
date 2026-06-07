@@ -122,6 +122,17 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	go s.heartbeat(hbCtx, meta, raw)
 
 	model, modelName := s.modelFor(req.SelectedVersion)
+
+	// Root trace span for the whole run; tool spans (in tools-mid) nest under it.
+	spanCtx, endSpan := trace.StartSpan(trace.WithTraceID(ctx, traceID), "chat.run", map[string]string{
+		"conversation_id": req.ConversationID,
+		"model":           modelName,
+		"run_mode":        s.Cfg.Agent.RunMode,
+		"resume":          boolStr(req.ResumeKey != ""),
+	})
+	defer endSpan()
+	ctx = spanCtx
+
 	deps := PipelineDeps{LLM: model, Model: modelName, Metrics: s.Metrics}
 	pipeline := BuildPipeline(SceneSimple, deps)
 	runner := RunnerForMode(s.Cfg.Agent.RunMode, pipeline...)
@@ -236,6 +247,13 @@ func taskFailed(meta messages.Meta, reason string) messages.Message {
 	m := messages.Task("failed", meta)
 	m.Content = reason
 	return m
+}
+
+func boolStr(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
 
 func firstNonEmpty(vals ...string) string {

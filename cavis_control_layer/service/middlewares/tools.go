@@ -7,6 +7,7 @@ import (
 
 	"github.com/cavis-oss/cavis_core/agent"
 	"github.com/cavis-oss/cavis_core/messages"
+	"github.com/cavis-oss/cavis_core/trace"
 	"github.com/cavis-oss/cavis_control_layer/llm"
 	"github.com/cavis-oss/cavis_control_layer/obs"
 )
@@ -98,8 +99,10 @@ func (m *Tools) invoke(rc *agent.RunContext, name string, args map[string]any) (
 	if tool == nil {
 		return "", fmt.Errorf("unknown tool %q", name)
 	}
+	ctx, end := trace.StartSpan(rc.Ctx, "tool.invoke", map[string]string{"tool": name})
+	defer end()
 	start := time.Now()
-	out, err := tool.Invoke(rc.Ctx, args)
+	out, err := tool.Invoke(ctx, args)
 	if m.Metrics != nil {
 		m.Metrics.ObserveToolCall(time.Since(start).Nanoseconds())
 	}
