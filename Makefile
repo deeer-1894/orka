@@ -41,6 +41,9 @@ run-tools:
 run-gui:
 	cd gui_agent && python3 main.py
 
+run-web:
+	cd web && npm install && npm run dev
+
 # ---- eval (Phase 8) ----
 eval:
 	cd cavis_control_layer && go test ./eval/... -run TestReplay -v
