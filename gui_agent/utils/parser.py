@@ -38,8 +38,31 @@ def parse_action(text: str) -> dict[str, Any]:
 
 
 _URL_RE = re.compile(r"https?://[^\s'\"]+")
+# bare domain like www.bilibili.com or example.com/path (no scheme)
+_DOMAIN_RE = re.compile(r"((?:[a-z0-9-]+\.)+[a-z]{2,}(?:/[^\s'\"]*)?)", re.I)
+
+# common site aliases so "打开b站" works without a URL
+_ALIASES = {
+    "b站": "https://www.bilibili.com",
+    "哔哩哔哩": "https://www.bilibili.com",
+    "bilibili": "https://www.bilibili.com",
+    "淘宝": "https://www.taobao.com",
+    "百度": "https://www.baidu.com",
+    "知乎": "https://www.zhihu.com",
+    "微博": "https://weibo.com",
+    "github": "https://github.com",
+}
 
 
 def extract_url(text: str) -> str:
-    m = _URL_RE.search(text or "")
-    return m.group(0) if m else ""
+    if not text:
+        return ""
+    if m := _URL_RE.search(text):
+        return m.group(0)
+    low = text.lower()
+    for key, url in _ALIASES.items():
+        if key.lower() in low:
+            return url
+    if d := _DOMAIN_RE.search(text):
+        return "https://" + d.group(1)
+    return ""

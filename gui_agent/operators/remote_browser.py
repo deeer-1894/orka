@@ -69,7 +69,12 @@ class RemoteBrowserOperator:
             return f"typed into mark {action.get('target', '')}"
         if kind == "navigate":
             url = action.get("url", "")
-            await self.page.goto(url, wait_until="domcontentloaded")
+            await self.page.goto(url, wait_until="load", timeout=30000)
+            # give SPA content a moment to paint before the next screenshot
+            try:
+                await self.page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                pass
             return f"navigated to {url}"
         if kind == "click":
             sel = action.get("selector") or action.get("target", "")

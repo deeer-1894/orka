@@ -14,6 +14,7 @@ import os
 from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 
 from agent.graph import build
 from agent.macro import MacroStore
@@ -37,7 +38,14 @@ async def run_task(ws: WebSocket, msg: dict[str, Any]) -> None:
     cdp_url = msg.get("cdp_url") or os.getenv("CDP_URL", "")
 
     async def emit(frame: dict[str, Any]) -> None:
-        await ws.send_json(frame)
+        # close-safe: the control layer closes the socket right after `done`;
+        # never raise (and never cascade) on send-after-close.
+        if ws.client_state != WebSocketState.CONNECTED:
+            return
+        try:
+            await ws.send_json(frame)
+        except (RuntimeError, WebSocketDisconnect):
+            pass
 
     operator = RemoteBrowserOperator(cdp_url=cdp_url)
     try:

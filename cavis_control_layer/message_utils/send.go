@@ -6,7 +6,9 @@ package message_utils
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"maps"
 	"math/rand"
 
 	"github.com/cavis-oss/cavis_core/agent"
@@ -60,7 +62,7 @@ func (mu *Messenger) Deliver(rc *agent.RunContext, raw func(messages.Message), m
 			Content:        m.Content,
 			Meta:           m.Meta,
 			Action:         m.Action,
-			Payload:        m.Payload,
+			Payload:        stripHeavy(m.Payload), // drop base64 screenshots from DB rows
 			Type:           string(m.Type),
 			CreatedAt:      m.Timestamp,
 		}
@@ -72,6 +74,24 @@ func (mu *Messenger) Deliver(rc *agent.RunContext, raw func(messages.Message), m
 	if mu.Log != nil {
 		mu.Log.Debug("emit", "trace_id", m.Meta.TraceID, "type", m.Type, "action", m.Action)
 	}
+}
+
+// stripHeavy returns a persistence-safe copy of a payload: large inline blobs
+// (e.g. base64 screenshots in browser events) are replaced with a marker so
+// Mongo rows stay small. The SSE-delivered message keeps the full payload.
+func stripHeavy(p any) any {
+	mp, ok := p.(map[string]any)
+	if !ok {
+		return p
+	}
+	d, ok := mp["data"].(string)
+	if !ok || len(d) <= 1024 {
+		return p
+	}
+	cp := make(map[string]any, len(mp))
+	maps.Copy(cp, mp)
+	cp["data"] = fmt.Sprintf("<omitted %d bytes>", len(d))
+	return cp
 }
 
 // shouldPersist applies the persistence policy:
