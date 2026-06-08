@@ -59,7 +59,7 @@ async def run_task(ws: WebSocket, msg: dict[str, Any]) -> None:
             "max_steps": max_steps,
             "history": [],
             "status": "running",
-            "use_vision": False,
+            "use_vision": os.getenv("VLM_ENABLE") == "1",
         }
         final = await graph.ainvoke(init, config={"recursion_limit": max_steps * 3 + 6})
         status = final.get("status", "END")

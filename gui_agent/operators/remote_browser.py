@@ -59,6 +59,14 @@ class RemoteBrowserOperator:
 
     async def execute(self, action: dict[str, Any]) -> str:
         kind = action.get("action")
+        # set-of-marks: act directly on a resolved element handle
+        handle = action.get("_handle")
+        if handle is not None and kind in ("click", "type"):
+            if kind == "click":
+                await handle.click(timeout=5000)
+                return f"clicked mark {action.get('target', '')}"
+            await handle.fill(action.get("text", ""), timeout=5000)
+            return f"typed into mark {action.get('target', '')}"
         if kind == "navigate":
             url = action.get("url", "")
             await self.page.goto(url, wait_until="domcontentloaded")

@@ -26,14 +26,15 @@ class Planner:
 
     async def predict(self, state: dict[str, Any], page) -> tuple[dict[str, Any], bool]:
         """Return (action, used_vision)."""
-        action = self._rule_predict(state)
+        # Vision-first when a multimodal model is configured: drive via
+        # Set-of-Marks (the screenshot node already numbered the elements).
+        if self.vlm_enabled:
+            return await self._vlm_predict(state), True
 
-        # DOM-first: only click/type need a locatable target.
+        # DOM-first rule planner (zero vision tokens).
+        action = self._rule_predict(state)
         if action.get("action") in ("click", "type"):
             ok = await dom_first.locate(page, action)
-            if not ok and self.vlm_enabled:
-                vis = await self._vlm_predict(state)
-                return vis, True
             if not ok:
                 return {"action": "error", "message": f"cannot locate target for {action}"}, False
         return action, False
@@ -56,13 +57,18 @@ class Planner:
             return {"action": "error", "message": "openai sdk unavailable for VLM"}
         client = OpenAI(base_url=self.base_url, api_key=self.api_key)
         sys = (
-            "You are a GUI agent. Given the instruction and a screenshot, output ONE "
-            "JSON action object with key 'action' in "
-            "{navigate,click,type,scroll,read,done,call_user,error} plus parameters "
-            "(url/selector/text/result). Output JSON only."
+            "You are a GUI agent using Set-of-Marks. The screenshot has numbered "
+            "tags on interactive elements. Output ONE JSON action object with key "
+            "'action' in {navigate,click,type,scroll,read,done,call_user,error}. "
+            "To click/type a tagged element, set 'mark' to its number (and 'text' "
+            "for type). Otherwise use url/result. Output JSON only."
         )
+        marks_text = state.get("marks_text", "")
         content = [
-            {"type": "text", "text": f"Instruction: {state.get('instruction','')}"},
+            {
+                "type": "text",
+                "text": f"Instruction: {state.get('instruction','')}\n\nElements:\n{marks_text}",
+            },
         ]
         if state.get("screenshot"):
             content.append({

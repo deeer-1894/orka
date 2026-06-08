@@ -7,12 +7,14 @@ edges route on status: running -> screenshot; END/ERROR/CALL_USER -> finish.
 
 from __future__ import annotations
 
+import base64
 from typing import Any, Awaitable, Callable
 
 from langgraph.graph import END, StateGraph
 
 from agent.model import Planner
 from agent.state import GraphState
+from operators import marks as marksmod
 from operators.remote_browser import RemoteBrowserOperator
 
 EmitFn = Callable[[dict[str, Any]], Awaitable[None]]
@@ -25,14 +27,19 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
         dom = await operator.dom_snapshot()
         shot = await operator.screenshot()
         out: GraphState = {"dom": dom}
-        # Always stream a screenshot for UI feedback (no token cost), but only
-        # feed it to the VLM when DOM-first failed (use_vision) — keeping the
-        # vision-token cost at zero on the DOM-first happy path.
-        await emit({"type": "screenshot", "data": shot, "session_id": state.get("session_id", "")})
         if state.get("use_vision"):
-            out["screenshot"] = shot
-        mode = "vision" if state.get("use_vision") else "dom"
-        await emit({"type": "observe", "mode": mode, "tokens": 0 if mode == "dom" else 1})
+            # Set-of-Marks: number interactive elements so the VLM can target
+            # "mark N" instead of pixels.
+            ms = await marksmod.collect_marks(operator.page)
+            annotated = marksmod.marks_to_b64_annotated(base64.b64decode(shot), ms)
+            out["screenshot"] = annotated
+            out["marks"] = ms  # type: ignore[typeddict-unknown-key]
+            out["marks_text"] = marksmod.marks_text(ms)  # type: ignore[typeddict-unknown-key]
+            await emit({"type": "screenshot", "data": annotated, "session_id": state.get("session_id", "")})
+            await emit({"type": "observe", "mode": "vision", "marks": len(ms), "tokens": 1, "session_id": state.get("session_id", "")})
+        else:
+            await emit({"type": "screenshot", "data": shot, "session_id": state.get("session_id", "")})
+            await emit({"type": "observe", "mode": "dom", "tokens": 0, "session_id": state.get("session_id", "")})
         return out
 
     async def predict_node(state: GraphState) -> GraphState:
@@ -44,6 +51,9 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
 
     async def execute_node(state: GraphState) -> GraphState:
         action = state.get("prediction", {}) or {}
+        # set-of-marks: resolve a mark index to a concrete element handle
+        if "mark" in action and state.get("marks"):
+            action = marksmod.mark_action_to_dict(action, state["marks"])  # type: ignore[typeddict-item]
         kind = action.get("action")
         step = int(state.get("step", 0)) + 1
         history = list(state.get("history", []))
