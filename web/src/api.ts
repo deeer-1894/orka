@@ -15,6 +15,11 @@ export const auth = {
   clear: () => localStorage.removeItem(TOKEN_KEY),
 };
 
+let unauthorizedHandler: (() => void) | null = null;
+export function setOnUnauthorized(fn: () => void) {
+  unauthorizedHandler = fn;
+}
+
 function headers(json = true): Record<string, string> {
   const h: Record<string, string> = {};
   if (json) h["Content-Type"] = "application/json";
@@ -30,8 +35,11 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   if (res.status === 401) {
+    // token missing/expired — clear it and let the app fall back to the login
+    // screen on its next render (no jarring full-page reload).
     auth.clear();
-    location.reload();
+    unauthorizedHandler?.();
+    throw new Error("unauthorized");
   }
   const j = await res.json();
   return (j.data ?? j) as T;

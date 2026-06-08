@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, auth } from "./api";
+import { api, auth, setOnUnauthorized } from "./api";
 import { useChatStream } from "./hooks/useChatStream";
 import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
@@ -13,6 +13,11 @@ type Tab = "browser" | "files" | "metrics" | "tasks";
 export default function App() {
   const [user, setUser] = useState<{ email: string; name: string } | null>(null);
   const [authReady, setAuthReady] = useState(false);
+
+  // a 401 from any request → drop back to the login screen (no page reload)
+  useEffect(() => {
+    setOnUnauthorized(() => setUser(null));
+  }, []);
 
   // restore session on load
   useEffect(() => {
