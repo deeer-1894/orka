@@ -2,24 +2,20 @@ import { useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
 
 const TOOLS = [
-  { id: "file", label: "file", color: "var(--color-ok)" },
-  { id: "gui_agent", label: "gui", color: "var(--color-browser)" },
+  { id: "file", label: "file" },
+  { id: "gui_agent", label: "gui" },
 ];
 
 export function Composer({
   status,
   enabled,
   setEnabled,
-  email,
-  setEmail,
   onSend,
   onKill,
 }: {
   status: RunStatus;
   enabled: string[];
   setEnabled: (t: string[]) => void;
-  email: string;
-  setEmail: (e: string) => void;
   onSend: (msg: string) => void;
   onKill: () => void;
 }) {
@@ -35,37 +31,9 @@ export function Composer({
     setEnabled(enabled.includes(id) ? enabled.filter((x) => x !== id) : [...enabled, id]);
 
   return (
-    <div className="border-t hair bg-panel/70 backdrop-blur-sm px-6 py-3">
+    <div className="px-5 pb-5">
       <div className="mx-auto max-w-3xl">
-        <div className="mb-2 flex items-center gap-3">
-          {TOOLS.map((t) => {
-            const on = enabled.includes(t.id);
-            return (
-              <button
-                key={t.id}
-                onClick={() => toggle(t.id)}
-                className="font-mono text-[10px] uppercase tracking-[0.16em] px-2 py-1 rounded border transition"
-                style={{
-                  color: on ? t.color : "var(--color-faint)",
-                  borderColor: on ? t.color : "var(--color-line)",
-                  background: on ? "rgba(255,255,255,0.04)" : "transparent",
-                }}
-              >
-                {on ? "▣" : "▢"} {t.label}
-              </button>
-            );
-          })}
-          <span className="ml-auto flex items-center gap-1.5">
-            <span className="font-mono text-[10px] text-faint">as</span>
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-40 bg-transparent font-mono text-[11px] text-muted outline-none border-b hair focus:border-live/40"
-            />
-          </span>
-        </div>
-
-        <div className="flex items-end gap-2">
+        <div className="rounded-[26px] border border-border bg-surface shadow-[0_2px_18px_rgba(40,38,32,0.06)] focus-within:border-accent/40 transition">
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -76,25 +44,54 @@ export function Composer({
               }
             }}
             rows={1}
-            placeholder="message the agent…  (⏎ send · ⇧⏎ newline)"
-            className="flex-1 resize-none rounded-lg border hair bg-panel px-4 py-3 text-[14px] outline-none focus:border-live/40 placeholder:text-faint/60"
+            placeholder="Message Cavis…"
+            className="block w-full resize-none bg-transparent px-5 pt-4 pb-1 text-[15px] outline-none placeholder:text-faint max-h-48"
           />
-          {busy ? (
-            <button
-              onClick={onKill}
-              className="h-11 rounded-lg border border-danger/50 bg-danger/10 px-4 font-mono text-[12px] text-danger hover:bg-danger/20 transition"
-            >
-              kill
-            </button>
-          ) : (
-            <button
-              onClick={send}
-              className="h-11 rounded-lg bg-live px-5 font-display font-bold text-[13px] text-ink hover:brightness-110 transition"
-            >
-              run →
-            </button>
-          )}
+          <div className="flex items-center gap-2 px-3 pb-3 pt-1">
+            {TOOLS.map((t) => {
+              const on = enabled.includes(t.id);
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => toggle(t.id)}
+                  className={
+                    "rounded-full border px-3 py-1 text-[13px] transition " +
+                    (on
+                      ? "border-accent/40 bg-accentsoft text-accent"
+                      : "border-border text-muted hover:bg-surface2")
+                  }
+                >
+                  {t.label}
+                </button>
+              );
+            })}
+            <div className="ml-auto">
+              {busy ? (
+                <button
+                  onClick={onKill}
+                  className="grid h-9 w-9 place-items-center rounded-full bg-ink text-bg hover:opacity-80 transition"
+                  title="Stop"
+                >
+                  <span className="h-3 w-3 rounded-[3px] bg-bg" />
+                </button>
+              ) : (
+                <button
+                  onClick={send}
+                  disabled={!text.trim()}
+                  className="grid h-9 w-9 place-items-center rounded-full bg-accent text-white hover:brightness-105 disabled:opacity-30 transition"
+                  title="Send"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 19V5M12 5l-6 6M12 5l6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </div>
         </div>
+        <p className="mt-2 text-center text-[11px] text-faint">
+          Cavis can make mistakes. Tool actions run against your workspace.
+        </p>
       </div>
     </div>
   );
