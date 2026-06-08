@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -157,12 +158,42 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 			return // resume() already emitted the failure event
 		}
 	} else {
-		rc.Messages = []messages.Message{messages.Chat(messages.RoleUser, req.Message, meta)}
+		// Seed the run with prior conversation turns so the LLM has memory,
+		// then append + persist the new user message (raw=nil: persist only,
+		// the SSE user echo is rendered optimistically by the frontend).
+		history := s.loadChatHistory(ctx, req.ConversationID, meta)
+		userMsg := messages.Chat(messages.RoleUser, req.Message, meta)
+		rc.Messages = append(history, userMsg)
+		s.Msg.Deliver(rc, nil, userMsg, true)
 		s.Msg.Deliver(rc, raw, messages.Task("start", meta), true)
 		err = runner.Run(rc)
 	}
 
 	s.finish(ctx, rc, meta, raw, err)
+}
+
+// loadChatHistory returns the prior user/assistant turns of a conversation in
+// chronological order, giving the LLM multi-turn memory.
+func (s *ChatService) loadChatHistory(ctx context.Context, convID string, meta messages.Meta) []messages.Message {
+	if s.Msg == nil || s.Msg.Store == nil || convID == "" {
+		return nil
+	}
+	rows, err := s.Msg.Store.GetMessages(ctx, convID, 0, 60)
+	if err != nil {
+		return nil
+	}
+	out := make([]messages.Message, 0, len(rows))
+	for i := len(rows) - 1; i >= 0; i-- { // GetMessages is newest-first; reverse
+		r := rows[i]
+		if r.Type != string(messages.EventChat) {
+			continue
+		}
+		if r.Role != messages.RoleUser && r.Role != messages.RoleAssistant {
+			continue
+		}
+		out = append(out, messages.Chat(r.Role, r.Content, meta))
+	}
+	return out
 }
 
 // resume claims the checkpoint (idempotent) and continues the run.
@@ -194,6 +225,8 @@ func (s *ChatService) finish(ctx context.Context, rc *agent.RunContext, meta mes
 		if s.Log != nil {
 			s.Log.Error("chat run failed", "trace_id", meta.TraceID, "err", err)
 		}
+		// Surface a friendly assistant message (not the raw upstream error).
+		s.Msg.Deliver(rc, raw, messages.Chat(messages.RoleAssistant, friendlyErr(err), meta), true)
 		s.Msg.Deliver(rc, raw, taskFailed(meta, err.Error()), true)
 	case rc.Interrupt != nil && rc.Interrupt.Clarify != nil:
 		s.persistClarify(ctx, rc, meta, raw)
@@ -240,6 +273,25 @@ func (s *ChatService) heartbeat(ctx context.Context, meta messages.Meta, raw fun
 		case <-t.C:
 			raw(messages.Heartbeat(meta))
 		}
+	}
+}
+
+// friendlyErr maps low-level run errors to a user-readable message.
+func friendlyErr(err error) string {
+	e := err.Error()
+	switch {
+	case strings.Contains(e, "Content Exists Risk") || strings.Contains(e, "content") && strings.Contains(e, "risk"):
+		return "抱歉,这条请求被模型的内容安全策略拦截了,请换个说法再试。"
+	case strings.Contains(e, "status 401") || strings.Contains(e, "status 403"):
+		return "模型服务鉴权失败,请检查 API key 配置。"
+	case strings.Contains(e, "status 429"):
+		return "模型服务请求过于频繁(限流),请稍后再试。"
+	case strings.Contains(e, "llm status 4"):
+		return "请求被模型服务拒绝(参数或内容问题),请调整后重试。"
+	case strings.Contains(e, "context deadline") || strings.Contains(e, "timeout"):
+		return "处理超时了,请重试或简化任务。"
+	default:
+		return "抱歉,处理时出错了:" + e
 	}
 }
 

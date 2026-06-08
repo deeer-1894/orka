@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"log/slog"
+	"net/http"
 	"os"
 	"time"
 
@@ -22,6 +24,22 @@ import (
 	"github.com/cavis-oss/cavis_control_layer/obs"
 	"github.com/cavis-oss/cavis_control_layer/service"
 )
+
+// waitReady polls an HTTP endpoint until it accepts connections (or timeout),
+// so the control layer doesn't race the tools_server on first request.
+func waitReady(url string, timeout time.Duration, logger *slog.Logger) {
+	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: 2 * time.Second}
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(url)
+		if err == nil {
+			_ = resp.Body.Close()
+			return
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	logger.Warn("tools_server not ready within timeout; continuing", "url", url)
+}
 
 func main() {
 	cfgPath := os.Getenv("CONFIG_PATH")
@@ -87,6 +105,7 @@ func main() {
 			cfg.Storage.BaseStoragePath, toolsURL, cfg.Security.CtxTokenSecret,
 			ttl, []string{"file:read", "file:write", "web:search"},
 		)
+		waitReady(toolsURL, 15*time.Second, logger) // avoid first-request startup race
 		logger.Info("tools via MCP", "url", toolsURL)
 	}
 

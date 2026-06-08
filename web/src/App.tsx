@@ -17,7 +17,8 @@ export default function App() {
   const [activeID, setActiveID] = useState("");
   const [tasks, setTasks] = useState<TaskMeta[]>([]);
   const [owners, setOwners] = useState<Record<string, OwnerInfo>>({});
-  const [enabled, setEnabled] = useState<string[]>(["search", "file"]);
+  // all tools on by default → the model auto-selects; chips are optional filters
+  const [enabled, setEnabled] = useState<string[]>(["search", "file", "gui_agent"]);
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);

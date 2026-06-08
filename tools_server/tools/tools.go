@@ -31,6 +31,7 @@ func Registry() map[string]Meta {
 		"file_write":  {Group: "file", Scope: "file:write"},
 		"file_list":   {Group: "file", Scope: "file:read"},
 		"web_search":  {Group: "web", Scope: "web:search"},
+		"fetch_url":   {Group: "web", Scope: "web:search"},
 		"weather":     {Group: "web", Scope: "web:search"},
 		"lark_whoami": {Group: "lark", Scope: "lark:read"},
 		"aio_echo":    {Group: "aio", Scope: "aio:read"},
@@ -69,6 +70,11 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 		mcp.WithString("query", mcp.Required(), mcp.Description("search query")),
 		mcp.WithNumber("limit", mcp.Description("max results (default 5)")),
 	), webSearch())
+
+	add(mcp.NewTool("fetch_url",
+		mcp.WithDescription("Fetch a web page and return its readable text. Use after web_search to read a result."),
+		mcp.WithString("url", mcp.Required(), mcp.Description("the page URL")),
+	), fetchURL())
 
 	add(mcp.NewTool("weather",
 		mcp.WithDescription("Get current weather + today's forecast for a location (live, keyless)."),

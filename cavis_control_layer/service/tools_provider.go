@@ -80,7 +80,7 @@ func filterEnabled(tools []agent.BaseTool, enabled []string) []agent.BaseTool {
 		case want[name]:
 		case want["file"] && len(name) >= 5 && name[:5] == "file_":
 		case want["gui_agent"] && name == "run_agent":
-		case want["search"] && (name == "web_search" || name == "weather"):
+		case want["search"] && (name == "web_search" || name == "weather" || name == "fetch_url"):
 		default:
 			continue
 		}
