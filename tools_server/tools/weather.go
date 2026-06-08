@@ -34,33 +34,49 @@ func weather() mcpserver.ToolHandlerFunc {
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 
+		type desc struct{ Value string }
 		var w struct {
 			Current []struct {
-				TempC      string              `json:"temp_C"`
-				FeelsLikeC string              `json:"FeelsLikeC"`
-				Humidity   string              `json:"humidity"`
-				WindKmph   string              `json:"windspeedKmph"`
-				WeatherteDesc []struct{ Value string } `json:"weatherDesc"`
+				TempC       string `json:"temp_C"`
+				FeelsLikeC  string `json:"FeelsLikeC"`
+				Humidity    string `json:"humidity"`
+				WindKmph    string `json:"windspeedKmph"`
+				WeatherDesc []desc `json:"weatherDesc"`
 			} `json:"current_condition"`
 			Weather []struct {
-				Date    string `json:"date"`
+				Date     string `json:"date"`
 				MaxtempC string `json:"maxtempC"`
 				MintempC string `json:"mintempC"`
+				Hourly   []struct {
+					Time        string `json:"time"`
+					WeatherDesc []desc `json:"weatherDesc"`
+					ChanceRain  string `json:"chanceofrain"`
+				} `json:"hourly"`
 			} `json:"weather"`
 		}
 		if err := json.Unmarshal(body, &w); err != nil || len(w.Current) == 0 {
 			return mcp.NewToolResultError("could not parse weather for " + loc), nil
 		}
 		c := w.Current[0]
-		desc := ""
-		if len(c.WeatherteDesc) > 0 {
-			desc = c.WeatherteDesc[0].Value
+		cur := ""
+		if len(c.WeatherDesc) > 0 {
+			cur = c.WeatherDesc[0].Value
 		}
-		out := fmt.Sprintf("Weather for %s:\n- now: %s°C (feels %s°C), %s\n- humidity: %s%%, wind: %s km/h\n",
-			loc, c.TempC, c.FeelsLikeC, desc, c.Humidity, c.WindKmph)
+		out := fmt.Sprintf("Weather for %s:\n- now: %s°C (feels %s°C), %s, humidity %s%%, wind %s km/h\n",
+			loc, c.TempC, c.FeelsLikeC, cur, c.Humidity, c.WindKmph)
 		if len(w.Weather) > 0 {
-			t := w.Weather[0]
-			out += fmt.Sprintf("- today (%s): high %s°C / low %s°C\n", t.Date, t.MaxtempC, t.MintempC)
+			out += "Forecast (free source provides ~3 days):\n"
+			for _, d := range w.Weather {
+				dd := "" // midday description
+				rain := ""
+				if len(d.Hourly) >= 5 {
+					if len(d.Hourly[4].WeatherDesc) > 0 {
+						dd = d.Hourly[4].WeatherDesc[0].Value
+					}
+					rain = d.Hourly[4].ChanceRain
+				}
+				out += fmt.Sprintf("- %s: %s–%s°C, %s (rain %s%%)\n", d.Date, d.MintempC, d.MaxtempC, dd, rain)
+			}
 		}
 		return mcp.NewToolResultText(out), nil
 	}

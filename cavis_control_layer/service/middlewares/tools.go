@@ -89,7 +89,18 @@ func (m *Tools) Handle(rc *agent.RunContext, next func(*agent.RunContext) error)
 		}
 	}
 
-	rc.Vars[VarFinal] = "(stopped: reached max tool iterations)"
+	// Hit the iteration cap: force one final answer WITHOUT tools so the user
+	// gets a useful summary of what was gathered instead of a raw stop message.
+	hist = append(hist, llm.ChatMessage{
+		Role: llm.RoleUser,
+		Content: "基于以上工具返回的信息,直接给出你能给出的最佳回答;若信息不完整,简要说明并给出已知部分。不要再调用任何工具。",
+	})
+	if resp, err := m.LLM.Chat(rc.Ctx, llm.Request{Model: m.Model, Messages: hist}); err == nil && resp.Content != "" {
+		hist = append(hist, llm.ChatMessage{Role: llm.RoleAssistant, Content: resp.Content})
+		rc.Vars[VarFinal] = resp.Content
+	} else {
+		rc.Vars[VarFinal] = "我尝试了多次但没能拿到完整结果,请换个问法或稍后再试。"
+	}
 	setHistory(rc, hist)
 	return nil
 }
