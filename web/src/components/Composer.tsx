@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
 
 const TOOLS = [
+  { id: "search", label: "search" },
   { id: "file", label: "file" },
   { id: "gui_agent", label: "gui" },
 ];

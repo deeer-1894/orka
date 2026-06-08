@@ -85,7 +85,7 @@ func main() {
 		ttl := time.Duration(cfg.Security.CtxTokenTTLSec) * time.Second
 		chat.ToolsFor = service.MCPToolsProvider(
 			cfg.Storage.BaseStoragePath, toolsURL, cfg.Security.CtxTokenSecret,
-			ttl, []string{"file:read", "file:write"},
+			ttl, []string{"file:read", "file:write", "web:search"},
 		)
 		logger.Info("tools via MCP", "url", toolsURL)
 	}

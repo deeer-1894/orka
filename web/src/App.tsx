@@ -17,7 +17,7 @@ export default function App() {
   const [activeID, setActiveID] = useState("");
   const [tasks, setTasks] = useState<TaskMeta[]>([]);
   const [owners, setOwners] = useState<Record<string, OwnerInfo>>({});
-  const [enabled, setEnabled] = useState<string[]>(["file"]);
+  const [enabled, setEnabled] = useState<string[]>(["search", "file"]);
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);

@@ -30,6 +30,8 @@ func Registry() map[string]Meta {
 		"file_read":   {Group: "file", Scope: "file:read"},
 		"file_write":  {Group: "file", Scope: "file:write"},
 		"file_list":   {Group: "file", Scope: "file:read"},
+		"web_search":  {Group: "web", Scope: "web:search"},
+		"weather":     {Group: "web", Scope: "web:search"},
 		"lark_whoami": {Group: "lark", Scope: "lark:read"},
 		"aio_echo":    {Group: "aio", Scope: "aio:read"},
 	}
@@ -61,6 +63,17 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 		mcp.WithDescription("List directory entries in your storage."),
 		mcp.WithString("path", mcp.Description("relative directory path (default root)")),
 	), fileList(baseStorage))
+
+	add(mcp.NewTool("web_search",
+		mcp.WithDescription("Search the web (DuckDuckGo) and return the top results. Use this for facts, weather, news, docs — not the GUI browser."),
+		mcp.WithString("query", mcp.Required(), mcp.Description("search query")),
+		mcp.WithNumber("limit", mcp.Description("max results (default 5)")),
+	), webSearch())
+
+	add(mcp.NewTool("weather",
+		mcp.WithDescription("Get current weather + today's forecast for a location (live, keyless)."),
+		mcp.WithString("location", mcp.Required(), mcp.Description("city name, e.g. 西安 / Xian")),
+	), weather())
 
 	add(mcp.NewTool("lark_whoami",
 		mcp.WithDescription("Lark: return the current user (stub)."),
