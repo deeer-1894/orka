@@ -21,6 +21,7 @@ type Storage struct {
 	Conversations *mongo.Collection
 	Messages      *mongo.Collection
 	Tasks         *mongo.Collection
+	Users         *mongo.Collection
 }
 
 // NewStorage connects to Mongo and pings it.
@@ -41,7 +42,38 @@ func NewStorage(ctx context.Context, uri, dbName string) (*Storage, error) {
 		Conversations: d.Collection("conversations"),
 		Messages:      d.Collection("messages"),
 		Tasks:         d.Collection("tasks"),
+		Users:         d.Collection("users"),
 	}, nil
+}
+
+// ---- users ----
+
+func (s *Storage) CreateUser(ctx context.Context, u *User) error {
+	if _, err := s.Users.InsertOne(ctx, u); err != nil {
+		return fmt.Errorf("insert user: %w", err)
+	}
+	return nil
+}
+
+func (s *Storage) GetUser(ctx context.Context, email string) (*User, error) {
+	var out User
+	err := s.Users.FindOne(ctx, bson.M{"email": email}).Decode(&out)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get user: %w", err)
+	}
+	return &out, nil
+}
+
+// ListConversationsByOwner returns a user's conversations, newest first.
+func (s *Storage) ListConversationsByOwner(ctx context.Context, owner string, page, size int64) ([]ConversationTable, error) {
+	var out []ConversationTable
+	if err := paginate(ctx, s.Conversations, bson.M{"owner_email": owner}, page, size, &out); err != nil {
+		return nil, fmt.Errorf("list conversations: %w", err)
+	}
+	return out, nil
 }
 
 // Close disconnects the client.

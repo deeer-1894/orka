@@ -119,6 +119,7 @@ func main() {
 
 	a := api.New(store, logger, metrics, chat)
 	a.BaseStorage = cfg.Storage.BaseStoragePath
+	a.Secret = cfg.Security.CtxTokenSecret
 	a.Directory = connectors.NewCachedDirectory(
 		&connectors.StubDirectory{},
 		state.NewRedisStore(rdb, "cavis:dir:"),

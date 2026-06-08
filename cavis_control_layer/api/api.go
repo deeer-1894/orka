@@ -21,9 +21,20 @@ type API struct {
 	Log         *slog.Logger
 	Metrics     *obs.Metrics
 	Chat        *service.ChatService
-	BaseStorage string                  // file storage root
+	BaseStorage string                   // file storage root
 	Directory   connectors.UserDirectory // owner enrichment (cached)
-	chunks      *chunkManager           // resumable upload state
+	Secret      string                   // HMAC secret for session tokens
+	chunks      *chunkManager            // resumable upload state
+}
+
+// authEmail returns the authenticated user's email set by AuthMiddleware.
+func authEmail(c *app.RequestContext) string {
+	if v, ok := c.Get("email"); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 // New builds an API controller set.

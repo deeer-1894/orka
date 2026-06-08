@@ -10,9 +10,18 @@ const (
 	RunPaused  = "paused"
 )
 
+// User is an account record (password stored as a bcrypt hash).
+type User struct {
+	Email        string `bson:"email" json:"email"`
+	Name         string `bson:"name" json:"name"`
+	PasswordHash string `bson:"password_hash" json:"-"`
+	CreatedAt    int64  `bson:"created_at" json:"created_at"`
+}
+
 // ConversationTable is the conversation shell; one conversation may own many tasks.
 type ConversationTable struct {
 	ConversationID string   `bson:"conversation_id" json:"conversation_id"`
+	OwnerEmail     string   `bson:"owner_email" json:"owner_email"`
 	Title          string   `bson:"title" json:"title"`
 	TaskIds        []string `bson:"task_ids" json:"task_ids"`
 	CreatedAt      int64    `bson:"created_at" json:"created_at"`

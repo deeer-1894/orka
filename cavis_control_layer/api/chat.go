@@ -22,8 +22,9 @@ func (a *API) ChatRun(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "bad request: "+err.Error())
 		return
 	}
-	if req.UserEmail == "" {
-		req.UserEmail = string(c.GetHeader("X-User-Email"))
+	// authenticated identity always wins over any client-supplied email
+	if e := authEmail(c); e != "" {
+		req.UserEmail = e
 	}
 
 	pr, pw := io.Pipe()

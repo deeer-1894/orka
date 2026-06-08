@@ -33,11 +33,15 @@ func (a *API) CreateTask(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "bad request: "+err.Error())
 		return
 	}
+	owner := authEmail(c)
+	if owner == "" {
+		owner = req.OwnerEmail
+	}
 	t := &db.TaskMeta{
 		TaskID:            messages.NewID(),
 		InitialTemplateId: req.InitialTemplateId,
 		ConversationID:    req.ConversationID,
-		OwnerEmail:        req.OwnerEmail,
+		OwnerEmail:        owner,
 		Variables:         req.Variables,
 		RunStatus:         db.RunStart,
 		CronStatus:        "off",
@@ -63,12 +67,10 @@ func (a *API) GetTasks(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "bad request: "+err.Error())
 		return
 	}
-	filter := bson.M{}
+	// always scope to the authenticated user
+	filter := bson.M{"owner_email": authEmail(c)}
 	if req.ConversationID != "" {
 		filter["conversation_id"] = req.ConversationID
-	}
-	if req.OwnerEmail != "" {
-		filter["owner_email"] = req.OwnerEmail
 	}
 	tasks, err := a.Store.ListTasks(ctx, filter, req.Page, req.Size)
 	if err != nil {

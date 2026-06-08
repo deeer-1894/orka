@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import type { Message } from "../types";
+import { auth } from "../api";
 
 export type RunStatus = "idle" | "streaming" | "paused" | "error" | "done";
 
@@ -43,7 +44,10 @@ export function useChatStream() {
     try {
       const res = await fetch("/api/v1/controller/chat/run", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-Email": p.userEmail },
+        headers: {
+          "Content-Type": "application/json",
+          ...(auth.token() ? { Authorization: "Bearer " + auth.token() } : {}),
+        },
         body: JSON.stringify({
           message: p.message,
           conversation_id: p.conversationID,

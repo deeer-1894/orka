@@ -38,6 +38,7 @@ func (a *API) CreateConversation(ctx context.Context, c *app.RequestContext) {
 	}
 	conv := &db.ConversationTable{
 		ConversationID: messages.NewID(),
+		OwnerEmail:     authEmail(c),
 		Title:          title,
 		TaskIds:        []string{},
 		CreatedAt:      time.Now().UnixMilli(),
@@ -67,7 +68,22 @@ func (a *API) GetConversation(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusInternalServerError, "get failed")
 		return
 	}
+	if conv.OwnerEmail != "" && conv.OwnerEmail != authEmail(c) {
+		fail(c, consts.StatusNotFound, "not found") // don't leak existence
+		return
+	}
 	ok(c, conv)
+}
+
+// ListConversations returns the authenticated user's conversations.
+func (a *API) ListConversations(ctx context.Context, c *app.RequestContext) {
+	convs, err := a.Store.ListConversationsByOwner(ctx, authEmail(c), 0, 100)
+	if err != nil {
+		a.Log.Error("list conversations", "err", err)
+		fail(c, consts.StatusInternalServerError, "list failed")
+		return
+	}
+	ok(c, convs)
 }
 
 // GetMessages lists messages of a conversation (paginated).
@@ -75,6 +91,12 @@ func (a *API) GetMessages(ctx context.Context, c *app.RequestContext) {
 	var req getMessagesReq
 	if err := bind(c, &req); err != nil || req.ConversationID == "" {
 		fail(c, consts.StatusBadRequest, "conversation_id required")
+		return
+	}
+	// ownership check: only the conversation's owner may read its messages
+	if conv, err := a.Store.GetConversation(ctx, req.ConversationID); err == nil &&
+		conv.OwnerEmail != "" && conv.OwnerEmail != authEmail(c) {
+		fail(c, consts.StatusNotFound, "not found")
 		return
 	}
 	msgs, err := a.Store.GetMessages(ctx, req.ConversationID, req.Page, req.Size)

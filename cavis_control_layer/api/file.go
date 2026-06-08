@@ -13,10 +13,9 @@ import (
 	"github.com/cavis-oss/cavis_core/pathsafe"
 )
 
-// userRoot resolves the caller's storage root from the X-User-Email header.
+// userRoot resolves the caller's storage root from the authenticated identity.
 func (a *API) userRoot(c *app.RequestContext) string {
-	email := string(c.GetHeader("X-User-Email"))
-	return pathsafe.UserRoot(a.BaseStorage, email)
+	return pathsafe.UserRoot(a.BaseStorage, authEmail(c))
 }
 
 func (a *API) resolve(c *app.RequestContext, rel string) (string, error) {

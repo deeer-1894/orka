@@ -14,6 +14,7 @@ import (
 	"github.com/cavis-oss/cavis_core/trace"
 
 	"github.com/cavis-oss/cavis_control_layer/checkpoint"
+	"github.com/cavis-oss/cavis_control_layer/db"
 	"github.com/cavis-oss/cavis_control_layer/llm"
 	"github.com/cavis-oss/cavis_control_layer/message_utils"
 	"github.com/cavis-oss/cavis_control_layer/obs"
@@ -152,15 +153,20 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// their own events (browser/...) into the same SSE stream.
 	rc.Ctx = agent.WithEmit(ctx, rc.Send)
 
+	taskID := ""
 	if req.ResumeKey != "" {
 		err = s.resume(ctx, runner, rc, req, raw)
 		if err != nil {
 			return // resume() already emitted the failure event
 		}
 	} else {
-		// Seed the run with prior conversation turns so the LLM has memory,
-		// then append + persist the new user message (raw=nil: persist only,
-		// the SSE user echo is rendered optimistically by the frontend).
+		// Record this run as a task so the Tasks panel reflects real activity.
+		taskID = s.createRunTask(ctx, req, meta)
+		if taskID != "" {
+			meta.TaskID, rc.Meta.TaskID = taskID, taskID
+		}
+		// Seed with prior turns (memory) + persist the new user message
+		// (raw=nil: persist only; the SSE echo is rendered optimistically).
 		history := s.loadChatHistory(ctx, req.ConversationID, meta)
 		userMsg := messages.Chat(messages.RoleUser, req.Message, meta)
 		rc.Messages = append(history, userMsg)
@@ -170,6 +176,44 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	}
 
 	s.finish(ctx, rc, meta, raw, err)
+	s.updateRunTask(taskID, rc, err, ctx.Err())
+}
+
+func (s *ChatService) createRunTask(ctx context.Context, req ChatRunRequest, meta messages.Meta) string {
+	if s.Msg == nil || s.Msg.Store == nil || req.UserEmail == "" {
+		return ""
+	}
+	id := messages.NewID()
+	t := &db.TaskMeta{
+		TaskID:         id,
+		ConversationID: req.ConversationID,
+		OwnerEmail:     req.UserEmail,
+		RunStatus:      db.RunRunning,
+		CronStatus:     "off",
+		Variables:      map[string]any{"prompt": req.Message},
+		CreatedAt:      time.Now().UnixMilli(),
+	}
+	if s.Msg.Store.CreateTask(ctx, t) != nil {
+		return ""
+	}
+	if req.ConversationID != "" {
+		_ = s.Msg.Store.AddTaskToConversation(ctx, req.ConversationID, id)
+	}
+	return id
+}
+
+func (s *ChatService) updateRunTask(taskID string, rc *agent.RunContext, runErr, ctxErr error) {
+	if taskID == "" || s.Msg == nil || s.Msg.Store == nil {
+		return
+	}
+	st := db.RunDone
+	switch {
+	case runErr != nil || ctxErr != nil:
+		st = db.RunFailed
+	case rc.Interrupt != nil:
+		st = db.RunPaused
+	}
+	_ = s.Msg.Store.UpdateTaskStatus(context.Background(), taskID, st)
 }
 
 // loadChatHistory returns the prior user/assistant turns of a conversation in

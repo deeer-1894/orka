@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "./api";
+import { api, auth } from "./api";
 import { useChatStream } from "./hooks/useChatStream";
+import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
 import { Thread } from "./components/Thread";
 import { Composer } from "./components/Composer";
@@ -10,15 +11,38 @@ import type { Conversation, Message, OwnerInfo, TaskMeta } from "./types";
 type Tab = "browser" | "files" | "metrics" | "tasks";
 
 export default function App() {
-  const [email, setEmail] = useState(() => localStorage.getItem("cavis.email") || "you@cavis.dev");
-  useEffect(() => localStorage.setItem("cavis.email", email), [email]);
+  const [user, setUser] = useState<{ email: string; name: string } | null>(null);
+  const [authReady, setAuthReady] = useState(false);
 
+  // restore session on load
+  useEffect(() => {
+    if (!auth.token()) {
+      setAuthReady(true);
+      return;
+    }
+    api
+      .me()
+      .then((u) => setUser({ email: u.email, name: u.name }))
+      .catch(() => auth.clear())
+      .finally(() => setAuthReady(true));
+  }, []);
+
+  if (!authReady) return <div className="h-screen" />;
+  if (!user) return <Login onAuthed={(s) => setUser({ email: s.email, name: s.name })} />;
+  return <Workbench user={user} onSignOut={() => { auth.clear(); setUser(null); }} />;
+}
+
+function Workbench({
+  user,
+  onSignOut,
+}: {
+  user: { email: string; name: string };
+  onSignOut: () => void;
+}) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeID, setActiveID] = useState("");
   const [tasks, setTasks] = useState<TaskMeta[]>([]);
   const [owners, setOwners] = useState<Record<string, OwnerInfo>>({});
-  // all tools on by default → the model auto-selects; chips are optional filters
-  const [enabled, setEnabled] = useState<string[]>(["search", "file", "gui_agent"]);
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -27,15 +51,21 @@ export default function App() {
   const { messages, status, run, kill, setMessages } = useChatStream();
 
   const refreshTasks = useCallback(() => {
-    api
-      .getTasks()
-      .then((r) => {
-        setTasks(r.tasks || []);
-        setOwners(r.owners || {});
-      })
-      .catch(() => {});
+    api.getTasks().then((r) => {
+      setTasks(r.tasks || []);
+      setOwners(r.owners || {});
+    }).catch(() => {});
   }, []);
-  useEffect(() => refreshTasks(), [refreshTasks]);
+
+  const refreshConversations = useCallback(() => {
+    api.listConversations().then((c) => setConversations(c || [])).catch(() => {});
+  }, []);
+
+  // load conversation list + tasks on mount (persists across refresh)
+  useEffect(() => {
+    refreshConversations();
+    refreshTasks();
+  }, [refreshConversations, refreshTasks]);
 
   const newConversation = useCallback(async () => {
     const c = await api.createConversation("New chat");
@@ -68,18 +98,19 @@ export default function App() {
   const onSend = useCallback(
     async (msg: string) => {
       const id = await ensureConversation();
-      await run({ message: msg, conversationID: id, userEmail: email, enabledTools: enabled });
+      // empty enabledTools => backend offers ALL tools; the model auto-selects
+      await run({ message: msg, conversationID: id, userEmail: user.email, enabledTools: [] });
       refreshTasks();
     },
-    [ensureConversation, run, email, enabled, refreshTasks],
+    [ensureConversation, run, user.email, refreshTasks],
   );
 
   const onResume = useCallback(
     async (resumeKey: string, answer: string) => {
-      await run({ message: answer, conversationID: activeID, userEmail: email, enabledTools: enabled, resumeKey });
+      await run({ message: answer, conversationID: activeID, userEmail: user.email, enabledTools: [], resumeKey });
       refreshTasks();
     },
-    [run, activeID, email, enabled, refreshTasks],
+    [run, activeID, user.email, refreshTasks],
   );
 
   const openViewport = useCallback(() => {
@@ -95,8 +126,9 @@ export default function App() {
         activeID={activeID}
         onSelect={selectConversation}
         onNew={newConversation}
-        email={email}
-        setEmail={setEmail}
+        name={user.name}
+        email={user.email}
+        onSignOut={onSignOut}
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
@@ -124,7 +156,7 @@ export default function App() {
         </header>
 
         <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} />
-        <Composer status={status} enabled={enabled} setEnabled={setEnabled} onSend={onSend} onKill={kill} />
+        <Composer status={status} onSend={onSend} onKill={kill} />
       </main>
 
       <ArtifactDrawer
@@ -133,7 +165,7 @@ export default function App() {
         tab={drawerTab}
         setTab={setDrawerTab}
         messages={messages}
-        email={email}
+        email={user.email}
         tasks={tasks}
         owners={owners}
       />

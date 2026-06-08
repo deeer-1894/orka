@@ -162,14 +162,14 @@ function FilesPanel({ email }: { email: string }) {
   const [items, setItems] = useState<{ name: string; dir: boolean; size: number }[]>([]);
   const [pct, setPct] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const refresh = () => fileApi.list(".", email).then(setItems).catch(() => setItems([]));
+  const refresh = () => fileApi.list(".").then(setItems).catch(() => setItems([]));
   useEffect(() => {
     refresh(); /* eslint-disable-next-line */
   }, [email]);
   const onUpload = async (f: File) => {
     setPct(0);
     try {
-      await fileApi.upload(f, "", email, setPct);
+      await fileApi.upload(f, "", setPct);
       await refresh();
     } finally {
       setPct(null);
@@ -205,7 +205,7 @@ function FilesPanel({ email }: { email: string }) {
               </a>
             )}
             <button
-              onClick={() => fileApi.delete(it.name, email).then(refresh)}
+              onClick={() => fileApi.delete(it.name).then(refresh)}
               className="text-[12px] text-faint opacity-0 hover:text-accent group-hover:opacity-100"
             >
               ✕

@@ -6,16 +6,18 @@ export function Sidebar({
   activeID,
   onSelect,
   onNew,
+  name,
   email,
-  setEmail,
+  onSignOut,
 }: {
   open: boolean;
   conversations: Conversation[];
   activeID: string;
   onSelect: (id: string) => void;
   onNew: () => void;
+  name: string;
   email: string;
-  setEmail: (e: string) => void;
+  onSignOut: () => void;
 }) {
   return (
     <aside
@@ -63,15 +65,21 @@ export function Sidebar({
           })}
         </div>
 
-        <div className="border-t border-border px-3 py-3">
-          <label className="block text-[11px] uppercase tracking-wider text-faint mb-1">
-            Signed in as
-          </label>
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-accent/50"
-          />
+        <div className="flex items-center gap-2.5 border-t border-border px-3 py-3">
+          <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent/90 text-[12px] text-white">
+            {(name || email || "?").slice(0, 1).toUpperCase()}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[13px] text-ink">{name || email}</div>
+            <div className="truncate text-[11px] text-faint">{email}</div>
+          </div>
+          <button
+            onClick={onSignOut}
+            className="rounded-lg px-2 py-1 text-[12px] text-faint hover:bg-surface hover:text-accent"
+            title="Sign out"
+          >
+            ⎋
+          </button>
         </div>
       </div>
     </aside>

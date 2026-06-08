@@ -230,8 +230,7 @@ function Empty() {
       <div className="text-center">
         <h1 className="font-serif text-[34px] text-ink">How can I help today?</h1>
         <p className="mt-3 text-[15px] text-muted max-w-md mx-auto">
-          Ask anything. Toggle <b>file</b> to read/write files or <b>gui</b> to drive a browser —
-          tool steps and screenshots appear inline.
+          问我任何问题。Cavis 会按需自动调用搜索、网页、天气、文件读写或浏览器自动化 —— 工具步骤和截图会内联显示。
         </p>
       </div>
     </div>
