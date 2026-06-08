@@ -44,6 +44,17 @@ run-gui:
 run-web:
 	cd web && npm install && npm run dev
 
+# Sandboxed GUI executor: gui_agent + headful Chromium inside a container, with
+# a live noVNC view. Playwright owns the on-screen browser (perfect live sync).
+#   WS  (control layer): ws://localhost:8100/api/v1/exec/gui/ws
+#   noVNC (UI live view): http://localhost:6080/vnc.html
+gui-sandbox:
+	docker build -t cavis-gui-agent gui_agent
+	docker run -d --name cavis-gui --rm --shm-size=1g -p 8100:8100 -p 6080:6080 cavis-gui-agent
+
+gui-sandbox-stop:
+	docker stop cavis-gui || true
+
 # ---- eval (Phase 8) ----
 eval:
 	cd cavis_control_layer && go test ./eval/... -run TestReplay -v

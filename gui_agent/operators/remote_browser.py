@@ -18,22 +18,62 @@ from playwright.async_api import Browser, Page, async_playwright
 class RemoteBrowserOperator:
     ACTION_SPACE = ["navigate", "click", "type", "scroll", "read", "done"]
 
-    def __init__(self, cdp_url: str | None = None, headless: bool = True):
+    def __init__(self, cdp_url: str | None = None, headless: bool | None = None):
         self.cdp_url = cdp_url or os.getenv("CDP_URL", "")
+        if headless is None:
+            headless = os.getenv("HEADLESS", "1") != "0"
         self.headless = headless
         self._pw = None
         self._browser: Browser | None = None
+        self._context = None  # set in non-CDP (persistent) mode
         self._page: Page | None = None
 
     async def start(self) -> None:
         self._pw = await async_playwright().start()
         if self.cdp_url:
             self._browser = await self._pw.chromium.connect_over_cdp(self.cdp_url)
-            ctx = self._browser.contexts[0] if self._browser.contexts else await self._browser.new_context()
-            self._page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+            # Attach to the page that's actually displayed in noVNC: scan every
+            # context for a pre-existing page rather than blindly taking
+            # contexts[0] (which can be an ephemeral context we don't see).
+            page = None
+            # prefer a real, already-open page (the visible one) over the blank
+            # page Playwright spins up on connect.
+            for c in self._browser.contexts:
+                for pg in c.pages:
+                    if pg.url and pg.url != "about:blank":
+                        page = pg
+                        break
+                if page:
+                    break
+            if page is None:
+                for c in self._browser.contexts:
+                    if c.pages:
+                        page = c.pages[0]
+                        break
+            if page is None:
+                ctx = self._browser.contexts[0] if self._browser.contexts else await self._browser.new_context()
+                page = await ctx.new_page()
+            self._page = page
+            try:
+                await self._page.bring_to_front()
+            except Exception:
+                pass
         else:
-            self._browser = await self._pw.chromium.launch(headless=self.headless)
-            self._page = await self._browser.new_page()
+            # launch_persistent_context gives Playwright control of Chrome's real
+            # foreground window (pages[0] == the visible window), so the noVNC view
+            # mirrors exactly what the agent does — unlike launch(), whose page
+            # lands in a separate background tab.
+            self._context = await self._pw.chromium.launch_persistent_context(
+                user_data_dir="/tmp/cavis-profile",
+                headless=self.headless,
+                no_viewport=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--start-maximized"],
+            )
+            self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
+            try:
+                await self._page.bring_to_front()
+            except Exception:
+                pass
 
     @property
     def page(self) -> Page:
@@ -59,6 +99,11 @@ class RemoteBrowserOperator:
 
     async def execute(self, action: dict[str, Any]) -> str:
         kind = action.get("action")
+        # keep the live view on the tab the agent is acting in
+        try:
+            await self.page.bring_to_front()
+        except Exception:
+            pass
         # set-of-marks: act directly on a resolved element handle
         handle = action.get("_handle")
         if handle is not None and kind in ("click", "type"):
@@ -101,8 +146,10 @@ class RemoteBrowserOperator:
 
     async def close(self) -> None:
         try:
-            if self._browser:
-                await self._browser.close()
+            # CDP mode: only disconnect (the container owns the browser).
+            # Local mode: close the persistent context we launched.
+            if not self.cdp_url and self._context:
+                await self._context.close()
         finally:
             if self._pw:
                 await self._pw.stop()

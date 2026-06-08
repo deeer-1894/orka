@@ -67,15 +67,72 @@ export function ArtifactDrawer({
 }
 
 function BrowserPanel({ messages }: { messages: Message[] }) {
+  const novnc =
+    (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_NOVNC_URL ||
+    "http://localhost:6080/vnc.html?autoconnect=1&resize=scale&reconnect=1";
   const shots = messages
     .filter((m) => m.type === "browser" && (m.payload as BrowserPayload)?.data)
     .map((m) => m.payload as BrowserPayload);
   const [i, setI] = useState(0);
+  const [mode, setMode] = useState<"live" | "frames">("live");
   useEffect(() => setI(Math.max(0, shots.length - 1)), [shots.length]);
-  if (shots.length === 0) return <Blank>No browser viewport yet. Enable gui and open a page.</Blank>;
-  const cur = shots[Math.min(i, shots.length - 1)];
+
   return (
     <div className="p-3">
+      <div className="mb-2 flex gap-1">
+        {(["live", "frames"] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            className={
+              "rounded-lg px-2.5 py-1 text-[12px] capitalize transition " +
+              (mode === m ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")
+            }
+          >
+            {m === "frames" ? `frames (${shots.length})` : "live"}
+          </button>
+        ))}
+      </div>
+
+      {mode === "live" ? (
+        <div className="overflow-hidden rounded-xl border border-border">
+          <div className="flex items-center gap-1.5 border-b border-border bg-surface2 px-3 py-2">
+            <span className="h-2.5 w-2.5 rounded-full bg-[#e0695f]" />
+            <span className="h-2.5 w-2.5 rounded-full bg-[#e3b341]" />
+            <span className="h-2.5 w-2.5 rounded-full bg-[#5aa469]" />
+            <span className="ml-2 text-[12px] text-faint">sandbox · live</span>
+          </div>
+          <iframe
+            src={novnc}
+            title="live browser"
+            className="block w-full bg-white"
+            style={{ height: 520, border: 0 }}
+          />
+          <div className="border-t border-border px-3 py-1.5 text-[11px] text-faint">
+            Live noVNC at {novnc}. Start the sandbox if blank: <code>make browser</code>
+          </div>
+        </div>
+      ) : shots.length === 0 ? (
+        <Blank>No frames yet. Enable gui and open a page.</Blank>
+      ) : (
+        <FramesView shots={shots} i={i} setI={setI} />
+      )}
+    </div>
+  );
+}
+
+function FramesView({
+  shots,
+  i,
+  setI,
+}: {
+  shots: BrowserPayload[];
+  i: number;
+  setI: (n: number) => void;
+}) {
+  const cur = shots[Math.min(i, shots.length - 1)];
+  return (
+    <>
       <div className="overflow-hidden rounded-xl border border-border">
         <div className="flex items-center gap-1.5 border-b border-border bg-surface2 px-3 py-2">
           <span className="h-2.5 w-2.5 rounded-full bg-[#e0695f]" />
@@ -97,7 +154,7 @@ function BrowserPanel({ messages }: { messages: Message[] }) {
           className="mt-3 w-full accent-[var(--color-accent)]"
         />
       )}
-    </div>
+    </>
   );
 }
 

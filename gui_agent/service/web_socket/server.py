@@ -10,7 +10,9 @@ Protocol (control layer <-> gui_agent):
 
 from __future__ import annotations
 
+import asyncio
 import os
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -20,10 +22,47 @@ from agent.graph import build
 from agent.macro import MacroStore
 from operators.remote_browser import RemoteBrowserOperator
 
-app = FastAPI(title="cavis-gui-agent")
+
+@asynccontextmanager
+async def lifespan(_app: "FastAPI"):
+    # Launch the shared browser on the app's main loop so it persists across
+    # requests (a browser created inside a request task dies when the task ends).
+    try:
+        await get_operator(os.getenv("CDP_URL", ""))
+    except Exception:
+        pass
+    yield
+    await reset_operator()
+
+
+app = FastAPI(title="cavis-gui-agent", lifespan=lifespan)
 
 _macros = MacroStore(os.getenv("MACRO_STORE", "./data/gui_macros.json"))
 _MACRO_ENABLED = os.getenv("MACRO_ENABLE", "1") == "1"
+
+# One persistent browser shared across runs: keeps the live noVNC view alive and
+# lets follow-up tasks continue in the same session. Runs are serialized.
+_op_lock = asyncio.Lock()
+_operator: RemoteBrowserOperator | None = None
+
+
+async def get_operator(cdp_url: str) -> RemoteBrowserOperator:
+    global _operator
+    if _operator is None:
+        op = RemoteBrowserOperator(cdp_url=cdp_url)
+        await op.start()
+        _operator = op
+    return _operator
+
+
+async def reset_operator() -> None:
+    global _operator
+    if _operator is not None:
+        try:
+            await _operator.close()
+        except Exception:
+            pass
+        _operator = None
 
 
 @app.get("/health")
@@ -47,44 +86,45 @@ async def run_task(ws: WebSocket, msg: dict[str, Any]) -> None:
         except (RuntimeError, WebSocketDisconnect):
             pass
 
-    operator = RemoteBrowserOperator(cdp_url=cdp_url)
-    try:
-        await operator.start()
-    except Exception as e:  # noqa: BLE001
-        await emit({"type": "error", "error": f"browser start failed: {e}", "session_id": session_id})
-        return
-
-    try:
-        # Fast path: replay a recorded macro deterministically (no predict/VLM).
-        if _MACRO_ENABLED and await replay_macro(operator, emit, instruction, session_id):
+    async with _op_lock:
+        try:
+            operator = await get_operator(cdp_url)
+        except Exception as e:  # noqa: BLE001
+            await emit({"type": "error", "error": f"browser start failed: {e}", "session_id": session_id})
             return
 
-        graph = build(operator, emit)
-        init = {
-            "instruction": instruction,
-            "session_id": session_id,
-            "step": 0,
-            "max_steps": max_steps,
-            "history": [],
-            "status": "running",
-            "use_vision": os.getenv("VLM_ENABLE") == "1",
-        }
-        final = await graph.ainvoke(init, config={"recursion_limit": max_steps * 3 + 6})
-        status = final.get("status", "END")
-        if status == "CALL_USER":
-            await emit({"type": "call_user", "reason": final.get("call_user", ""), "session_id": session_id})
-        elif status == "ERROR":
-            await emit({"type": "error", "error": final.get("error", "error"), "session_id": session_id})
-        else:
-            # Record the successful action sequence as a macro for next time.
-            if _MACRO_ENABLED:
-                actions = [h["action"] for h in final.get("history", []) if h.get("action")]
-                _macros.put(instruction, actions)
-            await emit({"type": "done", "summary": final.get("result", ""), "session_id": session_id})
-    except Exception as e:  # noqa: BLE001
-        await emit({"type": "error", "error": str(e), "session_id": session_id})
-    finally:
-        await operator.close()
+        try:
+            # Fast path: replay a recorded macro deterministically (no predict/VLM).
+            if _MACRO_ENABLED and await replay_macro(operator, emit, instruction, session_id):
+                return
+
+            graph = build(operator, emit)
+            init = {
+                "instruction": instruction,
+                "session_id": session_id,
+                "step": 0,
+                "max_steps": max_steps,
+                "history": [],
+                "status": "running",
+                "use_vision": os.getenv("VLM_ENABLE") == "1",
+            }
+            final = await graph.ainvoke(init, config={"recursion_limit": max_steps * 3 + 6})
+            status = final.get("status", "END")
+            if status == "CALL_USER":
+                await emit({"type": "call_user", "reason": final.get("call_user", ""), "session_id": session_id})
+            elif status == "ERROR":
+                await emit({"type": "error", "error": final.get("error", "error"), "session_id": session_id})
+            else:
+                if _MACRO_ENABLED:
+                    actions = [h["action"] for h in final.get("history", []) if h.get("action")]
+                    _macros.put(instruction, actions)
+                await emit({"type": "done", "summary": final.get("result", ""), "session_id": session_id})
+        except Exception as e:  # noqa: BLE001
+            # On failure, drop the shared browser so the next run gets a fresh one.
+            await reset_operator()
+            await emit({"type": "error", "error": str(e), "session_id": session_id})
+        # Note: the browser is intentionally kept alive across runs so the live
+        # noVNC view persists and follow-up tasks continue in the same session.
 
 
 async def replay_macro(operator, emit, instruction, session_id) -> bool:
