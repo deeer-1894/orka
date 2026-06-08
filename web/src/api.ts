@@ -66,6 +66,10 @@ export const api = {
   listConversations: () => post<Conversation[]>("/conversation/list", {}),
   createConversation: (title: string) =>
     post<Conversation>("/conversation/create-conversation", { title }),
+  renameConversation: (conversation_id: string, title: string) =>
+    post("/conversation/rename", { conversation_id, title }),
+  deleteConversation: (conversation_id: string) =>
+    post("/conversation/delete", { conversation_id }),
   getMessages: (conversation_id: string) =>
     post<Message[]>("/conversation/get-messages", { conversation_id, size: 200 }),
   getTasks: (filter: { conversation_id?: string } = {}) =>

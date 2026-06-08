@@ -111,6 +111,27 @@ func (s *Storage) ListConversations(ctx context.Context, page, size int64) ([]Co
 	return out, nil
 }
 
+func (s *Storage) UpdateConversationTitle(ctx context.Context, id, title string) error {
+	_, err := s.Conversations.UpdateOne(ctx,
+		bson.M{"conversation_id": id},
+		bson.M{"$set": bson.M{"title": title}},
+	)
+	if err != nil {
+		return fmt.Errorf("update conversation title: %w", err)
+	}
+	return nil
+}
+
+// DeleteConversation removes a conversation and its messages + tasks.
+func (s *Storage) DeleteConversation(ctx context.Context, id string) error {
+	if _, err := s.Conversations.DeleteOne(ctx, bson.M{"conversation_id": id}); err != nil {
+		return fmt.Errorf("delete conversation: %w", err)
+	}
+	_, _ = s.Messages.DeleteMany(ctx, bson.M{"conversation_id": id})
+	_, _ = s.Tasks.DeleteMany(ctx, bson.M{"conversation_id": id})
+	return nil
+}
+
 func (s *Storage) AddTaskToConversation(ctx context.Context, convID, taskID string) error {
 	_, err := s.Conversations.UpdateOne(ctx,
 		bson.M{"conversation_id": convID},

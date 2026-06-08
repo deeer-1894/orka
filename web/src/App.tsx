@@ -101,8 +101,26 @@ function Workbench({
       // empty enabledTools => backend offers ALL tools; the model auto-selects
       await run({ message: msg, conversationID: id, userEmail: user.email, enabledTools: [] });
       refreshTasks();
+      refreshConversations(); // pick up the auto-generated title
     },
-    [ensureConversation, run, user.email, refreshTasks],
+    [ensureConversation, run, user.email, refreshTasks, refreshConversations],
+  );
+
+  const onRename = useCallback(async (id: string, title: string) => {
+    await api.renameConversation(id, title);
+    setConversations((cs) => cs.map((c) => (c.conversation_id === id ? { ...c, title } : c)));
+  }, []);
+
+  const onDelete = useCallback(
+    async (id: string) => {
+      await api.deleteConversation(id);
+      setConversations((cs) => cs.filter((c) => c.conversation_id !== id));
+      if (activeID === id) {
+        setActiveID("");
+        setMessages([]);
+      }
+    },
+    [activeID, setMessages],
   );
 
   const onResume = useCallback(
@@ -126,6 +144,8 @@ function Workbench({
         activeID={activeID}
         onSelect={selectConversation}
         onNew={newConversation}
+        onRename={onRename}
+        onDelete={onDelete}
         name={user.name}
         email={user.email}
         onSignOut={onSignOut}

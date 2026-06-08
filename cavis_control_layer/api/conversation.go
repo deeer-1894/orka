@@ -75,6 +75,49 @@ func (a *API) GetConversation(ctx context.Context, c *app.RequestContext) {
 	ok(c, conv)
 }
 
+type renameReq struct {
+	ConversationID string `json:"conversation_id"`
+	Title          string `json:"title"`
+}
+
+// RenameConversation updates a conversation's title (owner only).
+func (a *API) RenameConversation(ctx context.Context, c *app.RequestContext) {
+	var req renameReq
+	if err := bind(c, &req); err != nil || req.ConversationID == "" || req.Title == "" {
+		fail(c, consts.StatusBadRequest, "conversation_id and title required")
+		return
+	}
+	conv, err := a.Store.GetConversation(ctx, req.ConversationID)
+	if err != nil || (conv.OwnerEmail != "" && conv.OwnerEmail != authEmail(c)) {
+		fail(c, consts.StatusNotFound, "not found")
+		return
+	}
+	if err := a.Store.UpdateConversationTitle(ctx, req.ConversationID, req.Title); err != nil {
+		fail(c, consts.StatusInternalServerError, "rename failed")
+		return
+	}
+	ok(c, map[string]string{"conversation_id": req.ConversationID, "title": req.Title})
+}
+
+// DeleteConversation removes a conversation and its data (owner only).
+func (a *API) DeleteConversation(ctx context.Context, c *app.RequestContext) {
+	var req getConvReq
+	if err := bind(c, &req); err != nil || req.ConversationID == "" {
+		fail(c, consts.StatusBadRequest, "conversation_id required")
+		return
+	}
+	conv, err := a.Store.GetConversation(ctx, req.ConversationID)
+	if err != nil || (conv.OwnerEmail != "" && conv.OwnerEmail != authEmail(c)) {
+		fail(c, consts.StatusNotFound, "not found")
+		return
+	}
+	if err := a.Store.DeleteConversation(ctx, req.ConversationID); err != nil {
+		fail(c, consts.StatusInternalServerError, "delete failed")
+		return
+	}
+	ok(c, map[string]string{"deleted": req.ConversationID})
+}
+
 // ListConversations returns the authenticated user's conversations.
 func (a *API) ListConversations(ctx context.Context, c *app.RequestContext) {
 	convs, err := a.Store.ListConversationsByOwner(ctx, authEmail(c), 0, 100)

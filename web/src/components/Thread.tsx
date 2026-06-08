@@ -136,15 +136,15 @@ function Steps({ items, onOpenViewport }: { items: Message[]; onOpenViewport: ()
 
 function Step({ m }: { m: Message }) {
   if (m.type === "tool") {
-    const p = m.payload as ToolPayload;
+    const p = (m.payload as ToolPayload) || ({} as ToolPayload);
     return (
       <div className="text-[13px]">
-        <span className="font-mono text-ink">🔧 {p?.tool}</span>
-        {p?.error ? (
+        <span className="font-mono text-ink">🔧 {p.tool || m.action || "tool"}</span>
+        {p.error ? (
           <span className="text-accent"> · {p.error}</span>
-        ) : (
-          <span className="text-muted"> · {trunc(p?.result, 90)}</span>
-        )}
+        ) : p.result ? (
+          <span className="text-muted"> · {trunc(p.result, 90)}</span>
+        ) : null}
       </div>
     );
   }

@@ -168,6 +168,10 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		// Seed with prior turns (memory) + persist the new user message
 		// (raw=nil: persist only; the SSE echo is rendered optimistically).
 		history := s.loadChatHistory(ctx, req.ConversationID, meta)
+		// First turn → title the conversation from the message.
+		if len(history) == 0 && req.ConversationID != "" && s.Msg != nil && s.Msg.Store != nil {
+			_ = s.Msg.Store.UpdateConversationTitle(ctx, req.ConversationID, titleSnippet(req.Message))
+		}
 		userMsg := messages.Chat(messages.RoleUser, req.Message, meta)
 		rc.Messages = append(history, userMsg)
 		s.Msg.Deliver(rc, nil, userMsg, true)
@@ -343,6 +347,19 @@ func taskFailed(meta messages.Meta, reason string) messages.Message {
 	m := messages.Task("failed", meta)
 	m.Content = reason
 	return m
+}
+
+// titleSnippet derives a short conversation title from the first message.
+func titleSnippet(msg string) string {
+	t := strings.TrimSpace(strings.ReplaceAll(msg, "\n", " "))
+	r := []rune(t)
+	if len(r) > 24 {
+		return string(r[:24]) + "…"
+	}
+	if len(r) == 0 {
+		return "New chat"
+	}
+	return t
 }
 
 func boolStr(b bool) string {

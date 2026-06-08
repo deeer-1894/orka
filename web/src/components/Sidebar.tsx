@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Conversation } from "../types";
 
 export function Sidebar({
@@ -6,6 +7,8 @@ export function Sidebar({
   activeID,
   onSelect,
   onNew,
+  onRename,
+  onDelete,
   name,
   email,
   onSignOut,
@@ -15,10 +18,14 @@ export function Sidebar({
   activeID: string;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onRename: (id: string, title: string) => void;
+  onDelete: (id: string) => void;
   name: string;
   email: string;
   onSignOut: () => void;
 }) {
+  const [editing, setEditing] = useState("");
+  const [draft, setDraft] = useState("");
   return (
     <aside
       className={
@@ -50,17 +57,57 @@ export function Sidebar({
           )}
           {conversations.map((c) => {
             const active = c.conversation_id === activeID;
+            if (editing === c.conversation_id) {
+              return (
+                <input
+                  key={c.conversation_id}
+                  autoFocus
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onBlur={() => {
+                    if (draft.trim()) onRename(c.conversation_id, draft.trim());
+                    setEditing("");
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    if (e.key === "Escape") setEditing("");
+                  }}
+                  className="w-full rounded-lg border border-accent/50 bg-surface px-3 py-2 text-[14px] outline-none"
+                />
+              );
+            }
             return (
-              <button
+              <div
                 key={c.conversation_id}
                 onClick={() => onSelect(c.conversation_id)}
                 className={
-                  "w-full truncate rounded-lg px-3 py-2 text-left text-[14px] transition " +
+                  "group flex items-center gap-1 rounded-lg px-3 py-2 cursor-pointer transition " +
                   (active ? "bg-accentsoft text-ink" : "text-muted hover:bg-surface")
                 }
               >
-                {c.title}
-              </button>
+                <span className="flex-1 truncate text-[14px]">{c.title}</span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDraft(c.title);
+                    setEditing(c.conversation_id);
+                  }}
+                  className="opacity-0 group-hover:opacity-100 px-1 text-faint hover:text-ink"
+                  title="重命名"
+                >
+                  ✎
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirm("删除这个会话?")) onDelete(c.conversation_id);
+                  }}
+                  className="opacity-0 group-hover:opacity-100 px-1 text-faint hover:text-accent"
+                  title="删除"
+                >
+                  ✕
+                </button>
+              </div>
             );
           })}
         </div>

@@ -28,6 +28,8 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/conversation/get-conversation", a.GetConversation)
 	g.POST("/conversation/get-messages", a.GetMessages)
 	g.POST("/conversation/list", a.ListConversations)
+	g.POST("/conversation/rename", a.RenameConversation)
+	g.POST("/conversation/delete", a.DeleteConversation)
 
 	g.POST("/task/create", a.CreateTask)
 	g.POST("/task/get-tasks", a.GetTasks)
