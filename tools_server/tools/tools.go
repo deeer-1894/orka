@@ -35,6 +35,8 @@ func Registry() map[string]Meta {
 		"weather":      {Group: "web", Scope: "web:search"},
 		"current_time": {Group: "util", Scope: ""}, // always available
 		"calculator":   {Group: "util", Scope: ""},
+		"unit_convert": {Group: "util", Scope: ""},
+		"http_request": {Group: "web", Scope: "web:search"}, // network egress → gated
 		"lark_whoami": {Group: "lark", Scope: "lark:read"},
 		"aio_echo":    {Group: "aio", Scope: "aio:read"},
 	}
@@ -92,6 +94,21 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 		mcp.WithDescription("Evaluate an arithmetic expression: + - * / % ^ and parentheses."),
 		mcp.WithString("expression", mcp.Required(), mcp.Description("e.g. (3+4)*2^3")),
 	), calculator())
+
+	add(mcp.NewTool("unit_convert",
+		mcp.WithDescription("Convert a value between units (length, mass, data, time, temperature)."),
+		mcp.WithNumber("value", mcp.Required(), mcp.Description("the numeric value")),
+		mcp.WithString("from", mcp.Required(), mcp.Description("source unit, e.g. km, lb, GiB, C")),
+		mcp.WithString("to", mcp.Required(), mcp.Description("target unit, e.g. mi, kg, MB, F")),
+	), unitConvert())
+
+	add(mcp.NewTool("http_request",
+		mcp.WithDescription("Make an HTTP GET/POST to a public URL (e.g. a JSON API) and return status + body. Not for browser tasks."),
+		mcp.WithString("url", mcp.Required(), mcp.Description("the request URL (http/https, public host only)")),
+		mcp.WithString("method", mcp.Description("GET (default) or POST")),
+		mcp.WithString("body", mcp.Description("request body for POST")),
+		mcp.WithString("content_type", mcp.Description("Content-Type for the body")),
+	), httpRequest())
 
 	add(mcp.NewTool("lark_whoami",
 		mcp.WithDescription("Lark: return the current user (stub)."),

@@ -23,9 +23,11 @@ var (
 	httpSearchC = &http.Client{Timeout: 15 * time.Second}
 )
 
-// webSearch queries DuckDuckGo's keyless HTML endpoint and returns the top
-// results as text. This is the right tool for information lookups (weather,
-// facts, docs) — far cheaper and more reliable than driving a browser.
+// webSearch returns the top web results as text. It tries a configured premium
+// provider first (set one of SERPER_API_KEY / BRAVE_API_KEY / SEARXNG_URL for
+// stable, high-quality results), then falls back to keyless DuckDuckGo scraping
+// and finally the Wikipedia API. This is the right tool for information lookups
+// (facts, docs, news) — far cheaper and more reliable than driving a browser.
 func webSearch() mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		q := strings.TrimSpace(req.GetString("query", ""))
@@ -35,6 +37,13 @@ func webSearch() mcpserver.ToolHandlerFunc {
 		limit := req.GetInt("limit", 5)
 		if limit <= 0 || limit > 10 {
 			limit = 5
+		}
+
+		// Premium providers first (only if their key/URL is configured).
+		for _, p := range searchProviders() {
+			if out := p(ctx, q, limit); out != "" {
+				return mcp.NewToolResultText(out), nil
+			}
 		}
 
 		endpoint := "https://html.duckduckgo.com/html/?q=" + url.QueryEscape(q)
