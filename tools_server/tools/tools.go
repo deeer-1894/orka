@@ -30,9 +30,11 @@ func Registry() map[string]Meta {
 		"file_read":   {Group: "file", Scope: "file:read"},
 		"file_write":  {Group: "file", Scope: "file:write"},
 		"file_list":   {Group: "file", Scope: "file:read"},
-		"web_search":  {Group: "web", Scope: "web:search"},
-		"fetch_url":   {Group: "web", Scope: "web:search"},
-		"weather":     {Group: "web", Scope: "web:search"},
+		"web_search":   {Group: "web", Scope: "web:search"},
+		"fetch_url":    {Group: "web", Scope: "web:search"},
+		"weather":      {Group: "web", Scope: "web:search"},
+		"current_time": {Group: "util", Scope: ""}, // always available
+		"calculator":   {Group: "util", Scope: ""},
 		"lark_whoami": {Group: "lark", Scope: "lark:read"},
 		"aio_echo":    {Group: "aio", Scope: "aio:read"},
 	}
@@ -80,6 +82,16 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 		mcp.WithDescription("Get current weather + today's forecast for a location (live, keyless)."),
 		mcp.WithString("location", mcp.Required(), mcp.Description("city name, e.g. 西安 / Xian")),
 	), weather())
+
+	add(mcp.NewTool("current_time",
+		mcp.WithDescription("Get the current date, time and weekday. Use for any 'today/now/recent' question."),
+		mcp.WithString("timezone", mcp.Description("IANA tz, default Asia/Shanghai")),
+	), currentTime())
+
+	add(mcp.NewTool("calculator",
+		mcp.WithDescription("Evaluate an arithmetic expression: + - * / % ^ and parentheses."),
+		mcp.WithString("expression", mcp.Required(), mcp.Description("e.g. (3+4)*2^3")),
+	), calculator())
 
 	add(mcp.NewTool("lark_whoami",
 		mcp.WithDescription("Lark: return the current user (stub)."),

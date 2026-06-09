@@ -23,6 +23,7 @@ func (m *Setup) Handle(rc *agent.RunContext, next func(*agent.RunContext) error)
 	if sys == "" {
 		sys = DefaultSystemPrompt
 	}
+	sys += skillsCatalog()
 	hist := []llm.ChatMessage{{Role: llm.RoleSystem, Content: sys}}
 	for _, msg := range rc.Messages {
 		if msg.Type != messages.EventChat {

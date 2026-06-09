@@ -3,6 +3,7 @@ package middlewares
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cavis-oss/cavis_core/agent"
@@ -72,6 +73,16 @@ func (m *Tools) Handle(rc *agent.RunContext, next func(*agent.RunContext) error)
 				rc.Interrupt = &agent.Interrupt{Reason: "clarify", Clarify: &clar}
 				setHistory(rc, hist)
 				return nil // cursor stays here; resume re-enters this loop
+			}
+			if tc.Name == ApplySkillTool {
+				name := fmt.Sprint(parseArgs(tc.Arguments)["name"])
+				content, applied := applySkill(name)
+				if applied {
+					rc.Emit(messages.New(messages.EventSkill, messages.RoleSystem, rc.Meta))
+				}
+				rc.Emit(messages.Tool("call", map[string]any{"tool": tc.Name, "args": map[string]any{"name": name}, "result": content}, rc.Meta))
+				hist = append(hist, llm.ChatMessage{Role: llm.RoleTool, ToolCallID: tc.ID, Name: tc.Name, Content: content})
+				continue
 			}
 			args := parseArgs(tc.Arguments)
 			result, toolErr := m.invoke(rc, tc.Name, args)
@@ -145,6 +156,17 @@ func toolSpecs(tools []agent.BaseTool) []llm.ToolSpec {
 				"options":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "optional choices"},
 			},
 			"required": []string{"question"},
+		},
+	})
+	specs = append(specs, llm.ToolSpec{
+		Name:        ApplySkillTool,
+		Description: "Adopt a domain skill (expertise prompt pack) before answering. " + strings.Join(skillNames(), ", ") + ".",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string", "enum": skillNames(), "description": "the skill to adopt"},
+			},
+			"required": []string{"name"},
 		},
 	})
 	return specs
