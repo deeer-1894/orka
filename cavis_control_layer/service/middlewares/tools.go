@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cavis-oss/cavis_core/agent"
@@ -66,6 +67,7 @@ func (m *Tools) Handle(rc *agent.RunContext, next func(*agent.RunContext) error)
 
 		hist = append(hist, llm.ChatMessage{Role: llm.RoleAssistant, Content: resp.Content, ToolCalls: resp.ToolCalls})
 
+		// clarify takes priority over everything else and interrupts the batch.
 		for _, tc := range resp.ToolCalls {
 			if tc.Name == ClarifyToolName {
 				clar := parseClarify(tc.Arguments)
@@ -74,29 +76,28 @@ func (m *Tools) Handle(rc *agent.RunContext, next func(*agent.RunContext) error)
 				setHistory(rc, hist)
 				return nil // cursor stays here; resume re-enters this loop
 			}
-			if tc.Name == ApplySkillTool {
-				name := fmt.Sprint(parseArgs(tc.Arguments)["name"])
-				content, applied := applySkill(name)
-				if applied {
+		}
+
+		// Execute the batch's tool calls concurrently (bounded), then emit +
+		// fold results into history in the original order (so the assistant
+		// tool_calls and their tool replies stay correctly paired/ordered).
+		results := m.runBatch(rc, resp.ToolCalls)
+		for _, r := range results {
+			if r.skill {
+				if r.skillOK {
 					rc.Emit(messages.New(messages.EventSkill, messages.RoleSystem, rc.Meta))
 				}
-				rc.Emit(messages.Tool("call", map[string]any{"tool": tc.Name, "args": map[string]any{"name": name}, "result": content}, rc.Meta))
-				hist = append(hist, llm.ChatMessage{Role: llm.RoleTool, ToolCallID: tc.ID, Name: tc.Name, Content: content})
-				continue
-			}
-			args := parseArgs(tc.Arguments)
-			result, toolErr := m.invoke(rc, tc.Name, args)
-
-			payload := map[string]any{"tool": tc.Name, "args": args}
-			content := result
-			if toolErr != nil {
-				payload["error"] = toolErr.Error()
-				content = "ERROR: " + toolErr.Error()
+				rc.Emit(messages.Tool("call", map[string]any{"tool": r.name, "args": r.args, "result": r.content}, rc.Meta))
 			} else {
-				payload["result"] = result
+				payload := map[string]any{"tool": r.name, "args": r.args}
+				if r.errStr != "" {
+					payload["error"] = r.errStr
+				} else {
+					payload["result"] = r.content
+				}
+				rc.Emit(messages.Tool("call", payload, rc.Meta))
 			}
-			rc.Emit(messages.Tool("call", payload, rc.Meta))
-			hist = append(hist, llm.ChatMessage{Role: llm.RoleTool, ToolCallID: tc.ID, Name: tc.Name, Content: content})
+			hist = append(hist, llm.ChatMessage{Role: llm.RoleTool, ToolCallID: r.id, Name: r.name, Content: r.content})
 		}
 	}
 
@@ -114,6 +115,59 @@ func (m *Tools) Handle(rc *agent.RunContext, next func(*agent.RunContext) error)
 	}
 	setHistory(rc, hist)
 	return nil
+}
+
+// toolResult is one tool call's outcome, carried back from runBatch in order.
+type toolResult struct {
+	id      string
+	name    string
+	args    map[string]any
+	content string
+	errStr  string
+	skill   bool // apply_skill (handled in-process)
+	skillOK bool
+}
+
+// runBatch executes the tool calls concurrently (bounded by maxConcurrent) and
+// returns results in the same order as calls. Invocations run in parallel; the
+// caller emits events + appends to history sequentially to preserve ordering and
+// avoid interleaving on the SSE pipe. apply_skill is resolved in-process.
+func (m *Tools) runBatch(rc *agent.RunContext, calls []llm.ToolCall) []toolResult {
+	const maxConcurrent = 4
+	results := make([]toolResult, len(calls))
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+
+	for i := range calls {
+		tc := calls[i]
+		r := &results[i]
+		r.id, r.name = tc.ID, tc.Name
+
+		if tc.Name == ApplySkillTool {
+			name := fmt.Sprint(parseArgs(tc.Arguments)["name"])
+			r.args = map[string]any{"name": name}
+			r.content, r.skillOK = applySkill(name)
+			r.skill = true
+			continue
+		}
+
+		r.args = parseArgs(tc.Arguments)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(r *toolResult) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			out, err := m.invoke(rc, r.name, r.args)
+			if err != nil {
+				r.errStr = err.Error()
+				r.content = "ERROR: " + err.Error()
+				return
+			}
+			r.content = out
+		}(r)
+	}
+	wg.Wait()
+	return results
 }
 
 func (m *Tools) invoke(rc *agent.RunContext, name string, args map[string]any) (string, error) {

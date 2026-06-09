@@ -101,7 +101,7 @@ func main() {
 	// the control layer uses the local filesystem tools directly.
 	if toolsURL := os.Getenv("TOOLS_MCP_URL"); toolsURL != "" {
 		ttl := time.Duration(cfg.Security.CtxTokenTTLSec) * time.Second
-		chat.ToolsFor = service.MCPToolsProvider(
+		chat.ToolsFor = service.MCPToolsProviderPooled(
 			cfg.Storage.BaseStoragePath, toolsURL, cfg.Security.CtxTokenSecret,
 			ttl, []string{"file:read", "file:write", "web:search"},
 		)

@@ -168,9 +168,12 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		// Seed with prior turns (memory) + persist the new user message
 		// (raw=nil: persist only; the SSE echo is rendered optimistically).
 		history := s.loadChatHistory(ctx, req.ConversationID, meta)
-		// First turn → title the conversation from the message.
+		// First turn → title the conversation. Set a snippet immediately (so the
+		// sidebar updates right away) then refine it with a mini LLM summary
+		// asynchronously (does not block the run, survives SSE disconnect).
 		if len(history) == 0 && req.ConversationID != "" && s.Msg != nil && s.Msg.Store != nil {
 			_ = s.Msg.Store.UpdateConversationTitle(ctx, req.ConversationID, titleSnippet(req.Message))
+			s.titleAsync(req.ConversationID, req.Message)
 		}
 		userMsg := messages.Chat(messages.RoleUser, req.Message, meta)
 		rc.Messages = append(history, userMsg)
@@ -347,6 +350,46 @@ func taskFailed(meta messages.Meta, reason string) messages.Message {
 	m := messages.Task("failed", meta)
 	m.Content = reason
 	return m
+}
+
+// titleAsync refines the conversation title using a mini LLM summary of the
+// first message. It runs in the background with its own short-lived context so
+// it neither blocks the chat run nor dies when the SSE connection closes.
+func (s *ChatService) titleAsync(convID, message string) {
+	model, modelName := s.modelFor("mini")
+	if model == nil || s.Msg == nil || s.Msg.Store == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		resp, err := model.Chat(ctx, llm.Request{Model: modelName, Messages: []llm.ChatMessage{
+			{Role: llm.RoleSystem, Content: "You generate a very short chat title (max 6 words) summarizing the user's first message. Reply with ONLY the title — same language as the message, no quotes, no punctuation at the end, no prefixes."},
+			{Role: llm.RoleUser, Content: message},
+		}})
+		if err != nil {
+			return // keep the snippet title
+		}
+		title := cleanTitle(resp.Content)
+		if title == "" {
+			return
+		}
+		_ = s.Msg.Store.UpdateConversationTitle(ctx, convID, title)
+	}()
+}
+
+// cleanTitle trims the model's title output to a safe single-line label.
+func cleanTitle(s string) string {
+	t := strings.TrimSpace(s)
+	t = strings.Trim(t, "\"'“”「」 \t\n")
+	if i := strings.IndexAny(t, "\n\r"); i >= 0 {
+		t = t[:i]
+	}
+	r := []rune(t)
+	if len(r) > 30 {
+		t = string(r[:30]) + "…"
+	}
+	return strings.TrimSpace(t)
 }
 
 // titleSnippet derives a short conversation title from the first message.
