@@ -26,8 +26,10 @@ type RunAgentTool struct {
 
 // NewRunAgentTool builds a run_agent tool targeting wsURL. token may be empty
 // (dev); when set it is sent so the GUI executor can authenticate the caller.
+// MaxSteps/Timeout are sized for a vision-grounded planner (UI-TARS): real GUI
+// tasks routinely take 10+ click/type steps, each with a model round-trip.
 func NewRunAgentTool(wsURL, token string) *RunAgentTool {
-	return &RunAgentTool{WSURL: wsURL, Token: token, MaxSteps: 8, Timeout: 120 * time.Second}
+	return &RunAgentTool{WSURL: wsURL, Token: token, MaxSteps: 20, Timeout: 300 * time.Second}
 }
 
 func (*RunAgentTool) Name() string { return "run_agent" }

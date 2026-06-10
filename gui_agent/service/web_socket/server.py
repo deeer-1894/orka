@@ -117,7 +117,8 @@ async def run_task(ws: WebSocket, msg: dict[str, Any]) -> None:
             else:
                 if _MACRO_ENABLED:
                     actions = [h["action"] for h in final.get("history", []) if h.get("action")]
-                    _macros.put(instruction, actions)
+                    if _macro_replayable(actions):
+                        _macros.put(instruction, [_macro_clean(a) for a in actions])
                 await emit({"type": "done", "summary": final.get("result", ""), "session_id": session_id})
         except Exception as e:  # noqa: BLE001
             # On failure, drop the shared browser so the next run gets a fresh one.
@@ -125,6 +126,30 @@ async def run_task(ws: WebSocket, msg: dict[str, Any]) -> None:
             await emit({"type": "error", "error": str(e), "session_id": session_id})
         # Note: the browser is intentionally kept alive across runs so the live
         # noVNC view persists and follow-up tasks continue in the same session.
+
+
+# Macros must replay deterministically. Coordinate- or handle-addressed steps
+# (UI-TARS clicks, resolved Set-of-Marks handles) break on any layout drift, so
+# only URL/selector-addressed sequences are cached.
+_MACRO_SAFE_KINDS = {"navigate", "navigate_back", "scroll", "wait", "read"}
+
+
+def _macro_replayable(actions: list[dict[str, Any]]) -> bool:
+    if not actions:
+        return False
+    for a in actions:
+        kind = a.get("action")
+        if kind in _MACRO_SAFE_KINDS and "x" not in a:
+            continue
+        if kind in ("click", "type") and a.get("selector") and "x" not in a and "_handle" not in a:
+            continue
+        return False
+    return True
+
+
+def _macro_clean(action: dict[str, Any]) -> dict[str, Any]:
+    """Strip private/transient keys (thoughts, handles) before persisting."""
+    return {k: v for k, v in action.items() if not k.startswith("_")}
 
 
 async def replay_macro(operator, emit, instruction, session_id) -> bool:

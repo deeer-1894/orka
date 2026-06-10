@@ -27,7 +27,17 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
         dom = await operator.dom_snapshot()
         shot = await operator.screenshot()
         out: GraphState = {"dom": dom}
-        if state.get("use_vision"):
+        if planner.mode == "uitars":
+            # UI-TARS grounds on raw pixels (no Set-of-Marks — annotations are
+            # off its training distribution). Keep a rolling screenshot window
+            # for the model's multi-turn context.
+            window = planner.uitars.max_shots if planner.uitars else 5
+            shots = list(state.get("shots", []))[-(window - 1):] + [shot]
+            out["screenshot"] = shot
+            out["shots"] = shots
+            await emit({"type": "screenshot", "data": shot, "session_id": state.get("session_id", "")})
+            await emit({"type": "observe", "mode": "uitars", "tokens": 1, "session_id": state.get("session_id", "")})
+        elif state.get("use_vision"):
             # Set-of-Marks: number interactive elements so the VLM can target
             # "mark N" instead of pixels.
             ms = await marksmod.collect_marks(operator.page)
@@ -45,6 +55,10 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
     async def predict_node(state: GraphState) -> GraphState:
         action, used_vision = await planner.predict(dict(state), operator.page)
         out: GraphState = {"prediction": action}
+        raw = action.pop("_raw", None)
+        if raw is not None:
+            # fold the model's reply into the multi-turn history (uitars)
+            out["responses"] = list(state.get("responses", [])) + [raw]
         if used_vision:
             out["use_vision"] = True
         return out
@@ -75,10 +89,14 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
                 result = await operator.execute(action)
                 history.append({"action": action, "result": result})
                 out["history"] = history
+                target = action.get("url") or action.get("selector") or ""
+                if not target and "x" in action:
+                    target = f"({action['x']:.0f},{action['y']:.0f})"
                 await emit({
                     "type": "action",
                     "action": kind,
-                    "target": action.get("url") or action.get("selector") or "",
+                    "target": target,
+                    "thought": action.get("_thought", ""),
                     "result": result,
                     "session_id": state.get("session_id", ""),
                 })

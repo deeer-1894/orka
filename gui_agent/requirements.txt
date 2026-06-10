@@ -4,6 +4,7 @@
 langgraph
 langchain
 langchain-openai
+openai
 playwright
 pillow
 fastapi

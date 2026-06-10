@@ -9,6 +9,8 @@ class GraphState(TypedDict, total=False):
     instruction: str          # natural-language task
     session_id: str
     screenshot: str           # base64 PNG of the current screen (when vision used)
+    shots: list[str]          # rolling raw-screenshot window (uitars multi-turn)
+    responses: list[str]      # raw model replies aligned to shots[:-1] (uitars)
     dom: str                  # textual a11y/DOM snapshot
     prediction: dict[str, Any]  # the next action chosen by predict
     history: list[dict[str, Any]]  # executed actions + results

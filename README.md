@@ -13,7 +13,7 @@ a Playwright/CDP GUI agent.
 | `orka_middleware` | tool-abstraction layer: ToolsManager + multi-transport MCP client |
 | `tools_server` | MCP gateway service: multi-source tool aggregation + routing |
 | `orka_control_layer` | control plane: API, SSE chat, middleware pipeline, persistence |
-| `gui_agent` | Python LangGraph/CDP GUI executor (independent) |
+| `gui_agent` | Python LangGraph/CDP GUI executor (independent); plans with UI-TARS (`GUI_PLANNER=uitars`) or a DOM-first rule/SoM-VLM fallback |
 
 ## Quick start
 
@@ -67,7 +67,6 @@ curl -s $B/metrics
 
 | Env | Effect |
 |-----|--------|
-| `LLM_MOCK=1` | use the deterministic offline demo LLM (no API key needed) |
 | `RUN_MODE=graph` | deterministic Graph runner (reproducible) instead of model-driven ADK |
 | `TOOLS_MCP_URL=` | source tools from a remote tools_server over MCP (else local fs tools) |
 | `GUI_AGENT_WS_URL=` | wire the real `run_agent` GUI tool (else a mock) |
@@ -75,7 +74,8 @@ curl -s $B/metrics
 | `OTEL_TRACES_STDOUT=1` | export OpenTelemetry spans (chat.run / tool.invoke) to stdout |
 | `OTEL_EXPORTER_OTLP_ENDPOINT=` | export spans to an OTLP/HTTP collector (Jaeger/Tempo) |
 | `CDP_URL=` | (gui_agent) attach to a remote Chromium over CDP instead of launching one |
-| `VLM_ENABLE=1` | (gui_agent) use a multimodal model as DOM-first fallback |
+| `GUI_PLANNER=uitars` | (gui_agent) plan with a UI-TARS GUI-agent model: coordinate-grounded click/type/drag from raw screenshots (`UITARS_BASE_URL`/`UITARS_API_KEY`/`UITARS_MODEL`, e.g. vLLM serving `UI-TARS-1.5-7B`) |
+| `VLM_ENABLE=1` | (gui_agent) use a generic multimodal model via Set-of-Marks as DOM-first fallback (legacy; superseded by `GUI_PLANNER=uitars`) |
 
 ### Eval (regression / reproducibility)
 
