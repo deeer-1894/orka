@@ -23,6 +23,43 @@ var httpReqClient = &http.Client{
 		}
 		return guardURL(r.URL)
 	},
+	// Validate the IP we actually CONNECT to (not just the pre-flight DNS
+	// lookup). This closes the DNS-rebinding TOCTOU window where a low-TTL host
+	// passes guardURL as public, then re-resolves to an internal IP on dial.
+	Transport: &http.Transport{
+		DialContext: guardedDial,
+	},
+}
+
+// guardedDial resolves the host itself, rejects any non-public candidate IP,
+// and dials a vetted IP directly — so the connection cannot land on an internal
+// address even if DNS changes between the guard check and the dial.
+func guardedDial(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil {
+		return nil, err
+	}
+	var d net.Dialer
+	var lastErr error
+	for _, ip := range ips {
+		if !isPublicIP(ip) {
+			lastErr = fmt.Errorf("blocked: host resolves to a non-public address (%s)", ip)
+			continue
+		}
+		conn, err := d.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no dialable address for %s", host)
+	}
+	return nil, lastErr
 }
 
 // httpRequest performs a generic outbound HTTP GET/POST and returns the status

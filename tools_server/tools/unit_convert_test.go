@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"math"
 	"net"
 	"net/url"
@@ -47,6 +48,14 @@ func TestGuardURL(t *testing.T) {
 		if err := guardURL(u); err == nil {
 			t.Errorf("%q should be blocked", raw)
 		}
+	}
+}
+
+func TestGuardedDialBlocksLoopback(t *testing.T) {
+	// localhost resolves only to loopback → dial must be refused (anti-rebinding).
+	_, err := guardedDial(context.Background(), "tcp", "localhost:80")
+	if err == nil {
+		t.Error("guardedDial should refuse a loopback-only host")
 	}
 }
 
