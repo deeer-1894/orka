@@ -51,11 +51,13 @@ export function Thread({
   status,
   onResume,
   onOpenViewport,
+  onPick,
 }: {
   messages: Message[];
   status: RunStatus;
   onResume: (key: string, answer: string) => void;
   onOpenViewport: () => void;
+  onPick: (text: string) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -67,7 +69,7 @@ export function Thread({
     status === "streaming" &&
     (blocks.length === 0 || blocks[blocks.length - 1].kind !== "assistant");
 
-  if (messages.length === 0) return <Empty />;
+  if (messages.length === 0) return <Empty onPick={onPick} />;
 
   // Each user turn is a navigable anchor for the floating outline (TOC).
   const turns = blocks
@@ -287,14 +289,41 @@ function Spinner() {
   return <span className="h-1.5 w-1.5 rounded-full bg-ok" />;
 }
 
-function Empty() {
+const EXAMPLES = [
+  { icon: "🌤️", title: "天气卡片", prompt: "西安今天天气怎么样" },
+  { icon: "🔎", title: "联网调研", prompt: "使用 researcher 技能,调研 Playwright 和 Puppeteer 的区别,给出带引用的结论" },
+  { icon: "🧮", title: "计算 / 换算", prompt: "现在几点了?顺便算 (3+4)*2^3,再把 100 公里换成英里" },
+  { icon: "🌐", title: "浏览器自动化", prompt: "用浏览器打开 https://duckduckgo.com/html/ 搜索 Playwright,告诉我第一条结果标题" },
+  { icon: "📝", title: "写文件", prompt: "把 Orka 的核心能力整理成一个 markdown 文件 capabilities.md 存到我的工作区" },
+  { icon: "🔐", title: "编码 / 哈希", prompt: "把 hello world 做 base64,再算它的 sha256" },
+];
+
+function Empty({ onPick }: { onPick: (text: string) => void }) {
   return (
     <div className="flex h-full items-center justify-center px-6">
-      <div className="text-center">
-        <h1 className="font-serif text-[34px] text-ink">How can I help today?</h1>
-        <p className="mt-3 text-[15px] text-muted max-w-md mx-auto">
-          问我任何问题。Orka 会按需自动调用搜索、网页、天气、文件读写或浏览器自动化 —— 工具步骤和截图会内联显示。
+      <div className="w-full max-w-2xl text-center">
+        <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-2xl bg-accent text-white font-serif text-[22px]">
+          O
+        </div>
+        <h1 className="font-serif text-[32px] text-ink">今天想做点什么?</h1>
+        <p className="mt-2 text-[14px] text-muted">
+          Orka 会自动编排搜索 · 网页 · 天气 · 文件 · 浏览器 · 换算 · 编码等工具。试试:
         </p>
+        <div className="mt-6 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+          {EXAMPLES.map((e) => (
+            <button
+              key={e.title}
+              onClick={() => onPick(e.prompt)}
+              className="group flex items-start gap-3 rounded-2xl border border-border bg-surface px-4 py-3 text-left transition hover:border-accent/40 hover:bg-surface2"
+            >
+              <span className="mt-0.5 text-[20px]">{e.icon}</span>
+              <span className="min-w-0">
+                <span className="block text-[13px] font-medium text-ink">{e.title}</span>
+                <span className="mt-0.5 block line-clamp-2 text-[12.5px] text-muted">{e.prompt}</span>
+              </span>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

@@ -180,7 +180,7 @@ function Workbench({
           </button>
         </header>
 
-        <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} />
+        <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} onPick={onSend} />
         <Composer status={status} onSend={onSend} onKill={kill} />
       </main>
 

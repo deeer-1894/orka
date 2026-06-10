@@ -1,5 +1,15 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
+
+// Mirrors the built-in skills registered in the control layer (skills_registry.go).
+// Selecting one prepends a directive the model honours via apply_skill.
+export const SKILLS = [
+  { name: "researcher", label: "调研", icon: "🔎", desc: "多来源交叉验证 + 引用" },
+  { name: "writer", label: "写作", icon: "✍️", desc: "结构化专业文案" },
+  { name: "coder", label: "编程", icon: "💻", desc: "可运行代码 + 设计权衡" },
+  { name: "analyst", label: "分析", icon: "📊", desc: "结构化拆解 + 建议" },
+  { name: "translator", label: "翻译", icon: "🌐", desc: "自然地道的翻译" },
+];
 
 export function Composer({
   status,
@@ -11,19 +21,68 @@ export function Composer({
   onKill: () => void;
 }) {
   const [text, setText] = useState("");
+  const [menu, setMenu] = useState(false);
+  const taRef = useRef<HTMLTextAreaElement>(null);
   const busy = status === "streaming";
+
+  // "/" at the start of an empty box opens the skill menu.
+  useEffect(() => {
+    if (text === "/") setMenu(true);
+  }, [text]);
 
   const send = () => {
     if (!text.trim() || busy) return;
     onSend(text.trim());
     setText("");
+    setMenu(false);
+  };
+
+  const pickSkill = (name: string) => {
+    setMenu(false);
+    const rest = text.replace(/^\/\w*/, "").trimStart();
+    setText(`使用 ${name} 技能:${rest ? " " + rest : ""}`);
+    requestAnimationFrame(() => taRef.current?.focus());
   };
 
   return (
     <div className="px-5 pb-5">
-      <div className="mx-auto max-w-3xl">
+      <div className="relative mx-auto max-w-3xl">
+        {menu && (
+          <div className="absolute bottom-[calc(100%+8px)] left-0 z-20 w-72 rounded-2xl border border-border bg-surface p-1.5 shadow-lg">
+            <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-faint">
+              技能 · 让 Orka 切换专长
+            </div>
+            {SKILLS.map((s) => (
+              <button
+                key={s.name}
+                onClick={() => pickSkill(s.name)}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-surface2"
+              >
+                <span className="text-[18px]">{s.icon}</span>
+                <span className="min-w-0">
+                  <span className="block text-[13px] text-ink">
+                    {s.label} <span className="text-faint">/{s.name}</span>
+                  </span>
+                  <span className="block truncate text-[12px] text-muted">{s.desc}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="flex items-end gap-2 rounded-[26px] border border-border bg-surface px-2 py-2 shadow-[0_2px_18px_rgba(40,38,32,0.06)] focus-within:border-accent/40 transition">
+          <button
+            onClick={() => setMenu((o) => !o)}
+            className={
+              "grid h-10 w-10 shrink-0 place-items-center rounded-full transition " +
+              (menu ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")
+            }
+            title="技能"
+          >
+            <span className="text-[17px]">✨</span>
+          </button>
           <textarea
+            ref={taRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
@@ -31,10 +90,11 @@ export function Composer({
                 e.preventDefault();
                 send();
               }
+              if (e.key === "Escape") setMenu(false);
             }}
             rows={1}
-            placeholder="Message Orka…"
-            className="block max-h-48 flex-1 resize-none bg-transparent px-3 py-2 text-[15px] outline-none placeholder:text-faint"
+            placeholder="给 Orka 发消息…  输入 / 选择技能"
+            className="block max-h-48 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] outline-none placeholder:text-faint"
           />
           {busy ? (
             <button
@@ -58,7 +118,7 @@ export function Composer({
           )}
         </div>
         <p className="mt-2 text-center text-[11px] text-faint">
-          Orka 会自动选择工具(搜索 · 网页 · 天气 · 文件 · 浏览器)。可能出错,工具操作会作用于你的工作区。
+          Orka 会自动选择工具(搜索 · 网页 · 天气 · 文件 · 浏览器 · 换算 · 编码)。可能出错,工具操作会作用于你的工作区。
         </p>
       </div>
     </div>
