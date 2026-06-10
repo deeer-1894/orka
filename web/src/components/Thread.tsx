@@ -52,12 +52,14 @@ export function Thread({
   onResume,
   onOpenViewport,
   onPick,
+  onRetry,
 }: {
   messages: Message[];
   status: RunStatus;
   onResume: (key: string, answer: string) => void;
   onOpenViewport: () => void;
   onPick: (text: string) => void;
+  onRetry: () => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -90,6 +92,20 @@ export function Thread({
           </div>
         ))}
         {thinking && <Thinking />}
+        {status === "error" && (
+          <div className="mb-6 ml-[42px] flex items-center gap-3">
+            <button
+              onClick={onRetry}
+              className="flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accentsoft/50 px-3 py-1.5 text-[13px] text-accent hover:bg-accentsoft transition"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                <path d="M21 12a9 9 0 1 1-3-6.7M21 3v5h-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              重试
+            </button>
+            <span className="text-[12px] text-faint">出错了 — 可重试,或检查工具/沙箱服务是否在运行</span>
+          </div>
+        )}
         <div ref={endRef} className="h-2" />
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, auth, setOnUnauthorized } from "./api";
 import { useChatStream } from "./hooks/useChatStream";
 import { Login } from "./components/Login";
@@ -109,8 +109,10 @@ function Workbench({
     return c.conversation_id;
   }, [activeID]);
 
+  const lastMsgRef = useRef("");
   const onSend = useCallback(
     async (msg: string) => {
+      lastMsgRef.current = msg;
       const id = await ensureConversation();
       // empty enabledTools => backend offers ALL tools; the model auto-selects
       await run({ message: msg, conversationID: id, userEmail: user.email, enabledTools: [] });
@@ -119,6 +121,11 @@ function Workbench({
     },
     [ensureConversation, run, user.email, refreshTasks, refreshConversations],
   );
+
+  // Re-send the last user message after a failure (network drop, sandbox down…).
+  const onRetry = useCallback(() => {
+    if (lastMsgRef.current) onSend(lastMsgRef.current);
+  }, [onSend]);
 
   const onRename = useCallback(async (id: string, title: string) => {
     await api.renameConversation(id, title);
@@ -194,7 +201,7 @@ function Workbench({
           </button>
         </header>
 
-        <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} onPick={onSend} />
+        <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} onPick={onSend} onRetry={onRetry} />
         <Composer status={status} onSend={onSend} onKill={kill} />
       </main>
 
