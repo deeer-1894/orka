@@ -41,7 +41,13 @@ async def collect_marks(page: Page, limit: int = 40) -> list[Mark]:
             role = (await h.get_attribute("role")) or (await h.evaluate("e => e.tagName.toLowerCase()"))
             name = ((await h.inner_text()) or "").strip()
             if not name:
-                name = (await h.get_attribute("aria-label")) or (await h.get_attribute("value")) or ""
+                # Use the LIVE value property (not the static value attribute) so a
+                # filled input reflects what was typed — otherwise the planner
+                # never sees its own input and re-types in a loop.
+                name = (await h.evaluate(
+                    "e => e.value || e.getAttribute('aria-label') "
+                    "|| e.getAttribute('placeholder') || e.getAttribute('title') || ''"
+                )) or ""
             marks.append(
                 Mark(index=len(marks), role=role, name=name[:40].replace("\n", " "), box=box, handle=h)
             )

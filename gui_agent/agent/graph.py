@@ -84,7 +84,20 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
 
         if kind == "done":
             out["status"] = "END"
-            out["result"] = action.get("result", await operator.title())
+            summary = action.get("result", "") or await operator.title()
+            # Ground the answer: attach the page's real url + readable text so the
+            # upstream model corrects/confirms the planner's summary instead of
+            # trusting a possibly-hallucinated one-liner (e.g. echoing the query).
+            try:
+                page_read = await operator.dom_snapshot(limit=1200)
+            except Exception:
+                page_read = ""
+            url = ""
+            try:
+                url = operator.page.url
+            except Exception:
+                pass
+            out["result"] = f"{summary}\n\n[final url] {url}\n[page content]\n{page_read}".strip()
         elif kind == "call_user":
             out["status"] = "CALL_USER"
             out["call_user"] = action.get("reason", "user input required")

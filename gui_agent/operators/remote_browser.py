@@ -106,17 +106,38 @@ class RemoteBrowserOperator:
         return base64.b64encode(png).decode("ascii")
 
     async def dom_snapshot(self, limit: int = 4000) -> str:
-        """A compact textual snapshot: title + visible text (truncated)."""
+        """A compact textual snapshot: title + main content (truncated).
+
+        Prefers a main/results content region over raw body text so the snippet
+        surfaces the actual content (e.g. result titles) instead of leading nav
+        chrome (region pickers, menus). Also lists the top link texts, which is
+        what "first result"-style questions usually need.
+        """
         try:
             title = await self.page.title()
         except Exception:
             title = ""
-        try:
-            text = await self.page.inner_text("body")
-        except Exception:
-            text = ""
+        text = ""
+        for sel in ("main", "[role=main]", "#links", ".results", "#content", "article", "body"):
+            try:
+                if await self.page.query_selector(sel):
+                    text = await self.page.inner_text(sel)
+                    if text.strip():
+                        break
+            except Exception:
+                continue
         text = " ".join(text.split())
-        return f"TITLE: {title}\nTEXT: {text[:limit]}"
+        links = []
+        try:
+            links = await self.page.eval_on_selector_all(
+                "a", "els => els.map(e => (e.innerText||'').trim()).filter(t => t.length > 8).slice(0, 8)"
+            )
+        except Exception:
+            pass
+        out = f"TITLE: {title}\nTEXT: {text[:limit]}"
+        if links:
+            out += "\nTOP LINKS: " + " | ".join(links)
+        return out
 
     async def execute(self, action: dict[str, Any]) -> str:
         kind = action.get("action")
