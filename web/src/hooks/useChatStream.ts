@@ -44,6 +44,69 @@ export function useChatStream() {
       ]);
     }
 
+    // terminal carries the run's final status; lastSeq tracks the highest SSE
+    // event id seen so a reconnect can replay only what was missed.
+    const state = { terminal: "streaming" as RunStatus, lastSeq: 0 };
+
+    const handleFrame = (frame: string) => {
+      let data = "";
+      for (const ln of frame.split("\n")) {
+        if (ln.startsWith("id:")) {
+          const n = parseInt(ln.slice(3).trim(), 10);
+          if (!isNaN(n)) state.lastSeq = n;
+        } else if (ln.startsWith("data:")) {
+          data = ln.slice(5).trim();
+        }
+      }
+      if (!data) return;
+      try {
+        const msg = JSON.parse(data) as Message;
+        if (msg.type === "heartbeat") return;
+        if (msg.type === "stream") {
+          setMessages((m) => {
+            const copy = [...m];
+            const i = copy.findIndex((x) => x.id === STREAM_ID);
+            if (i >= 0) {
+              copy[i] = { ...copy[i], content: (copy[i].content || "") + (msg.content || "") };
+            } else {
+              copy.push({ ...msg, id: STREAM_ID });
+            }
+            return copy;
+          });
+          return;
+        }
+        setMessages((m) => {
+          const base =
+            msg.type === "chat" && msg.role === "assistant"
+              ? m.filter((x) => x.id !== STREAM_ID)
+              : m;
+          return [...base, msg];
+        });
+        if (msg.type === "clarify") state.terminal = "paused";
+        if (msg.type === "task" && msg.action === "done") state.terminal = "done";
+        if (msg.type === "task" && msg.action === "failed") state.terminal = "error";
+      } catch {
+        /* skip malformed frame */
+      }
+    };
+
+    const consume = async (res: Response) => {
+      if (!res.body) throw new Error("no stream body");
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf("\n\n")) >= 0) {
+          handleFrame(buf.slice(0, idx));
+          buf = buf.slice(idx + 2);
+        }
+      }
+    };
+
     try {
       const res = await fetch("/api/v1/controller/chat/run", {
         method: "POST",
@@ -60,56 +123,30 @@ export function useChatStream() {
         }),
         signal: ctrl.signal,
       });
-      if (!res.body) throw new Error("no stream body");
+      await consume(res);
 
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let buf = "";
-      let last: RunStatus = "streaming";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        let idx: number;
-        while ((idx = buf.indexOf("\n\n")) >= 0) {
-          const frame = buf.slice(0, idx).trim();
-          buf = buf.slice(idx + 2);
-          const line = frame.startsWith("data:") ? frame.slice(5).trim() : frame;
-          if (!line) continue;
-          try {
-            const msg = JSON.parse(line) as Message;
-            if (msg.type === "heartbeat") continue; // shown via status, not feed
-            if (msg.type === "stream") {
-              // accumulate token deltas into one transient assistant bubble
-              setMessages((m) => {
-                const copy = [...m];
-                const i = copy.findIndex((x) => x.id === STREAM_ID);
-                if (i >= 0) {
-                  copy[i] = { ...copy[i], content: (copy[i].content || "") + (msg.content || "") };
-                } else {
-                  copy.push({ ...msg, id: STREAM_ID });
-                }
-                return copy;
-              });
-              continue;
-            }
-            // a real assistant chat finalizes the stream → drop the transient
-            setMessages((m) => {
-              const base =
-                msg.type === "chat" && msg.role === "assistant"
-                  ? m.filter((x) => x.id !== STREAM_ID)
-                  : m;
-              return [...base, msg];
-            });
-            if (msg.type === "clarify") last = "paused";
-            if (msg.type === "task" && msg.action === "done") last = "done";
-            if (msg.type === "task" && msg.action === "failed") last = "error";
-          } catch {
-            /* skip malformed frame */
-          }
+      // If the stream ended before a terminal event (network drop while the run
+      // is still going), reconnect to /chat/attach and replay missed events.
+      let attempts = 0;
+      while (state.terminal === "streaming" && !ctrl.signal.aborted && attempts < 5) {
+        attempts++;
+        await new Promise((r) => setTimeout(r, 500 * attempts));
+        try {
+          const url =
+            `/api/v1/controller/chat/attach?conversation_id=${encodeURIComponent(p.conversationID)}` +
+            `&last_event_id=${state.lastSeq}`;
+          const ar = await fetch(url, {
+            headers: { ...(auth.token() ? { Authorization: "Bearer " + auth.token() } : {}) },
+            signal: ctrl.signal,
+          });
+          if (ar.status === 404) break; // run already gone (finished + lingered out)
+          await consume(ar);
+          attempts = 0; // progress made; reset backoff
+        } catch {
+          /* retry */
         }
       }
-      setStatus(last);
+      setStatus(state.terminal);
     } catch (e) {
       if ((e as Error).name !== "AbortError") setStatus("error");
     }

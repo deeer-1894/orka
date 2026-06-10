@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"io"
+	"strconv"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
@@ -13,9 +14,11 @@ import (
 
 // ChatRun handles POST /chat/run, streaming events as Server-Sent Events.
 //
-// The response body is an io.Pipe whose reader is handed to Hertz via
-// SetBodyStream; a goroutine runs the chat and writes SSE frames into the pipe,
-// so events stream to the client incrementally.
+// Events are published to a per-conversation streamHub (which assigns sequence
+// ids and buffers recent frames), and this response subscribes from seq 0. The
+// run itself is detached from the request context, so if the client disconnects
+// it keeps producing events; the client can reconnect via /chat/attach and
+// replay everything it missed (Last-Event-ID).
 func (a *API) ChatRun(ctx context.Context, c *app.RequestContext) {
 	var req service.ChatRunRequest
 	if err := bind(c, &req); err != nil {
@@ -27,6 +30,45 @@ func (a *API) ChatRun(ctx context.Context, c *app.RequestContext) {
 		req.UserEmail = e
 	}
 
+	runID := firstNonEmptyStr(req.ConversationID, req.TaskID)
+	rs := a.hub.start(runID)
+
+	go func() {
+		// Detach from the Hertz request context (which ends when the handler
+		// returns); the run is cancelled via /chat/kill instead.
+		a.Chat.Run(context.Background(), req, func(m messages.Message) {
+			a.hub.publish(runID, m)
+		})
+		a.hub.finish(runID)
+	}()
+
+	a.streamRun(c, rs, 0)
+}
+
+// ChatAttach handles GET /chat/attach?conversation_id=..&last_event_id=N — it
+// re-attaches an SSE client to an in-progress run and replays missed events.
+func (a *API) ChatAttach(ctx context.Context, c *app.RequestContext) {
+	runID := string(c.Query("conversation_id"))
+	if runID == "" {
+		runID = string(c.Query("task_id"))
+	}
+	rs := a.hub.get(runID)
+	if rs == nil {
+		fail(c, consts.StatusNotFound, "no active run for id")
+		return
+	}
+	var from int64
+	if v := string(c.Query("last_event_id")); v != "" {
+		from, _ = strconv.ParseInt(v, 10, 64)
+	}
+	a.streamRun(c, rs, from)
+}
+
+// streamRun writes SSE frames (with id: lines for reconnect) from a runStream,
+// starting after fromSeq, until the run finishes or the client disconnects.
+func (a *API) streamRun(c *app.RequestContext, rs *runStream, fromSeq int64) {
+	ch, replay, done, cancel := rs.subscribe(fromSeq)
+
 	pr, pw := io.Pipe()
 	c.SetStatusCode(consts.StatusOK)
 	c.Response.Header.Set("Content-Type", "text/event-stream")
@@ -36,16 +78,37 @@ func (a *API) ChatRun(ctx context.Context, c *app.RequestContext) {
 
 	go func() {
 		defer pw.Close()
-		// Detach from the Hertz request context (which ends when the handler
-		// returns); the run is cancelled via /chat/kill instead.
-		a.Chat.Run(context.Background(), req, func(m messages.Message) {
-			frame, err := m.SSE()
-			if err != nil {
+		defer cancel()
+		write := func(sf seqFrame) bool {
+			if _, err := pw.Write([]byte("id: " + strconv.FormatInt(sf.seq, 10) + "\n")); err != nil {
+				return false
+			}
+			_, err := pw.Write(sf.data)
+			return err == nil
+		}
+		for _, sf := range replay {
+			if !write(sf) {
 				return
 			}
-			_, _ = pw.Write(frame) // write error => client gone; run is cancelled elsewhere
-		})
+		}
+		if done {
+			return // run already finished; replay was all that's left
+		}
+		for sf := range ch {
+			if !write(sf) {
+				return // client gone; run continues in the background
+			}
+		}
 	}()
+}
+
+func firstNonEmptyStr(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 type killReq struct {
