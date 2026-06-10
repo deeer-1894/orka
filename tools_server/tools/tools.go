@@ -36,6 +36,11 @@ func Registry() map[string]Meta {
 		"current_time": {Group: "util", Scope: ""}, // always available
 		"calculator":   {Group: "util", Scope: ""},
 		"unit_convert": {Group: "util", Scope: ""},
+		"base64":       {Group: "util", Scope: ""},
+		"hash":         {Group: "util", Scope: ""},
+		"uuid":         {Group: "util", Scope: ""},
+		"json_format":  {Group: "util", Scope: ""},
+		"text_stats":   {Group: "util", Scope: ""},
 		"http_request": {Group: "web", Scope: "web:search"}, // network egress → gated
 		"lark_whoami": {Group: "lark", Scope: "lark:read"},
 		"aio_echo":    {Group: "aio", Scope: "aio:read"},
@@ -101,6 +106,33 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 		mcp.WithString("from", mcp.Required(), mcp.Description("source unit, e.g. km, lb, GiB, C")),
 		mcp.WithString("to", mcp.Required(), mcp.Description("target unit, e.g. mi, kg, MB, F")),
 	), unitConvert())
+
+	add(mcp.NewTool("base64",
+		mcp.WithDescription("Encode or decode text to/from base64."),
+		mcp.WithString("text", mcp.Required(), mcp.Description("the input text")),
+		mcp.WithString("mode", mcp.Description("encode (default) or decode")),
+	), base64Tool())
+
+	add(mcp.NewTool("hash",
+		mcp.WithDescription("Compute a cryptographic hash of text (md5/sha1/sha256)."),
+		mcp.WithString("text", mcp.Required(), mcp.Description("the input text")),
+		mcp.WithString("algo", mcp.Description("sha256 (default), sha1, or md5")),
+	), hashTool())
+
+	add(mcp.NewTool("uuid",
+		mcp.WithDescription("Generate a random UUID (v4)."),
+	), uuidTool())
+
+	add(mcp.NewTool("json_format",
+		mcp.WithDescription("Pretty-print or minify a JSON document."),
+		mcp.WithString("json", mcp.Required(), mcp.Description("the JSON text")),
+		mcp.WithString("mode", mcp.Description("pretty (default) or minify")),
+	), jsonFormatTool())
+
+	add(mcp.NewTool("text_stats",
+		mcp.WithDescription("Count characters, words, lines and CJK characters in text."),
+		mcp.WithString("text", mcp.Required(), mcp.Description("the input text")),
+	), textStatsTool())
 
 	add(mcp.NewTool("http_request",
 		mcp.WithDescription("Make an HTTP GET/POST to a public URL (e.g. a JSON API) and return status + body. Not for browser tasks."),
