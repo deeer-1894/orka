@@ -22,6 +22,7 @@ const (
 	EventTool      EventType = "tool"      // tool call event
 	EventBrowser   EventType = "browser"   // GUI process event
 	EventHeartbeat EventType = "heartbeat" // keep-alive
+	EventStream    EventType = "stream"    // streaming token delta (not persisted)
 )
 
 // Roles.
@@ -76,6 +77,15 @@ func New(t EventType, role string, meta Meta) Message {
 // Chat builds a conversational message.
 func Chat(role, content string, meta Meta) Message {
 	m := New(EventChat, role, meta)
+	m.Content = content
+	return m
+}
+
+// StreamDelta builds an assistant streaming token delta. These are emitted over
+// SSE for live rendering and are never persisted; the final EventChat carries
+// the full, authoritative message.
+func StreamDelta(content string, meta Meta) Message {
+	m := New(EventStream, RoleAssistant, meta)
 	m.Content = content
 	return m
 }

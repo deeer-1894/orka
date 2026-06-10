@@ -4,6 +4,9 @@ import { auth } from "../api";
 
 export type RunStatus = "idle" | "streaming" | "paused" | "error" | "done";
 
+// id of the single transient bubble that accumulates streaming token deltas.
+const STREAM_ID = "__stream__";
+
 export interface RunParams {
   message: string;
   conversationID: string;
@@ -76,7 +79,28 @@ export function useChatStream() {
           try {
             const msg = JSON.parse(line) as Message;
             if (msg.type === "heartbeat") continue; // shown via status, not feed
-            setMessages((m) => [...m, msg]);
+            if (msg.type === "stream") {
+              // accumulate token deltas into one transient assistant bubble
+              setMessages((m) => {
+                const copy = [...m];
+                const i = copy.findIndex((x) => x.id === STREAM_ID);
+                if (i >= 0) {
+                  copy[i] = { ...copy[i], content: (copy[i].content || "") + (msg.content || "") };
+                } else {
+                  copy.push({ ...msg, id: STREAM_ID });
+                }
+                return copy;
+              });
+              continue;
+            }
+            // a real assistant chat finalizes the stream → drop the transient
+            setMessages((m) => {
+              const base =
+                msg.type === "chat" && msg.role === "assistant"
+                  ? m.filter((x) => x.id !== STREAM_ID)
+                  : m;
+              return [...base, msg];
+            });
             if (msg.type === "clarify") last = "paused";
             if (msg.type === "task" && msg.action === "done") last = "done";
             if (msg.type === "task" && msg.action === "failed") last = "error";

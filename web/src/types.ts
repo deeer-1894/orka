@@ -9,7 +9,8 @@ export type EventType =
   | "agent"
   | "tool"
   | "browser"
-  | "heartbeat";
+  | "heartbeat"
+  | "stream";
 
 export interface Meta {
   conversation_id: string;

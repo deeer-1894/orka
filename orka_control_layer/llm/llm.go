@@ -54,3 +54,11 @@ type Response struct {
 type Client interface {
 	Chat(ctx context.Context, req Request) (Response, error)
 }
+
+// StreamingClient is an optional capability: stream the assistant's content
+// token-by-token via onDelta, returning the fully-assembled Response (including
+// any tool calls) when complete. Callers should type-assert and fall back to
+// Chat when a client does not implement it.
+type StreamingClient interface {
+	ChatStream(ctx context.Context, req Request, onDelta func(string)) (Response, error)
+}

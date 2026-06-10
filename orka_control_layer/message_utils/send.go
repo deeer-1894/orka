@@ -100,7 +100,7 @@ func stripHeavy(p any) any {
 //   - tool/browser/agent/skill: only if caller asked AND it passes sampling
 func (mu *Messenger) shouldPersist(t messages.EventType, persist bool) bool {
 	switch t {
-	case messages.EventHeartbeat:
+	case messages.EventHeartbeat, messages.EventStream:
 		return false
 	case messages.EventChat, messages.EventClarify, messages.EventTask, messages.EventFile:
 		return true

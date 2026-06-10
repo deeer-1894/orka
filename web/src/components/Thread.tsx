@@ -22,7 +22,8 @@ function group(messages: Message[]): Block[] {
   };
   for (const m of messages) {
     if (m.type === "task" || m.type === "heartbeat") continue;
-    if (m.type === "chat") {
+    if (m.type === "chat" || m.type === "stream") {
+      // "stream" is the live, transient assistant bubble (token deltas).
       flush();
       blocks.push({ kind: m.role === "user" ? "user" : "assistant", m });
     } else if (m.type === "clarify") {

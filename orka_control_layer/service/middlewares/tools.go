@@ -56,7 +56,18 @@ func (m *Tools) Handle(rc *agent.RunContext, next func(*agent.RunContext) error)
 		if m.MaxHistory > 0 {
 			hist, _ = trimHistory(hist, m.MaxHistory)
 		}
-		resp, err := m.LLM.Chat(rc.Ctx, llm.Request{Model: m.Model, Messages: hist, Tools: specs})
+		req := llm.Request{Model: m.Model, Messages: hist, Tools: specs}
+		var resp llm.Response
+		var err error
+		if sc, ok := m.LLM.(llm.StreamingClient); ok {
+			// Stream content deltas to the client for live rendering; the final
+			// EventChat (emitted by output-mid) remains the persisted source.
+			resp, err = sc.ChatStream(rc.Ctx, req, func(delta string) {
+				rc.Emit(messages.StreamDelta(delta, rc.Meta))
+			})
+		} else {
+			resp, err = m.LLM.Chat(rc.Ctx, req)
+		}
 		if err != nil {
 			setHistory(rc, hist)
 			return fmt.Errorf("llm chat: %w", err)
