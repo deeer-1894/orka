@@ -37,9 +37,15 @@ def parse_action(text: str) -> dict[str, Any]:
     return obj
 
 
-_URL_RE = re.compile(r"https?://[^\s'\"]+")
+# ASCII URL charset only: CJK text/punctuation (，。、…) right after a URL in a
+# Chinese instruction must NOT be swallowed into it (it punycodes into a bogus
+# host and navigation DNS-fails). Trailing ASCII punctuation is stripped too.
+_URL_RE = re.compile(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+")
 # bare domain like www.bilibili.com or example.com/path (no scheme)
-_DOMAIN_RE = re.compile(r"((?:[a-z0-9-]+\.)+[a-z]{2,}(?:/[^\s'\"]*)?)", re.I)
+_DOMAIN_RE = re.compile(r"((?:[a-z0-9-]+\.)+[a-z]{2,}(?:/[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]*)?)", re.I)
+
+def _clean_url(u: str) -> str:
+    return u.rstrip(".,;:!?'\")]}")
 
 # common site aliases so "打开b站" works without a URL
 _ALIASES = {
@@ -58,11 +64,11 @@ def extract_url(text: str) -> str:
     if not text:
         return ""
     if m := _URL_RE.search(text):
-        return m.group(0)
+        return _clean_url(m.group(0))
     low = text.lower()
     for key, url in _ALIASES.items():
         if key.lower() in low:
             return url
     if d := _DOMAIN_RE.search(text):
-        return "https://" + d.group(1)
+        return "https://" + _clean_url(d.group(1))
     return ""

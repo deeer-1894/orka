@@ -12,6 +12,8 @@ class GraphState(TypedDict, total=False):
     shots: list[str]          # rolling raw-screenshot window (uitars multi-turn)
     responses: list[str]      # raw model replies aligned to shots[:-1] (uitars)
     dom: str                  # textual a11y/DOM snapshot
+    marks: list[Any]          # Set-of-Marks: numbered interactive elements (with handles)
+    marks_text: str           # textual mark index fed to the llm/vlm planner
     prediction: dict[str, Any]  # the next action chosen by predict
     history: list[dict[str, Any]]  # executed actions + results
     status: str               # "running" | "END" | "ERROR" | "CALL_USER"

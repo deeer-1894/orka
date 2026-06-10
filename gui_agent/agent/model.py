@@ -115,6 +115,14 @@ class UITarsPlanner:
 
 
 class Planner:
+    """Action planner. Modes:
+    - rule   : zero-LLM heuristics (navigate + read only; cannot click)
+    - llm    : text Set-of-Marks — the numbered element list goes to a TEXT
+               model (MODEL env), no screenshot, so any chat model can click
+    - vlm    : visual Set-of-Marks (screenshot + marks to a multimodal model)
+    - uitars : UI-TARS coordinate planner
+    """
+
     def __init__(self) -> None:
         mode = os.getenv("GUI_PLANNER", "").strip().lower()
         if not mode:
@@ -124,17 +132,21 @@ class Planner:
         self.uitars = UITarsPlanner() if mode == "uitars" else None
         self.base_url = os.getenv("OPENAI_BASE_URL", "")
         self.api_key = os.getenv("OPENAI_API_KEY", "")
-        self.model = os.getenv("VLM_MODEL", "gpt-4o")
+        if mode == "llm":
+            self.model = os.getenv("MODEL", "gpt-4o-mini")  # text model suffices
+        else:
+            self.model = os.getenv("VLM_MODEL", "gpt-4o")
 
     async def predict(self, state: dict[str, Any], page) -> tuple[dict[str, Any], bool]:
         """Return (action, used_vision)."""
         if self.uitars is not None:
             return await self.uitars.predict(state), True
 
-        # Vision when a generic multimodal model is configured: drive via
-        # Set-of-Marks (the screenshot node already numbered the elements).
-        if self.vlm_enabled:
-            return await self._vlm_predict(state), True
+        # Set-of-Marks planning: "vlm" sends marks + screenshot to a multimodal
+        # model; "llm" sends only the marks text to a cheap text model (the
+        # screenshot node already numbered the interactive elements).
+        if self.mode in ("vlm", "llm"):
+            return await self._som_predict(state, page), self.vlm_enabled
 
         # DOM-first rule planner (zero vision tokens).
         action = self._rule_predict(state)
@@ -155,34 +167,55 @@ class Planner:
         dom = state.get("dom", "")
         return {"action": "done", "result": dom[:400] if dom else "no content"}
 
-    async def _vlm_predict(self, state: dict[str, Any]) -> dict[str, Any]:
+    async def _som_predict(self, state: dict[str, Any], page=None) -> dict[str, Any]:
         try:
             from openai import OpenAI
         except Exception:
-            return {"action": "error", "message": "openai sdk unavailable for VLM"}
+            return {"action": "error", "message": "openai sdk unavailable for planner"}
         client = OpenAI(base_url=self.base_url, api_key=self.api_key)
         sys = (
-            "You are a GUI agent using Set-of-Marks. The screenshot has numbered "
-            "tags on interactive elements. Output ONE JSON action object with key "
+            "You are a GUI agent using Set-of-Marks. Interactive page elements are "
+            "numbered. Output ONE JSON action object with key "
             "'action' in {navigate,click,type,scroll,read,done,call_user,error}. "
             "To click/type a tagged element, set 'mark' to its number (and 'text' "
-            "for type). Otherwise use url/result. Output JSON only."
+            "for type). Check 'Current page' against the instruction: as soon as "
+            "the goal is satisfied, output {\"action\":\"done\",\"result\":\"<short summary "
+            "with final url/title>\"}. Never repeat an action that already succeeded. "
+            "Output ONLY the JSON object, no explanation."
         )
+        # Current page context lets the model recognise a click already landed.
+        cur = ""
+        if page is not None:
+            try:
+                cur = f"Current page: {page.url} — {await page.title()}"
+            except Exception:
+                cur = ""
         marks_text = state.get("marks_text", "")
-        content = [
-            {
-                "type": "text",
-                "text": f"Instruction: {state.get('instruction','')}\n\nElements:\n{marks_text}",
-            },
-        ]
-        if state.get("screenshot"):
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": "data:image/png;base64," + state["screenshot"]},
-            })
+        history = state.get("history", [])
+        past = "\n".join(
+            f"- {h.get('action', {}).get('action')} {h.get('action', {}).get('url') or h.get('action', {}).get('mark') or ''}"
+            f" -> {str(h.get('result', ''))[:60]}"
+            for h in history if h.get("action")
+        )
+        text = (
+            f"Instruction: {state.get('instruction','')}\n\n{cur}\n\n"
+            f"Actions so far:\n{past or '(none)'}\n\nElements:\n{marks_text}"
+        )
+        # Only the visual mode pays for image tokens; "llm" plans from text marks
+        # and sends a plain string (text-only providers reject multipart content).
+        content: Any = text
+        if self.vlm_enabled and state.get("screenshot"):
+            content = [
+                {"type": "text", "text": text},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64," + state["screenshot"]}},
+            ]
         resp = client.chat.completions.create(
             model=self.model,
             messages=[{"role": "system", "content": sys}, {"role": "user", "content": content}],
-            max_tokens=300,
+            # Reasoning models (e.g. DeepSeek) may spend most of the budget on
+            # hidden reasoning before emitting content — keep this generous.
+            max_tokens=1500,
         )
-        return parse_action(resp.choices[0].message.content or "")
+        msg = resp.choices[0].message
+        text_out = msg.content or getattr(msg, "reasoning_content", None) or ""
+        return parse_action(text_out)

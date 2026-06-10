@@ -48,8 +48,17 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
             await emit({"type": "screenshot", "data": annotated, "session_id": state.get("session_id", "")})
             await emit({"type": "observe", "mode": "vision", "marks": len(ms), "tokens": 1, "session_id": state.get("session_id", "")})
         else:
-            await emit({"type": "screenshot", "data": shot, "session_id": state.get("session_id", "")})
-            await emit({"type": "observe", "mode": "dom", "tokens": 0, "session_id": state.get("session_id", "")})
+            if planner.mode == "llm":
+                # Text Set-of-Marks: number the interactive elements but send
+                # only their TEXT list to a cheap chat model — zero image tokens.
+                ms = await marksmod.collect_marks(operator.page)
+                out["marks"] = ms  # type: ignore[typeddict-unknown-key]
+                out["marks_text"] = marksmod.marks_text(ms)  # type: ignore[typeddict-unknown-key]
+                await emit({"type": "screenshot", "data": shot, "session_id": state.get("session_id", "")})
+                await emit({"type": "observe", "mode": "llm", "marks": len(ms), "tokens": 0, "session_id": state.get("session_id", "")})
+            else:
+                await emit({"type": "screenshot", "data": shot, "session_id": state.get("session_id", "")})
+                await emit({"type": "observe", "mode": "dom", "tokens": 0, "session_id": state.get("session_id", "")})
         return out
 
     async def predict_node(state: GraphState) -> GraphState:
