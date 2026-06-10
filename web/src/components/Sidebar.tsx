@@ -36,7 +36,7 @@ export function Sidebar({
       <div className="w-[264px] flex flex-col h-full">
         <div className="flex items-center gap-2 px-4 h-14">
           <span className="grid h-7 w-7 place-items-center rounded-lg bg-accent text-white font-serif text-[15px] leading-none">
-            C
+            O
           </span>
           <span className="font-serif text-[18px] text-ink">Orka</span>
         </div>

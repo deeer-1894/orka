@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"strings"
+	"time"
 )
 
 // DemoClient is a deterministic offline client for HTTP smoke tests (no real
@@ -53,4 +54,26 @@ func (DemoClient) Chat(_ context.Context, req Request) (Response, error) {
 		}}}, nil
 	}
 	return Response{Content: "Echo: " + lastUser, FinishReason: "stop"}, nil
+}
+
+// ChatStream implements StreamingClient so the streaming path can be exercised
+// offline: it computes the full Response via Chat, then replays the content as
+// word-by-word deltas with a small delay to mimic a real token stream.
+func (d DemoClient) ChatStream(ctx context.Context, req Request, onDelta func(string)) (Response, error) {
+	resp, err := d.Chat(ctx, req)
+	if err != nil || resp.Content == "" || onDelta == nil {
+		return resp, err
+	}
+	for _, w := range strings.SplitAfter(resp.Content, " ") {
+		if w == "" {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return resp, ctx.Err()
+		case <-time.After(40 * time.Millisecond):
+		}
+		onDelta(w)
+	}
+	return resp, nil
 }

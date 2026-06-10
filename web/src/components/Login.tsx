@@ -35,7 +35,7 @@ export function Login({ onAuthed }: { onAuthed: (s: Session) => void }) {
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-accent text-white font-serif text-[22px]">
-            C
+            O
           </div>
           <h1 className="font-serif text-[26px] text-ink">Welcome to Orka</h1>
           <p className="mt-1 text-[14px] text-muted">

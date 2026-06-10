@@ -27,3 +27,4 @@ gui_agent/.venv/
 .DS_Store
 .idea/
 .vscode/
+.claude/

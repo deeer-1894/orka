@@ -152,7 +152,7 @@ function Assistant({ m }: { m: Message }) {
   return (
     <div className="mb-7 flex gap-3.5">
       <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent text-white font-serif text-[13px] leading-none">
-        C
+        O
       </div>
       <div className="min-w-0 flex-1 pt-0.5">
         <Markdown>{m.content ?? ""}</Markdown>
@@ -272,7 +272,7 @@ function Thinking() {
   return (
     <div className="mb-7 flex items-center gap-3.5">
       <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent text-white font-serif text-[13px]">
-        C
+        O
       </div>
       <div className="flex gap-1">
         <span className="dot h-1.5 w-1.5 rounded-full bg-faint" />
