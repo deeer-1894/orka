@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -327,23 +328,36 @@ func (s *ChatService) heartbeat(ctx context.Context, meta messages.Meta, raw fun
 	}
 }
 
-// friendlyErr maps low-level run errors to a user-readable message.
+// friendlyErr maps low-level run errors to a user-readable message. It branches
+// on the typed llm.APIError (HTTP status) and context errors rather than on
+// brittle error-string matching; the status body is only inspected for the
+// provider-specific content-moderation signal.
 func friendlyErr(err error) string {
-	e := err.Error()
-	switch {
-	case strings.Contains(e, "Content Exists Risk") || strings.Contains(e, "content") && strings.Contains(e, "risk"):
-		return "抱歉,这条请求被模型的内容安全策略拦截了,请换个说法再试。"
-	case strings.Contains(e, "status 401") || strings.Contains(e, "status 403"):
-		return "模型服务鉴权失败,请检查 API key 配置。"
-	case strings.Contains(e, "status 429"):
-		return "模型服务请求过于频繁(限流),请稍后再试。"
-	case strings.Contains(e, "llm status 4"):
-		return "请求被模型服务拒绝(参数或内容问题),请调整后重试。"
-	case strings.Contains(e, "context deadline") || strings.Contains(e, "timeout"):
+	if errors.Is(err, context.DeadlineExceeded) {
 		return "处理超时了,请重试或简化任务。"
-	default:
-		return "抱歉,处理时出错了:" + e
 	}
+	var apiErr *llm.APIError
+	if errors.As(err, &apiErr) {
+		body := strings.ToLower(apiErr.Body)
+		if strings.Contains(body, "content exists risk") || (strings.Contains(body, "content") && strings.Contains(body, "risk")) {
+			return "抱歉,这条请求被模型的内容安全策略拦截了,请换个说法再试。"
+		}
+		switch {
+		case apiErr.Status == 401 || apiErr.Status == 403:
+			return "模型服务鉴权失败,请检查 API key 配置。"
+		case apiErr.Status == 429:
+			return "模型服务请求过于频繁(限流),请稍后再试。"
+		case apiErr.Status/100 == 4:
+			return "请求被模型服务拒绝(参数或内容问题),请调整后重试。"
+		default:
+			return "模型服务暂时不可用,请稍后再试。"
+		}
+	}
+	e := err.Error()
+	if strings.Contains(e, "context deadline") || strings.Contains(e, "timeout") {
+		return "处理超时了,请重试或简化任务。"
+	}
+	return "抱歉,处理时出错了:" + e
 }
 
 func taskFailed(meta messages.Meta, reason string) messages.Message {

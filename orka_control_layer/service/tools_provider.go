@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -149,8 +150,39 @@ func MCPToolsProviderPooled(baseStorage, mcpURL, secret string, tokenTTL time.Du
 	}
 }
 
-// filterEnabled keeps the tools matching the request's enabled set. An empty set
-// means "all". Group aliases: "file" -> file_*, "gui_agent" -> run_agent.
+// Grouper is an optional capability: a tool that reports its own UI group. When
+// a tool implements it, filterEnabled trusts that over the name heuristic — the
+// path for future tools (and the eventual gateway-reported group) to be exact.
+type Grouper interface{ Group() string }
+
+// toolGroup returns a tool's group, preferring a self-reported Group() and
+// falling back to a name-convention heuristic that mirrors the gateway Registry.
+func toolGroup(t agent.BaseTool) string {
+	if g, ok := t.(Grouper); ok {
+		if grp := g.Group(); grp != "" {
+			return grp
+		}
+	}
+	return groupForName(t.Name())
+}
+
+func groupForName(name string) string {
+	switch {
+	case strings.HasPrefix(name, "file_"):
+		return "file"
+	case name == "run_agent":
+		return "gui_agent"
+	case name == "web_search" || name == "fetch_url" || name == "weather" || name == "http_request":
+		return "web"
+	case name == "current_time" || name == "calculator" || name == "unit_convert":
+		return "util"
+	}
+	return ""
+}
+
+// filterEnabled keeps the tools matching the request's enabled set, by exact
+// name or by group. An empty set means "all". "search" is a back-compat alias
+// for the "web" group.
 func filterEnabled(tools []agent.BaseTool, enabled []string) []agent.BaseTool {
 	if len(enabled) == 0 {
 		return tools
@@ -161,16 +193,10 @@ func filterEnabled(tools []agent.BaseTool, enabled []string) []agent.BaseTool {
 	}
 	var out []agent.BaseTool
 	for _, t := range tools {
-		name := t.Name()
-		switch {
-		case want[name]:
-		case want["file"] && len(name) >= 5 && name[:5] == "file_":
-		case want["gui_agent"] && name == "run_agent":
-		case want["search"] && (name == "web_search" || name == "weather" || name == "fetch_url"):
-		default:
-			continue
+		grp := toolGroup(t)
+		if want[t.Name()] || want[grp] || (want["search"] && grp == "web") {
+			out = append(out, t)
 		}
-		out = append(out, t)
 	}
 	return out
 }

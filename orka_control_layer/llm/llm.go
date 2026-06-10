@@ -2,7 +2,20 @@
 // It is a small interface so a mock can be injected in tests (no real endpoint).
 package llm
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
+
+// APIError is a typed error from the LLM endpoint, so callers can branch on the
+// HTTP status (and inspect the body for provider-specific signals like content
+// moderation) instead of matching on error strings.
+type APIError struct {
+	Status int
+	Body   string
+}
+
+func (e *APIError) Error() string { return fmt.Sprintf("llm status %d: %s", e.Status, e.Body) }
 
 // Roles.
 const (

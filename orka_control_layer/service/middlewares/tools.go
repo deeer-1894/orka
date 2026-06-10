@@ -3,6 +3,7 @@ package middlewares
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -246,7 +247,11 @@ func parseArgs(s string) map[string]any {
 	if s == "" {
 		return out
 	}
-	_ = json.Unmarshal([]byte(s), &out)
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		// Malformed tool arguments from the model: log it (a common cause of
+		// "the tool did nothing") rather than silently swallowing.
+		slog.Warn("tools-mid: malformed tool arguments", "err", err, "raw", truncStr(s, 200))
+	}
 	return out
 }
 
@@ -256,6 +261,15 @@ func parseClarify(s string) messages.ClarifyMessage {
 		Options  []string `json:"options"`
 		Context  string   `json:"context"`
 	}
-	_ = json.Unmarshal([]byte(s), &raw)
+	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+		slog.Warn("tools-mid: malformed clarify arguments", "err", err, "raw", truncStr(s, 200))
+	}
 	return messages.ClarifyMessage{Question: raw.Question, Options: raw.Options, Context: raw.Context}
+}
+
+func truncStr(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
 }

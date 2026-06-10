@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	mcpgo "github.com/mark3labs/mcp-go/client"
@@ -159,10 +160,12 @@ func extractText(res *mcp.CallToolResult) string {
 func schemaToMap(s mcp.ToolInputSchema) map[string]any {
 	b, err := json.Marshal(s)
 	if err != nil {
+		slog.Warn("mcp: tool schema marshal failed; using empty object", "err", err)
 		return map[string]any{"type": "object"}
 	}
 	var m map[string]any
 	if err := json.Unmarshal(b, &m); err != nil {
+		slog.Warn("mcp: tool schema unmarshal failed; using empty object", "err", err)
 		return map[string]any{"type": "object"}
 	}
 	return m

@@ -125,7 +125,7 @@ func (c *OpenAIClient) Chat(ctx context.Context, req Request) (Response, error) 
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode/100 != 2 {
-		return Response{}, fmt.Errorf("llm status %d: %s", resp.StatusCode, string(raw))
+		return Response{}, &APIError{Status: resp.StatusCode, Body: string(raw)}
 	}
 
 	var wresp wireResponse
@@ -194,7 +194,7 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-		return Response{}, fmt.Errorf("llm status %d: %s", resp.StatusCode, string(raw))
+		return Response{}, &APIError{Status: resp.StatusCode, Body: string(raw)}
 	}
 
 	var content strings.Builder
