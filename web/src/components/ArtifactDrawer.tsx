@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { api, files as fileApi } from "../api";
+import { api, auth, files as fileApi } from "../api";
 import type { BrowserPayload, Message, MetricsSnapshot, OwnerInfo, TaskMeta } from "../types";
 import { initials } from "../lib/format";
+import { Markdown } from "./Markdown";
 
 type Tab = "browser" | "files" | "metrics" | "tasks";
 
@@ -161,6 +162,7 @@ function FramesView({
 function FilesPanel({ email }: { email: string }) {
   const [items, setItems] = useState<{ name: string; dir: boolean; size: number }[]>([]);
   const [pct, setPct] = useState<number | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const refresh = () => fileApi.list(".").then(setItems).catch(() => setItems([]));
   useEffect(() => {
@@ -197,7 +199,17 @@ function FilesPanel({ email }: { email: string }) {
         {items.map((it) => (
           <div key={it.name} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface2">
             <span className="text-faint">{it.dir ? "📁" : "📄"}</span>
-            <span className="flex-1 truncate text-[14px] text-ink">{it.name}</span>
+            {it.dir ? (
+              <span className="flex-1 truncate text-[14px] text-ink">{it.name}</span>
+            ) : (
+              <button
+                onClick={() => setPreview(it.name)}
+                className="flex-1 truncate text-left text-[14px] text-ink hover:text-accent"
+                title="预览"
+              >
+                {it.name}
+              </button>
+            )}
             <span className="text-[11px] text-faint">{it.size}b</span>
             {!it.dir && (
               <a href={fileApi.downloadURL(it.name)} className="text-[12px] text-accent opacity-0 group-hover:opacity-100">
@@ -212,6 +224,54 @@ function FilesPanel({ email }: { email: string }) {
             </button>
           </div>
         ))}
+      </div>
+      {preview && <FilePreview name={preview} onClose={() => setPreview(null)} />}
+    </div>
+  );
+}
+
+// FilePreview renders a workspace file inline: images as <img>, everything else
+// as text (markdown rendered, other text in a mono block).
+function FilePreview({ name, onClose }: { name: string; onClose: () => void }) {
+  const [content, setContent] = useState<string | null>(null);
+  const [err, setErr] = useState("");
+  const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
+  const isMd = /\.(md|markdown)$/i.test(name);
+  const url = fileApi.downloadURL(name);
+
+  useEffect(() => {
+    if (isImage) return;
+    fetch(url, { headers: { Authorization: "Bearer " + auth.token() } })
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error("HTTP " + r.status))))
+      .then((t) => setContent(t.slice(0, 100_000)))
+      .catch((e) => setErr(String(e)));
+  }, [url, isImage]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6" onClick={onClose}>
+      <div
+        className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
+          <span className="text-faint">📄</span>
+          <span className="flex-1 truncate text-[14px] text-ink">{name}</span>
+          <a href={url} className="text-[12px] text-accent hover:underline">下载</a>
+          <button onClick={onClose} className="ml-1 text-faint hover:text-ink">✕</button>
+        </div>
+        <div className="overflow-y-auto px-4 py-3">
+          {isImage ? (
+            <img src={url} alt={name} className="mx-auto max-w-full rounded" />
+          ) : err ? (
+            <div className="text-[13px] text-accent">无法预览:{err}</div>
+          ) : content === null ? (
+            <div className="text-[13px] text-faint">加载中…</div>
+          ) : isMd ? (
+            <Markdown>{content}</Markdown>
+          ) : (
+            <pre className="whitespace-pre-wrap break-words font-mono text-[12.5px] text-ink">{content}</pre>
+          )}
+        </div>
       </div>
     </div>
   );
