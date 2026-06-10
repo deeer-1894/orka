@@ -19,10 +19,11 @@ import (
 // the built-in `clarify` tool sets rc.Interrupt so the runner stops with the
 // cursor on this middleware (so resume re-enters the loop with the user reply).
 type Tools struct {
-	LLM      llm.Client
-	Model    string
-	MaxIters int
-	Metrics  *obs.Metrics
+	LLM        llm.Client
+	Model      string
+	MaxIters   int
+	MaxHistory int // bound context across ReAct iterations (0 = unbounded)
+	Metrics    *obs.Metrics
 }
 
 func (m *Tools) Name() string { return "tools-mid" }
@@ -51,6 +52,9 @@ func (m *Tools) Handle(rc *agent.RunContext, next func(*agent.RunContext) error)
 		if err := rc.Ctx.Err(); err != nil {
 			setHistory(rc, hist)
 			return err
+		}
+		if m.MaxHistory > 0 {
+			hist, _ = trimHistory(hist, m.MaxHistory)
 		}
 		resp, err := m.LLM.Chat(rc.Ctx, llm.Request{Model: m.Model, Messages: hist, Tools: specs})
 		if err != nil {

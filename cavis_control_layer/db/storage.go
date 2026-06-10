@@ -36,14 +36,62 @@ func NewStorage(ctx context.Context, uri, dbName string) (*Storage, error) {
 		return nil, fmt.Errorf("mongo ping: %w", err)
 	}
 	d := cli.Database(dbName)
-	return &Storage{
+	s := &Storage{
 		client:        cli,
 		db:            d,
 		Conversations: d.Collection("conversations"),
 		Messages:      d.Collection("messages"),
 		Tasks:         d.Collection("tasks"),
 		Users:         d.Collection("users"),
-	}, nil
+	}
+	if err := s.EnsureIndexes(cctx); err != nil {
+		return nil, fmt.Errorf("mongo indexes: %w", err)
+	}
+	return s, nil
+}
+
+// EnsureIndexes creates the indexes backing every hot query path so reads scale
+// past a full-collection scan + in-memory sort. Idempotent (safe to re-run).
+func (s *Storage) EnsureIndexes(ctx context.Context) error {
+	specs := []struct {
+		col   *mongo.Collection
+		model mongo.IndexModel
+	}{
+		// users: unique email (also enforces no duplicate accounts).
+		{s.Users, mongo.IndexModel{
+			Keys:    bson.D{{Key: "email", Value: 1}},
+			Options: options.Index().SetUnique(true).SetName("email_unique"),
+		}},
+		// messages: list a conversation's history newest-first.
+		{s.Messages, mongo.IndexModel{
+			Keys: bson.D{{Key: "conversation_id", Value: 1}, {Key: "created_at", Value: -1}},
+			Options: options.Index().SetName("conv_created"),
+		}},
+		// tasks: a user's tasks newest-first.
+		{s.Tasks, mongo.IndexModel{
+			Keys: bson.D{{Key: "owner_email", Value: 1}, {Key: "created_at", Value: -1}},
+			Options: options.Index().SetName("owner_created"),
+		}},
+		{s.Tasks, mongo.IndexModel{
+			Keys: bson.D{{Key: "task_id", Value: 1}},
+			Options: options.Index().SetName("task_id"),
+		}},
+		// conversations: a user's conversations newest-first.
+		{s.Conversations, mongo.IndexModel{
+			Keys: bson.D{{Key: "owner_email", Value: 1}, {Key: "created_at", Value: -1}},
+			Options: options.Index().SetName("owner_created"),
+		}},
+		{s.Conversations, mongo.IndexModel{
+			Keys: bson.D{{Key: "conversation_id", Value: 1}},
+			Options: options.Index().SetName("conversation_id"),
+		}},
+	}
+	for _, sp := range specs {
+		if _, err := sp.col.Indexes().CreateOne(ctx, sp.model); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ---- users ----

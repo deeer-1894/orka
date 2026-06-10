@@ -50,6 +50,9 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	if err := cfg.Validate(); err != nil {
+		panic("config validation failed: " + err.Error())
+	}
 
 	logger := obs.NewLogger(cfg.Obs.LogLevel)
 	metrics := obs.NewMetrics()
@@ -119,7 +122,9 @@ func main() {
 
 	a := api.New(store, logger, metrics, chat)
 	a.BaseStorage = cfg.Storage.BaseStoragePath
-	a.Secret = cfg.Security.CtxTokenSecret
+	// User session tokens are signed with a key DISTINCT from the control<->tools
+	// context-token key, so the two token types are not interchangeable.
+	a.Secret = cfg.SessionSecret()
 	a.Directory = connectors.NewCachedDirectory(
 		&connectors.StubDirectory{},
 		state.NewRedisStore(rdb, "cavis:dir:"),

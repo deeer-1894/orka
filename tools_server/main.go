@@ -20,6 +20,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("config validation failed: %v", err)
+	}
 
 	var blacklist []string
 	if v := os.Getenv("TOOLS_BLACKLIST"); v != "" {

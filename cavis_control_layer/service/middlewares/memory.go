@@ -19,10 +19,21 @@ func (m *Memory) Handle(rc *agent.RunContext, next func(*agent.RunContext) error
 		max = 50
 	}
 	hist := getHistory(rc)
-	if len(hist) <= max {
-		return nil
+	if trimmed, changed := trimHistory(hist, max); changed {
+		setHistory(rc, trimmed)
 	}
-	// preserve leading system messages
+	return nil
+}
+
+// trimHistory bounds a chat history to ~max messages, always preserving the
+// leading system prompt(s). It is tool-call safe: the kept tail never begins
+// with an orphan tool message (a tool reply whose assistant tool_calls were
+// trimmed away), which strict providers reject. Returns the (possibly) trimmed
+// slice and whether anything was dropped.
+func trimHistory(hist []llm.ChatMessage, max int) ([]llm.ChatMessage, bool) {
+	if max < 1 || len(hist) <= max {
+		return hist, false
+	}
 	head := 0
 	for head < len(hist) && hist[head].Role == llm.RoleSystem {
 		head++
@@ -31,9 +42,19 @@ func (m *Memory) Handle(rc *agent.RunContext, next func(*agent.RunContext) error
 	if keepTail < 1 {
 		keepTail = 1
 	}
-	trimmed := make([]llm.ChatMessage, 0, head+keepTail)
+	start := len(hist) - keepTail
+	if start < head {
+		start = head
+	}
+	// Never start the tail on a tool reply with no preceding tool_calls.
+	for start < len(hist) && hist[start].Role == llm.RoleTool {
+		start++
+	}
+	if start <= head {
+		return hist, false // nothing meaningful to trim
+	}
+	trimmed := make([]llm.ChatMessage, 0, head+(len(hist)-start))
 	trimmed = append(trimmed, hist[:head]...)
-	trimmed = append(trimmed, hist[len(hist)-keepTail:]...)
-	setHistory(rc, trimmed)
-	return nil
+	trimmed = append(trimmed, hist[start:]...)
+	return trimmed, true
 }

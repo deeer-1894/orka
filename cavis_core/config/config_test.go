@@ -4,6 +4,44 @@ import (
 	"testing"
 )
 
+func TestValidateSecret(t *testing.T) {
+	t.Setenv("CAVIS_DEV", "")
+	t.Setenv("LLM_MOCK", "")
+
+	c := &Config{}
+	c.Security.CtxTokenSecret = DefaultDevSecret
+	if err := c.Validate(); err == nil {
+		t.Error("default placeholder secret should be rejected")
+	}
+	c.Security.CtxTokenSecret = ""
+	if err := c.Validate(); err == nil {
+		t.Error("empty secret should be rejected")
+	}
+	c.Security.CtxTokenSecret = "short"
+	if err := c.Validate(); err == nil {
+		t.Error("short secret should be rejected")
+	}
+	c.Security.CtxTokenSecret = "a-properly-long-random-secret-value"
+	if err := c.Validate(); err != nil {
+		t.Errorf("strong secret should pass: %v", err)
+	}
+
+	// dev mode relaxes the check
+	t.Setenv("CAVIS_DEV", "1")
+	c.Security.CtxTokenSecret = DefaultDevSecret
+	if err := c.Validate(); err != nil {
+		t.Errorf("dev mode should allow placeholder: %v", err)
+	}
+}
+
+func TestSessionSecretDistinct(t *testing.T) {
+	c := &Config{}
+	c.Security.CtxTokenSecret = "a-properly-long-random-secret-value"
+	if c.SessionSecret() == string(c.CtxSecret()) {
+		t.Error("session secret must differ from ctx secret")
+	}
+}
+
 func TestLoadDefaultsWhenNoFile(t *testing.T) {
 	c, err := Load("/nonexistent/path/config.yaml")
 	if err != nil {

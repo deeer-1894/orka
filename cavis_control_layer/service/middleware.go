@@ -30,15 +30,23 @@ type PipelineDeps struct {
 
 // BuildPipeline assembles the middleware chain for a scene.
 //
-//	simple    : setup -> tools -> interrupt -> output
-//	interrupt : setup -> tools -> interrupt -> output   (same; clarify is data-driven)
-//	complex   : setup -> plan -> skill -> tools -> memory -> interrupt -> output
+//	simple    : setup -> memory -> tools -> interrupt -> output
+//	interrupt : setup -> memory -> tools -> interrupt -> output  (clarify is data-driven)
+//	complex   : setup -> plan -> skill -> memory -> tools -> interrupt -> output
+//
+// memory-mid (history trimming) runs before tools-mid so the seeded context is
+// bounded; tools-mid additionally re-trims each ReAct iteration.
 //
 // interrupt-mid is included everywhere as a harmless finalizer; in practice
 // tools-mid raises clarify itself so the cursor lands correctly for resume.
 func BuildPipeline(scene Scene, deps PipelineDeps) []agent.Middleware {
+	// maxHistory bounds the LLM context: Memory trims the seeded history before
+	// the loop, and tools-mid re-trims each ReAct iteration so an agentic run
+	// with many tool calls cannot grow context (and cost) without bound.
+	const maxHistory = 40
 	setup := &middlewares.Setup{SystemPrompt: deps.SystemPrompt}
-	tools := &middlewares.Tools{LLM: deps.LLM, Model: deps.Model, Metrics: deps.Metrics}
+	memory := &middlewares.Memory{MaxMessages: maxHistory}
+	tools := &middlewares.Tools{LLM: deps.LLM, Model: deps.Model, Metrics: deps.Metrics, MaxHistory: maxHistory}
 	interrupt := &middlewares.Interrupt{}
 	output := &middlewares.Output{}
 
@@ -48,12 +56,12 @@ func BuildPipeline(scene Scene, deps PipelineDeps) []agent.Middleware {
 			setup,
 			&middlewares.Plan{LLM: deps.LLM, Model: deps.Model},
 			&middlewares.Skill{Dir: deps.SkillDir, Skill: deps.Skill},
+			memory,
 			tools,
-			&middlewares.Memory{},
 			interrupt,
 			output,
 		}
 	default: // simple, interrupt
-		return []agent.Middleware{setup, tools, interrupt, output}
+		return []agent.Middleware{setup, memory, tools, interrupt, output}
 	}
 }

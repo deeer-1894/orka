@@ -3,6 +3,9 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -10,6 +13,11 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// DefaultDevSecret is the placeholder secret shipped in config.yaml. It is
+// rejected at startup outside dev mode (see Validate) so a deployment can never
+// silently run with a publicly-known signing key.
+const DefaultDevSecret = "dev-only-change-me"
 
 // Config is the full application configuration.
 type Config struct {
@@ -56,6 +64,41 @@ type SecurityConfig struct {
 type ObsConfig struct {
 	LogLevel        string  `yaml:"log_level"`
 	PersistSampling float64 `yaml:"persist_sampling"`
+}
+
+// IsDev reports whether the process is running in dev mode (CAVIS_DEV=1 or
+// LLM_MOCK=1), which relaxes the secret check below.
+func IsDev() bool {
+	return os.Getenv("CAVIS_DEV") == "1" || os.Getenv("LLM_MOCK") == "1"
+}
+
+// Validate enforces security-critical invariants at startup. Outside dev mode a
+// missing or placeholder HMAC secret is fatal: with a known signing key an
+// attacker could forge context tokens (bypassing tool RBAC) and user sessions.
+func (c *Config) Validate() error {
+	s := c.Security.CtxTokenSecret
+	if IsDev() {
+		return nil
+	}
+	if s == "" || s == DefaultDevSecret {
+		return errors.New("security.ctx_token_secret is empty or the dev placeholder; " +
+			"set a strong CTX_TOKEN_SECRET (or run with CAVIS_DEV=1 for local dev)")
+	}
+	if len(s) < 16 {
+		return errors.New("security.ctx_token_secret is too short; use >= 16 random bytes")
+	}
+	return nil
+}
+
+// CtxSecret is the key for control<->tools context tokens (must match the
+// tools_server). SessionSecret is a distinct key derived for user session
+// tokens, so a forged context token can never be replayed as a session (and
+// vice versa) — defence in depth even when one base secret is configured.
+func (c *Config) CtxSecret() []byte { return []byte(c.Security.CtxTokenSecret) }
+
+func (c *Config) SessionSecret() string {
+	sum := sha256.Sum256([]byte(c.Security.CtxTokenSecret + "|cavis-session-v1"))
+	return hex.EncodeToString(sum[:])
 }
 
 // Load reads path (if present) then applies env overrides and defaults.

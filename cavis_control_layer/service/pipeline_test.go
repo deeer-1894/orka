@@ -108,8 +108,8 @@ func TestPipeline_ClarifyInterruptAndResume(t *testing.T) {
 	if rc.Interrupt.Clarify.Question != "which currency?" {
 		t.Fatalf("clarify question = %q", rc.Interrupt.Clarify.Question)
 	}
-	if rc.Cursor != 1 {
-		t.Fatalf("cursor = %d, want 1 (tools-mid)", rc.Cursor)
+	if rc.Cursor != 2 {
+		t.Fatalf("cursor = %d, want 2 (tools-mid, after setup+memory)", rc.Cursor)
 	}
 	if _, ok := rc.Vars[middlewares.VarFinal]; ok {
 		t.Fatal("should not have a final answer before resume")
