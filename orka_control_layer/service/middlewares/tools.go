@@ -73,6 +73,9 @@ func (m *Tools) Handle(rc *agent.RunContext, next func(*agent.RunContext) error)
 			setHistory(rc, hist)
 			return fmt.Errorf("llm chat: %w", err)
 		}
+		if m.Metrics != nil && resp.Usage.TotalTokens > 0 {
+			m.Metrics.ObserveLLM(resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+		}
 
 		if len(resp.ToolCalls) == 0 {
 			hist = append(hist, llm.ChatMessage{Role: llm.RoleAssistant, Content: resp.Content})

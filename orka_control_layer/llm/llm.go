@@ -56,11 +56,19 @@ type Request struct {
 	Temperature float32
 }
 
+// Usage reports token consumption for a call (when the provider returns it).
+type Usage struct {
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+}
+
 // Response is the model's reply.
 type Response struct {
 	Content      string
 	ToolCalls    []ToolCall
 	FinishReason string
+	Usage        Usage
 }
 
 // Client is the minimal LLM contract.

@@ -199,16 +199,51 @@ function Steps({ items, onOpenViewport }: { items: Message[]; onOpenViewport: ()
   );
 }
 
+// toolReceipt turns a tool payload into a readable {icon,label,detail} receipt,
+// so a step reads like "📄 wrote report.md · 1,785 bytes" instead of raw JSON.
+function toolReceipt(p: ToolPayload): { icon: string; label: string; detail: string } {
+  const a = (p.args || {}) as Record<string, unknown>;
+  const s = (k: string) => (a[k] == null ? "" : String(a[k]));
+  const res = stripCard(p.result || "");
+  switch (p.tool) {
+    case "file_write":
+      return { icon: "📄", label: `写入 ${s("path")}`, detail: res };
+    case "file_read":
+      return { icon: "📄", label: `读取 ${s("path")}`, detail: trunc(res, 70) };
+    case "file_list":
+      return { icon: "📁", label: `列目录 ${s("path") || "/"}`, detail: trunc(res, 70) };
+    case "web_search":
+      return { icon: "🔎", label: `搜索 “${s("query")}”`, detail: trunc(res, 70) };
+    case "fetch_url":
+      return { icon: "🔗", label: `读取网页`, detail: trunc(s("url") || res, 70) };
+    case "weather":
+      return { icon: "🌤️", label: `天气 ${s("location")}`, detail: "" };
+    case "current_time":
+      return { icon: "🕐", label: "当前时间", detail: trunc(res, 60) };
+    case "calculator":
+      return { icon: "🧮", label: "计算", detail: trunc(res, 60) };
+    case "unit_convert":
+      return { icon: "📐", label: "单位换算", detail: trunc(res, 60) };
+    case "http_request":
+      return { icon: "🌍", label: `HTTP ${s("method") || "GET"}`, detail: trunc(s("url"), 60) };
+    case "apply_skill":
+      return { icon: "✨", label: `采纳技能 ${s("name")}`, detail: "" };
+    default:
+      return { icon: "🔧", label: p.tool || "tool", detail: trunc(res, 70) };
+  }
+}
+
 function Step({ m }: { m: Message }) {
   if (m.type === "tool") {
     const p = (m.payload as ToolPayload) || ({} as ToolPayload);
+    const r = toolReceipt(p);
     return (
       <div className="text-[13px]">
-        <span className="font-mono text-ink">🔧 {p.tool || m.action || "tool"}</span>
+        <span className="text-ink">{r.icon} {r.label}</span>
         {p.error ? (
-          <span className="text-accent"> · {p.error}</span>
-        ) : p.result ? (
-          <span className="text-muted"> · {trunc(stripCard(p.result), 90)}</span>
+          <span className="text-accent"> · {trunc(p.error, 80)}</span>
+        ) : r.detail ? (
+          <span className="text-muted"> · {r.detail}</span>
         ) : null}
       </div>
     );
@@ -216,13 +251,32 @@ function Step({ m }: { m: Message }) {
   if (m.type === "browser") {
     const p = m.payload as BrowserPayload;
     const kind = p?.type ?? p?.action ?? "event";
+    const verb: Record<string, string> = {
+      navigate: "打开", click: "点击", type: "输入", scroll: "滚动",
+      screenshot: "截图", observe: "观察", done: "完成", action: "操作",
+    };
     return (
-      <div className="text-[13px] text-muted">
-        🌐 <span className="font-mono">{kind}</span>
-        {p?.mode && <span className="text-faint"> ({p.mode})</span>}
-        {p?.target && <span className="text-faint"> {trunc(p.target, 60)}</span>}
+      <div className="flex items-start gap-2 text-[13px] text-muted">
+        {p?.data ? (
+          <img
+            src={"data:image/png;base64," + p.data}
+            alt="frame"
+            className="mt-0.5 h-10 w-16 shrink-0 rounded border border-border object-cover"
+          />
+        ) : (
+          <span>🌐</span>
+        )}
+        <span className="min-w-0">
+          <span className="text-ink">{verb[kind] || kind}</span>
+          {p?.mode && <span className="text-faint"> ({p.mode})</span>}
+          {p?.target && <span className="text-faint"> {trunc(p.target, 56)}</span>}
+          {p?.result && <span className="text-faint"> · {trunc(p.result, 56)}</span>}
+        </span>
       </div>
     );
+  }
+  if (m.type === "skill") {
+    return <div className="text-[13px] text-muted">✨ 采纳技能</div>;
   }
   return (
     <div className="text-[13px] text-muted">

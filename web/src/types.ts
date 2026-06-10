@@ -103,4 +103,8 @@ export interface MetricsSnapshot {
   checkpoints: number;
   tool_calls: number;
   avg_tool_call_micros: number;
+  llm_calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
 }

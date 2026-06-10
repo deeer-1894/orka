@@ -52,6 +52,7 @@ function Workbench({
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<Tab>("browser");
+  const [totalTokens, setTotalTokens] = useState(0);
 
   const { messages, status, run, kill, setMessages } = useChatStream();
 
@@ -71,6 +72,14 @@ function Workbench({
     refreshConversations();
     refreshTasks();
   }, [refreshConversations, refreshTasks]);
+
+  // live token-usage chip in the header
+  useEffect(() => {
+    const t = () => api.metrics().then((s) => setTotalTokens(s.total_tokens || 0)).catch(() => {});
+    t();
+    const id = setInterval(t, 4000);
+    return () => clearInterval(id);
+  }, []);
 
   const newConversation = useCallback(async () => {
     const c = await api.createConversation("New chat");
@@ -168,7 +177,12 @@ function Workbench({
             </svg>
           </button>
           <span className="font-serif text-[16px] text-ink">Orka</span>
-          <span className="text-[12px] text-faint">deepseek-v4-flash</span>
+          <span className="rounded-full bg-surface2 px-2 py-0.5 text-[11px] text-muted">deepseek-v4-flash</span>
+          {totalTokens > 0 && (
+            <span className="text-[11px] text-faint" title="本进程累计 token 用量">
+              🪙 {totalTokens >= 1000 ? (totalTokens / 1000).toFixed(1) + "k" : totalTokens} tokens
+            </span>
+          )}
           <button
             onClick={() => setDrawerOpen((o) => !o)}
             className={

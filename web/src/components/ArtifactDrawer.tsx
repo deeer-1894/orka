@@ -225,11 +225,16 @@ function MetricsPanel() {
     const id = setInterval(t, 2000);
     return () => clearInterval(id);
   }, []);
+  const fmt = (n: number) => (n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n));
   const stats = [
-    { k: "Active sessions", v: m?.active_sessions ?? 0 },
+    { k: "运行中会话", v: m?.active_sessions ?? 0 },
     { k: "Checkpoints", v: m?.checkpoints ?? 0 },
-    { k: "Tool calls", v: m?.tool_calls ?? 0 },
-    { k: "Avg tool µs", v: Math.round(m?.avg_tool_call_micros ?? 0) },
+    { k: "工具调用", v: m?.tool_calls ?? 0 },
+    { k: "平均工具 µs", v: Math.round(m?.avg_tool_call_micros ?? 0) },
+    { k: "LLM 调用", v: m?.llm_calls ?? 0 },
+    { k: "总 tokens", v: fmt(m?.total_tokens ?? 0) },
+    { k: "输入 tokens", v: fmt(m?.prompt_tokens ?? 0) },
+    { k: "输出 tokens", v: fmt(m?.completion_tokens ?? 0) },
   ];
   return (
     <div className="grid grid-cols-2 gap-2.5 p-3">

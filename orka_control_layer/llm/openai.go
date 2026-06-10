@@ -65,6 +65,17 @@ type wireRequest struct {
 	Tools       []wireTool    `json:"tools,omitempty"`
 	Temperature float32       `json:"temperature,omitempty"`
 	Stream      bool          `json:"stream,omitempty"`
+	StreamOpts  *streamOpts   `json:"stream_options,omitempty"`
+}
+
+type streamOpts struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
+type wireUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 type wireResponse struct {
@@ -72,6 +83,7 @@ type wireResponse struct {
 		Message      wireMessage `json:"message"`
 		FinishReason string      `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *wireUsage `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
@@ -140,6 +152,9 @@ func (c *OpenAIClient) Chat(ctx context.Context, req Request) (Response, error) 
 	}
 	msg := wresp.Choices[0].Message
 	out := Response{Content: msg.Content, FinishReason: wresp.Choices[0].FinishReason}
+	if u := wresp.Usage; u != nil {
+		out.Usage = Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
+	}
 	for _, tc := range msg.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments})
 	}
@@ -163,6 +178,7 @@ type wireStreamChunk struct {
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *wireUsage `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
@@ -173,6 +189,7 @@ type wireStreamChunk struct {
 func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func(string)) (Response, error) {
 	wr := toWireRequest(req)
 	wr.Stream = true
+	wr.StreamOpts = &streamOpts{IncludeUsage: true} // ask the provider for a final usage chunk
 	body, err := json.Marshal(wr)
 	if err != nil {
 		return Response{}, fmt.Errorf("marshal request: %w", err)
@@ -205,6 +222,7 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 	toolAcc := map[int]*tcAcc{}
 	var order []int
 	finish := ""
+	var usage Usage
 
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -223,6 +241,9 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 		}
 		if chunk.Error != nil {
 			return Response{}, fmt.Errorf("llm error: %s", chunk.Error.Message)
+		}
+		if u := chunk.Usage; u != nil { // final usage chunk (stream_options)
+			usage = Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
 		}
 		if len(chunk.Choices) == 0 {
 			continue
@@ -257,7 +278,7 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 		return Response{}, fmt.Errorf("stream read: %w", err)
 	}
 
-	out := Response{Content: content.String(), FinishReason: finish}
+	out := Response{Content: content.String(), FinishReason: finish, Usage: usage}
 	for _, idx := range order {
 		acc := toolAcc[idx]
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: acc.id, Name: acc.name, Arguments: acc.args.String()})
