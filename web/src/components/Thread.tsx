@@ -69,11 +69,17 @@ export function Thread({
 
   if (messages.length === 0) return <Empty />;
 
+  // Each user turn is a navigable anchor for the floating outline (TOC).
+  const turns = blocks
+    .filter((b): b is Extract<Block, { kind: "user" }> => b.kind === "user")
+    .map((b) => ({ id: "turn-" + b.m.id, text: b.m.content || "" }));
+
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div className="relative flex-1 overflow-y-auto">
+      <ThreadOutline turns={turns} />
       <div className="mx-auto max-w-3xl px-5 py-8">
         {blocks.map((b, i) => (
-          <div key={i} className="rise">
+          <div key={i} id={b.kind === "user" ? "turn-" + b.m.id : undefined} className="rise scroll-mt-4">
             {b.kind === "user" && <UserBubble m={b.m} />}
             {b.kind === "assistant" && <Assistant m={b.m} />}
             {b.kind === "clarify" && <Clarify m={b.m} onResume={onResume} />}
@@ -84,6 +90,50 @@ export function Thread({
         {thinking && <Thinking />}
         <div ref={endRef} className="h-2" />
       </div>
+    </div>
+  );
+}
+
+// ThreadOutline is a floating table-of-contents: it lists each user turn and
+// scrolls to it on click — handy for navigating long conversations.
+function ThreadOutline({ turns }: { turns: { id: string; text: string }[] }) {
+  const [open, setOpen] = useState(false);
+  if (turns.length < 2) return null;
+  const go = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setOpen(false);
+  };
+  return (
+    <div className="sticky top-0 z-10 float-right mr-2 mt-2">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        title="Outline"
+        className={
+          "grid h-8 w-8 place-items-center rounded-lg border text-muted transition " +
+          (open ? "border-accent/40 bg-accentsoft text-accent" : "border-border bg-surface hover:bg-surface2")
+        }
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+          <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute right-0 mt-1.5 max-h-[60vh] w-64 overflow-y-auto rounded-xl border border-border bg-surface p-1.5 shadow-lg">
+          <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-faint">
+            Outline · {turns.length} turns
+          </div>
+          {turns.map((t, i) => (
+            <button
+              key={t.id}
+              onClick={() => go(t.id)}
+              className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] text-muted hover:bg-surface2 hover:text-ink"
+            >
+              <span className="mt-0.5 shrink-0 text-faint">{i + 1}.</span>
+              <span className="line-clamp-2">{trunc(t.text, 60)}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
