@@ -150,8 +150,38 @@ async def replay_macro(operator, emit, instruction, session_id) -> bool:
         return False  # fall back to exploration
 
 
+# Auth: when GUI_AUTH_TOKEN is set, every WS connection must present it as
+# `Authorization: Bearer <token>` (or `?token=`). The GUI executor drives a real
+# browser, so an unauthenticated port is a strong SSRF / internal-probe surface.
+_GUI_AUTH_TOKEN = os.getenv("GUI_AUTH_TOKEN", "")
+# Origin allowlist blocks browser-based cross-site WS hijacking; server-to-server
+# clients send no Origin header and are allowed.
+_ALLOWED_ORIGIN_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
+
+
+def _authorized(ws: WebSocket) -> bool:
+    # Origin check (only meaningful for browser clients that set it).
+    origin = ws.headers.get("origin")
+    if origin:
+        from urllib.parse import urlparse
+
+        host = urlparse(origin).hostname or ""
+        if host not in _ALLOWED_ORIGIN_HOSTS:
+            return False
+    if not _GUI_AUTH_TOKEN:
+        return True  # dev: no token configured
+    auth = ws.headers.get("authorization", "")
+    presented = auth[7:] if auth.lower().startswith("bearer ") else ws.query_params.get("token", "")
+    import hmac  # constant-time compare
+
+    return hmac.compare_digest(presented, _GUI_AUTH_TOKEN)
+
+
 @app.websocket("/api/v1/exec/gui/ws")
 async def gui_ws(ws: WebSocket) -> None:
+    if not _authorized(ws):
+        await ws.close(code=1008)  # policy violation
+        return
     await ws.accept()
     try:
         while True:

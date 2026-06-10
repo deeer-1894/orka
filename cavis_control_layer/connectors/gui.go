@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/cavis-oss/cavis_core/agent"
@@ -18,13 +19,15 @@ import (
 // RunAgentTool adapts the GUI executor to agent.BaseTool.
 type RunAgentTool struct {
 	WSURL    string
+	Token    string // shared secret sent as Authorization: Bearer on the WS handshake
 	MaxSteps int
 	Timeout  time.Duration
 }
 
-// NewRunAgentTool builds a run_agent tool targeting wsURL.
-func NewRunAgentTool(wsURL string) *RunAgentTool {
-	return &RunAgentTool{WSURL: wsURL, MaxSteps: 8, Timeout: 120 * time.Second}
+// NewRunAgentTool builds a run_agent tool targeting wsURL. token may be empty
+// (dev); when set it is sent so the GUI executor can authenticate the caller.
+func NewRunAgentTool(wsURL, token string) *RunAgentTool {
+	return &RunAgentTool{WSURL: wsURL, Token: token, MaxSteps: 8, Timeout: 120 * time.Second}
 }
 
 func (*RunAgentTool) Name() string { return "run_agent" }
@@ -51,7 +54,7 @@ func (t *RunAgentTool) Invoke(ctx context.Context, args map[string]any) (string,
 		"max_steps":   t.MaxSteps,
 	})
 
-	cli := ws.NewClient(t.WSURL,
+	opts := []ws.Option{
 		ws.WithOnMessage(func(b []byte) {
 			var m map[string]any
 			if json.Unmarshal(b, &m) == nil {
@@ -61,7 +64,11 @@ func (t *RunAgentTool) Invoke(ctx context.Context, args map[string]any) (string,
 				}
 			}
 		}),
-	)
+	}
+	if t.Token != "" {
+		opts = append(opts, ws.WithHeaders(http.Header{"Authorization": []string{"Bearer " + t.Token}}))
+	}
+	cli := ws.NewClient(t.WSURL, opts...)
 	cli.Start(ctx)
 	defer cli.Close()
 

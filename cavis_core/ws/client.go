@@ -6,6 +6,7 @@ package ws
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sync"
 	"time"
 
@@ -29,6 +30,7 @@ type Client struct {
 
 	sendCh     chan []byte
 	maxBackoff time.Duration
+	headers    http.Header
 }
 
 // Option configures a Client.
@@ -39,6 +41,10 @@ func WithOnMessage(f func([]byte)) Option { return func(c *Client) { c.onMessage
 
 // WithOnConnect sets a callback invoked on each successful (re)connect.
 func WithOnConnect(f func()) Option { return func(c *Client) { c.onConnect = f } }
+
+// WithHeaders sets HTTP headers sent on the WebSocket handshake (e.g. an auth
+// token for the executor).
+func WithHeaders(h http.Header) Option { return func(c *Client) { c.headers = h } }
 
 // NewClient creates a client for url (call Start to connect).
 func NewClient(url string, opts ...Option) *Client {
@@ -65,7 +71,7 @@ func (c *Client) loop(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.url, nil)
+		conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.url, c.headers)
 		if err != nil {
 			select {
 			case <-ctx.Done():

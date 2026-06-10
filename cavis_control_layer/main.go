@@ -96,7 +96,11 @@ func main() {
 
 	// Wire the real GUI executor (run_agent) when configured; else keep the mock.
 	if wsURL := cfg.Agent.GUIAgentWSURL; wsURL != "" {
-		service.GUITool = connectors.NewRunAgentTool(wsURL)
+		guiToken := os.Getenv("GUI_AUTH_TOKEN")
+		service.GUITool = connectors.NewRunAgentTool(wsURL, guiToken)
+		if guiToken == "" {
+			logger.Warn("gui agent has no GUI_AUTH_TOKEN; the executor is unauthenticated (dev only)")
+		}
 		logger.Info("gui agent enabled", "ws", wsURL)
 	}
 
