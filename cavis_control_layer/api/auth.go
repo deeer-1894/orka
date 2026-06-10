@@ -32,6 +32,10 @@ func (a *API) Register(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "bad request")
 		return
 	}
+	if a.authLimiter != nil && !a.authLimiter.allow("register:"+c.ClientIP()) {
+		fail(c, consts.StatusTooManyRequests, "too many attempts, please slow down")
+		return
+	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	if req.Email == "" || len(req.Password) < 6 {
 		fail(c, consts.StatusBadRequest, "email required and password >= 6 chars")
@@ -67,8 +71,18 @@ func (a *API) Login(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	// Throttle by IP and by email so neither a single source nor a single
+	// account can be brute-forced.
+	if a.authLimiter != nil &&
+		(!a.authLimiter.allow("login:"+c.ClientIP()) || !a.authLimiter.allow("login:"+req.Email)) {
+		fail(c, consts.StatusTooManyRequests, "too many attempts, please try again later")
+		return
+	}
 	u, err := a.Store.GetUser(ctx, req.Email)
 	if err != nil {
+		// Run a dummy compare so response timing doesn't reveal whether the
+		// account exists (anti-enumeration).
+		bcrypt.CompareHashAndPassword([]byte("$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinv"), []byte(req.Password))
 		fail(c, consts.StatusUnauthorized, "invalid credentials")
 		return
 	}

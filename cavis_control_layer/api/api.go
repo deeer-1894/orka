@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
@@ -25,6 +26,7 @@ type API struct {
 	Directory   connectors.UserDirectory // owner enrichment (cached)
 	Secret      string                   // HMAC secret for session tokens
 	chunks      *chunkManager            // resumable upload state
+	authLimiter *rateLimiter             // throttles login/register attempts
 }
 
 // authEmail returns the authenticated user's email set by AuthMiddleware.
@@ -39,7 +41,11 @@ func authEmail(c *app.RequestContext) string {
 
 // New builds an API controller set.
 func New(store *db.Storage, log *slog.Logger, m *obs.Metrics, chat *service.ChatService) *API {
-	return &API{Store: store, Log: log, Metrics: m, Chat: chat, chunks: newChunkManager()}
+	return &API{
+		Store: store, Log: log, Metrics: m, Chat: chat, chunks: newChunkManager(),
+		// 10 auth attempts per key per 5 minutes (per-IP and per-email).
+		authLimiter: newRateLimiter(10, 5*time.Minute),
+	}
 }
 
 // Metrics exposes a runtime metrics snapshot.
