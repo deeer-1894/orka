@@ -30,7 +30,7 @@ func fetchURL() mcpserver.ToolHandlerFunc {
 			u = "https://" + u
 		}
 		hreq, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-		hreq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; CavisBot/0.1)")
+		hreq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; OrkaBot/0.1)")
 		resp, err := httpSearchC.Do(hreq)
 		if err != nil {
 			return mcp.NewToolResultError("fetch failed: " + err.Error()), nil

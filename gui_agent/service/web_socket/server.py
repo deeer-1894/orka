@@ -35,7 +35,7 @@ async def lifespan(_app: "FastAPI"):
     await reset_operator()
 
 
-app = FastAPI(title="cavis-gui-agent", lifespan=lifespan)
+app = FastAPI(title="orka-gui-agent", lifespan=lifespan)
 
 _macros = MacroStore(os.getenv("MACRO_STORE", "./data/gui_macros.json"))
 _MACRO_ENABLED = os.getenv("MACRO_ENABLE", "1") == "1"

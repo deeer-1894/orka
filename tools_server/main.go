@@ -7,8 +7,8 @@ import (
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	"github.com/cavis-oss/cavis_core/config"
-	"github.com/cavis-oss/tools_server/server"
+	"github.com/orka-oss/orka_core/config"
+	"github.com/orka-oss/tools_server/server"
 )
 
 func main() {
@@ -41,7 +41,7 @@ func main() {
 	)
 
 	addr := cfg.Server.ToolsAddr
-	log.Printf("cavis tools_server listening on %s path=/api/v1/tools/mcp storage=%s", addr, cfg.Storage.BaseStoragePath)
+	log.Printf("orka tools_server listening on %s path=/api/v1/tools/mcp storage=%s", addr, cfg.Storage.BaseStoragePath)
 	if err := httpSrv.Start(addr); err != nil {
 		log.Fatalf("tools_server: %v", err)
 	}

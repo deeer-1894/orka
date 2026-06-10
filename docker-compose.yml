@@ -1,7 +1,7 @@
 services:
   redis:
     image: redis:7-alpine
-    container_name: cavis-redis
+    container_name: orka-redis
     ports:
       - "6379:6379"
     command: ["redis-server", "--appendonly", "no", "--save", ""]
@@ -13,11 +13,11 @@ services:
 
   mongo:
     image: mongo:7
-    container_name: cavis-mongo
+    container_name: orka-mongo
     ports:
       - "27017:27017"
     volumes:
-      - cavis_mongo_data:/data/db
+      - orka_mongo_data:/data/db
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
       interval: 5s
@@ -25,4 +25,4 @@ services:
       retries: 5
 
 volumes:
-  cavis_mongo_data:
+  orka_mongo_data:

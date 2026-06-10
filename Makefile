@@ -2,7 +2,7 @@
 
 # Workspace root is not a module, so `./...` cannot span modules.
 # Build/test each module via its path prefix.
-MODS := ./cavis_core/... ./cavis_middleware/... ./tools_server/... ./cavis_control_layer/...
+MODS := ./orka_core/... ./orka_middleware/... ./tools_server/... ./orka_control_layer/...
 
 # ---- local infra ----
 up:
@@ -22,10 +22,10 @@ test:
 	go test $(MODS)
 
 tidy:
-	cd cavis_core && go mod tidy
-	cd cavis_middleware && go mod tidy
+	cd orka_core && go mod tidy
+	cd orka_middleware && go mod tidy
 	cd tools_server && go mod tidy
-	cd cavis_control_layer && go mod tidy
+	cd orka_control_layer && go mod tidy
 	go work sync
 
 lint:
@@ -33,7 +33,7 @@ lint:
 
 # ---- run services ----
 run-control:
-	go run ./cavis_control_layer
+	go run ./orka_control_layer
 
 run-tools:
 	go run ./tools_server
@@ -49,12 +49,12 @@ run-web:
 #   WS  (control layer): ws://localhost:8100/api/v1/exec/gui/ws
 #   noVNC (UI live view): http://localhost:6080/vnc.html
 gui-sandbox:
-	docker build -t cavis-gui-agent gui_agent
-	docker run -d --name cavis-gui --rm --shm-size=1g -p 8100:8100 -p 6080:6080 cavis-gui-agent
+	docker build -t orka-gui-agent gui_agent
+	docker run -d --name orka-gui --rm --shm-size=1g -p 8100:8100 -p 6080:6080 orka-gui-agent
 
 gui-sandbox-stop:
-	docker stop cavis-gui || true
+	docker stop orka-gui || true
 
 # ---- eval (Phase 8) ----
 eval:
-	cd cavis_control_layer && go test ./eval/... -run TestReplay -v
+	cd orka_control_layer && go test ./eval/... -run TestReplay -v

@@ -13,8 +13,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	"github.com/cavis-oss/tools_server/identity"
-	"github.com/cavis-oss/tools_server/util"
+	"github.com/orka-oss/tools_server/identity"
+	"github.com/orka-oss/tools_server/util"
 )
 
 // Meta describes a tool's group and the scope required to use it.

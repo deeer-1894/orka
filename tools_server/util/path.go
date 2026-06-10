@@ -1,7 +1,7 @@
 // Package util holds gateway path helpers.
 package util
 
-import "github.com/cavis-oss/cavis_core/pathsafe"
+import "github.com/orka-oss/orka_core/pathsafe"
 
 // ResolvePath confines rel to the per-user root base/<user> using filepath.Rel
 // containment (never HasPrefix). Returns an error on traversal.

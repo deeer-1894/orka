@@ -64,7 +64,7 @@ class RemoteBrowserOperator:
             # mirrors exactly what the agent does — unlike launch(), whose page
             # lands in a separate background tab.
             self._context = await self._pw.chromium.launch_persistent_context(
-                user_data_dir="/tmp/cavis-profile",
+                user_data_dir="/tmp/orka-profile",
                 headless=self.headless,
                 no_viewport=True,
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--start-maximized"],

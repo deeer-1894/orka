@@ -7,7 +7,7 @@ import type {
 } from "./types";
 
 const BASE = "/api/v1/controller";
-const TOKEN_KEY = "cavis.token";
+const TOKEN_KEY = "orka.token";
 
 export const auth = {
   token: () => localStorage.getItem(TOKEN_KEY) || "",

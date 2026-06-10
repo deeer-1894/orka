@@ -1,4 +1,4 @@
-# Cavis local config. Every value can be overridden by the matching env var
+# Orka local config. Every value can be overridden by the matching env var
 # (see .env.example). Do NOT put real secrets here; use env in real deploys.
 
 server:
@@ -19,7 +19,7 @@ llm:
 
 storage:
   mongo_uri: "mongodb://localhost:27017"
-  mongo_db: "cavis"
+  mongo_db: "orka"
   redis_addr: "localhost:6379"
   base_storage_path: "./data/storage"
 

@@ -38,7 +38,7 @@ export function Sidebar({
           <span className="grid h-7 w-7 place-items-center rounded-lg bg-accent text-white font-serif text-[15px] leading-none">
             C
           </span>
-          <span className="font-serif text-[18px] text-ink">Cavis</span>
+          <span className="font-serif text-[18px] text-ink">Orka</span>
         </div>
 
         <div className="px-3">

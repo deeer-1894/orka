@@ -1,9 +1,9 @@
-module github.com/cavis-oss/tools_server
+module github.com/orka-oss/tools_server
 
 go 1.25.5
 
 require (
-	github.com/cavis-oss/cavis_core v0.0.0
+	github.com/orka-oss/orka_core v0.0.0
 	github.com/mark3labs/mcp-go v0.54.1
 )
 
@@ -17,4 +17,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/cavis-oss/cavis_core => ../cavis_core
+replace github.com/orka-oss/orka_core => ../orka_core

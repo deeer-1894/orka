@@ -12,7 +12,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	"github.com/cavis-oss/cavis_core/security"
+	"github.com/orka-oss/orka_core/security"
 )
 
 func transportHeaders(h map[string]string) []transport.StreamableHTTPCOption {
@@ -90,7 +90,7 @@ func tokenHeader(t *testing.T, email string, scopes []string) map[string]string 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return map[string]string{"X-Cavis-Token": tok}
+	return map[string]string{"X-Orka-Token": tok}
 }
 
 func TestGateway_FileWriteReadWithinRoot(t *testing.T) {

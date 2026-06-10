@@ -54,7 +54,7 @@ func httpRequest() mcpserver.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		hreq.Header.Set("User-Agent", "CavisBot/0.1")
+		hreq.Header.Set("User-Agent", "OrkaBot/0.1")
 		if ct := req.GetString("content_type", ""); ct != "" {
 			hreq.Header.Set("Content-Type", ct)
 		} else if method == http.MethodPost {

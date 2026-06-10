@@ -1,8 +1,8 @@
 go 1.25.5
 
 use (
-	./cavis_control_layer
-	./cavis_core
-	./cavis_middleware
+	./orka_control_layer
+	./orka_core
+	./orka_middleware
 	./tools_server
 )

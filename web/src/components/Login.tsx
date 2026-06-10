@@ -37,7 +37,7 @@ export function Login({ onAuthed }: { onAuthed: (s: Session) => void }) {
           <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-accent text-white font-serif text-[22px]">
             C
           </div>
-          <h1 className="font-serif text-[26px] text-ink">Welcome to Cavis</h1>
+          <h1 className="font-serif text-[26px] text-ink">Welcome to Orka</h1>
           <p className="mt-1 text-[14px] text-muted">
             {mode === "login" ? "登录你的工作区" : "创建一个新账号"}
           </p>

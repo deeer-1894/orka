@@ -1,4 +1,4 @@
-// Mirrors the Go event protocol in cavis_core/messages.
+// Mirrors the Go event protocol in orka_core/messages.
 
 export type EventType =
   | "task"

@@ -48,7 +48,7 @@ func webSearch() mcpserver.ToolHandlerFunc {
 
 		endpoint := "https://html.duckduckgo.com/html/?q=" + url.QueryEscape(q)
 		hreq, _ := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-		hreq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; CavisBot/0.1)")
+		hreq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; OrkaBot/0.1)")
 		resp, err := httpSearchC.Do(hreq)
 		if err != nil {
 			return mcp.NewToolResultError("search failed: " + err.Error()), nil
@@ -96,7 +96,7 @@ func wikiSearch(ctx context.Context, q string, limit int) string {
 		api := fmt.Sprintf("https://%s.wikipedia.org/w/api.php?action=query&list=search&srsearch=%s&format=json&srlimit=%d",
 			lang, url.QueryEscape(q), limit)
 		hreq, _ := http.NewRequestWithContext(ctx, http.MethodGet, api, nil)
-		hreq.Header.Set("User-Agent", "CavisBot/0.1 (https://example.com)")
+		hreq.Header.Set("User-Agent", "OrkaBot/0.1 (https://example.com)")
 		resp, err := httpSearchC.Do(hreq)
 		if err != nil {
 			continue

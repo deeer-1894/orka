@@ -116,7 +116,7 @@ func searxngSearch(ctx context.Context, q string, limit int) string {
 	base := strings.TrimRight(os.Getenv("SEARXNG_URL"), "/")
 	endpoint := fmt.Sprintf("%s/search?q=%s&format=json", base, url.QueryEscape(q))
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	req.Header.Set("User-Agent", "CavisBot/0.1")
+	req.Header.Set("User-Agent", "OrkaBot/0.1")
 	resp, err := httpSearchC.Do(req)
 	if err != nil {
 		return ""

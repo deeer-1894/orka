@@ -167,7 +167,7 @@ function Workbench({
               <path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
           </button>
-          <span className="font-serif text-[16px] text-ink">Cavis</span>
+          <span className="font-serif text-[16px] text-ink">Orka</span>
           <span className="text-[12px] text-faint">deepseek-v4-flash</span>
           <button
             onClick={() => setDrawerOpen((o) => !o)}

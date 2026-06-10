@@ -33,7 +33,7 @@ export function Composer({
               }
             }}
             rows={1}
-            placeholder="Message Cavis…"
+            placeholder="Message Orka…"
             className="block max-h-48 flex-1 resize-none bg-transparent px-3 py-2 text-[15px] outline-none placeholder:text-faint"
           />
           {busy ? (
@@ -58,7 +58,7 @@ export function Composer({
           )}
         </div>
         <p className="mt-2 text-center text-[11px] text-faint">
-          Cavis 会自动选择工具(搜索 · 网页 · 天气 · 文件 · 浏览器)。可能出错,工具操作会作用于你的工作区。
+          Orka 会自动选择工具(搜索 · 网页 · 天气 · 文件 · 浏览器)。可能出错,工具操作会作用于你的工作区。
         </p>
       </div>
     </div>

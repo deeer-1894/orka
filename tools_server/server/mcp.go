@@ -10,9 +10,9 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	"github.com/cavis-oss/cavis_core/security"
-	"github.com/cavis-oss/tools_server/identity"
-	"github.com/cavis-oss/tools_server/tools"
+	"github.com/orka-oss/orka_core/security"
+	"github.com/orka-oss/tools_server/identity"
+	"github.com/orka-oss/tools_server/tools"
 )
 
 // Config configures the gateway.
@@ -27,7 +27,7 @@ func New(cfg Config) *mcpserver.MCPServer {
 	bl := toSet(cfg.Blacklist)
 	reg := tools.Registry()
 
-	s := mcpserver.NewMCPServer("cavis-tools", "0.1.0",
+	s := mcpserver.NewMCPServer("orka-tools", "0.1.0",
 		mcpserver.WithToolCapabilities(true),
 		// tools/list filter: drop tools the caller's scopes don't grant.
 		mcpserver.WithToolFilter(func(ctx context.Context, ts []mcp.Tool) []mcp.Tool {
@@ -47,12 +47,12 @@ func New(cfg Config) *mcpserver.MCPServer {
 	return s
 }
 
-// ContextFunc verifies the signed context token from the X-Cavis-Token header
+// ContextFunc verifies the signed context token from the X-Orka-Token header
 // and injects the caller identity. An X-User-Email header (without a valid
 // token) yields an identity with NO scopes, so scoped tools are denied.
 func ContextFunc(secret []byte) mcpserver.HTTPContextFunc {
 	return func(ctx context.Context, r *http.Request) context.Context {
-		if tok := r.Header.Get("X-Cavis-Token"); tok != "" {
+		if tok := r.Header.Get("X-Orka-Token"); tok != "" {
 			if ct, err := security.Verify(tok, secret); err == nil {
 				return identity.With(ctx, identity.Identity{Email: ct.UserEmail, Scopes: ct.Scopes})
 			}
