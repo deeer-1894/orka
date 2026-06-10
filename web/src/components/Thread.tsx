@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
-import type { BrowserPayload, ClarifyPayload, Message, ToolPayload } from "../types";
+import type { BrowserPayload, ClarifyPayload, Message, ToolPayload, WeatherCardData } from "../types";
 import { Markdown } from "./Markdown";
+import { WeatherCard, parseWeatherCard } from "./WeatherCard";
 
 type Block =
   | { kind: "user"; m: Message }
   | { kind: "assistant"; m: Message }
   | { kind: "clarify"; m: Message }
+  | { kind: "weather"; data: WeatherCardData }
   | { kind: "steps"; items: Message[] };
 
 function group(messages: Message[]): Block[] {
@@ -27,6 +29,15 @@ function group(messages: Message[]): Block[] {
       flush();
       blocks.push({ kind: "clarify", m });
     } else {
+      // A weather tool result carries a structured card → surface it as its own
+      // rich block (and still keep the tool step in the collapsible list).
+      if (m.type === "tool" && (m.payload as ToolPayload)?.tool === "weather") {
+        const card = parseWeatherCard((m.payload as ToolPayload)?.result);
+        if (card) {
+          flush();
+          blocks.push({ kind: "weather", data: card });
+        }
+      }
       buf.push(m); // tool / browser / agent / skill / file
     }
   }
@@ -65,6 +76,7 @@ export function Thread({
             {b.kind === "user" && <UserBubble m={b.m} />}
             {b.kind === "assistant" && <Assistant m={b.m} />}
             {b.kind === "clarify" && <Clarify m={b.m} onResume={onResume} />}
+            {b.kind === "weather" && <WeatherCard data={b.data} />}
             {b.kind === "steps" && <Steps items={b.items} onOpenViewport={onOpenViewport} />}
           </div>
         ))}
@@ -143,7 +155,7 @@ function Step({ m }: { m: Message }) {
         {p.error ? (
           <span className="text-accent"> · {p.error}</span>
         ) : p.result ? (
-          <span className="text-muted"> · {trunc(p.result, 90)}</span>
+          <span className="text-muted"> · {trunc(stripCard(p.result), 90)}</span>
         ) : null}
       </div>
     );
@@ -240,4 +252,10 @@ function Empty() {
 function trunc(s: string | undefined, n: number) {
   if (!s) return "";
   return s.length > n ? s.slice(0, n) + "…" : s;
+}
+
+// stripCard removes the embedded <weather-card> JSON block from a tool result
+// so the collapsible step list shows only the human-readable text.
+function stripCard(s: string): string {
+  return s.replace(/\n?<weather-card>[\s\S]*?<\/weather-card>/g, "").trim();
 }

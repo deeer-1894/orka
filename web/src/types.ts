@@ -44,6 +44,24 @@ export interface ToolPayload {
   error?: string;
 }
 
+export interface WeatherCardData {
+  location: string;
+  current: {
+    temp_c: string;
+    feels_c: string;
+    desc: string;
+    humidity: string;
+    wind_kmph: string;
+  };
+  forecast?: {
+    date: string;
+    min_c: string;
+    max_c: string;
+    desc: string;
+    rain: string;
+  }[];
+}
+
 export interface BrowserPayload {
   type?: string;
   mode?: "dom" | "vision" | "macro";

@@ -64,6 +64,14 @@ func weather() mcpserver.ToolHandlerFunc {
 		}
 		out := fmt.Sprintf("Weather for %s:\n- now: %s°C (feels %s°C), %s, humidity %s%%, wind %s km/h\n",
 			loc, c.TempC, c.FeelsLikeC, cur, c.Humidity, c.WindKmph)
+
+		// Build a structured card alongside the prose so the frontend can render
+		// a rich weather widget (icons + hi/lo). The model still narrates from
+		// the text above; the card travels in a tagged block it can ignore.
+		card := weatherCard{
+			Location: loc,
+			Current:  weatherNow{TempC: c.TempC, FeelsC: c.FeelsLikeC, Desc: cur, Humidity: c.Humidity, WindKmph: c.WindKmph},
+		}
 		if len(w.Weather) > 0 {
 			out += "Forecast (free source provides ~3 days):\n"
 			for _, d := range w.Weather {
@@ -76,8 +84,35 @@ func weather() mcpserver.ToolHandlerFunc {
 					rain = d.Hourly[4].ChanceRain
 				}
 				out += fmt.Sprintf("- %s: %s–%s°C, %s (rain %s%%)\n", d.Date, d.MintempC, d.MaxtempC, dd, rain)
+				card.Forecast = append(card.Forecast, weatherDay{Date: d.Date, MinC: d.MintempC, MaxC: d.MaxtempC, Desc: dd, Rain: rain})
 			}
+		}
+		if cardJSON, err := json.Marshal(card); err == nil {
+			out += "\n<weather-card>" + string(cardJSON) + "</weather-card>"
 		}
 		return mcp.NewToolResultText(out), nil
 	}
+}
+
+// weatherCard is the structured payload the frontend renders as a widget.
+type weatherCard struct {
+	Location string       `json:"location"`
+	Current  weatherNow   `json:"current"`
+	Forecast []weatherDay `json:"forecast,omitempty"`
+}
+
+type weatherNow struct {
+	TempC    string `json:"temp_c"`
+	FeelsC   string `json:"feels_c"`
+	Desc     string `json:"desc"`
+	Humidity string `json:"humidity"`
+	WindKmph string `json:"wind_kmph"`
+}
+
+type weatherDay struct {
+	Date string `json:"date"`
+	MinC string `json:"min_c"`
+	MaxC string `json:"max_c"`
+	Desc string `json:"desc"`
+	Rain string `json:"rain"`
 }
