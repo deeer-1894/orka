@@ -80,16 +80,14 @@ func main() {
 	}
 	cpStore := checkpoint.NewRedisStore(rdb, "orka:cp:")
 
-	// LLM: real OpenAI-compatible client, or a deterministic demo client for
-	// offline smoke tests (LLM_MOCK=1).
-	var mainLLM, miniLLM llm.Client
-	if os.Getenv("LLM_MOCK") == "1" {
-		mainLLM, miniLLM = llm.NewDemo(), llm.NewDemo()
-		logger.Info("using demo LLM (LLM_MOCK=1)")
-	} else {
-		mainLLM = llm.NewOpenAIClient(cfg.LLM.OpenAIBaseURL, cfg.LLM.OpenAIAPIKey)
-		miniLLM = mainLLM
+	// LLM: real OpenAI-compatible client only (no fake/demo fallback — the
+	// server always talks to the configured model).
+	if cfg.LLM.OpenAIAPIKey == "" {
+		logger.Warn("LLM api key is empty; chat requests will fail until OPENAI_API_KEY is set")
 	}
+	var mainLLM, miniLLM llm.Client
+	mainLLM = llm.NewOpenAIClient(cfg.LLM.OpenAIBaseURL, cfg.LLM.OpenAIAPIKey)
+	miniLLM = mainLLM
 
 	msg := message_utils.New(store, cfg.Obs.PersistSampling, logger)
 	chat := service.NewChatService(cfg, mainLLM, miniLLM, cpStore, msg, metrics, logger)

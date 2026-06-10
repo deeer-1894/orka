@@ -66,10 +66,10 @@ type ObsConfig struct {
 	PersistSampling float64 `yaml:"persist_sampling"`
 }
 
-// IsDev reports whether the process is running in dev mode (ORKA_DEV=1 or
-// LLM_MOCK=1), which relaxes the secret check below.
+// IsDev reports whether the process is running in dev mode (ORKA_DEV=1), which
+// relaxes the secret check below.
 func IsDev() bool {
-	return os.Getenv("ORKA_DEV") == "1" || os.Getenv("LLM_MOCK") == "1"
+	return os.Getenv("ORKA_DEV") == "1"
 }
 
 // Validate enforces security-critical invariants at startup. Outside dev mode a

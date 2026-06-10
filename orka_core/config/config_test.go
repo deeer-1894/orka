@@ -6,7 +6,6 @@ import (
 
 func TestValidateSecret(t *testing.T) {
 	t.Setenv("ORKA_DEV", "")
-	t.Setenv("LLM_MOCK", "")
 
 	c := &Config{}
 	c.Security.CtxTokenSecret = DefaultDevSecret
