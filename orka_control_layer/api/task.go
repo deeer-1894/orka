@@ -60,6 +60,76 @@ func (a *API) CreateTask(ctx context.Context, c *app.RequestContext) {
 	ok(c, t)
 }
 
+type scheduleReq struct {
+	ConversationID string `json:"conversation_id"`
+	Prompt         string `json:"prompt"`
+	IntervalSec    int64  `json:"interval_sec"`
+	Title          string `json:"title"`
+}
+
+// ScheduleTask creates a recurring task: every IntervalSec the scheduler renders
+// Prompt and triggers a chat run for the owner.
+func (a *API) ScheduleTask(ctx context.Context, c *app.RequestContext) {
+	var req scheduleReq
+	if err := bind(c, &req); err != nil {
+		fail(c, consts.StatusBadRequest, "bad request: "+err.Error())
+		return
+	}
+	owner := authEmail(c)
+	if owner == "" {
+		fail(c, consts.StatusUnauthorized, "login required")
+		return
+	}
+	if req.Prompt == "" || req.IntervalSec < 30 {
+		fail(c, consts.StatusBadRequest, "prompt required and interval_sec >= 30")
+		return
+	}
+	now := time.Now().UnixMilli()
+	t := &db.TaskMeta{
+		TaskID:         messages.NewID(),
+		ConversationID: req.ConversationID,
+		OwnerEmail:     owner,
+		Variables:      map[string]any{"prompt_template": req.Prompt, "title": req.Title},
+		RunStatus:      db.RunStart,
+		CronStatus:     "on",
+		IntervalSec:    req.IntervalSec,
+		NextRunAt:      now + req.IntervalSec*1000, // first run one interval from now
+		CreatedAt:      now,
+	}
+	if err := a.Store.CreateTask(ctx, t); err != nil {
+		a.Log.Error("schedule task", "err", err)
+		fail(c, consts.StatusInternalServerError, "schedule failed")
+		return
+	}
+	if req.ConversationID != "" {
+		_ = a.Store.AddTaskToConversation(ctx, req.ConversationID, t.TaskID)
+	}
+	ok(c, t)
+}
+
+type taskIDReq struct {
+	TaskID string `json:"task_id"`
+}
+
+// UnscheduleTask turns a recurring task off (owner-checked).
+func (a *API) UnscheduleTask(ctx context.Context, c *app.RequestContext) {
+	var req taskIDReq
+	if err := bind(c, &req); err != nil {
+		fail(c, consts.StatusBadRequest, "bad request")
+		return
+	}
+	t, err := a.Store.GetTask(ctx, req.TaskID)
+	if err != nil || t.OwnerEmail != authEmail(c) {
+		fail(c, consts.StatusNotFound, "task not found")
+		return
+	}
+	if err := a.Store.SetTaskCron(ctx, req.TaskID, "off", t.IntervalSec, 0); err != nil {
+		fail(c, consts.StatusInternalServerError, "update failed")
+		return
+	}
+	ok(c, map[string]string{"status": "off", "task_id": req.TaskID})
+}
+
 // GetTasks lists tasks filtered by conversation and/or owner.
 func (a *API) GetTasks(ctx context.Context, c *app.RequestContext) {
 	var req getTasksReq

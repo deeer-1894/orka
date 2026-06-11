@@ -251,6 +251,32 @@ func (s *Storage) UpdateTaskStatus(ctx context.Context, id, runStatus string) er
 	return nil
 }
 
+// SetTaskCron turns recurring scheduling on/off for a task and sets its period
+// and next-due time.
+func (s *Storage) SetTaskCron(ctx context.Context, id, cronStatus string, intervalSec, nextRunAt int64) error {
+	_, err := s.Tasks.UpdateOne(ctx,
+		bson.M{"task_id": id},
+		bson.M{"$set": bson.M{"cron_status": cronStatus, "interval_sec": intervalSec, "next_run_at": nextRunAt}},
+	)
+	if err != nil {
+		return fmt.Errorf("set task cron: %w", err)
+	}
+	return nil
+}
+
+// AdvanceTaskRun records a cron run: pushes next_run_at forward and stores a
+// short result summary.
+func (s *Storage) AdvanceTaskRun(ctx context.Context, id string, nextRunAt int64, lastResult string) error {
+	_, err := s.Tasks.UpdateOne(ctx,
+		bson.M{"task_id": id},
+		bson.M{"$set": bson.M{"next_run_at": nextRunAt, "last_result": lastResult, "run_status": RunRunning}},
+	)
+	if err != nil {
+		return fmt.Errorf("advance task run: %w", err)
+	}
+	return nil
+}
+
 // paginate is a generic find-with-skip/limit helper, newest first by created_at.
 func paginate[T any](ctx context.Context, col *mongo.Collection, filter bson.M, page, size int64, out *[]T) error {
 	if size <= 0 {

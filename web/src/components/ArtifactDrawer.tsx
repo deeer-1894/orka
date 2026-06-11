@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, auth, files as fileApi } from "../api";
-import type { BrowserPayload, Message, MetricsSnapshot, OwnerInfo, TaskMeta } from "../types";
-import { initials } from "../lib/format";
+import type { BrowserPayload, Message, MetricsSnapshot, TaskMeta } from "../types";
 import { Markdown } from "./Markdown";
 
 type Tab = "browser" | "files" | "metrics" | "tasks";
@@ -13,8 +12,6 @@ export function ArtifactDrawer({
   setTab,
   messages,
   email,
-  tasks,
-  owners,
 }: {
   open: boolean;
   onClose: () => void;
@@ -22,8 +19,6 @@ export function ArtifactDrawer({
   setTab: (t: Tab) => void;
   messages: Message[];
   email: string;
-  tasks: TaskMeta[];
-  owners: Record<string, OwnerInfo>;
 }) {
   return (
     <aside
@@ -60,7 +55,7 @@ export function ArtifactDrawer({
           {tab === "browser" && <BrowserPanel messages={messages} />}
           {tab === "files" && <FilesPanel email={email} />}
           {tab === "metrics" && <MetricsPanel />}
-          {tab === "tasks" && <TasksPanel tasks={tasks} owners={owners} />}
+          {tab === "tasks" && <TasksPanel />}
         </div>
       </div>
     </aside>
@@ -308,25 +303,125 @@ function MetricsPanel() {
   );
 }
 
-function TasksPanel({ tasks, owners }: { tasks: TaskMeta[]; owners: Record<string, OwnerInfo> }) {
-  if (tasks.length === 0) return <Blank>No tasks</Blank>;
+const RUN_COLOR: Record<string, string> = {
+  running: "text-accent", done: "text-ok", failed: "text-accent", paused: "text-muted", start: "text-muted",
+};
+const INTERVALS = [
+  { label: "每分钟", sec: 60 },
+  { label: "每 10 分钟", sec: 600 },
+  { label: "每小时", sec: 3600 },
+  { label: "每天", sec: 86400 },
+];
+
+function taskPrompt(t: TaskMeta): string {
+  const v = (t.variables || {}) as Record<string, unknown>;
+  return String(v.prompt_template || v.prompt || v.title || "—");
+}
+function fmtWhen(ms?: number): string {
+  if (!ms) return "";
+  const d = new Date(ms);
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+function TasksPanel() {
+  const [tasks, setTasks] = useState<TaskMeta[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [prompt, setPrompt] = useState("");
+  const [sec, setSec] = useState(3600);
+
+  const refresh = () => api.getTasks().then((r) => setTasks(r.tasks || [])).catch(() => {});
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 5000);
+    return () => clearInterval(id);
+  }, []);
+
+  const create = async () => {
+    if (!prompt.trim()) return;
+    await api.scheduleTask(prompt.trim(), sec, prompt.trim().slice(0, 24));
+    setPrompt("");
+    setCreating(false);
+    refresh();
+  };
+
   return (
-    <div className="space-y-1.5 p-3">
-      {tasks.map((t) => {
-        const o = owners[t.owner_email];
-        return (
-          <div key={t.task_id} className="flex items-center gap-2.5 rounded-xl border border-border bg-surface2/40 px-3 py-2.5">
-            <div className="grid h-8 w-8 place-items-center rounded-full bg-accent/90 text-[11px] text-white">
-              {initials(o?.name || t.owner_email || "?")}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[13px] text-ink">{o?.name || t.owner_email || "—"}</div>
-              <div className="text-[11px] text-faint">{t.task_id.slice(0, 10)}</div>
-            </div>
-            <span className="text-[11px] text-muted">{t.run_status}</span>
+    <div className="p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[12px] text-faint">任务 · {tasks.length}</span>
+        <button
+          onClick={() => setCreating((o) => !o)}
+          className="rounded-lg border border-border px-2.5 py-1 text-[12px] text-muted hover:border-accent/40"
+        >
+          {creating ? "取消" : "+ 定时任务"}
+        </button>
+      </div>
+
+      {creating && (
+        <div className="mb-3 space-y-2 rounded-xl border border-border bg-surface2/40 p-3">
+          <textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            rows={2}
+            placeholder="让 Orka 定时做什么?例如:总结今天的科技新闻"
+            className="w-full resize-none rounded-lg border border-border bg-surface px-2.5 py-2 text-[13px] outline-none focus:border-accent/50"
+          />
+          <div className="flex items-center gap-2">
+            <select
+              value={sec}
+              onChange={(e) => setSec(Number(e.target.value))}
+              className="rounded-lg border border-border bg-surface px-2 py-1.5 text-[13px] outline-none"
+            >
+              {INTERVALS.map((i) => (
+                <option key={i.sec} value={i.sec}>{i.label}</option>
+              ))}
+            </select>
+            <button
+              onClick={create}
+              disabled={!prompt.trim()}
+              className="ml-auto rounded-lg bg-accent px-3 py-1.5 text-[13px] text-white disabled:opacity-40"
+            >
+              创建
+            </button>
           </div>
-        );
-      })}
+        </div>
+      )}
+
+      {tasks.length === 0 && <Blank>暂无任务</Blank>}
+      <div className="space-y-1.5">
+        {tasks.map((t) => {
+          const scheduled = t.cron_status === "on";
+          return (
+            <div key={t.task_id} className="rounded-xl border border-border bg-surface2/40 px-3 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className={"text-[11px] font-medium " + (RUN_COLOR[t.run_status] || "text-muted")}>
+                  ● {t.run_status}
+                </span>
+                {scheduled && (
+                  <span className="rounded-full bg-accentsoft px-1.5 py-0.5 text-[10px] text-accent">
+                    定时 · {INTERVALS.find((i) => i.sec === t.interval_sec)?.label || (t.interval_sec || 0) + "s"}
+                  </span>
+                )}
+                <span className="ml-auto text-[10px] text-faint">{fmtWhen(t.created_at)}</span>
+              </div>
+              <div className="mt-1 line-clamp-2 text-[13px] text-ink">{taskPrompt(t)}</div>
+              {scheduled && t.next_run_at ? (
+                <div className="mt-1 text-[11px] text-faint">下次运行 {fmtWhen(t.next_run_at)}</div>
+              ) : null}
+              {t.last_result ? (
+                <div className="mt-1 line-clamp-2 text-[11px] text-muted">↳ {t.last_result}</div>
+              ) : null}
+              {scheduled && (
+                <button
+                  onClick={() => api.unscheduleTask(t.task_id).then(refresh)}
+                  className="mt-1.5 text-[11px] text-faint hover:text-accent"
+                >
+                  停用定时
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

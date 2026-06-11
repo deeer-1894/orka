@@ -82,6 +82,9 @@ export const api = {
     post<Message[]>("/conversation/get-messages", { conversation_id, size: 200 }),
   getTasks: (filter: { conversation_id?: string } = {}) =>
     post<{ tasks: TaskMeta[]; owners: Record<string, OwnerInfo> }>("/task/get-tasks", { ...filter, size: 100 }),
+  scheduleTask: (prompt: string, interval_sec: number, title: string, conversation_id = "") =>
+    post<TaskMeta>("/task/schedule", { prompt, interval_sec, title, conversation_id }),
+  unscheduleTask: (task_id: string) => post("/task/unschedule", { task_id }),
   metrics: async (): Promise<MetricsSnapshot> => {
     const res = await fetch(BASE + "/metrics", { headers: headers(false) });
     const j = await res.json();

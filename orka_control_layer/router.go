@@ -33,6 +33,8 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 
 	g.POST("/task/create", a.CreateTask)
 	g.POST("/task/get-tasks", a.GetTasks)
+	g.POST("/task/schedule", a.ScheduleTask)
+	g.POST("/task/unschedule", a.UnscheduleTask)
 
 	g.POST("/chat/run", a.ChatRun)
 	g.GET("/chat/attach", a.ChatAttach) // reconnect + replay missed SSE events

@@ -6,7 +6,7 @@ import { Sidebar } from "./components/Sidebar";
 import { Thread } from "./components/Thread";
 import { Composer } from "./components/Composer";
 import { ArtifactDrawer } from "./components/ArtifactDrawer";
-import type { Conversation, Message, OwnerInfo, TaskMeta } from "./types";
+import type { Conversation, Message } from "./types";
 
 type Tab = "browser" | "files" | "metrics" | "tasks";
 
@@ -46,8 +46,6 @@ function Workbench({
 }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeID, setActiveID] = useState("");
-  const [tasks, setTasks] = useState<TaskMeta[]>([]);
-  const [owners, setOwners] = useState<Record<string, OwnerInfo>>({});
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -56,12 +54,8 @@ function Workbench({
 
   const { messages, status, run, kill, setMessages } = useChatStream();
 
-  const refreshTasks = useCallback(() => {
-    api.getTasks().then((r) => {
-      setTasks(r.tasks || []);
-      setOwners(r.owners || {});
-    }).catch(() => {});
-  }, []);
+  // Tasks now self-fetch inside the Tasks panel; keep a no-op so call sites stay simple.
+  const refreshTasks = useCallback(() => {}, []);
 
   const refreshConversations = useCallback(() => {
     api.listConversations().then((c) => setConversations(c || [])).catch(() => {});
@@ -212,8 +206,6 @@ function Workbench({
         setTab={setDrawerTab}
         messages={messages}
         email={user.email}
-        tasks={tasks}
-        owners={owners}
       />
     </div>
   );

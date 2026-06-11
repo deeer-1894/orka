@@ -50,4 +50,7 @@ type TaskMeta struct {
 	OwnerEmail        string         `bson:"owner_email" json:"owner_email"`
 	Variables         map[string]any `bson:"variables" json:"variables"`
 	CreatedAt         int64          `bson:"created_at" json:"created_at"`
+	IntervalSec       int64          `bson:"interval_sec" json:"interval_sec"` // recurring period (0 = not scheduled)
+	NextRunAt         int64          `bson:"next_run_at" json:"next_run_at"`   // unix millis the cron is next due
+	LastResult        string         `bson:"last_result" json:"last_result"`   // short summary of the latest run
 }

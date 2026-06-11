@@ -90,6 +90,9 @@ export interface TaskMeta {
   owner_email: string;
   variables: Record<string, unknown> | null;
   created_at: number;
+  interval_sec?: number;
+  next_run_at?: number;
+  last_result?: string;
 }
 
 export interface OwnerInfo {

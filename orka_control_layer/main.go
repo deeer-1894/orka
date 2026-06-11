@@ -144,7 +144,10 @@ func main() {
 				}, func(messages.Message) {})
 				return nil
 			},
-			Interval: time.Minute,
+			Advance: func(ctx context.Context, taskID string, nextRunAt int64) error {
+				return store.AdvanceTaskRun(ctx, taskID, nextRunAt, "")
+			},
+			Interval: 20 * time.Second,
 			Log:      logger,
 		}
 		go sched.Start(context.Background())
