@@ -57,6 +57,16 @@ func (m *Tools) Handle(rc *agent.RunContext, next func(*agent.RunContext) error)
 		if m.MaxHistory > 0 {
 			hist, _ = trimHistory(hist, m.MaxHistory)
 		}
+		// Budget-aware nudge: two iterations before the cap, tell the model to
+		// stop researching and produce the deliverable (write any required file)
+		// NOW, while tools are still available — otherwise a thorough run can
+		// exhaust the loop on data gathering and never reach its output step.
+		if iter == maxIters-2 {
+			hist = append(hist, llm.ChatMessage{
+				Role:    llm.RoleUser,
+				Content: "⚠️ 工具调用预算即将用完。请立刻停止额外调研,用现有信息完成任务的最终产出:如果任务要求写文件,现在就调用 file_write 写入,然后给出简短总结。",
+			})
+		}
 		req := llm.Request{Model: m.Model, Messages: hist, Tools: specs}
 		var resp llm.Response
 		var err error

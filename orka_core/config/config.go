@@ -159,7 +159,7 @@ func (c *Config) applyDefaults() {
 	setDefaultInt(&c.Agent.CheckpointTTLSec, 86400)
 	setDefault(&c.LLM.Model, "gpt-4o-mini")
 	setDefault(&c.LLM.MiniModel, c.LLM.Model)
-	setDefaultInt(&c.Security.CtxTokenTTLSec, 300)
+	setDefaultInt(&c.Security.CtxTokenTTLSec, 1800) // cover long agentic runs (the MCP client binds its token at run start)
 	setDefault(&c.Obs.LogLevel, "info")
 	if c.Obs.PersistSampling == 0 {
 		c.Obs.PersistSampling = 1.0

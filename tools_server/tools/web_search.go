@@ -51,6 +51,11 @@ func webSearch() mcpserver.ToolHandlerFunc {
 		hreq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; OrkaBot/0.1)")
 		resp, err := httpSearchC.Do(hreq)
 		if err != nil {
+			// DuckDuckGo unreachable/blocked → fall back to the keyless Wikipedia
+			// API rather than failing (which forces the model to over-fetch).
+			if wiki := wikiSearch(ctx, q, limit); wiki != "" {
+				return mcp.NewToolResultText(wiki), nil
+			}
 			return mcp.NewToolResultError("search failed: " + err.Error()), nil
 		}
 		defer resp.Body.Close()

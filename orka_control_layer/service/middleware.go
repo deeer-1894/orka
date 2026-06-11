@@ -44,9 +44,13 @@ func BuildPipeline(scene Scene, deps PipelineDeps) []agent.Middleware {
 	// the loop, and tools-mid re-trims each ReAct iteration so an agentic run
 	// with many tool calls cannot grow context (and cost) without bound.
 	const maxHistory = 40
+	// maxIters caps the ReAct loop. Tool calls within one iteration run
+	// concurrently, so 16 batches comfortably covers complex multi-tool tasks
+	// (research + compute + synthesize + write) without runaway loops.
+	const maxIters = 16
 	setup := &middlewares.Setup{SystemPrompt: deps.SystemPrompt}
 	memory := &middlewares.Memory{MaxMessages: maxHistory}
-	tools := &middlewares.Tools{LLM: deps.LLM, Model: deps.Model, Metrics: deps.Metrics, MaxHistory: maxHistory}
+	tools := &middlewares.Tools{LLM: deps.LLM, Model: deps.Model, Metrics: deps.Metrics, MaxHistory: maxHistory, MaxIters: maxIters}
 	interrupt := &middlewares.Interrupt{}
 	output := &middlewares.Output{}
 
