@@ -80,13 +80,15 @@ function Workbench({
     return () => clearInterval(id);
   }, []);
 
-  const newConversation = useCallback(async () => {
-    const c = await api.createConversation("New chat");
-    setConversations((cs) => [c, ...cs]);
-    seen.current.add(c.conversation_id);
-    setConvMessages(c.conversation_id, []);
-    setActiveID(c.conversation_id);
-  }, [setConvMessages]);
+  // "New chat" just resets to the empty state — the server conversation is
+  // created lazily on the first send (ensureConversation), so clicking around
+  // never accumulates empty "New chat" placeholders.
+  const newConversation = useCallback(() => setActiveID(""), []);
+
+  const onPrune = useCallback(async () => {
+    await api.pruneConversations().catch(() => {});
+    refreshConversations();
+  }, [refreshConversations]);
 
   const selectConversation = useCallback(
     async (id: string) => {
@@ -171,6 +173,7 @@ function Workbench({
         onNew={newConversation}
         onRename={onRename}
         onDelete={onDelete}
+        onPrune={onPrune}
         name={user.name}
         email={user.email}
         onSignOut={onSignOut}

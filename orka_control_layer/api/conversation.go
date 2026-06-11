@@ -118,6 +118,22 @@ func (a *API) DeleteConversation(ctx context.Context, c *app.RequestContext) {
 	ok(c, map[string]string{"deleted": req.ConversationID})
 }
 
+// PruneConversations deletes the user's empty (message-less) conversations.
+func (a *API) PruneConversations(ctx context.Context, c *app.RequestContext) {
+	owner := authEmail(c)
+	if owner == "" {
+		fail(c, consts.StatusUnauthorized, "login required")
+		return
+	}
+	n, err := a.Store.PruneEmptyConversations(ctx, owner)
+	if err != nil {
+		a.Log.Error("prune conversations", "err", err)
+		fail(c, consts.StatusInternalServerError, "prune failed")
+		return
+	}
+	ok(c, map[string]int{"removed": n})
+}
+
 // ListConversations returns the authenticated user's conversations.
 func (a *API) ListConversations(ctx context.Context, c *app.RequestContext) {
 	convs, err := a.Store.ListConversationsByOwner(ctx, authEmail(c), 0, 100)

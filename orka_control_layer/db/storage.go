@@ -180,6 +180,42 @@ func (s *Storage) DeleteConversation(ctx context.Context, id string) error {
 	return nil
 }
 
+// PruneEmptyConversations deletes the owner's conversations that have no chat
+// messages (the unused "New chat" placeholders). Returns the number removed.
+func (s *Storage) PruneEmptyConversations(ctx context.Context, owner string) (int, error) {
+	convs, err := s.ListConversationsByOwner(ctx, owner, 0, 10000)
+	if err != nil {
+		return 0, err
+	}
+	ids := make([]string, 0, len(convs))
+	for _, c := range convs {
+		ids = append(ids, c.ConversationID)
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	// One query: which of those conversations actually have messages.
+	vals, err := s.Messages.Distinct(ctx, "conversation_id", bson.M{"conversation_id": bson.M{"$in": ids}})
+	if err != nil {
+		return 0, fmt.Errorf("distinct messages: %w", err)
+	}
+	nonEmpty := make(map[string]bool, len(vals))
+	for _, v := range vals {
+		if id, ok := v.(string); ok {
+			nonEmpty[id] = true
+		}
+	}
+	n := 0
+	for _, id := range ids {
+		if !nonEmpty[id] {
+			if err := s.DeleteConversation(ctx, id); err == nil {
+				n++
+			}
+		}
+	}
+	return n, nil
+}
+
 func (s *Storage) AddTaskToConversation(ctx context.Context, convID, taskID string) error {
 	_, err := s.Conversations.UpdateOne(ctx,
 		bson.M{"conversation_id": convID},

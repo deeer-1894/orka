@@ -78,6 +78,7 @@ export const api = {
     post("/conversation/rename", { conversation_id, title }),
   deleteConversation: (conversation_id: string) =>
     post("/conversation/delete", { conversation_id }),
+  pruneConversations: () => post<{ removed: number }>("/conversation/prune-empty", {}),
   getMessages: (conversation_id: string) =>
     post<Message[]>("/conversation/get-messages", { conversation_id, size: 200 }),
   getTasks: (filter: { conversation_id?: string } = {}) =>
