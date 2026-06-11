@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, auth, setOnUnauthorized } from "./api";
-import { useChatStream } from "./hooks/useChatStream";
+import { useChatStreams } from "./hooks/useChatStream";
 import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
 import { Thread } from "./components/Thread";
@@ -52,7 +52,12 @@ function Workbench({
   const [drawerTab, setDrawerTab] = useState<Tab>("browser");
   const [totalTokens, setTotalTokens] = useState(0);
 
-  const { messages, status, run, kill, setMessages } = useChatStream();
+  const { run, kill, setConvMessages, messagesOf, statusOf, runningIds } = useChatStreams();
+  const messages = messagesOf(activeID);
+  const status = statusOf(activeID);
+  // conversations whose history we've already loaded (or that have a live run),
+  // so switching back never clobbers an in-flight stream with stale history.
+  const seen = useRef<Set<string>>(new Set());
 
   // Tasks now self-fetch inside the Tasks panel; keep a no-op so call sites stay simple.
   const refreshTasks = useCallback(() => {}, []);
@@ -78,21 +83,24 @@ function Workbench({
   const newConversation = useCallback(async () => {
     const c = await api.createConversation("New chat");
     setConversations((cs) => [c, ...cs]);
+    seen.current.add(c.conversation_id);
+    setConvMessages(c.conversation_id, []);
     setActiveID(c.conversation_id);
-    setMessages([]);
-  }, [setMessages]);
+  }, [setConvMessages]);
 
   const selectConversation = useCallback(
     async (id: string) => {
       setActiveID(id);
+      if (seen.current.has(id)) return; // already loaded or has a live stream
+      seen.current.add(id);
       try {
         const rows = (await api.getMessages(id)) as (Message & { created_at?: number })[];
-        setMessages(rows.map((r) => ({ ...r, ts: r.ts || r.created_at || Date.now() })).sort((a, b) => a.ts - b.ts));
+        setConvMessages(id, rows.map((r) => ({ ...r, ts: r.ts || r.created_at || Date.now() })).sort((a, b) => a.ts - b.ts));
       } catch {
-        setMessages([]);
+        setConvMessages(id, []);
       }
     },
-    [setMessages],
+    [setConvMessages],
   );
 
   const ensureConversation = useCallback(async (): Promise<string> => {
@@ -108,10 +116,13 @@ function Workbench({
     async (msg: string) => {
       lastMsgRef.current = msg;
       const id = await ensureConversation();
-      // empty enabledTools => backend offers ALL tools; the model auto-selects
-      await run({ message: msg, conversationID: id, userEmail: user.email, enabledTools: [] });
+      seen.current.add(id);
+      // fire-and-forget: do NOT await, so other conversations stay interactive
+      // while this one streams. The backend runs each conversation concurrently.
+      run({ message: msg, conversationID: id, userEmail: user.email, enabledTools: [] }).then(() => {
+        refreshConversations(); // pick up the auto-generated title
+      });
       refreshTasks();
-      refreshConversations(); // pick up the auto-generated title
     },
     [ensureConversation, run, user.email, refreshTasks, refreshConversations],
   );
@@ -130,17 +141,15 @@ function Workbench({
     async (id: string) => {
       await api.deleteConversation(id);
       setConversations((cs) => cs.filter((c) => c.conversation_id !== id));
-      if (activeID === id) {
-        setActiveID("");
-        setMessages([]);
-      }
+      seen.current.delete(id);
+      if (activeID === id) setActiveID("");
     },
-    [activeID, setMessages],
+    [activeID],
   );
 
   const onResume = useCallback(
     async (resumeKey: string, answer: string) => {
-      await run({ message: answer, conversationID: activeID, userEmail: user.email, enabledTools: [], resumeKey });
+      run({ message: answer, conversationID: activeID, userEmail: user.email, enabledTools: [], resumeKey });
       refreshTasks();
     },
     [run, activeID, user.email, refreshTasks],
@@ -157,6 +166,7 @@ function Workbench({
         open={sidebarOpen}
         conversations={conversations}
         activeID={activeID}
+        runningIds={runningIds}
         onSelect={selectConversation}
         onNew={newConversation}
         onRename={onRename}
@@ -196,7 +206,7 @@ function Workbench({
         </header>
 
         <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} onPick={onSend} onRetry={onRetry} />
-        <Composer status={status} onSend={onSend} onKill={kill} />
+        <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} />
       </main>
 
       <ArtifactDrawer

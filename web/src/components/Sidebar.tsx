@@ -5,6 +5,7 @@ export function Sidebar({
   open,
   conversations,
   activeID,
+  runningIds,
   onSelect,
   onNew,
   onRename,
@@ -16,6 +17,7 @@ export function Sidebar({
   open: boolean;
   conversations: Conversation[];
   activeID: string;
+  runningIds: string[];
   onSelect: (id: string) => void;
   onNew: () => void;
   onRename: (id: string, title: string) => void;
@@ -57,6 +59,7 @@ export function Sidebar({
           )}
           {conversations.map((c) => {
             const active = c.conversation_id === activeID;
+            const running = runningIds.includes(c.conversation_id);
             if (editing === c.conversation_id) {
               return (
                 <input
@@ -85,6 +88,12 @@ export function Sidebar({
                   (active ? "bg-accentsoft text-ink" : "text-muted hover:bg-surface")
                 }
               >
+                {running && (
+                  <span
+                    className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ok"
+                    title="运行中"
+                  />
+                )}
                 <span className="flex-1 truncate text-[14px]">{c.title}</span>
                 <button
                   onClick={(e) => {
