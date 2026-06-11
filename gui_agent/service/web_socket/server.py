@@ -93,6 +93,13 @@ async def run_task(ws: WebSocket, msg: dict[str, Any]) -> None:
             await emit({"type": "error", "error": f"browser start failed: {e}", "session_id": session_id})
             return
 
+        # Start each task from a blank page so a stale page left by a previous,
+        # unrelated task doesn't confuse the planner into a click loop.
+        try:
+            await operator.page.goto("about:blank")
+        except Exception:  # noqa: BLE001
+            pass
+
         try:
             # Fast path: replay a recorded macro deterministically (no predict/VLM).
             if _MACRO_ENABLED and await replay_macro(operator, emit, instruction, session_id):
@@ -212,7 +219,29 @@ async def gui_ws(ws: WebSocket) -> None:
         while True:
             msg = await ws.receive_json()
             if msg.get("type") == "run":
-                await run_task(ws, msg)
+                # Run as a cancellable task and watch for the client closing the
+                # socket (i.e. /chat/kill on the control side). On disconnect we
+                # cancel the run so it stops driving the browser and RELEASES the
+                # shared _op_lock — otherwise a runaway run would block every
+                # other conversation's browser task.
+                runner = asyncio.create_task(run_task(ws, msg))
+                while not runner.done():
+                    try:
+                        ev = await asyncio.wait_for(ws.receive(), timeout=0.5)
+                    except asyncio.TimeoutError:
+                        continue
+                    except (WebSocketDisconnect, RuntimeError):
+                        runner.cancel()
+                        break
+                    if ev.get("type") == "websocket.disconnect":
+                        runner.cancel()
+                        break
+                try:
+                    await runner
+                except asyncio.CancelledError:
+                    pass
+                if ws.client_state != WebSocketState.CONNECTED:
+                    return
             else:
                 await ws.send_json({"type": "error", "error": f"unknown message type {msg.get('type')}"})
     except WebSocketDisconnect:

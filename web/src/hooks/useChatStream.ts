@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import type { Message } from "../types";
-import { auth } from "../api";
+import { api, auth } from "../api";
 
 export type RunStatus = "idle" | "streaming" | "paused" | "error" | "done";
 
@@ -20,6 +20,7 @@ export function useChatStream() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [status, setStatus] = useState<RunStatus>("idle");
   const abortRef = useRef<AbortController | null>(null);
+  const activeConvRef = useRef<string>("");
 
   const reset = useCallback(() => setMessages([]), []);
 
@@ -27,6 +28,7 @@ export function useChatStream() {
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    activeConvRef.current = p.conversationID;
     setStatus("streaming");
 
     // optimistic echo of the user's message
@@ -153,6 +155,11 @@ export function useChatStream() {
   }, []);
 
   const kill = useCallback(() => {
+    // Cancel the BACKEND run (it is detached on context.Background(), so
+    // aborting the local SSE fetch alone leaves it running). /chat/kill cancels
+    // the run's context, which also closes any GUI WebSocket and frees the
+    // shared browser lock.
+    if (activeConvRef.current) api.kill(activeConvRef.current).catch(() => {});
     abortRef.current?.abort();
     setStatus("idle");
   }, []);
