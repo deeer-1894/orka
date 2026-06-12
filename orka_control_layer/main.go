@@ -86,7 +86,17 @@ func main() {
 		logger.Warn("LLM api key is empty; chat requests will fail until OPENAI_API_KEY is set")
 	}
 	var mainLLM, miniLLM llm.Client
-	mainLLM = llm.NewOpenAIClient(cfg.LLM.OpenAIBaseURL, cfg.LLM.OpenAIAPIKey)
+	// Wrap the provider client in bounded exponential-backoff retry so a transient
+	// 429/5xx/network blip doesn't fail a whole agentic run (or a sub-agent).
+	mainLLM = llm.NewRetry(
+		llm.NewOpenAIClient(cfg.LLM.OpenAIBaseURL, cfg.LLM.OpenAIAPIKey),
+		llm.RetryConfig{
+			MaxAttempts: cfg.LLM.MaxRetries,
+			OnRetry: func(attempt int, delay time.Duration, err error) {
+				logger.Warn("llm transient error; retrying", "attempt", attempt, "delay", delay.String(), "err", err.Error())
+			},
+		},
+	)
 	miniLLM = mainLLM
 
 	msg := message_utils.New(store, cfg.Obs.PersistSampling, logger)

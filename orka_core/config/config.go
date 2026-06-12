@@ -41,6 +41,7 @@ type LLMConfig struct {
 	Model         string `yaml:"model"`
 	MiniModel     string `yaml:"mini_model"`
 	VLMModel      string `yaml:"vlm_model"`
+	MaxRetries    int    `yaml:"max_retries"` // total LLM attempts incl. first on transient 429/5xx/network (default 3)
 }
 
 type StorageConfig struct {
@@ -145,6 +146,7 @@ func (c *Config) applyEnv() {
 	envStr(&c.LLM.Model, "MODEL")
 	envStr(&c.LLM.MiniModel, "MINI_MODEL")
 	envStr(&c.LLM.VLMModel, "VLM_MODEL")
+	envInt(&c.LLM.MaxRetries, "LLM_MAX_RETRIES")
 	envStr(&c.Storage.MongoURI, "MONGO_URI")
 	envStr(&c.Storage.MongoDB, "MONGO_DB")
 	envStr(&c.Storage.RedisAddr, "REDIS_ADDR")
