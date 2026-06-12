@@ -4,8 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orka-oss/orka_control_layer/llm"
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/config"
+	"github.com/orka-oss/orka_core/messages"
 )
 
 type namedTool string
@@ -61,5 +63,50 @@ func TestBuildSubAgentsConfigDriven(t *testing.T) {
 	got := names(BuildSubAgents(available, nil, nil, "main-model", "mini-model", nil, specs))
 	if len(got) != 1 || got[0] != "analyst" {
 		t.Fatalf("expected only [analyst], got %v", got)
+	}
+}
+
+// Integration: a real sub-agent built by BuildSubAgents runs its own scripted
+// tool loop, bubbles its internal tool events into the PARENT sink TAGGED with
+// agent_id (this is what the UI groups into a lane and what survives reload),
+// and returns its final answer as the structured delegation result.
+func TestSubAgentBubblesTaggedEventsAndReturnsFinal(t *testing.T) {
+	// Researcher script: call web_search, then answer.
+	mock := llm.NewMock(
+		llm.Response{ToolCalls: []llm.ToolCall{{ID: "1", Name: "web_search", Arguments: `{"query":"rust web frameworks"}`}}, FinishReason: "tool_calls"},
+		llm.Response{Content: "FOUND: axum and actix lead in 2025.", FinishReason: "stop"},
+	)
+	agents := BuildSubAgents(toolset("web_search", "fetch_url"), mock, mock, "main", "mini", nil, nil)
+	var researcher agent.BaseTool
+	for _, a := range agents {
+		if a.Name() == "researcher" {
+			researcher = a
+		}
+	}
+	if researcher == nil {
+		t.Fatal("researcher sub-agent not built")
+	}
+
+	parentMeta := messages.Meta{ConversationID: "c1", AgentID: ""} // orchestrator
+	var emitted []messages.Message
+	ctx := agent.WithEmit(agent.WithMeta(context.Background(), parentMeta),
+		func(m messages.Message) { emitted = append(emitted, m) })
+
+	out, err := researcher.Invoke(ctx, map[string]any{"task": "research rust web frameworks"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "FOUND: axum and actix lead in 2025." {
+		t.Fatalf("delegation result = %q", out)
+	}
+
+	var taggedTool bool
+	for _, m := range emitted {
+		if m.Type == messages.EventTool && m.Meta.AgentID == "researcher" {
+			taggedTool = true
+		}
+	}
+	if !taggedTool {
+		t.Fatalf("expected a tool event tagged agent_id=researcher in %d emitted events", len(emitted))
 	}
 }
