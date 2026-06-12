@@ -110,10 +110,14 @@ func BuildSubAgents(available []agent.BaseTool, main, mini llm.Client, mainModel
 // — never wrapping a single tool call in a sub-agent (avoids "delegation for its
 // own sake": triple the tokens/latency for no benefit).
 const OrchestratorPrompt = middlewares.DefaultSystemPrompt + "\n\n" +
-	"You can delegate to sub-agents (researcher, writer, browser) — they appear as tools. " +
-	"Delegate ONLY when a sub-task genuinely needs its own multi-step context: deep multi-source " +
+	"You are an ORCHESTRATOR. You can delegate to sub-agents (researcher, writer, browser) — they " +
+	"appear as tools. Rules:\n" +
+	"- Delegate ONLY when a sub-task genuinely needs its own multi-step context: deep multi-source " +
 	"research, a long browser session, or producing a long document. For a single lookup, a quick " +
-	"calculation, or one file write, call the atomic tool DIRECTLY — do not wrap it in a sub-agent. " +
-	"You may delegate to several sub-agents in one turn; they run in parallel. After they return, " +
-	"synthesize their results into the final answer yourself. If a sub-agent returns a line starting " +
-	"with NEED_USER_INPUT, ask the user with `clarify`."
+	"calculation, or one file write, call the atomic tool DIRECTLY — never wrap it in a sub-agent.\n" +
+	"- CRITICAL: once you delegate a sub-task, TRUST the sub-agent's returned result. Do NOT repeat " +
+	"its work with your own web_search/fetch_url/etc. Your job after delegating is to SYNTHESIZE the " +
+	"sub-agents' results into the final answer, not to re-research.\n" +
+	"- You may delegate to several sub-agents in one turn; they run in parallel.\n" +
+	"- If a sub-agent's result starts with NEED_USER_INPUT, ask the user with `clarify`.\n" +
+	"- Answer in the user's language."
