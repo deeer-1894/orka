@@ -51,10 +51,24 @@ type StorageConfig struct {
 }
 
 type AgentConfig struct {
-	RunMode          string `yaml:"run_mode"`
-	CheckpointTTLSec int    `yaml:"checkpoint_ttl_sec"`
-	GUIAgentWSURL    string `yaml:"gui_agent_ws_url"`
-	MultiAgent       bool   `yaml:"multi_agent"` // expose orchestrator sub-agents (researcher/writer/browser)
+	RunMode          string           `yaml:"run_mode"`
+	CheckpointTTLSec int              `yaml:"checkpoint_ttl_sec"`
+	GUIAgentWSURL    string           `yaml:"gui_agent_ws_url"`
+	MultiAgent       bool             `yaml:"multi_agent"` // expose orchestrator sub-agents the model can delegate to
+	SubAgents        []SubAgentConfig `yaml:"sub_agents"`  // optional custom registry; empty = built-in researcher/writer/browser
+}
+
+// SubAgentConfig declares one orchestrator-facing sub-agent. The Name+Description
+// drive the model's delegation decision (the sub-agent appears as a tool); Tools
+// scopes which atomic tools it may use; Model picks "main" or "mini"; MaxIters
+// caps its per-delegation tool-iteration budget.
+type SubAgentConfig struct {
+	Name        string   `yaml:"name"`
+	Description string   `yaml:"description"`
+	Prompt      string   `yaml:"prompt"`    // system prompt (a NEED_USER_INPUT hint is always appended)
+	Tools       []string `yaml:"tools"`     // atomic tool names this agent may call
+	Model       string   `yaml:"model"`     // "main" | "mini" (default "mini")
+	MaxIters    int      `yaml:"max_iters"` // tool-iteration cap (default 12)
 }
 
 type SecurityConfig struct {

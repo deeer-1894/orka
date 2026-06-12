@@ -153,7 +153,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		if miniModel == "" {
 			miniModel = modelName
 		}
-		subs := BuildSubAgents(tools, s.Main, s.Mini, modelName, miniModel, s.Metrics)
+		subs := BuildSubAgents(tools, s.Main, s.Mini, modelName, miniModel, s.Metrics, s.Cfg.Agent.SubAgents)
 		tools = append(tools, subs...)
 		deps.SystemPrompt = OrchestratorPrompt
 	}
