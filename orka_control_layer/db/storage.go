@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -28,7 +29,12 @@ type Storage struct {
 func NewStorage(ctx context.Context, uri, dbName string) (*Storage, error) {
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	cli, err := mongo.Connect(cctx, options.Client().ApplyURI(uri))
+	// Decode interface{} (Meta/Payload) fields into bson.M (objects) instead of
+	// the default bson.D (which JSON-marshals as a [{Key,Value}] array the
+	// frontend can't read as msg.meta.agent_id / payload.tool).
+	reg := bson.NewRegistry()
+	reg.RegisterTypeMapEntry(bson.TypeEmbeddedDocument, reflect.TypeFor[bson.M]())
+	cli, err := mongo.Connect(cctx, options.Client().ApplyURI(uri).SetRegistry(reg))
 	if err != nil {
 		return nil, fmt.Errorf("mongo connect: %w", err)
 	}

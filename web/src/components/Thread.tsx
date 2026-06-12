@@ -179,9 +179,24 @@ function Assistant({ m }: { m: Message }) {
   );
 }
 
+const AGENT_ICON: Record<string, string> = { researcher: "🔎", writer: "✍️", browser: "🌐" };
+
 function Steps({ items, onOpenViewport }: { items: Message[]; onOpenViewport: () => void }) {
   const [open, setOpen] = useState(false);
   const hasShot = items.some((m) => m.type === "browser" && (m.payload as BrowserPayload)?.data);
+
+  // Partition: the orchestrator's own steps render flat; each sub-agent's steps
+  // (tagged with meta.agent_id) collapse into their own labeled lane.
+  const own = items.filter((m) => !m.meta?.agent_id);
+  const lanes = new Map<string, Message[]>();
+  for (const m of items) {
+    const a = m.meta?.agent_id;
+    if (a) {
+      if (!lanes.has(a)) lanes.set(a, []);
+      lanes.get(a)!.push(m);
+    }
+  }
+
   return (
     <div className="mb-6 ml-[42px]">
       <button
@@ -191,6 +206,7 @@ function Steps({ items, onOpenViewport }: { items: Message[]; onOpenViewport: ()
         <Spinner />
         <span>
           {open ? "Hide" : "Show"} {items.length} step{items.length > 1 ? "s" : ""}
+          {lanes.size > 0 && ` · ${lanes.size} agent`}
         </span>
         {hasShot && (
           <span
@@ -206,6 +222,34 @@ function Steps({ items, onOpenViewport }: { items: Message[]; onOpenViewport: ()
       </button>
       {open && (
         <div className="mt-2 space-y-1.5 border-l-2 border-border pl-4">
+          {own.map((m) => (
+            <Step key={m.id} m={m} />
+          ))}
+          {[...lanes.entries()].map(([agent, msgs]) => (
+            <AgentLane key={agent} agent={agent} items={msgs} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// AgentLane groups a delegated sub-agent's steps under its own collapsible card.
+function AgentLane({ agent, items }: { agent: string; items: Message[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-lg border border-border bg-surface2/40">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-[13px]"
+      >
+        <span className="text-[15px]">{AGENT_ICON[agent] || "🤖"}</span>
+        <span className="font-medium text-ink">{agent}</span>
+        <span className="text-faint">· {items.length} 步</span>
+        <span className="ml-auto text-faint">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <div className="space-y-1 border-t border-border px-2.5 py-1.5 pl-4">
           {items.map((m) => (
             <Step key={m.id} m={m} />
           ))}
@@ -244,6 +288,10 @@ function toolReceipt(p: ToolPayload): { icon: string; label: string; detail: str
       return { icon: "🌍", label: `HTTP ${s("method") || "GET"}`, detail: trunc(s("url"), 60) };
     case "apply_skill":
       return { icon: "✨", label: `采纳技能 ${s("name")}`, detail: "" };
+    case "researcher":
+    case "writer":
+    case "browser":
+      return { icon: "🤝", label: `委派 ${p.tool}`, detail: trunc(s("task") || res, 64) };
     default:
       return { icon: "🔧", label: p.tool || "tool", detail: trunc(res, 70) };
   }
