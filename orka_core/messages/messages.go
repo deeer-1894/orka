@@ -38,8 +38,10 @@ type Meta struct {
 	ConversationID string `json:"conversation_id"`
 	TaskID         string `json:"task_id"`
 	ModelVersion   string `json:"model_version,omitempty"`
-	TraceID        string `json:"trace_id"`             // links one request end-to-end
-	UserEmail      string `json:"user_email,omitempty"` // identity for trace/isolation
+	TraceID        string `json:"trace_id"`               // links one request end-to-end
+	UserEmail      string `json:"user_email,omitempty"`   // identity for trace/isolation
+	AgentID        string `json:"agent_id,omitempty"`     // which (sub-)agent emitted this; "" = orchestrator
+	ParentAgentID  string `json:"parent_agent_id,omitempty"` // the agent that delegated to AgentID
 }
 
 // Message is the unified cross-module envelope.

@@ -54,6 +54,7 @@ type AgentConfig struct {
 	RunMode          string `yaml:"run_mode"`
 	CheckpointTTLSec int    `yaml:"checkpoint_ttl_sec"`
 	GUIAgentWSURL    string `yaml:"gui_agent_ws_url"`
+	MultiAgent       bool   `yaml:"multi_agent"` // expose orchestrator sub-agents (researcher/writer/browser)
 }
 
 type SecurityConfig struct {
@@ -137,6 +138,9 @@ func (c *Config) applyEnv() {
 	envStr(&c.Agent.RunMode, "RUN_MODE")
 	envInt(&c.Agent.CheckpointTTLSec, "CHECKPOINT_TTL_SEC")
 	envStr(&c.Agent.GUIAgentWSURL, "GUI_AGENT_WS_URL")
+	if os.Getenv("MULTI_AGENT") == "1" {
+		c.Agent.MultiAgent = true
+	}
 	envStr(&c.Security.CtxTokenSecret, "CTX_TOKEN_SECRET")
 	envInt(&c.Security.CtxTokenTTLSec, "CTX_TOKEN_TTL_SEC")
 	envStr(&c.Obs.LogLevel, "LOG_LEVEL")

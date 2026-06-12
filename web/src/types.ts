@@ -18,6 +18,8 @@ export interface Meta {
   model_version?: string;
   trace_id: string;
   user_email?: string;
+  agent_id?: string;
+  parent_agent_id?: string;
 }
 
 export interface Message {

@@ -137,8 +137,6 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	ctx = spanCtx
 
 	deps := PipelineDeps{LLM: model, Model: modelName, Metrics: s.Metrics}
-	pipeline := BuildPipeline(SceneSimple, deps)
-	runner := RunnerForMode(s.Cfg.Agent.RunMode, pipeline...)
 
 	tools, cleanup, err := s.ToolsFor(ctx, req)
 	if err != nil && s.Log != nil {
@@ -147,6 +145,21 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	if cleanup != nil {
 		defer cleanup()
 	}
+
+	// Multi-agent: the orchestrator (main model) gets the atomic tools PLUS
+	// sub-agents (researcher/writer/browser, mini model) it can delegate to.
+	if s.Cfg.Agent.MultiAgent {
+		miniModel := s.Cfg.LLM.MiniModel
+		if miniModel == "" {
+			miniModel = modelName
+		}
+		subs := BuildSubAgents(tools, s.Main, s.Mini, modelName, miniModel, s.Metrics)
+		tools = append(tools, subs...)
+		deps.SystemPrompt = OrchestratorPrompt
+	}
+
+	pipeline := BuildPipeline(SceneSimple, deps)
+	runner := RunnerForMode(s.Cfg.Agent.RunMode, pipeline...)
 
 	rc := &agent.RunContext{Ctx: ctx, Vars: map[string]any{}, Meta: meta, Tools: tools}
 	// Serialize emits PER RUN (not globally): parallel sub-agents stream events
@@ -159,9 +172,10 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		defer emitMu.Unlock()
 		s.Msg.Deliver(rc, raw, m, true)
 	}
-	// Expose the emit sink on the context so tools (e.g. run_agent) can stream
-	// their own events (browser/...) into the same SSE stream.
-	rc.Ctx = agent.WithEmit(ctx, rc.Send)
+	// Expose the emit sink + run meta on the context so tools — including
+	// sub-agents (AgentTool) — can stream events into the same SSE stream and
+	// inherit conversation/trace identity.
+	rc.Ctx = agent.WithEmit(agent.WithMeta(ctx, meta), rc.Send)
 
 	taskID := ""
 	if req.ResumeKey != "" {

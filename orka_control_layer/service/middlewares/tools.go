@@ -25,6 +25,8 @@ type Tools struct {
 	MaxIters   int
 	MaxHistory int           // bound context across ReAct iterations (0 = unbounded)
 	GUIBudget  time.Duration // cumulative wall-time the browser may consume per turn (0 = default 4m)
+	NoClarify  bool          // sub-agents don't ask the user directly (return NEED_USER_INPUT instead)
+	NoStream   bool          // sub-agents don't stream tokens into the parent's main bubble
 	Metrics    *obs.Metrics
 }
 
@@ -44,7 +46,7 @@ func (m *Tools) Handle(rc *agent.RunContext, next func(*agent.RunContext) error)
 		delete(rc.Vars, VarResumeKey)
 	}
 
-	specs := toolSpecs(rc.Tools)
+	specs := toolSpecs(rc.Tools, !m.NoClarify)
 	maxIters := m.MaxIters
 	if maxIters <= 0 {
 		maxIters = 8
@@ -72,7 +74,7 @@ func (m *Tools) Handle(rc *agent.RunContext, next func(*agent.RunContext) error)
 		req := llm.Request{Model: m.Model, Messages: hist, Tools: specs}
 		var resp llm.Response
 		var err error
-		if sc, ok := m.LLM.(llm.StreamingClient); ok {
+		if sc, ok := m.LLM.(llm.StreamingClient); ok && !m.NoStream {
 			// Stream content deltas to the client for live rendering; the final
 			// EventChat (emitted by output-mid) remains the persisted source.
 			resp, err = sc.ChatStream(rc.Ctx, req, func(delta string) {
@@ -270,23 +272,25 @@ func findTool(tools []agent.BaseTool, name string) agent.BaseTool {
 }
 
 // toolSpecs converts BaseTools to LLM specs and appends the built-in clarify tool.
-func toolSpecs(tools []agent.BaseTool) []llm.ToolSpec {
+func toolSpecs(tools []agent.BaseTool, withClarify bool) []llm.ToolSpec {
 	specs := make([]llm.ToolSpec, 0, len(tools)+1)
 	for _, t := range tools {
 		specs = append(specs, llm.ToolSpec{Name: t.Name(), Description: t.Description(), Parameters: t.Schema()})
 	}
-	specs = append(specs, llm.ToolSpec{
-		Name:        ClarifyToolName,
-		Description: "Ask the user a concise clarifying question when the request is ambiguous or missing information.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"question": map[string]any{"type": "string", "description": "the question to ask"},
-				"options":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "optional choices"},
+	if withClarify {
+		specs = append(specs, llm.ToolSpec{
+			Name:        ClarifyToolName,
+			Description: "Ask the user a concise clarifying question when the request is ambiguous or missing information.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"question": map[string]any{"type": "string", "description": "the question to ask"},
+					"options":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "optional choices"},
+				},
+				"required": []string{"question"},
 			},
-			"required": []string{"question"},
-		},
-	})
+		})
+	}
 	specs = append(specs, llm.ToolSpec{
 		Name:        ApplySkillTool,
 		Description: "Adopt a domain skill (expertise prompt pack) before answering. " + strings.Join(skillNames(), ", ") + ".",
