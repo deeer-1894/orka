@@ -47,6 +47,18 @@ type AgentTool struct {
 	Final func(*RunContext) string      // extracts the sub-agent's final answer
 }
 
+// asString renders a tool arg as a string, treating a missing (nil) value as
+// empty rather than the literal "<nil>".
+func asString(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprint(v)
+}
+
 func (a *AgentTool) Name() string        { return a.Spec.Name }
 func (a *AgentTool) Description() string  { return a.Spec.Description }
 func (a *AgentTool) Schema() map[string]any {
@@ -66,9 +78,9 @@ func (a *AgentTool) Schema() map[string]any {
 // result. It is safe to run concurrently (the orchestrator's tool batch may
 // dispatch several sub-agents at once).
 func (a *AgentTool) Invoke(ctx context.Context, args map[string]any) (string, error) {
-	brief := strings.TrimSpace(fmt.Sprint(args["task"]))
+	brief := strings.TrimSpace(asString(args["task"]))
 	if brief == "" {
-		brief = strings.TrimSpace(fmt.Sprint(args["input"]))
+		brief = strings.TrimSpace(asString(args["input"]))
 	}
 	if brief == "" {
 		return "", fmt.Errorf("agent %q: empty task brief", a.Spec.Name)
