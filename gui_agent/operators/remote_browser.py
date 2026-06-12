@@ -150,16 +150,16 @@ class RemoteBrowserOperator:
         handle = action.get("_handle")
         if handle is not None and kind in ("click", "type"):
             if kind == "click":
-                await handle.click(timeout=5000)
+                await handle.click(timeout=2500)
                 return f"clicked mark {action.get('target', '')}"
-            await handle.fill(action.get("text", ""), timeout=5000)
+            await handle.fill(action.get("text", ""), timeout=2500)
             return f"typed into mark {action.get('target', '')}"
         if kind == "navigate":
             url = action.get("url", "")
             await self.page.goto(url, wait_until="load", timeout=30000)
             # give SPA content a moment to paint before the next screenshot
             try:
-                await self.page.wait_for_load_state("networkidle", timeout=5000)
+                await self.page.wait_for_load_state("networkidle", timeout=2500)
             except Exception:
                 pass
             return f"navigated to {url}"
@@ -185,7 +185,7 @@ class RemoteBrowserOperator:
             return f"dragged ({x:.0f},{y:.0f}) -> ({x2:.0f},{y2:.0f})"
         if kind == "click":
             sel = action.get("selector") or action.get("target", "")
-            await self.page.click(sel, timeout=5000)
+            await self.page.click(sel, timeout=2500)
             return f"clicked {sel}"
         if kind == "type":
             sel = action.get("selector") or action.get("target", "")
@@ -198,7 +198,7 @@ class RemoteBrowserOperator:
                 if submit:
                     await self.page.keyboard.press("Enter")
                 return f"typed {len(text)} chars" + (" + Enter" if submit else "")
-            await self.page.fill(sel, text, timeout=5000)
+            await self.page.fill(sel, text, timeout=2500)
             return f"typed into {sel}"
         if kind == "hotkey":
             combo = hotkey_to_playwright(action.get("key", ""))

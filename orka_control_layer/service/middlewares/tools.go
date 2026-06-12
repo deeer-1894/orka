@@ -23,7 +23,8 @@ type Tools struct {
 	LLM        llm.Client
 	Model      string
 	MaxIters   int
-	MaxHistory int // bound context across ReAct iterations (0 = unbounded)
+	MaxHistory int           // bound context across ReAct iterations (0 = unbounded)
+	GUIBudget  time.Duration // cumulative wall-time the browser may consume per turn (0 = default 4m)
 	Metrics    *obs.Metrics
 }
 
@@ -48,6 +49,7 @@ func (m *Tools) Handle(rc *agent.RunContext, next func(*agent.RunContext) error)
 	if maxIters <= 0 {
 		maxIters = 8
 	}
+	var guiNanos int64 // cumulative browser wall-time across this turn
 
 	for iter := 0; iter < maxIters; iter++ {
 		if err := rc.Ctx.Err(); err != nil {
@@ -110,7 +112,7 @@ func (m *Tools) Handle(rc *agent.RunContext, next func(*agent.RunContext) error)
 		// Execute the batch's tool calls concurrently (bounded), then emit +
 		// fold results into history in the original order (so the assistant
 		// tool_calls and their tool replies stay correctly paired/ordered).
-		results := m.runBatch(rc, resp.ToolCalls)
+		results := m.runBatch(rc, resp.ToolCalls, &guiNanos)
 		for _, r := range results {
 			if r.skill {
 				if r.skillOK {
@@ -157,15 +159,30 @@ type toolResult struct {
 	skillOK bool
 }
 
+// guiToolName is the GUI browser tool; it is expensive and prone to flailing on
+// JS-heavy pages, so its invocations are capped per chat turn.
+const guiToolName = "run_agent"
+
 // runBatch executes the tool calls concurrently (bounded by maxConcurrent) and
 // returns results in the same order as calls. Invocations run in parallel; the
 // caller emits events + appends to history sequentially to preserve ordering and
 // avoid interleaving on the SSE pipe. apply_skill is resolved in-process.
-func (m *Tools) runBatch(rc *agent.RunContext, calls []llm.ToolCall) []toolResult {
+//
+// guiNanos (shared across the whole turn) tracks the cumulative wall-time the
+// browser has consumed. Once it exceeds GUIBudget, further run_agent calls are
+// short-circuited with a directive to answer from gathered info — this caps a
+// flailing browser task by TIME, so many short, productive calls are fine while
+// only runaway looping is curbed.
+func (m *Tools) runBatch(rc *agent.RunContext, calls []llm.ToolCall, guiNanos *int64) []toolResult {
 	const maxConcurrent = 4
+	budget := m.GUIBudget
+	if budget <= 0 {
+		budget = 4 * time.Minute
+	}
 	results := make([]toolResult, len(calls))
 	sem := make(chan struct{}, maxConcurrent)
 	var wg sync.WaitGroup
+	var mu sync.Mutex // guards *guiNanos
 
 	for i := range calls {
 		tc := calls[i]
@@ -181,19 +198,35 @@ func (m *Tools) runBatch(rc *agent.RunContext, calls []llm.ToolCall) []toolResul
 		}
 
 		r.args = parseArgs(tc.Arguments)
+
+		// Cumulative GUI time budget (checked sequentially before the concurrent
+		// invokes, so the read is consistent within a batch).
+		isGUI := tc.Name == guiToolName
+		if isGUI && *guiNanos >= int64(budget) {
+			r.content = "浏览器(run_agent)本轮已累计运行较久,达到时间预算。请不要再调用 run_agent;" +
+				"用已经获取到的页面信息直接给出最佳回答,信息不足就如实说明并给出已知部分。"
+			continue
+		}
+
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(r *toolResult) {
+		go func(r *toolResult, isGUI bool) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			start := time.Now()
 			out, err := m.invoke(rc, r.name, r.args)
+			if isGUI {
+				mu.Lock()
+				*guiNanos += time.Since(start).Nanoseconds()
+				mu.Unlock()
+			}
 			if err != nil {
 				r.errStr = err.Error()
 				r.content = "ERROR: " + err.Error()
 				return
 			}
 			r.content = out
-		}(r)
+		}(r, isGUI)
 	}
 	wg.Wait()
 	return results

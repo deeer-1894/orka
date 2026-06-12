@@ -128,9 +128,25 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
                 out["error"] = str(e)
                 await emit({"type": "error", "error": str(e), "session_id": state.get("session_id", "")})
 
-        if out.get("status") == "running" and step >= int(state.get("max_steps", 8)):
+        # Stop conditions: out of step budget, OR stuck (the last 3 actions are
+        # identical — a scroll/click loop on a page the planner can't make
+        # progress on). On stop, return a grounded page snapshot so the upstream
+        # model can answer from what we DID see instead of re-invoking the
+        # browser over and over.
+        def _sig(a: dict[str, Any]) -> tuple:
+            return (a.get("action"), a.get("url") or a.get("selector") or a.get("mark") or a.get("x"))
+
+        recent = [h["action"] for h in history[-3:] if h.get("action")]
+        stuck = len(recent) == 3 and len({_sig(a) for a in recent}) == 1
+
+        if out.get("status") == "running" and (step >= int(state.get("max_steps", 8)) or stuck):
             out["status"] = "END"
-            out["result"] = "max steps reached"
+            try:
+                snap = await operator.dom_snapshot(limit=1200)
+            except Exception:  # noqa: BLE001
+                snap = ""
+            reason = "重复动作,无进展" if stuck else "达到步数上限"
+            out["result"] = f"[浏览器停止:{reason}。以下是当前页面内容,请据此作答,不要再重复打开浏览器]\n{snap}"
         return out
 
     def route(state: GraphState) -> str:
