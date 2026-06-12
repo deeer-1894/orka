@@ -99,14 +99,27 @@ func (m *Tools) Handle(rc *agent.RunContext, next func(*agent.RunContext) error)
 		hist = append(hist, llm.ChatMessage{Role: llm.RoleAssistant, Content: resp.Content, ToolCalls: resp.ToolCalls})
 
 		// clarify takes priority over everything else and interrupts the batch.
-		for _, tc := range resp.ToolCalls {
-			if tc.Name == ClarifyToolName {
-				clar := parseClarify(tc.Arguments)
-				rc.Vars[VarPendingClarify] = clar
-				rc.Interrupt = &agent.Interrupt{Reason: "clarify", Clarify: &clar}
-				setHistory(rc, hist)
-				return nil // cursor stays here; resume re-enters this loop
+		// CONTRACT: the assistant message above carries ALL tool_calls, and strict
+		// providers require every tool_call to have a matching tool reply. So when
+		// clarify co-occurs with sibling calls, we still append a tool reply for
+		// EVERY tool_call (clarify → "asked the user"; siblings → "deferred, will
+		// redo after the reply") before interrupting — otherwise resume sends an
+		// assistant message with dangling tool_calls and the provider rejects it.
+		// (This is amplified under multi-agent, where batches mix sub-agent calls
+		// with clarify far more often.)
+		if clarTC, ok := findClarify(resp.ToolCalls); ok {
+			for _, tc := range resp.ToolCalls {
+				reply := "本步因需要用户澄清而暂缓,将在用户回复后重做。"
+				if tc.ID == clarTC.ID {
+					reply = "已向用户提出澄清问题,等待回复。"
+				}
+				hist = append(hist, llm.ChatMessage{Role: llm.RoleTool, ToolCallID: tc.ID, Name: tc.Name, Content: reply})
 			}
+			clar := parseClarify(clarTC.Arguments)
+			rc.Vars[VarPendingClarify] = clar
+			rc.Interrupt = &agent.Interrupt{Reason: "clarify", Clarify: &clar}
+			setHistory(rc, hist)
+			return nil // cursor stays here; resume re-enters this loop
 		}
 
 		// Execute the batch's tool calls concurrently (bounded), then emit +
@@ -286,6 +299,16 @@ func toolSpecs(tools []agent.BaseTool) []llm.ToolSpec {
 		},
 	})
 	return specs
+}
+
+// findClarify returns the first clarify tool call in a batch, if any.
+func findClarify(calls []llm.ToolCall) (llm.ToolCall, bool) {
+	for _, tc := range calls {
+		if tc.Name == ClarifyToolName {
+			return tc, true
+		}
+	}
+	return llm.ToolCall{}, false
 }
 
 func parseArgs(s string) map[string]any {

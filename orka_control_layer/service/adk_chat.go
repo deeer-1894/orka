@@ -149,7 +149,16 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	}
 
 	rc := &agent.RunContext{Ctx: ctx, Vars: map[string]any{}, Meta: meta, Tools: tools}
-	rc.Send = func(m messages.Message) { s.Msg.Deliver(rc, raw, m, true) }
+	// Serialize emits PER RUN (not globally): parallel sub-agents stream events
+	// concurrently into the same SSE sink, so without this their frames could
+	// interleave/corrupt. A per-run mutex keeps each run's stream ordered without
+	// coupling independent conversations.
+	var emitMu sync.Mutex
+	rc.Send = func(m messages.Message) {
+		emitMu.Lock()
+		defer emitMu.Unlock()
+		s.Msg.Deliver(rc, raw, m, true)
+	}
 	// Expose the emit sink on the context so tools (e.g. run_agent) can stream
 	// their own events (browser/...) into the same SSE stream.
 	rc.Ctx = agent.WithEmit(ctx, rc.Send)
