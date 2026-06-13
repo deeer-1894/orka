@@ -99,6 +99,17 @@ func skillsCatalog() string {
 	return sb.String()
 }
 
+// SkillPrompt returns a skill's expert guidance for deterministic injection into
+// the system prompt when the user has explicitly locked a skill "mode" in the UI
+// (vs. the model adopting one itself via apply_skill).
+func SkillPrompt(name string) (string, bool) {
+	s, ok := skillByName(name)
+	if !ok {
+		return "", false
+	}
+	return s.Prompt, true
+}
+
 // applySkill resolves the requested skill and returns the tool-result content
 // (the expert guidance) plus whether it was found.
 func applySkill(name string) (string, bool) {

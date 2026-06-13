@@ -18,12 +18,16 @@ export function Composer({
   onKill,
   enabledGroups,
   onToggleGroup,
+  activeSkill,
+  onPickSkill,
 }: {
   status: RunStatus;
   onSend: (msg: string) => void;
   onKill: () => void;
   enabledGroups: Set<string>;
   onToggleGroup: (id: string) => void;
+  activeSkill: string | null;
+  onPickSkill: (name: string | null) => void;
 }) {
   const [text, setText] = useState("");
   const [menu, setMenu] = useState(false);
@@ -42,12 +46,16 @@ export function Composer({
     setMenu(false);
   };
 
+  // Skills are now a locked "mode" (structured active_skill the backend injects
+  // deterministically), not a one-shot text macro that pollutes the input.
   const pickSkill = (name: string) => {
     setMenu(false);
-    const rest = text.replace(/^\/\w*/, "").trimStart();
-    setText(`使用 ${name} 技能:${rest ? " " + rest : ""}`);
+    onPickSkill(name);
+    // strip the leading "/…" trigger if present, keep the user's actual text
+    setText((t) => t.replace(/^\/\w*\s*/, ""));
     requestAnimationFrame(() => taRef.current?.focus());
   };
+  const skill = activeSkill ? SKILLS.find((s) => s.name === activeSkill) : null;
 
   return (
     <div className="px-5 pb-5">
@@ -99,6 +107,12 @@ export function Composer({
           <span className="ml-1 text-[11px] text-faint">
             {enabledGroups.size === 0 ? "全部工具" : `仅 ${enabledGroups.size} 类`}
           </span>
+          {skill && (
+            <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-accentsoft px-2 py-1 text-[12px] text-accent">
+              {skill.icon} {skill.label} 模式
+              <button onClick={() => onPickSkill(null)} aria-label="退出技能模式" className="hover:text-ink">✕</button>
+            </span>
+          )}
         </div>
 
         <div className="flex items-end gap-2 rounded-[26px] border border-border bg-surface px-2 py-2 shadow-[0_2px_18px_rgba(40,38,32,0.06)] focus-within:border-accent/40 transition">

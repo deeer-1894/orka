@@ -14,6 +14,7 @@ export interface RunParams {
   enabledTools: string[];
   resumeKey?: string;
   selectedVersion?: string; // "" = main model, "mini" = the cheaper/faster model
+  activeSkill?: string; // user-locked skill mode (researcher / writer / …)
 }
 
 interface ConvStream {
@@ -143,6 +144,7 @@ export function useChatStreams() {
             enabled_tools: p.enabledTools,
             resume_key: p.resumeKey ?? "",
             selected_version: p.selectedVersion ?? "",
+            active_skill: p.activeSkill ?? "",
           }),
           signal: ctrl.signal,
         });

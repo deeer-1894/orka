@@ -19,6 +19,7 @@ import (
 	"github.com/orka-oss/orka_control_layer/llm"
 	"github.com/orka-oss/orka_control_layer/message_utils"
 	"github.com/orka-oss/orka_control_layer/obs"
+	"github.com/orka-oss/orka_control_layer/service/middlewares"
 )
 
 // ChatRunRequest is the /chat/run payload.
@@ -32,6 +33,7 @@ type ChatRunRequest struct {
 	SelectedVersion string   `json:"selected_version"`
 	ResumeKey       string   `json:"resume_key"`
 	UserEmail       string   `json:"user_email"`
+	ActiveSkill     string   `json:"active_skill"` // user-locked skill mode (deterministic prompt injection)
 }
 
 // ToolsProvider supplies the tool set for a request and an optional cleanup
@@ -160,6 +162,16 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 			subs := BuildSubAgents(tools, s.Main, s.Mini, modelName, miniModel, s.Metrics, s.Cfg.Agent.SubAgents)
 			tools = append(tools, subs...)
 		}
+	}
+
+	// A user-locked skill deterministically injects its expert guidance into the
+	// system prompt (vs. waiting for the model to adopt it via apply_skill).
+	if sp, ok := middlewares.SkillPrompt(req.ActiveSkill); ok {
+		base := deps.SystemPrompt
+		if base == "" {
+			base = middlewares.DefaultSystemPrompt
+		}
+		deps.SystemPrompt = base + "\n\n[Active skill mode]\n" + sp
 	}
 
 	pipeline := BuildPipeline(SceneSimple, deps)

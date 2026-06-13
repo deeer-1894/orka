@@ -79,6 +79,7 @@ function Workbench({
   const [toolGroups, setToolGroups] = useState<Set<string>>(() => loadTools(""));
   const [models, setModels] = useState<ModelOption[]>(MODELS_FALLBACK);
   const [scheduleFor, setScheduleFor] = useState<string | null>(null); // prompt to schedule
+  const [activeSkill, setActiveSkill] = useState<string | null>(null); // locked skill mode
 
   useEffect(() => {
     api.models().then((m) => m.length && setModels(m)).catch(() => {});
@@ -186,12 +187,12 @@ function Workbench({
       const enabledTools = toolGroups.size ? [...toolGroups] : [];
       // fire-and-forget: do NOT await, so other conversations stay interactive
       // while this one streams. The backend runs each conversation concurrently.
-      run({ message: msg, conversationID: id, userEmail: user.email, enabledTools, selectedVersion: version }).then(() => {
+      run({ message: msg, conversationID: id, userEmail: user.email, enabledTools, selectedVersion: version, activeSkill: activeSkill ?? "" }).then(() => {
         refreshConversations(); // pick up the auto-generated title
       });
       refreshTasks();
     },
-    [ensureConversation, run, user.email, refreshTasks, refreshConversations, version, toolGroups],
+    [ensureConversation, run, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill],
   );
 
   // Re-send the last user message after a failure (network drop, sandbox down…).
@@ -308,7 +309,7 @@ function Workbench({
         </header>
 
         <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} />
-        <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} enabledGroups={toolGroups} onToggleGroup={toggleGroup} />
+        <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} enabledGroups={toolGroups} onToggleGroup={toggleGroup} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
       </main>
 
       <ArtifactDrawer
