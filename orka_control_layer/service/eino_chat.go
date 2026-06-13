@@ -29,6 +29,37 @@ const einoOrchestratorName = "orka"
 // (via llm.EinoModel) and tool suite (via EinoTools), running in parallel to the
 // hand-rolled runner and gated by config so the working path is untouched.
 
+// budgetGuard forces an agent to wrap up before the hard MaxIterations cliff:
+// on the last allowed model call it strips the tools, so the model MUST answer
+// from what it already has instead of erroring out at the cap (the cause of
+// expensive deep-research runs dying with no result). Model-agnostic — it
+// removes the *ability* to call tools rather than politely asking.
+type budgetGuard struct {
+	*adk.BaseChatModelAgentMiddleware
+	maxIters int
+}
+
+func newBudgetGuard(maxIters int) *budgetGuard {
+	return &budgetGuard{BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{}, maxIters: maxIters}
+}
+
+func (g *budgetGuard) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
+	if g.maxIters > 1 {
+		// assistant messages == model-generation cycles so far.
+		n := 0
+		for _, m := range state.Messages {
+			if m != nil && m.Role == schema.Assistant {
+				n++
+			}
+		}
+		if n >= g.maxIters-1 { // last allowed call → no tools, force synthesis
+			state.ToolInfos = nil
+			state.DeferredToolInfos = nil
+		}
+	}
+	return ctx, state, nil
+}
+
 // summarizationHandlers returns the eino summarization middleware so long runs
 // fold older context into a running summary instead of overflowing — the native
 // replacement for the hand-rolled Memory truncation (which dropped old turns).
@@ -62,7 +93,7 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 			ReturnDirectly:  clarifyReturnDirectly(),
 		},
 		MaxIterations: maxIters,
-		Handlers:      handlers,
+		Handlers:      append([]adk.ChatModelAgentMiddleware{newBudgetGuard(maxIters)}, handlers...),
 	})
 }
 
@@ -115,6 +146,7 @@ func BuildEinoSubAgentTools(ctx context.Context, mainClient llm.Client, mainMode
 				ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(scoped)},
 			},
 			MaxIterations: iters,
+			Handlers:      []adk.ChatModelAgentMiddleware{newBudgetGuard(iters)},
 		})
 		if err != nil {
 			return nil, err
@@ -147,7 +179,7 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 			EmitInternalEvents: true, // stream sub-agent events up for lane rendering
 		},
 		MaxIterations: maxIters,
-		Handlers:      summarizationHandlers(ctx, mainClient, mainModel),
+		Handlers:      append([]adk.ChatModelAgentMiddleware{newBudgetGuard(maxIters)}, summarizationHandlers(ctx, mainClient, mainModel)...),
 	})
 }
 
