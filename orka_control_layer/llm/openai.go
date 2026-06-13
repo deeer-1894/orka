@@ -43,11 +43,12 @@ type wireToolCall struct {
 }
 
 type wireMessage struct {
-	Role       string         `json:"role"`
-	Content    string         `json:"content"`
-	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string         `json:"tool_call_id,omitempty"`
-	Name       string         `json:"name,omitempty"`
+	Role             string         `json:"role"`
+	Content          string         `json:"content"`
+	ReasoningContent string         `json:"reasoning_content,omitempty"`
+	ToolCalls        []wireToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string         `json:"tool_call_id,omitempty"`
+	Name             string         `json:"name,omitempty"`
 }
 
 type wireTool struct {
@@ -151,7 +152,7 @@ func (c *OpenAIClient) Chat(ctx context.Context, req Request) (Response, error) 
 		return Response{}, fmt.Errorf("llm returned no choices")
 	}
 	msg := wresp.Choices[0].Message
-	out := Response{Content: msg.Content, FinishReason: wresp.Choices[0].FinishReason}
+	out := Response{Content: msg.Content, Reasoning: msg.ReasoningContent, FinishReason: wresp.Choices[0].FinishReason}
 	if u := wresp.Usage; u != nil {
 		out.Usage = Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
 	}
@@ -166,8 +167,9 @@ func (c *OpenAIClient) Chat(ctx context.Context, req Request) (Response, error) 
 type wireStreamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string `json:"content"`
-			ToolCalls []struct {
+			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content"`
+			ToolCalls        []struct {
 				Index    int    `json:"index"`
 				ID       string `json:"id"`
 				Function struct {
@@ -214,7 +216,7 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 		return Response{}, &APIError{Status: resp.StatusCode, Body: string(raw)}
 	}
 
-	var content strings.Builder
+	var content, reasoning strings.Builder
 	type tcAcc struct {
 		id, name string
 		args     strings.Builder
@@ -249,6 +251,9 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 			continue
 		}
 		ch := chunk.Choices[0]
+		if ch.Delta.ReasoningContent != "" {
+			reasoning.WriteString(ch.Delta.ReasoningContent)
+		}
 		if ch.Delta.Content != "" {
 			content.WriteString(ch.Delta.Content)
 			if onDelta != nil {
@@ -278,7 +283,7 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 		return Response{}, fmt.Errorf("stream read: %w", err)
 	}
 
-	out := Response{Content: content.String(), FinishReason: finish, Usage: usage}
+	out := Response{Content: content.String(), Reasoning: reasoning.String(), FinishReason: finish, Usage: usage}
 	for _, idx := range order {
 		acc := toolAcc[idx]
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: acc.id, Name: acc.name, Arguments: acc.args.String()})

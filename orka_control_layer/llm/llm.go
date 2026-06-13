@@ -66,6 +66,7 @@ type Usage struct {
 // Response is the model's reply.
 type Response struct {
 	Content      string
+	Reasoning    string // reasoning_content from reasoning models (DeepSeek-R1 etc.); "" otherwise
 	ToolCalls    []ToolCall
 	FinishReason string
 	Usage        Usage
