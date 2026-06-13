@@ -183,7 +183,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 
 	taskID := ""
 	if req.ResumeKey != "" {
-		err = s.resume(ctx, runner, rc, req, raw)
+		err = s.resume(ctx, runner, rc, req, raw, deps, tools, model, modelName)
 		if err != nil {
 			return // resume() already emitted the failure event
 		}
@@ -280,7 +280,7 @@ func (s *ChatService) loadChatHistory(ctx context.Context, convID string, meta m
 }
 
 // resume claims the checkpoint (idempotent) and continues the run.
-func (s *ChatService) resume(ctx context.Context, runner agent.Runner, rc *agent.RunContext, req ChatRunRequest, raw func(messages.Message)) error {
+func (s *ChatService) resume(ctx context.Context, runner agent.Runner, rc *agent.RunContext, req ChatRunRequest, raw func(messages.Message), deps PipelineDeps, tools []agent.BaseTool, model llm.Client, modelName string) error {
 	c, err := s.CP.Claim(ctx, req.ResumeKey)
 	if err != nil {
 		// not found / already consumed -> reject duplicate or expired resume
@@ -296,6 +296,18 @@ func (s *ChatService) resume(ctx context.Context, runner agent.Runner, rc *agent
 		rc.Vars = c.Vars
 	}
 	s.Msg.Deliver(rc, raw, messages.Task("running", rc.Meta), true)
+	if s.Cfg.Agent.EinoRuntime {
+		// Stateless resume: fold the user's answer into history and re-run the
+		// eino agent over the augmented messages (the clarify question was already
+		// recorded into the checkpoint's history before the pause).
+		if req.Message != "" {
+			um := messages.Chat(messages.RoleUser, req.Message, rc.Meta)
+			rc.Messages = append(rc.Messages, um)
+			s.Msg.Deliver(rc, nil, um, true)
+		}
+		rc.Interrupt = nil
+		return s.runEino(ctx, rc, deps, tools, model, modelName, raw)
+	}
 	return runner.ResumeWithParams(rc, req.ResumeKey, req.Message)
 }
 

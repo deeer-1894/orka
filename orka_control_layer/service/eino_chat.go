@@ -58,7 +58,8 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 		Instruction: instruction,
 		Model:       llm.NewEinoModel(client, model),
 		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(tools)},
+			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(withClarify(tools))},
+			ReturnDirectly:  clarifyReturnDirectly(),
 		},
 		MaxIterations: maxIters,
 		Handlers:      handlers,
@@ -134,7 +135,7 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 	if maxIters <= 0 {
 		maxIters = 16
 	}
-	allTools := append(EinoTools(atomic), subTools...)
+	allTools := append(EinoTools(withClarify(atomic)), subTools...)
 	return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        einoOrchestratorName,
 		Description: "Orka orchestrator",
@@ -142,6 +143,7 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 		Model:       llm.NewEinoModel(mainClient, mainModel),
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: allTools},
+			ReturnDirectly:     clarifyReturnDirectly(),
 			EmitInternalEvents: true, // stream sub-agent events up for lane rendering
 		},
 		MaxIterations: maxIters,
@@ -264,6 +266,15 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 			name := pc.name
 			if name == "" {
 				name = m.ToolName
+			}
+			// clarify pauses the run: surface the question and interrupt so the
+			// existing checkpoint/resume machinery takes over (the clarify question
+			// is recorded into history so the resumed run has full context).
+			if name == middlewares.ClarifyToolName {
+				clar := clarifyFromArgs(pc.args)
+				rc.Messages = append(rc.Messages, messages.Chat(messages.RoleAssistant, "❓ "+clar.Question, rc.Meta))
+				rc.Interrupt = &agent.Interrupt{Reason: "clarify", Clarify: &clar}
+				return nil
 			}
 			payload := map[string]any{"tool": name, "args": pc.args, "result": m.Content}
 			emit(messages.Tool("call", payload, eventMeta))
