@@ -137,3 +137,16 @@ func (a *API) ChatKill(ctx context.Context, c *app.RequestContext) {
 	}
 	fail(c, consts.StatusNotFound, "no running session for id")
 }
+
+// ListModels handles GET /models, exposing the configured model names so the UI
+// shows real labels (deepseek / vLLM / OpenAI…) instead of a hardcoded string.
+// Only the two user-facing tiers are surfaced (main / mini) — base_url and other
+// ops details are intentionally not exposed to the client.
+func (a *API) ListModels(_ context.Context, c *app.RequestContext) {
+	llm := a.Chat.Cfg.LLM
+	out := []map[string]string{{"version": "", "label": llm.Model, "hint": "主模型 · 更强"}}
+	if llm.MiniModel != "" && llm.MiniModel != llm.Model {
+		out = append(out, map[string]string{"version": "mini", "label": llm.MiniModel, "hint": "更快 · 更省"})
+	}
+	ok(c, out)
+}

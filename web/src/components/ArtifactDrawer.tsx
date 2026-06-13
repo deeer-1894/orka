@@ -208,9 +208,13 @@ function FilesPanel({ email }: { email: string }) {
                 {it.name}
               </button>
             )}
-            <span className="text-[11px] text-faint">{it.size}b</span>
+            <span className="text-[11px] text-faint">{fmtBytes(it.size)}</span>
             {!it.dir && (
-              <a href={fileApi.downloadURL(it.name)} className="text-[12px] text-accent opacity-0 group-hover:opacity-100">
+              <a
+                href={fileApi.downloadURL(it.name)}
+                className="text-[12px] text-accent opacity-0 group-hover:opacity-100"
+                aria-label={"下载 " + it.name}
+              >
                 ↓
               </a>
             )}
@@ -441,4 +445,11 @@ function TasksPanel({ onJumpToConversation }: { onJumpToConversation: (cid: stri
 
 function Blank({ children }: { children: React.ReactNode }) {
   return <div className="p-6 text-center text-[13px] text-faint">{children}</div>;
+}
+
+// fmtBytes renders a file size as a human-readable string (195 KB, not 200000b).
+function fmtBytes(n: number): string {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1).replace(/\.0$/, "") + " KB";
+  return (n / (1024 * 1024)).toFixed(1).replace(/\.0$/, "") + " MB";
 }

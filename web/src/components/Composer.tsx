@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
+import { TOOL_GROUPS } from "../lib/toolGroups";
 
 // Mirrors the built-in skills registered in the control layer (skills_registry.go).
 // Selecting one prepends a directive the model honours via apply_skill.
@@ -15,10 +16,14 @@ export function Composer({
   status,
   onSend,
   onKill,
+  enabledGroups,
+  onToggleGroup,
 }: {
   status: RunStatus;
   onSend: (msg: string) => void;
   onKill: () => void;
+  enabledGroups: Set<string>;
+  onToggleGroup: (id: string) => void;
 }) {
   const [text, setText] = useState("");
   const [menu, setMenu] = useState(false);
@@ -69,6 +74,32 @@ export function Composer({
             ))}
           </div>
         )}
+
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          {TOOL_GROUPS.map((g) => {
+            const on = enabledGroups.size === 0 || enabledGroups.has(g.id);
+            const narrowed = enabledGroups.size > 0;
+            return (
+              <button
+                key={g.id}
+                onClick={() => onToggleGroup(g.id)}
+                title={g.desc}
+                aria-pressed={narrowed && on}
+                className={
+                  "rounded-full border px-2.5 py-1 text-[12px] transition " +
+                  (narrowed && on
+                    ? "border-accent/40 bg-accentsoft text-accent"
+                    : "border-border text-faint hover:bg-surface2")
+                }
+              >
+                {g.icon} {g.label}
+              </button>
+            );
+          })}
+          <span className="ml-1 text-[11px] text-faint">
+            {enabledGroups.size === 0 ? "全部工具" : `仅 ${enabledGroups.size} 类`}
+          </span>
+        </div>
 
         <div className="flex items-end gap-2 rounded-[26px] border border-border bg-surface px-2 py-2 shadow-[0_2px_18px_rgba(40,38,32,0.06)] focus-within:border-accent/40 transition">
           <button

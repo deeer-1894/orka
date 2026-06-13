@@ -51,4 +51,5 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.DELETE("/file/delete", a.FileDelete)
 
 	g.GET("/metrics", a.MetricsSnapshot)
+	g.GET("/models", a.ListModels)
 }

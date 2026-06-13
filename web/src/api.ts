@@ -107,6 +107,11 @@ export const api = {
     const j = await res.json();
     return j.data as MetricsSnapshot;
   },
+  models: async (): Promise<{ version: string; label: string; hint: string }[]> => {
+    const res = await fetch(BASE + "/models", { headers: headers(false) });
+    const j = await res.json();
+    return (j.data ?? []) as { version: string; label: string; hint: string }[];
+  },
   kill: (id: string) => post("/chat/kill", { conversation_id: id, task_id: id }),
 };
 

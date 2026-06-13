@@ -8,13 +8,16 @@ import { Composer } from "./components/Composer";
 import { ArtifactDrawer } from "./components/ArtifactDrawer";
 import { Toaster } from "./lib/toast";
 import { useTheme } from "./lib/theme";
+import { loadTools, saveTools } from "./lib/toolGroups";
 import type { Conversation, Message } from "./types";
 
 type Tab = "browser" | "files" | "metrics" | "tasks";
 
-const MODELS = [
-  { value: "", label: "deepseek-v4-flash", hint: "主模型 · 更强" },
-  { value: "mini", label: "mini", hint: "更快 · 更省" },
+interface ModelOption { version: string; label: string; hint: string }
+// Fallback until /models resolves (keeps the picker non-empty on first paint).
+const MODELS_FALLBACK: ModelOption[] = [
+  { version: "", label: "主模型", hint: "更强" },
+  { version: "mini", label: "mini", hint: "更快 · 更省" },
 ];
 
 export default function App() {
@@ -72,6 +75,13 @@ function Workbench({
   const [totalTokens, setTotalTokens] = useState(0);
   const [version, setVersion] = useState(""); // selected model version ("" main, "mini")
   const [theme, toggleTheme] = useTheme();
+  // Per-conversation enabled tool groups (empty = all tools, the default).
+  const [toolGroups, setToolGroups] = useState<Set<string>>(() => loadTools(""));
+  const [models, setModels] = useState<ModelOption[]>(MODELS_FALLBACK);
+
+  useEffect(() => {
+    api.models().then((m) => m.length && setModels(m)).catch(() => {});
+  }, []);
   // conversation_ids that have a scheduled (cron) task → marked 🔁 in the sidebar.
   const [scheduledIds, setScheduledIds] = useState<Set<string>>(new Set());
 
@@ -139,6 +149,23 @@ function Workbench({
     [setConvMessages],
   );
 
+  // Load the saved tool-group selection whenever the active conversation changes.
+  useEffect(() => {
+    setToolGroups(loadTools(activeID));
+  }, [activeID]);
+
+  const toggleGroup = useCallback(
+    (id: string) => {
+      setToolGroups((prev) => {
+        const next = new Set(prev);
+        next.has(id) ? next.delete(id) : next.add(id);
+        saveTools(activeID, next);
+        return next;
+      });
+    },
+    [activeID],
+  );
+
   const ensureConversation = useCallback(async (): Promise<string> => {
     if (activeID) return activeID;
     const c = await api.createConversation("New chat");
@@ -153,14 +180,17 @@ function Workbench({
       lastMsgRef.current = msg;
       const id = await ensureConversation();
       seen.current.add(id);
+      // carry a new chat's tool selection onto its freshly-created conversation id
+      if (id && toolGroups.size) saveTools(id, toolGroups);
+      const enabledTools = toolGroups.size ? [...toolGroups] : [];
       // fire-and-forget: do NOT await, so other conversations stay interactive
       // while this one streams. The backend runs each conversation concurrently.
-      run({ message: msg, conversationID: id, userEmail: user.email, enabledTools: [], selectedVersion: version }).then(() => {
+      run({ message: msg, conversationID: id, userEmail: user.email, enabledTools, selectedVersion: version }).then(() => {
         refreshConversations(); // pick up the auto-generated title
       });
       refreshTasks();
     },
-    [ensureConversation, run, user.email, refreshTasks, refreshConversations, version],
+    [ensureConversation, run, user.email, refreshTasks, refreshConversations, version, toolGroups],
   );
 
   // Re-send the last user message after a failure (network drop, sandbox down…).
@@ -249,7 +279,7 @@ function Workbench({
             </svg>
           </button>
           <span className="font-serif text-[16px] text-ink">Orka</span>
-          <ModelSelect value={version} onChange={setVersion} />
+          <ModelSelect value={version} onChange={setVersion} models={models} />
           {totalTokens > 0 && (
             <span className="text-[11px] text-faint" title="本进程累计 token 用量">
               🪙 {totalTokens >= 1000 ? (totalTokens / 1000).toFixed(1) + "k" : totalTokens} tokens
@@ -277,7 +307,7 @@ function Workbench({
         </header>
 
         <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} onPick={onSend} onRetry={onRetry} />
-        <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} />
+        <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} enabledGroups={toolGroups} onToggleGroup={toggleGroup} />
       </main>
 
       <ArtifactDrawer
@@ -295,9 +325,9 @@ function Workbench({
 
 // ModelSelect is the header model picker; it sets the per-run `selected_version`
 // the backend's modelFor() reads ("" → main model, "mini" → cheaper/faster).
-function ModelSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function ModelSelect({ value, onChange, models }: { value: string; onChange: (v: string) => void; models: ModelOption[] }) {
   const [open, setOpen] = useState(false);
-  const cur = MODELS.find((m) => m.value === value) || MODELS[0];
+  const cur = models.find((m) => m.version === value) || models[0];
   return (
     <div className="relative">
       <button
@@ -313,23 +343,23 @@ function ModelSelect({ value, onChange }: { value: string; onChange: (v: string)
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 z-20 mt-1 w-48 rounded-xl border border-border bg-surface p-1 shadow-lg" role="listbox">
-            {MODELS.map((m) => (
+          <div className="absolute left-0 z-20 mt-1 w-56 rounded-xl border border-border bg-surface p-1 shadow-lg" role="listbox">
+            {models.map((m) => (
               <button
-                key={m.value}
+                key={m.version}
                 role="option"
-                aria-selected={m.value === value}
+                aria-selected={m.version === value}
                 onClick={() => {
-                  onChange(m.value);
+                  onChange(m.version);
                   setOpen(false);
                 }}
                 className={
                   "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] " +
-                  (m.value === value ? "bg-accentsoft text-accent" : "text-ink hover:bg-surface2")
+                  (m.version === value ? "bg-accentsoft text-accent" : "text-ink hover:bg-surface2")
                 }
               >
-                <span>{m.label}</span>
-                <span className="text-[11px] text-faint">{m.hint}</span>
+                <span className="truncate">{m.label}</span>
+                <span className="shrink-0 text-[11px] text-faint">{m.hint}</span>
               </button>
             ))}
           </div>

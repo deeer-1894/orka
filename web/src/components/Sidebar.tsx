@@ -118,7 +118,7 @@ export function Sidebar({
                 {scheduled && (
                   <span className="shrink-0 text-[12px]" title="由定时任务驱动">🔁</span>
                 )}
-                <span className="flex-1 truncate text-[14px]">{c.title}</span>
+                <span className="flex-1 truncate text-[14px]" title={c.title}>{c.title}</span>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
