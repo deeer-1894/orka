@@ -23,6 +23,7 @@ export function Composer({
   onKill,
   enabledGroups,
   onToggleGroup,
+  onClearGroups,
   activeSkill,
   onPickSkill,
 }: {
@@ -31,11 +32,13 @@ export function Composer({
   onKill: () => void;
   enabledGroups: Set<string>;
   onToggleGroup: (id: string) => void;
+  onClearGroups: () => void;
   activeSkill: string | null;
   onPickSkill: (name: string | null) => void;
 }) {
   const [text, setText] = useState("");
   const [menu, setMenu] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -109,29 +112,45 @@ export function Composer({
         )}
 
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
-          {TOOL_GROUPS.map((g) => {
-            const on = enabledGroups.size === 0 || enabledGroups.has(g.id);
-            const narrowed = enabledGroups.size > 0;
-            return (
-              <button
-                key={g.id}
-                onClick={() => onToggleGroup(g.id)}
-                title={g.desc}
-                aria-pressed={narrowed && on}
-                className={
-                  "rounded-full border px-2.5 py-1 text-[12px] transition " +
-                  (narrowed && on
-                    ? "border-accent/40 bg-accentsoft text-accent"
-                    : "border-border text-faint hover:bg-surface2")
-                }
-              >
-                {g.icon} {g.label}
-              </button>
-            );
-          })}
-          <span className="ml-1 text-[11px] text-faint">
-            {enabledGroups.size === 0 ? "全部工具" : `仅 ${enabledGroups.size} 类`}
-          </span>
+          {!toolsOpen ? (
+            // Collapsed: the default is automatic tool selection — make that
+            // obvious instead of showing four greyed chips that look "off".
+            <button
+              onClick={() => setToolsOpen(true)}
+              title="默认按任务自动选择工具，点击可限定工具范围"
+              className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-[12px] text-muted hover:bg-surface2"
+            >
+              🧰 {enabledGroups.size === 0 ? "工具：自动选择" : `工具：仅 ${enabledGroups.size} 类`}
+              <span className="text-faint">⌄</span>
+            </button>
+          ) : (
+            <>
+              <span className="text-[11px] text-faint">限定范围：</span>
+              {TOOL_GROUPS.map((g) => {
+                const on = enabledGroups.has(g.id);
+                return (
+                  <button
+                    key={g.id}
+                    onClick={() => onToggleGroup(g.id)}
+                    title={g.desc}
+                    aria-pressed={on}
+                    className={
+                      "rounded-full border px-2.5 py-1 text-[12px] transition " +
+                      (on ? "border-accent/40 bg-accentsoft text-accent" : "border-border text-faint hover:bg-surface2")
+                    }
+                  >
+                    {g.icon} {g.label}
+                  </button>
+                );
+              })}
+              {enabledGroups.size > 0 && (
+                <button onClick={onClearGroups} className="rounded-full px-2 py-1 text-[12px] text-faint hover:text-accent" title="恢复按任务自动选择全部工具">
+                  重置为自动
+                </button>
+              )}
+              <button onClick={() => setToolsOpen(false)} className="ml-0.5 text-[11px] text-faint hover:text-ink">收起</button>
+            </>
+          )}
           {skill && (
             <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-accentsoft px-2 py-1 text-[12px] text-accent">
               {skill.icon} {skill.label} 模式

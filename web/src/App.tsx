@@ -167,6 +167,10 @@ function Workbench({
     },
     [activeID],
   );
+  const clearGroups = useCallback(() => {
+    setToolGroups(new Set());
+    saveTools(activeID, new Set());
+  }, [activeID]);
 
   const ensureConversation = useCallback(async (): Promise<string> => {
     if (activeID) return activeID;
@@ -309,7 +313,7 @@ function Workbench({
         </header>
 
         <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} />
-        <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} enabledGroups={toolGroups} onToggleGroup={toggleGroup} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
+        <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} enabledGroups={toolGroups} onToggleGroup={toggleGroup} onClearGroups={clearGroups} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
       </main>
 
       <ArtifactDrawer
