@@ -216,7 +216,14 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 			s.titleAsync(req.ConversationID, req.Message)
 		}
 		userMsg := messages.Chat(messages.RoleUser, req.Message, meta)
-		rc.Messages = append(history, userMsg)
+		// Fold any uploaded attachments (text inline; images via a VLM pre-pass)
+		// into the message the model sees — the optimistic UI echo keeps the
+		// user's original text, so this context is invisible in the bubble.
+		modelMsg := userMsg
+		if extra := s.processAttachments(ctx, req); extra != "" {
+			modelMsg.Content += extra
+		}
+		rc.Messages = append(history, modelMsg)
 		s.Msg.Deliver(rc, nil, userMsg, true)
 		s.Msg.Deliver(rc, raw, messages.Task("start", meta), true)
 		if s.Cfg.Agent.EinoRuntime {

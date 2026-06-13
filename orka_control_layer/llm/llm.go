@@ -36,6 +36,7 @@ type ToolCall struct {
 type ChatMessage struct {
 	Role       string     `json:"role"`
 	Content    string     `json:"content"`
+	Images     []string   `json:"-"`                      // data URLs sent alongside Content (vision models)
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"` // set when Role == tool
 	Name       string     `json:"name,omitempty"`         // tool name for tool results

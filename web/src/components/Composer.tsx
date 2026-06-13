@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
 import { TOOL_GROUPS } from "../lib/toolGroups";
+import { files as fileApi } from "../api";
+import { toastError } from "../lib/toast";
+
+interface Attachment { name: string; path: string; image: boolean }
+const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
 
 // Mirrors the built-in skills registered in the control layer (skills_registry.go).
 // Selecting one prepends a directive the model honours via apply_skill.
@@ -22,7 +27,7 @@ export function Composer({
   onPickSkill,
 }: {
   status: RunStatus;
-  onSend: (msg: string) => void;
+  onSend: (msg: string, fileIDs?: string[]) => void;
   onKill: () => void;
   enabledGroups: Set<string>;
   onToggleGroup: (id: string) => void;
@@ -31,8 +36,27 @@ export function Composer({
 }) {
   const [text, setText] = useState("");
   const [menu, setMenu] = useState(false);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const busy = status === "streaming";
+
+  const onFiles = async (list: FileList | null) => {
+    if (!list?.length) return;
+    setUploading((n) => n + list.length);
+    for (const f of Array.from(list)) {
+      try {
+        const path = await fileApi.upload(f, "");
+        setAttachments((a) => [...a, { name: f.name, path, image: IMAGE_RE.test(f.name) }]);
+      } catch {
+        toastError("上传失败：" + f.name);
+      } finally {
+        setUploading((n) => n - 1);
+      }
+    }
+    if (fileRef.current) fileRef.current.value = "";
+  };
 
   // "/" at the start of an empty box opens the skill menu.
   useEffect(() => {
@@ -40,9 +64,10 @@ export function Composer({
   }, [text]);
 
   const send = () => {
-    if (!text.trim() || busy) return;
-    onSend(text.trim());
+    if ((!text.trim() && attachments.length === 0) || busy || uploading > 0) return;
+    onSend(text.trim(), attachments.map((a) => a.path));
     setText("");
+    setAttachments([]);
     setMenu(false);
   };
 
@@ -115,6 +140,19 @@ export function Composer({
           )}
         </div>
 
+        {(attachments.length > 0 || uploading > 0) && (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {attachments.map((a, i) => (
+              <span key={a.path} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface2/60 px-2 py-1 text-[12px] text-ink">
+                <span>{a.image ? "🖼️" : "📄"}</span>
+                <span className="max-w-[160px] truncate">{a.name}</span>
+                <button onClick={() => setAttachments((xs) => xs.filter((_, j) => j !== i))} aria-label={"移除 " + a.name} className="text-faint hover:text-accent">✕</button>
+              </span>
+            ))}
+            {uploading > 0 && <span className="rounded-lg bg-surface2/60 px-2 py-1 text-[12px] text-faint">上传中 {uploading}…</span>}
+          </div>
+        )}
+
         <div className="flex items-end gap-2 rounded-[26px] border border-border bg-surface px-2 py-2 shadow-[0_2px_18px_rgba(40,38,32,0.06)] focus-within:border-accent/40 transition">
           <button
             onClick={() => setMenu((o) => !o)}
@@ -123,9 +161,26 @@ export function Composer({
               (menu ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")
             }
             title="技能"
+            aria-label="选择技能"
           >
             <span className="text-[17px]">✨</span>
           </button>
+          <button
+            onClick={() => fileRef.current?.click()}
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-muted hover:bg-surface2 transition"
+            title="上传文件 / 图片"
+            aria-label="上传文件或图片"
+          >
+            <span className="text-[17px]">📎</span>
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            accept="image/*,.txt,.md,.json,.csv,.log,.py,.js,.ts,.go,.html,.css,.yaml,.yml,.xml"
+            hidden
+            onChange={(e) => onFiles(e.target.files)}
+          />
           <textarea
             ref={taRef}
             value={text}
@@ -152,9 +207,10 @@ export function Composer({
           ) : (
             <button
               onClick={send}
-              disabled={!text.trim()}
+              disabled={(!text.trim() && attachments.length === 0) || uploading > 0}
               className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-accent text-white hover:brightness-105 disabled:opacity-30 transition"
               title="Send"
+              aria-label="发送"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                 <path d="M12 19V5M12 5l-6 6M12 5l6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />

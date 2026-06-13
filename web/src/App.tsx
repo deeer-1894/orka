@@ -178,7 +178,7 @@ function Workbench({
 
   const lastMsgRef = useRef("");
   const onSend = useCallback(
-    async (msg: string) => {
+    async (msg: string, fileIDs: string[] = []) => {
       lastMsgRef.current = msg;
       const id = await ensureConversation();
       seen.current.add(id);
@@ -187,7 +187,7 @@ function Workbench({
       const enabledTools = toolGroups.size ? [...toolGroups] : [];
       // fire-and-forget: do NOT await, so other conversations stay interactive
       // while this one streams. The backend runs each conversation concurrently.
-      run({ message: msg, conversationID: id, userEmail: user.email, enabledTools, selectedVersion: version, activeSkill: activeSkill ?? "" }).then(() => {
+      run({ message: msg, conversationID: id, userEmail: user.email, enabledTools, selectedVersion: version, activeSkill: activeSkill ?? "", fileIDs }).then(() => {
         refreshConversations(); // pick up the auto-generated title
       });
       refreshTasks();

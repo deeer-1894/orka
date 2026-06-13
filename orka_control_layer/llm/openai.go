@@ -61,12 +61,31 @@ type wireTool struct {
 }
 
 type wireRequest struct {
-	Model       string        `json:"model"`
-	Messages    []wireMessage `json:"messages"`
-	Tools       []wireTool    `json:"tools,omitempty"`
-	Temperature float32       `json:"temperature,omitempty"`
-	Stream      bool          `json:"stream,omitempty"`
-	StreamOpts  *streamOpts   `json:"stream_options,omitempty"`
+	Model       string           `json:"model"`
+	Messages    []wireReqMessage `json:"messages"`
+	Tools       []wireTool       `json:"tools,omitempty"`
+	Temperature float32          `json:"temperature,omitempty"`
+	Stream      bool             `json:"stream,omitempty"`
+	StreamOpts  *streamOpts      `json:"stream_options,omitempty"`
+}
+
+// wireReqMessage is the OUTGOING message; Content is `any` so it can be a plain
+// string or a multimodal [{type:text},{type:image_url}] array (vision input).
+type wireReqMessage struct {
+	Role       string         `json:"role"`
+	Content    any            `json:"content"`
+	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+	Name       string         `json:"name,omitempty"`
+}
+
+type wirePart struct {
+	Type     string        `json:"type"` // "text" | "image_url"
+	Text     string        `json:"text,omitempty"`
+	ImageURL *wireImageURL `json:"image_url,omitempty"`
+}
+type wireImageURL struct {
+	URL string `json:"url"`
 }
 
 type streamOpts struct {
@@ -94,7 +113,18 @@ type wireResponse struct {
 func toWireRequest(req Request) wireRequest {
 	wr := wireRequest{Model: req.Model, Temperature: req.Temperature}
 	for _, m := range req.Messages {
-		wm := wireMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID, Name: m.Name}
+		wm := wireReqMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID, Name: m.Name}
+		if len(m.Images) > 0 {
+			// Multimodal: text part first, then one image_url part per image.
+			parts := make([]wirePart, 0, len(m.Images)+1)
+			if m.Content != "" {
+				parts = append(parts, wirePart{Type: "text", Text: m.Content})
+			}
+			for _, url := range m.Images {
+				parts = append(parts, wirePart{Type: "image_url", ImageURL: &wireImageURL{URL: url}})
+			}
+			wm.Content = parts
+		}
 		for _, tc := range m.ToolCalls {
 			wm.ToolCalls = append(wm.ToolCalls, wireToolCall{
 				ID: tc.ID, Type: "function",

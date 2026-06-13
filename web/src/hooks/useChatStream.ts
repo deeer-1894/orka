@@ -15,6 +15,7 @@ export interface RunParams {
   resumeKey?: string;
   selectedVersion?: string; // "" = main model, "mini" = the cheaper/faster model
   activeSkill?: string; // user-locked skill mode (researcher / writer / …)
+  fileIDs?: string[]; // uploaded attachment paths (text injected; images → VLM)
 }
 
 interface ConvStream {
@@ -145,6 +146,7 @@ export function useChatStreams() {
             resume_key: p.resumeKey ?? "",
             selected_version: p.selectedVersion ?? "",
             active_skill: p.activeSkill ?? "",
+            file_ids: p.fileIDs ?? [],
           }),
           signal: ctrl.signal,
         });
