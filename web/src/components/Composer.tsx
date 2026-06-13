@@ -153,18 +153,7 @@ export function Composer({
           </div>
         )}
 
-        <div className="flex items-end gap-2 rounded-[26px] border border-border bg-surface px-2 py-2 shadow-[0_2px_18px_rgba(40,38,32,0.06)] focus-within:border-accent/40 transition">
-          <button
-            onClick={() => setMenu((o) => !o)}
-            className={
-              "grid h-10 w-10 shrink-0 place-items-center rounded-full transition " +
-              (menu ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")
-            }
-            title="技能"
-            aria-label="选择技能"
-          >
-            <span className="text-[17px]">✨</span>
-          </button>
+        <div className="flex items-end gap-2 rounded-[26px] border border-border bg-surface px-2 py-2 shadow-[0_2px_18px_rgba(40,38,32,0.06)] transition">
           <button
             onClick={() => fileRef.current?.click()}
             className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-muted hover:bg-surface2 transition"
