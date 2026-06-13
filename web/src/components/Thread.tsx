@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
 import type { BrowserPayload, ClarifyPayload, Message, ToolPayload, WeatherCardData } from "../types";
+import { files as fileApi } from "../api";
 import { Markdown } from "./Markdown";
 import { WeatherCard, parseWeatherCard } from "./WeatherCard";
 
@@ -78,14 +79,24 @@ export function Thread({
     .filter((b): b is Extract<Block, { kind: "user" }> => b.kind === "user")
     .map((b) => ({ id: "turn-" + b.m.id, text: b.m.content || "" }));
 
+  // Index of the last assistant block — only it gets the "regenerate" action,
+  // since regenerate re-runs the most recent user turn.
+  let lastAssistant = -1;
+  blocks.forEach((b, i) => {
+    if (b.kind === "assistant") lastAssistant = i;
+  });
+  const canAct = status !== "streaming";
+
   return (
     <div className="relative flex-1 overflow-y-auto">
       <ThreadOutline turns={turns} />
       <div className="mx-auto max-w-3xl px-5 py-8">
         {blocks.map((b, i) => (
           <div key={i} id={b.kind === "user" ? "turn-" + b.m.id : undefined} className="rise scroll-mt-4">
-            {b.kind === "user" && <UserBubble m={b.m} />}
-            {b.kind === "assistant" && <Assistant m={b.m} />}
+            {b.kind === "user" && <UserBubble m={b.m} onEdit={canAct ? onPick : undefined} />}
+            {b.kind === "assistant" && (
+              <Assistant m={b.m} onRegenerate={canAct && i === lastAssistant ? onRetry : undefined} />
+            )}
             {b.kind === "clarify" && <Clarify m={b.m} onResume={onResume} />}
             {b.kind === "weather" && <WeatherCard data={b.data} />}
             {b.kind === "steps" && <Steps items={b.items} onOpenViewport={onOpenViewport} />}
@@ -156,26 +167,99 @@ function ThreadOutline({ turns }: { turns: { id: string; text: string }[] }) {
   );
 }
 
-function UserBubble({ m }: { m: Message }) {
+function UserBubble({ m, onEdit }: { m: Message; onEdit?: (text: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(m.content || "");
+  if (editing) {
+    const submit = () => {
+      const t = draft.trim();
+      setEditing(false);
+      if (t && t !== m.content) onEdit?.(t);
+    };
+    return (
+      <div className="mb-6 flex justify-end">
+        <div className="w-[85%] rounded-2xl bg-userbubble p-2">
+          <textarea
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+              if (e.key === "Escape") setEditing(false);
+            }}
+            rows={Math.min(8, draft.split("\n").length + 1)}
+            className="w-full resize-none rounded-lg bg-surface px-3 py-2 text-[15px] text-ink outline-none focus:border-accent/50"
+          />
+          <div className="mt-1.5 flex justify-end gap-2 text-[12px]">
+            <button onClick={() => setEditing(false)} className="px-2 py-1 text-faint hover:text-ink">取消</button>
+            <button onClick={submit} className="rounded-lg bg-accent px-2.5 py-1 text-white">重新发送</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
-    <div className="mb-6 flex justify-end">
+    <div className="group mb-6 flex flex-col items-end gap-1">
       <div className="max-w-[85%] rounded-2xl rounded-br-md bg-userbubble px-4 py-2.5 text-[15px] leading-relaxed text-ink whitespace-pre-wrap">
         {m.content}
       </div>
+      {onEdit && (
+        <div className="flex gap-1 opacity-0 transition group-hover:opacity-100">
+          <CopyButton text={m.content || ""} />
+          <ActionButton label="编辑并重发" onClick={() => { setDraft(m.content || ""); setEditing(true); }}>✎</ActionButton>
+        </div>
+      )}
     </div>
   );
 }
 
-function Assistant({ m }: { m: Message }) {
+function Assistant({ m, onRegenerate }: { m: Message; onRegenerate?: () => void }) {
   return (
-    <div className="mb-7 flex gap-3.5">
+    <div className="group mb-7 flex gap-3.5">
       <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent text-white font-serif text-[13px] leading-none">
         O
       </div>
       <div className="min-w-0 flex-1 pt-0.5">
         <Markdown>{m.content ?? ""}</Markdown>
+        <div className="mt-1 flex gap-1 opacity-0 transition group-hover:opacity-100">
+          <CopyButton text={m.content || ""} />
+          {onRegenerate && <ActionButton label="重新生成" onClick={onRegenerate}>↻</ActionButton>}
+        </div>
       </div>
     </div>
+  );
+}
+
+function ActionButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="grid h-6 w-6 place-items-center rounded-md text-[13px] text-faint hover:bg-surface2 hover:text-ink"
+    >
+      {children}
+    </button>
+  );
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <ActionButton
+      label={done ? "已复制" : "复制"}
+      onClick={() => {
+        navigator.clipboard?.writeText(text).then(() => {
+          setDone(true);
+          setTimeout(() => setDone(false), 1500);
+        });
+      }}
+    >
+      {done ? "✓" : "⧉"}
+    </ActionButton>
   );
 }
 
@@ -261,15 +345,15 @@ function AgentLane({ agent, items }: { agent: string; items: Message[] }) {
 
 // toolReceipt turns a tool payload into a readable {icon,label,detail} receipt,
 // so a step reads like "📄 wrote report.md · 1,785 bytes" instead of raw JSON.
-function toolReceipt(p: ToolPayload): { icon: string; label: string; detail: string } {
+function toolReceipt(p: ToolPayload): { icon: string; label: string; detail: string; file?: string } {
   const a = (p.args || {}) as Record<string, unknown>;
   const s = (k: string) => (a[k] == null ? "" : String(a[k]));
   const res = stripCard(p.result || "");
   switch (p.tool) {
     case "file_write":
-      return { icon: "📄", label: `写入 ${s("path")}`, detail: res };
+      return { icon: "📄", label: "写入", detail: res, file: s("path") };
     case "file_read":
-      return { icon: "📄", label: `读取 ${s("path")}`, detail: trunc(res, 70) };
+      return { icon: "📄", label: "读取", detail: trunc(res, 70), file: s("path") };
     case "file_list":
       return { icon: "📁", label: `列目录 ${s("path") || "/"}`, detail: trunc(res, 70) };
     case "web_search":
@@ -303,7 +387,18 @@ function Step({ m }: { m: Message }) {
     const r = toolReceipt(p);
     return (
       <div className="text-[13px]">
-        <span className="text-ink">{r.icon} {r.label}</span>
+        <span className="text-ink">{r.icon} {r.label} </span>
+        {r.file ? (
+          <a
+            href={fileApi.downloadURL(r.file)}
+            download
+            onClick={(e) => e.stopPropagation()}
+            className="text-accent hover:underline"
+            title="下载文件"
+          >
+            {r.file} ↓
+          </a>
+        ) : null}
         {p.error ? (
           <span className="text-accent"> · {trunc(p.error, 80)}</span>
         ) : r.detail ? (

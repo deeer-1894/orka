@@ -13,6 +13,7 @@ export interface RunParams {
   userEmail: string;
   enabledTools: string[];
   resumeKey?: string;
+  selectedVersion?: string; // "" = main model, "mini" = the cheaper/faster model
 }
 
 interface ConvStream {
@@ -141,6 +142,7 @@ export function useChatStreams() {
             user_email: p.userEmail,
             enabled_tools: p.enabledTools,
             resume_key: p.resumeKey ?? "",
+            selected_version: p.selectedVersion ?? "",
           }),
           signal: ctrl.signal,
         });

@@ -12,6 +12,7 @@ export function ArtifactDrawer({
   setTab,
   messages,
   email,
+  onJumpToConversation,
 }: {
   open: boolean;
   onClose: () => void;
@@ -19,15 +20,16 @@ export function ArtifactDrawer({
   setTab: (t: Tab) => void;
   messages: Message[];
   email: string;
+  onJumpToConversation: (cid: string) => void;
 }) {
   return (
     <aside
       className={
-        "shrink-0 overflow-hidden border-l border-border bg-surface transition-all duration-300 " +
-        (open ? "w-[400px]" : "w-0")
+        "fixed inset-y-0 right-0 z-40 shrink-0 overflow-hidden border-l border-border bg-surface md:static md:z-auto transition-all duration-300 " +
+        (open ? "w-[400px] max-md:w-[86vw]" : "w-0")
       }
     >
-      <div className="flex h-full w-[400px] flex-col">
+      <div className="flex h-full w-[400px] max-md:w-[86vw] flex-col">
         <div className="flex items-center justify-between border-b border-border px-3 h-14">
           <div className="flex gap-1">
             {(["browser", "files", "metrics", "tasks"] as Tab[]).map((t) => (
@@ -47,6 +49,7 @@ export function ArtifactDrawer({
             onClick={onClose}
             className="grid h-8 w-8 place-items-center rounded-lg text-faint hover:bg-surface2"
             title="Close"
+            aria-label="关闭工件面板"
           >
             ✕
           </button>
@@ -55,7 +58,7 @@ export function ArtifactDrawer({
           {tab === "browser" && <BrowserPanel messages={messages} />}
           {tab === "files" && <FilesPanel email={email} />}
           {tab === "metrics" && <MetricsPanel />}
-          {tab === "tasks" && <TasksPanel />}
+          {tab === "tasks" && <TasksPanel onJumpToConversation={onJumpToConversation} />}
         </div>
       </div>
     </aside>
@@ -323,7 +326,7 @@ function fmtWhen(ms?: number): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-function TasksPanel() {
+function TasksPanel({ onJumpToConversation }: { onJumpToConversation: (cid: string) => void }) {
   const [tasks, setTasks] = useState<TaskMeta[]>([]);
   const [creating, setCreating] = useState(false);
   const [prompt, setPrompt] = useState("");
@@ -410,14 +413,24 @@ function TasksPanel() {
               {t.last_result ? (
                 <div className="mt-1 line-clamp-2 text-[11px] text-muted">↳ {t.last_result}</div>
               ) : null}
-              {scheduled && (
-                <button
-                  onClick={() => api.unscheduleTask(t.task_id).then(refresh)}
-                  className="mt-1.5 text-[11px] text-faint hover:text-accent"
-                >
-                  停用定时
-                </button>
-              )}
+              <div className="mt-1.5 flex items-center gap-3">
+                {t.conversation_id && (
+                  <button
+                    onClick={() => onJumpToConversation(t.conversation_id)}
+                    className="text-[11px] text-accent hover:underline"
+                  >
+                    ↗ 打开对话
+                  </button>
+                )}
+                {scheduled && (
+                  <button
+                    onClick={() => api.unscheduleTask(t.task_id).then(refresh)}
+                    className="text-[11px] text-faint hover:text-accent"
+                  >
+                    停用定时
+                  </button>
+                )}
+              </div>
             </div>
           );
         })}

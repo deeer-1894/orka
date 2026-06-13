@@ -6,9 +6,16 @@ import { Sidebar } from "./components/Sidebar";
 import { Thread } from "./components/Thread";
 import { Composer } from "./components/Composer";
 import { ArtifactDrawer } from "./components/ArtifactDrawer";
+import { Toaster } from "./lib/toast";
+import { useTheme } from "./lib/theme";
 import type { Conversation, Message } from "./types";
 
 type Tab = "browser" | "files" | "metrics" | "tasks";
+
+const MODELS = [
+  { value: "", label: "deepseek-v4-flash", hint: "主模型 · 更强" },
+  { value: "mini", label: "mini", hint: "更快 · 更省" },
+];
 
 export default function App() {
   const [user, setUser] = useState<{ email: string; name: string } | null>(null);
@@ -32,9 +39,18 @@ export default function App() {
       .finally(() => setAuthReady(true));
   }, []);
 
-  if (!authReady) return <div className="h-screen" />;
-  if (!user) return <Login onAuthed={(s) => setUser({ email: s.email, name: s.name })} />;
-  return <Workbench user={user} onSignOut={() => { auth.clear(); setUser(null); }} />;
+  return (
+    <>
+      {!authReady ? (
+        <div className="h-screen" />
+      ) : !user ? (
+        <Login onAuthed={(s) => setUser({ email: s.email, name: s.name })} />
+      ) : (
+        <Workbench user={user} onSignOut={() => { auth.clear(); setUser(null); }} />
+      )}
+      <Toaster />
+    </>
+  );
 }
 
 function Workbench({
@@ -47,10 +63,17 @@ function Workbench({
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeID, setActiveID] = useState("");
 
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Sidebar starts open on desktop, closed on narrow screens (where it overlays).
+  const [sidebarOpen, setSidebarOpen] = useState(() =>
+    typeof window === "undefined" ? true : window.innerWidth >= 768,
+  );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<Tab>("browser");
   const [totalTokens, setTotalTokens] = useState(0);
+  const [version, setVersion] = useState(""); // selected model version ("" main, "mini")
+  const [theme, toggleTheme] = useTheme();
+  // conversation_ids that have a scheduled (cron) task → marked 🔁 in the sidebar.
+  const [scheduledIds, setScheduledIds] = useState<Set<string>>(new Set());
 
   const { run, kill, setConvMessages, messagesOf, statusOf, runningIds } = useChatStreams();
   const messages = messagesOf(activeID);
@@ -59,8 +82,19 @@ function Workbench({
   // so switching back never clobbers an in-flight stream with stale history.
   const seen = useRef<Set<string>>(new Set());
 
-  // Tasks now self-fetch inside the Tasks panel; keep a no-op so call sites stay simple.
-  const refreshTasks = useCallback(() => {}, []);
+  // Pull tasks to learn which conversations are scheduled (for the sidebar 🔁).
+  const refreshTasks = useCallback(() => {
+    api
+      .getTasks()
+      .then((r) => {
+        const ids = new Set<string>();
+        for (const t of r.tasks || []) {
+          if (t.cron_status === "on" && t.conversation_id) ids.add(t.conversation_id);
+        }
+        setScheduledIds(ids);
+      })
+      .catch(() => {});
+  }, []);
 
   const refreshConversations = useCallback(() => {
     api.listConversations().then((c) => setConversations(c || [])).catch(() => {});
@@ -121,12 +155,12 @@ function Workbench({
       seen.current.add(id);
       // fire-and-forget: do NOT await, so other conversations stay interactive
       // while this one streams. The backend runs each conversation concurrently.
-      run({ message: msg, conversationID: id, userEmail: user.email, enabledTools: [] }).then(() => {
+      run({ message: msg, conversationID: id, userEmail: user.email, enabledTools: [], selectedVersion: version }).then(() => {
         refreshConversations(); // pick up the auto-generated title
       });
       refreshTasks();
     },
-    [ensureConversation, run, user.email, refreshTasks, refreshConversations],
+    [ensureConversation, run, user.email, refreshTasks, refreshConversations, version],
   );
 
   // Re-send the last user message after a failure (network drop, sandbox down…).
@@ -151,10 +185,20 @@ function Workbench({
 
   const onResume = useCallback(
     async (resumeKey: string, answer: string) => {
-      run({ message: answer, conversationID: activeID, userEmail: user.email, enabledTools: [], resumeKey });
+      run({ message: answer, conversationID: activeID, userEmail: user.email, enabledTools: [], resumeKey, selectedVersion: version });
       refreshTasks();
     },
-    [run, activeID, user.email, refreshTasks],
+    [run, activeID, user.email, refreshTasks, version],
+  );
+
+  // Jump from a task (Tasks panel) to its originating conversation.
+  const onJumpToConversation = useCallback(
+    (cid: string) => {
+      if (!cid) return;
+      selectConversation(cid);
+      setDrawerOpen(false);
+    },
+    [selectConversation],
   );
 
   const openViewport = useCallback(() => {
@@ -163,12 +207,25 @@ function Workbench({
   }, []);
 
   return (
-    <div className="flex h-screen">
+    <div className="relative flex h-screen">
+      {/* mobile backdrop: tapping it closes whichever overlay is open */}
+      {(sidebarOpen || drawerOpen) && (
+        <div
+          className="fixed inset-0 z-30 bg-black/25 md:hidden"
+          onClick={() => {
+            setSidebarOpen(false);
+            setDrawerOpen(false);
+          }}
+          aria-hidden="true"
+        />
+      )}
       <Sidebar
         open={sidebarOpen}
+        onSelectClose={() => window.innerWidth < 768 && setSidebarOpen(false)}
         conversations={conversations}
         activeID={activeID}
         runningIds={runningIds}
+        scheduledIds={scheduledIds}
         onSelect={selectConversation}
         onNew={newConversation}
         onRename={onRename}
@@ -185,22 +242,33 @@ function Workbench({
             onClick={() => setSidebarOpen((o) => !o)}
             className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-surface2"
             title="Toggle sidebar"
+            aria-label="切换侧栏"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
           </button>
           <span className="font-serif text-[16px] text-ink">Orka</span>
-          <span className="rounded-full bg-surface2 px-2 py-0.5 text-[11px] text-muted">deepseek-v4-flash</span>
+          <ModelSelect value={version} onChange={setVersion} />
           {totalTokens > 0 && (
             <span className="text-[11px] text-faint" title="本进程累计 token 用量">
               🪙 {totalTokens >= 1000 ? (totalTokens / 1000).toFixed(1) + "k" : totalTokens} tokens
             </span>
           )}
           <button
+            onClick={toggleTheme}
+            className="ml-auto grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-surface2"
+            title={theme === "dark" ? "切换到亮色" : "切换到暗色"}
+            aria-label={theme === "dark" ? "切换到亮色模式" : "切换到暗色模式"}
+          >
+            {theme === "dark" ? "☀️" : "🌙"}
+          </button>
+          <button
             onClick={() => setDrawerOpen((o) => !o)}
+            aria-label="切换工件面板"
+            aria-pressed={drawerOpen}
             className={
-              "ml-auto rounded-lg border px-3 py-1.5 text-[13px] transition " +
+              "rounded-lg border px-3 py-1.5 text-[13px] transition " +
               (drawerOpen ? "border-accent/40 bg-accentsoft text-accent" : "border-border text-muted hover:bg-surface2")
             }
           >
@@ -219,7 +287,54 @@ function Workbench({
         setTab={setDrawerTab}
         messages={messages}
         email={user.email}
+        onJumpToConversation={onJumpToConversation}
       />
+    </div>
+  );
+}
+
+// ModelSelect is the header model picker; it sets the per-run `selected_version`
+// the backend's modelFor() reads ("" → main model, "mini" → cheaper/faster).
+function ModelSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const cur = MODELS.find((m) => m.value === value) || MODELS[0];
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-label="选择模型"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="flex items-center gap-1 rounded-full bg-surface2 px-2 py-0.5 text-[11px] text-muted hover:text-ink"
+      >
+        {cur.label}
+        <span className="text-faint">▾</span>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 z-20 mt-1 w-48 rounded-xl border border-border bg-surface p-1 shadow-lg" role="listbox">
+            {MODELS.map((m) => (
+              <button
+                key={m.value}
+                role="option"
+                aria-selected={m.value === value}
+                onClick={() => {
+                  onChange(m.value);
+                  setOpen(false);
+                }}
+                className={
+                  "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] " +
+                  (m.value === value ? "bg-accentsoft text-accent" : "text-ink hover:bg-surface2")
+                }
+              >
+                <span>{m.label}</span>
+                <span className="text-[11px] text-faint">{m.hint}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

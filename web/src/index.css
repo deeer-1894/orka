@@ -24,6 +24,44 @@
   color-scheme: light;
 }
 
+/* Dark mode: override the theme tokens (Tailwind v4 maps bg-surface etc. to
+   these vars, so the whole UI flips). Warm dark to match the paper aesthetic. */
+html.dark {
+  color-scheme: dark;
+  --color-bg: #1a1917;
+  --color-surface: #232220;
+  --color-surface2: #2b2926;
+  --color-border: #38352f;
+  --color-ink: #ece9e2;
+  --color-muted: #a8a399;
+  --color-faint: #837d72;
+  --color-accent: #e07a5a;
+  --color-accentsoft: #3a2a23;
+  --color-userbubble: #2e2b26;
+  --color-ok: #6fa57d;
+  --color-codebg: #26241f;
+}
+html.dark *::-webkit-scrollbar-thumb {
+  background: #45413a;
+}
+
+/* Keyboard focus ring — visible only for keyboard users (a11y). */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 html,
 body,
 #root {

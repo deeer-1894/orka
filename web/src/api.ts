@@ -5,6 +5,7 @@ import type {
   OwnerInfo,
   TaskMeta,
 } from "./types";
+import { toastError } from "./lib/toast";
 
 const BASE = "/api/v1/controller";
 const TOKEN_KEY = "orka.token";
@@ -29,19 +30,34 @@ function headers(json = true): Record<string, string> {
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(BASE + path, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(BASE + path, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(body),
+    });
+  } catch {
+    toastError("网络连接失败，请检查后端服务");
+    throw new Error("network");
+  }
   if (res.status === 401) {
     // token missing/expired — clear it and let the app fall back to the login
     // screen on its next render (no jarring full-page reload).
     auth.clear();
     unauthorizedHandler?.();
+    toastError("登录已过期，请重新登录");
     throw new Error("unauthorized");
   }
-  const j = await res.json();
+  const j = await res.json().catch(() => ({}));
+  if (j && typeof j.code === "number" && j.code !== 0) {
+    toastError(j.msg || `请求失败 (${res.status})`);
+    throw new Error(j.msg || "request failed");
+  }
+  if (res.status >= 500) {
+    toastError("服务暂时不可用，请稍后再试");
+    throw new Error("server " + res.status);
+  }
   return (j.data ?? j) as T;
 }
 

@@ -6,7 +6,9 @@ export function Sidebar({
   conversations,
   activeID,
   runningIds,
+  scheduledIds,
   onSelect,
+  onSelectClose,
   onNew,
   onRename,
   onDelete,
@@ -19,7 +21,9 @@ export function Sidebar({
   conversations: Conversation[];
   activeID: string;
   runningIds: string[];
+  scheduledIds: Set<string>;
   onSelect: (id: string) => void;
+  onSelectClose?: () => void;
   onNew: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
@@ -33,7 +37,7 @@ export function Sidebar({
   return (
     <aside
       className={
-        "shrink-0 overflow-hidden border-r border-border bg-surface2/60 flex flex-col transition-all duration-300 " +
+        "fixed inset-y-0 left-0 z-40 shrink-0 overflow-hidden border-r border-border bg-surface2 md:static md:z-auto md:bg-surface2/60 flex flex-col transition-all duration-300 " +
         (open ? "w-[264px]" : "w-0")
       }
     >
@@ -73,6 +77,7 @@ export function Sidebar({
           {conversations.map((c) => {
             const active = c.conversation_id === activeID;
             const running = runningIds.includes(c.conversation_id);
+            const scheduled = scheduledIds.has(c.conversation_id);
             if (editing === c.conversation_id) {
               return (
                 <input
@@ -95,7 +100,10 @@ export function Sidebar({
             return (
               <div
                 key={c.conversation_id}
-                onClick={() => onSelect(c.conversation_id)}
+                onClick={() => {
+                  onSelect(c.conversation_id);
+                  onSelectClose?.();
+                }}
                 className={
                   "group flex items-center gap-1 rounded-lg px-3 py-2 cursor-pointer transition " +
                   (active ? "bg-accentsoft text-ink" : "text-muted hover:bg-surface")
@@ -107,6 +115,9 @@ export function Sidebar({
                     title="运行中"
                   />
                 )}
+                {scheduled && (
+                  <span className="shrink-0 text-[12px]" title="由定时任务驱动">🔁</span>
+                )}
                 <span className="flex-1 truncate text-[14px]">{c.title}</span>
                 <button
                   onClick={(e) => {
@@ -116,6 +127,7 @@ export function Sidebar({
                   }}
                   className="opacity-0 group-hover:opacity-100 px-1 text-faint hover:text-ink"
                   title="重命名"
+                  aria-label="重命名会话"
                 >
                   ✎
                 </button>
@@ -126,6 +138,7 @@ export function Sidebar({
                   }}
                   className="opacity-0 group-hover:opacity-100 px-1 text-faint hover:text-accent"
                   title="删除"
+                  aria-label="删除会话"
                 >
                   ✕
                 </button>
