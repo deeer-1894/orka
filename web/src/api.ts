@@ -1,4 +1,5 @@
 import type {
+  Connector,
   Conversation,
   MetricsSnapshot,
   Message,
@@ -106,6 +107,10 @@ export const api = {
   listRuns: (filter: { conversation_id?: string; status?: string } = {}) =>
     post<{ runs: RunRecord[] }>("/run/list", { ...filter, size: 50 }),
   rerunRun: (run_id: string) => post<{ status: string }>("/run/rerun", { run_id }),
+  listConnectors: () => post<{ connectors: Connector[] }>("/connector/list", {}),
+  testConnector: (c: Partial<Connector>) => post<{ ok: boolean; tools?: string[]; error?: string }>("/connector/test", c),
+  createConnector: (c: Partial<Connector>) => post<Connector>("/connector/create", c),
+  deleteConnector: (connector_id: string) => post("/connector/delete", { connector_id }),
   metrics: async (): Promise<MetricsSnapshot> => {
     const res = await fetch(BASE + "/metrics", { headers: headers(false) });
     const j = await res.json();

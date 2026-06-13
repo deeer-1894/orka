@@ -115,6 +115,18 @@ export interface RunRecord {
   duration_ms: number;
 }
 
+export interface Connector {
+  connector_id: string;
+  name: string;
+  transport: string; // http | streamable_http | stdio
+  url: string;
+  command: string;
+  args: string[];
+  headers: Record<string, string>;
+  enabled: boolean;
+  created_at: number;
+}
+
 export interface OwnerInfo {
   email: string;
   name: string;

@@ -24,6 +24,7 @@ type Storage struct {
 	Tasks         *mongo.Collection
 	Users         *mongo.Collection
 	Runs          *mongo.Collection
+	Connectors    *mongo.Collection
 }
 
 // NewStorage connects to Mongo and pings it.
@@ -51,6 +52,7 @@ func NewStorage(ctx context.Context, uri, dbName string) (*Storage, error) {
 		Tasks:         d.Collection("tasks"),
 		Users:         d.Collection("users"),
 		Runs:          d.Collection("runs"),
+		Connectors:    d.Collection("connectors"),
 	}
 	if err := s.EnsureIndexes(cctx); err != nil {
 		return nil, fmt.Errorf("mongo indexes: %w", err)
@@ -92,6 +94,10 @@ func (s *Storage) EnsureIndexes(ctx context.Context) error {
 		{s.Runs, mongo.IndexModel{
 			Keys:    bson.D{{Key: "run_id", Value: 1}},
 			Options: options.Index().SetName("run_id"),
+		}},
+		{s.Connectors, mongo.IndexModel{
+			Keys:    bson.D{{Key: "owner_email", Value: 1}, {Key: "created_at", Value: -1}},
+			Options: options.Index().SetName("owner_created"),
 		}},
 		// conversations: a user's conversations newest-first.
 		{s.Conversations, mongo.IndexModel{
@@ -376,6 +382,40 @@ func (s *Storage) GetRun(ctx context.Context, runID string) (*RunRecord, error) 
 		return nil, fmt.Errorf("get run: %w", err)
 	}
 	return &out, nil
+}
+
+// --- connectors (user-registered external MCP servers) ---
+
+func (s *Storage) CreateConnector(ctx context.Context, c *Connector) error {
+	if _, err := s.Connectors.InsertOne(ctx, c); err != nil {
+		return fmt.Errorf("insert connector: %w", err)
+	}
+	return nil
+}
+
+func (s *Storage) ListConnectors(ctx context.Context, owner string) ([]Connector, error) {
+	var out []Connector
+	if err := paginate(ctx, s.Connectors, bson.M{"owner_email": owner}, 0, 100, &out); err != nil {
+		return nil, fmt.Errorf("list connectors: %w", err)
+	}
+	return out, nil
+}
+
+// EnabledConnectors returns a user's enabled connectors (for the runtime merge).
+func (s *Storage) EnabledConnectors(ctx context.Context, owner string) ([]Connector, error) {
+	var out []Connector
+	if err := paginate(ctx, s.Connectors, bson.M{"owner_email": owner, "enabled": true}, 0, 100, &out); err != nil {
+		return nil, fmt.Errorf("enabled connectors: %w", err)
+	}
+	return out, nil
+}
+
+func (s *Storage) DeleteConnector(ctx context.Context, id, owner string) error {
+	_, err := s.Connectors.DeleteOne(ctx, bson.M{"connector_id": id, "owner_email": owner})
+	if err != nil {
+		return fmt.Errorf("delete connector: %w", err)
+	}
+	return nil
 }
 
 // paginate is a generic find-with-skip/limit helper, newest first by created_at.

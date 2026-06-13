@@ -40,6 +40,24 @@ type MessagesTable struct {
 	CreatedAt      int64  `bson:"created_at" json:"created_at"`
 }
 
+// Connector is a user-registered external MCP server. Orka's MCP gateway, RBAC
+// and per-user pooling already exist for the built-in tools server; a Connector
+// lets a user point the same machinery at ANY MCP server (http/streamable/stdio)
+// so its tools join the agent's toolset — turning Orka into an integration
+// platform. Headers carry the server's own auth (API key etc.).
+type Connector struct {
+	ConnectorID string            `bson:"connector_id" json:"connector_id"`
+	OwnerEmail  string            `bson:"owner_email" json:"owner_email"`
+	Name        string            `bson:"name" json:"name"`
+	Transport   string            `bson:"transport" json:"transport"` // http | streamable_http | stdio
+	URL         string            `bson:"url" json:"url"`             // http/streamable_http
+	Command     string            `bson:"command" json:"command"`     // stdio
+	Args        []string          `bson:"args" json:"args"`           // stdio
+	Headers     map[string]string `bson:"headers" json:"headers"`     // auth headers (secret; redacted in API list)
+	Enabled     bool              `bson:"enabled" json:"enabled"`
+	CreatedAt   int64             `bson:"created_at" json:"created_at"`
+}
+
 // RunRecord is one EXECUTION of the agent (manual or scheduled) — the audit
 // unit of the automation platform. Tasks are definitions; RunRecords are the
 // individual runs, so a scheduled task spawns many of them. Captures enough to

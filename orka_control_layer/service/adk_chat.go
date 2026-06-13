@@ -51,6 +51,9 @@ type ChatService struct {
 	Metrics *obs.Metrics
 	Log     *slog.Logger
 	ToolsFor ToolsProvider
+	// InvalidateTools busts a user's cached tool connections (e.g. after they
+	// add/remove an MCP connector). Set by main when the pooled provider is wired.
+	InvalidateTools func(email string)
 
 	mu   sync.Mutex
 	runs map[string]context.CancelFunc

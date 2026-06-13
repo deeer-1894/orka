@@ -125,10 +125,15 @@ func main() {
 	// the control layer uses the local filesystem tools directly.
 	if toolsURL := os.Getenv("TOOLS_MCP_URL"); toolsURL != "" {
 		ttl := time.Duration(cfg.Security.CtxTokenTTLSec) * time.Second
-		chat.ToolsFor = service.MCPToolsProviderPooled(
+		prov, inval := service.MCPToolsProviderPooled(
 			cfg.Storage.BaseStoragePath, toolsURL, cfg.Security.CtxTokenSecret,
 			ttl, []string{"file:read", "file:write", "web:search"},
+			func(ctx context.Context, email string) ([]db.Connector, error) {
+				return store.EnabledConnectors(ctx, email)
+			},
 		)
+		chat.ToolsFor = prov
+		chat.InvalidateTools = inval
 		waitReady(toolsURL, 15*time.Second, logger) // avoid first-request startup race
 		logger.Info("tools via MCP", "url", toolsURL)
 	}

@@ -56,4 +56,9 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/run/list", a.ListRuns)   // execution history (run records)
 	g.POST("/run/get", a.GetRun)
 	g.POST("/run/rerun", a.RerunRun)
+
+	g.POST("/connector/list", a.ListConnectors) // external MCP integrations
+	g.POST("/connector/create", a.CreateConnector)
+	g.POST("/connector/test", a.TestConnector)
+	g.POST("/connector/delete", a.DeleteConnector)
 }
