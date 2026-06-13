@@ -40,6 +40,21 @@ type MessagesTable struct {
 	CreatedAt      int64  `bson:"created_at" json:"created_at"`
 }
 
+// Notification surfaces something the user should know about an unattended run
+// (a scheduled/webhook run that failed) — the alerting half of "敢托付":
+// run history records WHAT happened; notifications make sure you find out.
+type Notification struct {
+	NotificationID string `bson:"notification_id" json:"notification_id"`
+	OwnerEmail     string `bson:"owner_email" json:"owner_email"`
+	Kind           string `bson:"kind" json:"kind"` // run_failed
+	Title          string `bson:"title" json:"title"`
+	Body           string `bson:"body" json:"body"`
+	RunID          string `bson:"run_id" json:"run_id"`
+	ConversationID string `bson:"conversation_id" json:"conversation_id"`
+	Read           bool   `bson:"read" json:"read"`
+	CreatedAt      int64  `bson:"created_at" json:"created_at"`
+}
+
 // Connector is a user-registered external MCP server. Orka's MCP gateway, RBAC
 // and per-user pooling already exist for the built-in tools server; a Connector
 // lets a user point the same machinery at ANY MCP server (http/streamable/stdio)

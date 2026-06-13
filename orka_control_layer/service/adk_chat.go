@@ -211,7 +211,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	if req.ResumeKey != "" {
 		err = s.resume(ctx, runner, rc, req, raw, deps, tools, model, modelName)
 		if err != nil {
-			s.finalizeRun(runRecID, rc, startedAt, err, ctx.Err())
+			s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err())
 			return // resume() already emitted the failure event
 		}
 	} else {
@@ -244,7 +244,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	}
 
 	s.finish(ctx, rc, meta, raw, err)
-	s.finalizeRun(runRecID, rc, startedAt, err, ctx.Err())
+	s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err())
 }
 
 // createRun opens a RunRecord (status=running) for this execution.
@@ -272,7 +272,7 @@ func (s *ChatService) createRun(ctx context.Context, req ChatRunRequest, meta me
 
 // finalizeRun stamps a run's terminal state + execution stats. Uses a background
 // context since the request context may already be cancelled.
-func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt int64, runErr, ctxErr error) {
+func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt int64, req ChatRunRequest, runErr, ctxErr error) {
 	if runID == "" || s.Msg == nil || s.Msg.Store == nil {
 		return
 	}
@@ -289,11 +289,26 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 	out, _ := rc.Vars[middlewares.VarFinal].(string)
 	tokens, _ := rc.Vars["run_tokens"].(int)
 	toolCalls, _ := rc.Vars["run_tools"].(int)
-	_ = s.Msg.Store.FinalizeRun(context.Background(), db.RunRecord{
+	bg := context.Background()
+	_ = s.Msg.Store.FinalizeRun(bg, db.RunRecord{
 		RunID: runID, Status: status, Error: errStr,
 		Output: trunc(out, 400), Tokens: tokens, ToolCalls: toolCalls,
 		FinishedAt: now, DurationMs: now - startedAt,
 	})
+	// Alert on UNATTENDED failures (scheduled/webhook/rerun) — a manual failure
+	// the user is already watching on screen.
+	if status == db.RunFailed && req.Trigger != "" && req.Trigger != "manual" && req.UserEmail != "" {
+		_ = s.Msg.Store.CreateNotification(bg, &db.Notification{
+			NotificationID: "ntf_" + messages.NewID(),
+			OwnerEmail:     req.UserEmail,
+			Kind:           "run_failed",
+			Title:          "自动任务运行失败",
+			Body:           trunc(req.Message, 80) + " — " + trunc(errStr, 120),
+			RunID:          runID,
+			ConversationID: req.ConversationID,
+			CreatedAt:      now,
+		})
+	}
 }
 
 // trunc caps a string to n runes for storage/display.

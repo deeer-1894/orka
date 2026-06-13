@@ -25,6 +25,7 @@ type Storage struct {
 	Users         *mongo.Collection
 	Runs          *mongo.Collection
 	Connectors    *mongo.Collection
+	Notifications *mongo.Collection
 }
 
 // NewStorage connects to Mongo and pings it.
@@ -53,6 +54,7 @@ func NewStorage(ctx context.Context, uri, dbName string) (*Storage, error) {
 		Users:         d.Collection("users"),
 		Runs:          d.Collection("runs"),
 		Connectors:    d.Collection("connectors"),
+		Notifications: d.Collection("notifications"),
 	}
 	if err := s.EnsureIndexes(cctx); err != nil {
 		return nil, fmt.Errorf("mongo indexes: %w", err)
@@ -96,6 +98,10 @@ func (s *Storage) EnsureIndexes(ctx context.Context) error {
 			Options: options.Index().SetName("run_id"),
 		}},
 		{s.Connectors, mongo.IndexModel{
+			Keys:    bson.D{{Key: "owner_email", Value: 1}, {Key: "created_at", Value: -1}},
+			Options: options.Index().SetName("owner_created"),
+		}},
+		{s.Notifications, mongo.IndexModel{
 			Keys:    bson.D{{Key: "owner_email", Value: 1}, {Key: "created_at", Value: -1}},
 			Options: options.Index().SetName("owner_created"),
 		}},
@@ -404,6 +410,44 @@ func (s *Storage) GetRun(ctx context.Context, runID string) (*RunRecord, error) 
 		return nil, fmt.Errorf("get run: %w", err)
 	}
 	return &out, nil
+}
+
+// --- notifications ---
+
+func (s *Storage) CreateNotification(ctx context.Context, n *Notification) error {
+	if _, err := s.Notifications.InsertOne(ctx, n); err != nil {
+		return fmt.Errorf("insert notification: %w", err)
+	}
+	return nil
+}
+
+func (s *Storage) ListNotifications(ctx context.Context, owner string, unreadOnly bool) ([]Notification, error) {
+	filter := bson.M{"owner_email": owner}
+	if unreadOnly {
+		filter["read"] = false
+	}
+	var out []Notification
+	if err := paginate(ctx, s.Notifications, filter, 0, 50, &out); err != nil {
+		return nil, fmt.Errorf("list notifications: %w", err)
+	}
+	return out, nil
+}
+
+func (s *Storage) UnreadCount(ctx context.Context, owner string) (int64, error) {
+	return s.Notifications.CountDocuments(ctx, bson.M{"owner_email": owner, "read": false})
+}
+
+// MarkNotificationsRead marks one (id != "") or all of a user's notifications read.
+func (s *Storage) MarkNotificationsRead(ctx context.Context, owner, id string) error {
+	filter := bson.M{"owner_email": owner}
+	if id != "" {
+		filter["notification_id"] = id
+	}
+	_, err := s.Notifications.UpdateMany(ctx, filter, bson.M{"$set": bson.M{"read": true}})
+	if err != nil {
+		return fmt.Errorf("mark read: %w", err)
+	}
+	return nil
 }
 
 // --- connectors (user-registered external MCP servers) ---

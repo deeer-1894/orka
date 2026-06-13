@@ -65,4 +65,7 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/connector/create", a.CreateConnector)
 	g.POST("/connector/test", a.TestConnector)
 	g.POST("/connector/delete", a.DeleteConnector)
+
+	g.POST("/notification/list", a.ListNotifications)
+	g.POST("/notification/read", a.ReadNotifications)
 }

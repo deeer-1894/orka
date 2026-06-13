@@ -3,6 +3,7 @@ import type {
   Conversation,
   MetricsSnapshot,
   Message,
+  Notification,
   OwnerInfo,
   RunRecord,
   TaskMeta,
@@ -113,6 +114,8 @@ export const api = {
   testConnector: (c: Partial<Connector>) => post<{ ok: boolean; tools?: string[]; error?: string }>("/connector/test", c),
   createConnector: (c: Partial<Connector>) => post<Connector>("/connector/create", c),
   deleteConnector: (connector_id: string) => post("/connector/delete", { connector_id }),
+  listNotifications: () => post<{ notifications: Notification[]; unread: number }>("/notification/list", {}),
+  readNotifications: (notification_id = "") => post("/notification/read", { notification_id }),
   metrics: async (): Promise<MetricsSnapshot> => {
     const res = await fetch(BASE + "/metrics", { headers: headers(false) });
     const j = await res.json();

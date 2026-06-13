@@ -9,7 +9,7 @@ import { ArtifactDrawer } from "./components/ArtifactDrawer";
 import { Toaster, toast } from "./lib/toast";
 import { useTheme } from "./lib/theme";
 import { loadTools, saveTools } from "./lib/toolGroups";
-import type { Conversation, Message } from "./types";
+import type { Conversation, Message, Notification } from "./types";
 
 type Tab = "browser" | "files" | "runs" | "tasks" | "integrations" | "metrics";
 
@@ -291,9 +291,10 @@ function Workbench({
               🪙 {totalTokens >= 1000 ? (totalTokens / 1000).toFixed(1) + "k" : totalTokens} tokens
             </span>
           )}
+          <NotificationBell onJump={onJumpToConversation} />
           <button
             onClick={toggleTheme}
-            className="ml-auto grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-surface2"
+            className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-surface2"
             title={theme === "dark" ? "切换到亮色" : "切换到暗色"}
             aria-label={theme === "dark" ? "切换到亮色模式" : "切换到暗色模式"}
           >
@@ -403,6 +404,62 @@ function ScheduleDialog({ prompt, onClose, onConfirm }: { prompt: string; onClos
 
 // ModelSelect is the header model picker; it sets the per-run `selected_version`
 // the backend's modelFor() reads ("" → main model, "mini" → cheaper/faster).
+// NotificationBell surfaces unattended-run failures (the alerting half of run
+// history): a header bell with an unread badge + a dropdown that jumps to the
+// failed run's conversation.
+function NotificationBell({ onJump }: { onJump: (cid: string) => void }) {
+  const [unread, setUnread] = useState(0);
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<Notification[]>([]);
+  const load = () => api.listNotifications().then((r) => { setUnread(r.unread); setItems(r.notifications || []); }).catch(() => {});
+  useEffect(() => {
+    load();
+    const id = setInterval(() => api.listNotifications().then((r) => setUnread(r.unread)).catch(() => {}), 20000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div className="relative ml-auto">
+      <button
+        onClick={() => { setOpen((o) => !o); if (!open) load(); }}
+        aria-label={"通知" + (unread > 0 ? `（${unread} 条未读）` : "")}
+        className="relative grid h-8 w-8 place-items-center rounded-lg text-[16px] text-muted hover:bg-surface2"
+      >
+        🔔
+        {unread > 0 && (
+          <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-[16px] place-items-center rounded-full bg-accent px-1 text-[10px] text-white">{unread > 9 ? "9+" : unread}</span>
+        )}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-20 mt-1 w-80 rounded-xl border border-border bg-surface p-1.5 shadow-lg">
+            <div className="flex items-center justify-between px-2 py-1">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-faint">通知</span>
+              {items.length > 0 && <button onClick={() => api.readNotifications().then(load)} className="text-[11px] text-faint hover:text-accent">全部已读</button>}
+            </div>
+            {items.length === 0 && <div className="px-2 py-4 text-center text-[13px] text-faint">暂无通知</div>}
+            <div className="max-h-[60vh] overflow-y-auto">
+              {items.map((n) => (
+                <button
+                  key={n.notification_id}
+                  onClick={() => { api.readNotifications(n.notification_id).then(load); if (n.conversation_id) { onJump(n.conversation_id); setOpen(false); } }}
+                  className={"flex w-full flex-col items-start gap-0.5 rounded-lg px-2 py-1.5 text-left hover:bg-surface2 " + (n.read ? "opacity-60" : "")}
+                >
+                  <span className="text-[13px] text-ink">
+                    {!n.read && <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-accent align-middle" />}
+                    {n.title}
+                  </span>
+                  <span className="line-clamp-2 text-[12px] text-muted">{n.body}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function ModelSelect({ value, onChange, models }: { value: string; onChange: (v: string) => void; models: ModelOption[] }) {
   const [open, setOpen] = useState(false);
   const cur = models.find((m) => m.version === value) || models[0];

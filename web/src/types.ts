@@ -117,6 +117,17 @@ export interface RunRecord {
   duration_ms: number;
 }
 
+export interface Notification {
+  notification_id: string;
+  kind: string;
+  title: string;
+  body: string;
+  run_id: string;
+  conversation_id: string;
+  read: boolean;
+  created_at: number;
+}
+
 export interface Connector {
   connector_id: string;
   name: string;
