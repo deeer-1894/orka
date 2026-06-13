@@ -55,8 +55,9 @@ type AgentConfig struct {
 	RunMode          string           `yaml:"run_mode"`
 	CheckpointTTLSec int              `yaml:"checkpoint_ttl_sec"`
 	GUIAgentWSURL    string           `yaml:"gui_agent_ws_url"`
-	MultiAgent       bool             `yaml:"multi_agent"` // expose orchestrator sub-agents the model can delegate to
-	SubAgents        []SubAgentConfig `yaml:"sub_agents"`  // optional custom registry; empty = built-in researcher/writer/browser
+	MultiAgent       bool             `yaml:"multi_agent"`  // expose orchestrator sub-agents the model can delegate to
+	SubAgents        []SubAgentConfig `yaml:"sub_agents"`   // optional custom registry; empty = built-in researcher/writer/browser
+	EinoRuntime      bool             `yaml:"eino_runtime"` // run the chat path on the cloudwego/eino library instead of the hand-rolled runner
 }
 
 // SubAgentConfig declares one orchestrator-facing sub-agent. The Name+Description
@@ -156,6 +157,9 @@ func (c *Config) applyEnv() {
 	envStr(&c.Agent.GUIAgentWSURL, "GUI_AGENT_WS_URL")
 	if os.Getenv("MULTI_AGENT") == "1" {
 		c.Agent.MultiAgent = true
+	}
+	if os.Getenv("EINO_RUNTIME") == "1" {
+		c.Agent.EinoRuntime = true
 	}
 	envStr(&c.Security.CtxTokenSecret, "CTX_TOKEN_SECRET")
 	envInt(&c.Security.CtxTokenTTLSec, "CTX_TOKEN_TTL_SEC")

@@ -203,7 +203,11 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		rc.Messages = append(history, userMsg)
 		s.Msg.Deliver(rc, nil, userMsg, true)
 		s.Msg.Deliver(rc, raw, messages.Task("start", meta), true)
-		err = runner.Run(rc)
+		if s.Cfg.Agent.EinoRuntime {
+			err = s.runEino(ctx, rc, deps, tools, model, modelName, raw)
+		} else {
+			err = runner.Run(rc)
+		}
 	}
 
 	s.finish(ctx, rc, meta, raw, err)

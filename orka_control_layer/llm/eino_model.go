@@ -36,8 +36,8 @@ func (m *EinoModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatMo
 }
 
 // Generate runs a single completion.
-func (m *EinoModel) Generate(ctx context.Context, input []*schema.Message, _ ...model.Option) (*schema.Message, error) {
-	resp, err := m.client.Chat(ctx, m.request(input))
+func (m *EinoModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
+	resp, err := m.client.Chat(ctx, m.request(input, opts))
 	if err != nil {
 		return nil, err
 	}
@@ -47,20 +47,21 @@ func (m *EinoModel) Generate(ctx context.Context, input []*schema.Message, _ ...
 // Stream streams the completion. When the underlying client supports streaming
 // we forward token deltas; otherwise we fall back to a single-chunk stream over
 // Generate (eino consumers treat both uniformly).
-func (m *EinoModel) Stream(ctx context.Context, input []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+func (m *EinoModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 	sc, ok := m.client.(StreamingClient)
 	if !ok {
-		out, err := m.Generate(ctx, input)
+		out, err := m.Generate(ctx, input, opts...)
 		if err != nil {
 			return nil, err
 		}
 		return schema.StreamReaderFromArray([]*schema.Message{out}), nil
 	}
 
+	req := m.request(input, opts)
 	sr, sw := schema.Pipe[*schema.Message](8)
 	go func() {
 		defer sw.Close()
-		resp, err := sc.ChatStream(ctx, m.request(input), func(delta string) {
+		resp, err := sc.ChatStream(ctx, req, func(delta string) {
 			if delta != "" {
 				sw.Send(&schema.Message{Role: schema.Assistant, Content: delta}, nil)
 			}
@@ -77,10 +78,16 @@ func (m *EinoModel) Stream(ctx context.Context, input []*schema.Message, _ ...mo
 	return sr, nil
 }
 
-// request converts eino messages + bound tools into our wire Request.
-func (m *EinoModel) request(input []*schema.Message) Request {
+// request converts eino messages + tools into our wire Request. Tools may come
+// either from the WithTools METHOD (m.tools) or, as eino's ChatModelAgent
+// actually does, from a request-time model.WithTools OPTION — the latter wins.
+func (m *EinoModel) request(input []*schema.Message, opts []model.Option) Request {
+	tools := m.tools
+	if co := model.GetCommonOptions(&model.Options{}, opts...); len(co.Tools) > 0 {
+		tools = co.Tools
+	}
 	req := Request{Model: m.model, Messages: toChatMessages(input)}
-	for _, ti := range m.tools {
+	for _, ti := range tools {
 		req.Tools = append(req.Tools, toToolSpec(ti))
 	}
 	return req
