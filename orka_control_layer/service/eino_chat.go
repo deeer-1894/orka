@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/adk/middlewares/summarization"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -28,8 +29,26 @@ const einoOrchestratorName = "orka"
 // (via llm.EinoModel) and tool suite (via EinoTools), running in parallel to the
 // hand-rolled runner and gated by config so the working path is untouched.
 
+// summarizationHandlers returns the eino summarization middleware so long runs
+// fold older context into a running summary instead of overflowing — the native
+// replacement for the hand-rolled Memory truncation (which dropped old turns).
+// Triggers on message count to avoid a token-counter dependency; the agent's own
+// model generates the summary.
+func summarizationHandlers(ctx context.Context, client llm.Client, model string) []adk.ChatModelAgentMiddleware {
+	mw, err := summarization.New(ctx, &summarization.Config{
+		Model:   llm.NewEinoModel(client, model),
+		Trigger: &summarization.TriggerCondition{ContextMessages: 80},
+	})
+	if err != nil {
+		return nil // summarization is best-effort; never block agent construction
+	}
+	return []adk.ChatModelAgentMiddleware{mw}
+}
+
 // BuildEinoAgent constructs an eino ReAct ChatModelAgent over our model + tools.
-func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction string, tools []agent.BaseTool, maxIters int) (adk.Agent, error) {
+// handlers are optional middlewares (e.g. summarization) the production path
+// supplies; the minimal/test path passes none for deterministic behavior.
+func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction string, tools []agent.BaseTool, maxIters int, handlers ...adk.ChatModelAgentMiddleware) (adk.Agent, error) {
 	if maxIters <= 0 {
 		maxIters = 16
 	}
@@ -42,6 +61,7 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(tools)},
 		},
 		MaxIterations: maxIters,
+		Handlers:      handlers,
 	})
 }
 
@@ -125,8 +145,12 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 			EmitInternalEvents: true, // stream sub-agent events up for lane rendering
 		},
 		MaxIterations: maxIters,
+		Handlers:      summarizationHandlers(ctx, mainClient, mainModel),
 	})
 }
+
+// einoMaxIters is the orchestrator/agent generation-cycle cap for the prod path.
+const einoMaxIters = 16
 
 // RunEinoOnce runs the agent to completion on a single user message and returns
 // the final assistant text. Tool steps and intermediate assistant turns are
@@ -302,7 +326,7 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 		if instruction == "" {
 			instruction = middlewares.DefaultSystemPrompt
 		}
-		ag, err = BuildEinoAgent(ctx, client, model, instruction, tools, 16)
+		ag, err = BuildEinoAgent(ctx, client, model, instruction, tools, einoMaxIters, summarizationHandlers(ctx, client, model)...)
 	}
 	if err != nil {
 		return err
