@@ -510,6 +510,7 @@ function RunsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: strin
 
 function TasksPanel({ onJumpToConversation }: { onJumpToConversation: (cid: string) => void }) {
   const [tasks, setTasks] = useState<TaskMeta[]>([]);
+  const [hookUrl, setHookUrl] = useState<Record<string, string>>({});
   const [creating, setCreating] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [sec, setSec] = useState(3600);
@@ -612,7 +613,26 @@ function TasksPanel({ onJumpToConversation }: { onJumpToConversation: (cid: stri
                     停用定时
                   </button>
                 )}
+                {t.webhook_token ? (
+                  <button onClick={() => api.disableWebhook(t.task_id).then(refresh)} className="text-[11px] text-faint hover:text-accent">关闭 webhook</button>
+                ) : (
+                  <button
+                    onClick={() => api.enableWebhook(t.task_id).then((r) => { setHookUrl((m) => ({ ...m, [t.task_id]: location.origin + r.path })); refresh(); }).catch(() => {})}
+                    className="text-[11px] text-faint hover:text-accent"
+                  >
+                    🪝 webhook
+                  </button>
+                )}
               </div>
+              {(hookUrl[t.task_id] || t.webhook_token) && (
+                <div className="mt-1 flex items-center gap-2 rounded-lg bg-surface2 px-2 py-1 text-[10px] text-muted">
+                  <code className="min-w-0 flex-1 truncate">{hookUrl[t.task_id] || `${location.origin}/api/v1/controller/hook/${t.webhook_token}`}</code>
+                  <button
+                    onClick={() => navigator.clipboard?.writeText(hookUrl[t.task_id] || `${location.origin}/api/v1/controller/hook/${t.webhook_token}`)}
+                    aria-label="复制 webhook URL" className="shrink-0 hover:text-accent"
+                  >⧉</button>
+                </div>
+              )}
             </div>
           );
         })}

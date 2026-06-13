@@ -94,4 +94,6 @@ type TaskMeta struct {
 	IntervalSec       int64          `bson:"interval_sec" json:"interval_sec"` // recurring period (0 = not scheduled)
 	NextRunAt         int64          `bson:"next_run_at" json:"next_run_at"`   // unix millis the cron is next due
 	LastResult        string         `bson:"last_result" json:"last_result"`   // short summary of the latest run
+	WebhookToken      string         `bson:"webhook_token,omitempty" json:"webhook_token,omitempty"` // set → POST /hook/{token} triggers this task
+	RetryCount        int            `bson:"retry_count,omitempty" json:"retry_count,omitempty"`     // task-level auto-retry on failure (0 = none)
 }

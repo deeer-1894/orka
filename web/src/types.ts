@@ -95,6 +95,8 @@ export interface TaskMeta {
   interval_sec?: number;
   next_run_at?: number;
   last_result?: string;
+  webhook_token?: string;
+  retry_count?: number;
 }
 
 export interface RunRecord {

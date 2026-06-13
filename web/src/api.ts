@@ -104,6 +104,8 @@ export const api = {
   scheduleTask: (prompt: string, interval_sec: number, title: string, conversation_id = "") =>
     post<TaskMeta>("/task/schedule", { prompt, interval_sec, title, conversation_id }),
   unscheduleTask: (task_id: string) => post("/task/unschedule", { task_id }),
+  enableWebhook: (task_id: string) => post<{ token: string; path: string }>("/task/webhook/enable", { task_id }),
+  disableWebhook: (task_id: string) => post("/task/webhook/disable", { task_id }),
   listRuns: (filter: { conversation_id?: string; status?: string } = {}) =>
     post<{ runs: RunRecord[] }>("/run/list", { ...filter, size: 50 }),
   rerunRun: (run_id: string) => post<{ status: string }>("/run/rerun", { run_id }),

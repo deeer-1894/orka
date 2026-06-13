@@ -310,6 +310,28 @@ func (s *Storage) UpdateTaskStatus(ctx context.Context, id, runStatus string) er
 	return nil
 }
 
+// SetTaskWebhook sets (or clears, when token=="") a task's webhook trigger token.
+func (s *Storage) SetTaskWebhook(ctx context.Context, id, token string) error {
+	_, err := s.Tasks.UpdateOne(ctx, bson.M{"task_id": id}, bson.M{"$set": bson.M{"webhook_token": token}})
+	if err != nil {
+		return fmt.Errorf("set task webhook: %w", err)
+	}
+	return nil
+}
+
+// GetTaskByWebhook resolves a task from its webhook token (the token IS the auth).
+func (s *Storage) GetTaskByWebhook(ctx context.Context, token string) (*TaskMeta, error) {
+	var out TaskMeta
+	err := s.Tasks.FindOne(ctx, bson.M{"webhook_token": token}).Decode(&out)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get task by webhook: %w", err)
+	}
+	return &out, nil
+}
+
 // SetTaskCron turns recurring scheduling on/off for a task and sets its period
 // and next-due time.
 func (s *Storage) SetTaskCron(ctx context.Context, id, cronStatus string, intervalSec, nextRunAt int64) error {

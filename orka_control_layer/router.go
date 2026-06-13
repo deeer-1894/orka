@@ -18,6 +18,8 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	// public auth
 	g.POST("/auth/register", a.Register)
 	g.POST("/auth/login", a.Login)
+	// public webhook trigger — the opaque token in the path is the auth.
+	g.POST("/hook/:token", a.Webhook)
 
 	// everything below requires a valid session token
 	g.Use(a.AuthMiddleware())
@@ -36,6 +38,8 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/task/get-tasks", a.GetTasks)
 	g.POST("/task/schedule", a.ScheduleTask)
 	g.POST("/task/unschedule", a.UnscheduleTask)
+	g.POST("/task/webhook/enable", a.EnableWebhook)
+	g.POST("/task/webhook/disable", a.DisableWebhook)
 
 	g.POST("/chat/run", a.ChatRun)
 	g.GET("/chat/attach", a.ChatAttach) // reconnect + replay missed SSE events
