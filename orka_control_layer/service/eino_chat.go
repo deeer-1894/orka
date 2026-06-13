@@ -214,6 +214,11 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 		args map[string]any
 	}
 	calls := map[string]pendingCall{} // tool_call_id → call info (for args)
+	tokens, toolCalls := 0, 0          // per-run audit counters (incl. sub-agents)
+	defer func() {
+		rc.Vars["run_tokens"] = tokens
+		rc.Vars["run_tools"] = toolCalls
+	}()
 
 	for {
 		ev, ok := iter.Next()
@@ -250,6 +255,10 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 			continue
 		}
 
+		if m.ResponseMeta != nil && m.ResponseMeta.Usage != nil {
+			tokens += m.ResponseMeta.Usage.TotalTokens
+		}
+
 		switch m.Role {
 		case schema.Assistant:
 			for _, tc := range m.ToolCalls {
@@ -276,6 +285,7 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 				rc.Interrupt = &agent.Interrupt{Reason: "clarify", Clarify: &clar}
 				return nil
 			}
+			toolCalls++
 			payload := map[string]any{"tool": name, "args": pc.args, "result": m.Content}
 			emit(messages.Tool("call", payload, eventMeta))
 		}

@@ -3,6 +3,7 @@ import type {
   MetricsSnapshot,
   Message,
   OwnerInfo,
+  RunRecord,
   TaskMeta,
 } from "./types";
 import { toastError } from "./lib/toast";
@@ -102,6 +103,9 @@ export const api = {
   scheduleTask: (prompt: string, interval_sec: number, title: string, conversation_id = "") =>
     post<TaskMeta>("/task/schedule", { prompt, interval_sec, title, conversation_id }),
   unscheduleTask: (task_id: string) => post("/task/unschedule", { task_id }),
+  listRuns: (filter: { conversation_id?: string; status?: string } = {}) =>
+    post<{ runs: RunRecord[] }>("/run/list", { ...filter, size: 50 }),
+  rerunRun: (run_id: string) => post<{ status: string }>("/run/rerun", { run_id }),
   metrics: async (): Promise<MetricsSnapshot> => {
     const res = await fetch(BASE + "/metrics", { headers: headers(false) });
     const j = await res.json();

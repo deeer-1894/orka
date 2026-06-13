@@ -165,6 +165,7 @@ func main() {
 				chat.Run(context.Background(), service.ChatRunRequest{
 					Message: content, ConversationID: task.ConversationID,
 					TaskID: task.TaskID, UserEmail: task.OwnerEmail,
+					Trigger: "schedule",
 				}, func(messages.Message) {})
 				return nil
 			},

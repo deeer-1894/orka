@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { api, auth, files as fileApi } from "../api";
-import type { BrowserPayload, Message, MetricsSnapshot, TaskMeta } from "../types";
+import type { BrowserPayload, Message, MetricsSnapshot, RunRecord, TaskMeta } from "../types";
+import { toast } from "../lib/toast";
 import { Markdown } from "./Markdown";
 
-type Tab = "browser" | "files" | "metrics" | "tasks";
+type Tab = "browser" | "files" | "runs" | "metrics" | "tasks";
 
 export function ArtifactDrawer({
   open,
@@ -32,7 +33,7 @@ export function ArtifactDrawer({
       <div className="flex h-full w-[400px] max-md:w-[86vw] flex-col">
         <div className="flex items-center justify-between border-b border-border px-3 h-14">
           <div className="flex gap-1">
-            {(["browser", "files", "metrics", "tasks"] as Tab[]).map((t) => (
+            {(["browser", "files", "runs", "metrics", "tasks"] as Tab[]).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -57,6 +58,7 @@ export function ArtifactDrawer({
         <div className="flex-1 overflow-y-auto">
           {tab === "browser" && <BrowserPanel messages={messages} />}
           {tab === "files" && <FilesPanel email={email} />}
+          {tab === "runs" && <RunsPanel onJumpToConversation={onJumpToConversation} />}
           {tab === "metrics" && <MetricsPanel />}
           {tab === "tasks" && <TasksPanel onJumpToConversation={onJumpToConversation} />}
         </div>
@@ -328,6 +330,87 @@ function fmtWhen(ms?: number): string {
   if (!ms) return "";
   const d = new Date(ms);
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+const RUN_STATUS: Record<string, { label: string; cls: string }> = {
+  running: { label: "运行中", cls: "text-accent" },
+  done: { label: "完成", cls: "text-ok" },
+  failed: { label: "失败", cls: "text-accent" },
+  paused: { label: "等待澄清", cls: "text-muted" },
+};
+const TRIGGER_LABEL: Record<string, string> = {
+  manual: "手动", schedule: "定时", resume: "续跑", rerun: "重跑",
+};
+
+function fmtDur(ms: number): string {
+  if (!ms || ms < 0) return "—";
+  if (ms < 1000) return ms + "ms";
+  if (ms < 60000) return (ms / 1000).toFixed(1) + "s";
+  return Math.floor(ms / 60000) + "m" + Math.round((ms % 60000) / 1000) + "s";
+}
+
+// RunsPanel is the execution history — the automation platform's audit log.
+// Every run (manual / scheduled / rerun) lands here with status, duration,
+// tokens, tool count; click to open its conversation, or re-run it.
+function RunsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: string) => void }) {
+  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [onlyFailed, setOnlyFailed] = useState(false);
+  const refresh = () =>
+    api.listRuns(onlyFailed ? { status: "failed" } : {}).then((r) => setRuns(r.runs || [])).catch(() => {});
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 5000);
+    return () => clearInterval(id); /* eslint-disable-next-line */
+  }, [onlyFailed]);
+
+  return (
+    <div className="p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[12px] text-faint">运行历史 · {runs.length}</span>
+        <button
+          onClick={() => setOnlyFailed((o) => !o)}
+          className={"rounded-lg border px-2.5 py-1 text-[12px] transition " + (onlyFailed ? "border-accent/40 bg-accentsoft text-accent" : "border-border text-muted hover:border-accent/40")}
+        >
+          只看失败
+        </button>
+      </div>
+      {runs.length === 0 && <Blank>暂无运行记录</Blank>}
+      <div className="space-y-1.5">
+        {runs.map((r) => {
+          const st = RUN_STATUS[r.status] || { label: r.status, cls: "text-muted" };
+          return (
+            <div key={r.run_id} className="rounded-xl border border-border bg-surface2/40 px-3 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className={"text-[11px] font-medium " + st.cls}>● {st.label}</span>
+                <span className="rounded-full bg-surface2 px-1.5 py-0.5 text-[10px] text-muted">{TRIGGER_LABEL[r.trigger] || r.trigger}</span>
+                <span className="ml-auto text-[10px] text-faint">{fmtWhen(r.created_at)}</span>
+              </div>
+              <div className="mt-1 line-clamp-2 text-[13px] text-ink">{r.prompt || "—"}</div>
+              {r.error ? (
+                <div className="mt-1 line-clamp-2 text-[11px] text-accent">↳ {r.error}</div>
+              ) : r.output ? (
+                <div className="mt-1 line-clamp-2 text-[11px] text-muted">↳ {r.output}</div>
+              ) : null}
+              <div className="mt-1.5 flex items-center gap-3 text-[11px] text-faint">
+                <span>耗时 {fmtDur(r.duration_ms)}</span>
+                {r.tool_calls > 0 && <span>工具 {r.tool_calls}</span>}
+                {r.tokens > 0 && <span>{r.tokens >= 1000 ? (r.tokens / 1000).toFixed(1) + "k" : r.tokens} tok</span>}
+                {r.conversation_id && (
+                  <button onClick={() => onJumpToConversation(r.conversation_id)} className="text-accent hover:underline">↗ 对话</button>
+                )}
+                <button
+                  onClick={() => api.rerunRun(r.run_id).then(() => { toast("已重新触发", "success"); setTimeout(refresh, 800); }).catch(() => {})}
+                  className="hover:text-accent"
+                >
+                  ↻ 重跑
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function TasksPanel({ onJumpToConversation }: { onJumpToConversation: (cid: string) => void }) {

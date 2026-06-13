@@ -90,6 +90,14 @@ func (m *Tools) Handle(rc *agent.RunContext, next func(*agent.RunContext) error)
 		if m.Metrics != nil && resp.Usage.TotalTokens > 0 {
 			m.Metrics.ObserveLLM(resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
 		}
+		if resp.Usage.TotalTokens > 0 { // per-run audit counter (read by finalizeRun)
+			t, _ := rc.Vars["run_tokens"].(int)
+			rc.Vars["run_tokens"] = t + resp.Usage.TotalTokens
+		}
+		if n := len(resp.ToolCalls); n > 0 {
+			c, _ := rc.Vars["run_tools"].(int)
+			rc.Vars["run_tools"] = c + n
+		}
 
 		if len(resp.ToolCalls) == 0 {
 			hist = append(hist, llm.ChatMessage{Role: llm.RoleAssistant, Content: resp.Content})

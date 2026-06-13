@@ -34,6 +34,7 @@ type ChatRunRequest struct {
 	ResumeKey       string   `json:"resume_key"`
 	UserEmail       string   `json:"user_email"`
 	ActiveSkill     string   `json:"active_skill"` // user-locked skill mode (deterministic prompt injection)
+	Trigger         string   `json:"trigger"`      // manual | schedule (audit: how the run was started)
 }
 
 // ToolsProvider supplies the tool set for a request and an optional cleanup
@@ -193,18 +194,24 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// inherit conversation/trace identity.
 	rc.Ctx = agent.WithEmit(agent.WithMeta(ctx, meta), rc.Send)
 
-	taskID := ""
+	// Record this execution as an auditable run (the automation platform's unit).
+	startedAt := time.Now().UnixMilli()
+	trigger := req.Trigger
+	if trigger == "" {
+		trigger = "manual"
+	}
+	if req.ResumeKey != "" {
+		trigger = "resume"
+	}
+	runRecID := s.createRun(ctx, req, meta, trigger)
+
 	if req.ResumeKey != "" {
 		err = s.resume(ctx, runner, rc, req, raw, deps, tools, model, modelName)
 		if err != nil {
+			s.finalizeRun(runRecID, rc, startedAt, err, ctx.Err())
 			return // resume() already emitted the failure event
 		}
 	} else {
-		// Record this run as a task so the Tasks panel reflects real activity.
-		taskID = s.createRunTask(ctx, req, meta)
-		if taskID != "" {
-			meta.TaskID, rc.Meta.TaskID = taskID, taskID
-		}
 		// Seed with prior turns (memory) + persist the new user message
 		// (raw=nil: persist only; the SSE echo is rendered optimistically).
 		history := s.loadChatHistory(ctx, req.ConversationID, meta)
@@ -234,44 +241,65 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	}
 
 	s.finish(ctx, rc, meta, raw, err)
-	s.updateRunTask(taskID, rc, err, ctx.Err())
+	s.finalizeRun(runRecID, rc, startedAt, err, ctx.Err())
 }
 
-func (s *ChatService) createRunTask(ctx context.Context, req ChatRunRequest, meta messages.Meta) string {
+// createRun opens a RunRecord (status=running) for this execution.
+func (s *ChatService) createRun(ctx context.Context, req ChatRunRequest, meta messages.Meta, trigger string) string {
 	if s.Msg == nil || s.Msg.Store == nil || req.UserEmail == "" {
 		return ""
 	}
-	id := messages.NewID()
-	t := &db.TaskMeta{
-		TaskID:         id,
+	id := "run_" + messages.NewID()
+	r := &db.RunRecord{
+		RunID:          id,
+		TaskID:         req.TaskID,
 		ConversationID: req.ConversationID,
 		OwnerEmail:     req.UserEmail,
-		RunStatus:      db.RunRunning,
-		CronStatus:     "off",
-		Variables:      map[string]any{"prompt": req.Message},
+		Trigger:        trigger,
+		Status:         db.RunRunning,
+		Prompt:         req.Message,
+		TraceID:        meta.TraceID,
 		CreatedAt:      time.Now().UnixMilli(),
 	}
-	if s.Msg.Store.CreateTask(ctx, t) != nil {
+	if s.Msg.Store.CreateRun(ctx, r) != nil {
 		return ""
-	}
-	if req.ConversationID != "" {
-		_ = s.Msg.Store.AddTaskToConversation(ctx, req.ConversationID, id)
 	}
 	return id
 }
 
-func (s *ChatService) updateRunTask(taskID string, rc *agent.RunContext, runErr, ctxErr error) {
-	if taskID == "" || s.Msg == nil || s.Msg.Store == nil {
+// finalizeRun stamps a run's terminal state + execution stats. Uses a background
+// context since the request context may already be cancelled.
+func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt int64, runErr, ctxErr error) {
+	if runID == "" || s.Msg == nil || s.Msg.Store == nil {
 		return
 	}
-	st := db.RunDone
+	status, errStr := db.RunDone, ""
 	switch {
-	case runErr != nil || ctxErr != nil:
-		st = db.RunFailed
+	case runErr == context.Canceled || ctxErr == context.Canceled:
+		status, errStr = db.RunFailed, "cancelled"
+	case runErr != nil:
+		status, errStr = db.RunFailed, runErr.Error()
 	case rc.Interrupt != nil:
-		st = db.RunPaused
+		status = db.RunPaused
 	}
-	_ = s.Msg.Store.UpdateTaskStatus(context.Background(), taskID, st)
+	now := time.Now().UnixMilli()
+	out, _ := rc.Vars[middlewares.VarFinal].(string)
+	tokens, _ := rc.Vars["run_tokens"].(int)
+	toolCalls, _ := rc.Vars["run_tools"].(int)
+	_ = s.Msg.Store.FinalizeRun(context.Background(), db.RunRecord{
+		RunID: runID, Status: status, Error: errStr,
+		Output: trunc(out, 400), Tokens: tokens, ToolCalls: toolCalls,
+		FinishedAt: now, DurationMs: now - startedAt,
+	})
+}
+
+// trunc caps a string to n runes for storage/display.
+func trunc(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
 }
 
 // loadChatHistory returns the prior user/assistant turns of a conversation in

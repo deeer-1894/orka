@@ -97,6 +97,24 @@ export interface TaskMeta {
   last_result?: string;
 }
 
+export interface RunRecord {
+  run_id: string;
+  task_id: string;
+  conversation_id: string;
+  owner_email: string;
+  trigger: string; // manual | schedule | resume | rerun
+  status: string; // running | done | failed | paused
+  prompt: string;
+  output: string;
+  error: string;
+  tool_calls: number;
+  tokens: number;
+  trace_id: string;
+  created_at: number;
+  finished_at: number;
+  duration_ms: number;
+}
+
 export interface OwnerInfo {
   email: string;
   name: string;

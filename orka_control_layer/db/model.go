@@ -40,6 +40,29 @@ type MessagesTable struct {
 	CreatedAt      int64  `bson:"created_at" json:"created_at"`
 }
 
+// RunRecord is one EXECUTION of the agent (manual or scheduled) — the audit
+// unit of the automation platform. Tasks are definitions; RunRecords are the
+// individual runs, so a scheduled task spawns many of them. Captures enough to
+// answer "did it run, how long, did it succeed, what did it produce, why did it
+// fail" without re-reading the whole conversation.
+type RunRecord struct {
+	RunID          string `bson:"run_id" json:"run_id"`
+	TaskID         string `bson:"task_id" json:"task_id"` // parent scheduled task ("" = ad-hoc)
+	ConversationID string `bson:"conversation_id" json:"conversation_id"`
+	OwnerEmail     string `bson:"owner_email" json:"owner_email"`
+	Trigger        string `bson:"trigger" json:"trigger"` // manual | schedule | resume
+	Status         string `bson:"status" json:"status"`   // running | done | failed | paused
+	Prompt         string `bson:"prompt" json:"prompt"`
+	Output         string `bson:"output" json:"output"` // final answer summary (capped)
+	Error          string `bson:"error" json:"error"`
+	ToolCalls      int    `bson:"tool_calls" json:"tool_calls"`
+	Tokens         int    `bson:"tokens" json:"tokens"`
+	TraceID        string `bson:"trace_id" json:"trace_id"` // ties to messages/spans of this run
+	CreatedAt      int64  `bson:"created_at" json:"created_at"`
+	FinishedAt     int64  `bson:"finished_at" json:"finished_at"`
+	DurationMs     int64  `bson:"duration_ms" json:"duration_ms"`
+}
+
 // TaskMeta supports template-driven, cron-scheduled, variable-rendered tasks.
 type TaskMeta struct {
 	TaskID            string         `bson:"task_id" json:"task_id"`

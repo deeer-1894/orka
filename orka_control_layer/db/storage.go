@@ -23,6 +23,7 @@ type Storage struct {
 	Messages      *mongo.Collection
 	Tasks         *mongo.Collection
 	Users         *mongo.Collection
+	Runs          *mongo.Collection
 }
 
 // NewStorage connects to Mongo and pings it.
@@ -49,6 +50,7 @@ func NewStorage(ctx context.Context, uri, dbName string) (*Storage, error) {
 		Messages:      d.Collection("messages"),
 		Tasks:         d.Collection("tasks"),
 		Users:         d.Collection("users"),
+		Runs:          d.Collection("runs"),
 	}
 	if err := s.EnsureIndexes(cctx); err != nil {
 		return nil, fmt.Errorf("mongo indexes: %w", err)
@@ -81,6 +83,15 @@ func (s *Storage) EnsureIndexes(ctx context.Context) error {
 		{s.Tasks, mongo.IndexModel{
 			Keys: bson.D{{Key: "task_id", Value: 1}},
 			Options: options.Index().SetName("task_id"),
+		}},
+		// runs: a user's run history newest-first, plus lookup by id.
+		{s.Runs, mongo.IndexModel{
+			Keys:    bson.D{{Key: "owner_email", Value: 1}, {Key: "created_at", Value: -1}},
+			Options: options.Index().SetName("owner_created"),
+		}},
+		{s.Runs, mongo.IndexModel{
+			Keys:    bson.D{{Key: "run_id", Value: 1}},
+			Options: options.Index().SetName("run_id"),
 		}},
 		// conversations: a user's conversations newest-first.
 		{s.Conversations, mongo.IndexModel{
@@ -317,6 +328,54 @@ func (s *Storage) AdvanceTaskRun(ctx context.Context, id string, nextRunAt int64
 		return fmt.Errorf("advance task run: %w", err)
 	}
 	return nil
+}
+
+// CreateRun records the start of an execution.
+func (s *Storage) CreateRun(ctx context.Context, r *RunRecord) error {
+	if _, err := s.Runs.InsertOne(ctx, r); err != nil {
+		return fmt.Errorf("insert run: %w", err)
+	}
+	return nil
+}
+
+// FinalizeRun stamps the terminal state of a run. Called with a background
+// context since it runs after the request context may be cancelled.
+func (s *Storage) FinalizeRun(ctx context.Context, r RunRecord) error {
+	set := bson.M{
+		"status": r.Status, "output": r.Output, "error": r.Error,
+		"tokens": r.Tokens, "tool_calls": r.ToolCalls,
+		"finished_at": r.FinishedAt, "duration_ms": r.DurationMs,
+	}
+	_, err := s.Runs.UpdateOne(ctx, bson.M{"run_id": r.RunID}, bson.M{"$set": set})
+	if err != nil {
+		return fmt.Errorf("finalize run: %w", err)
+	}
+	return nil
+}
+
+// ListRuns returns runs matching the filter, newest-first.
+func (s *Storage) ListRuns(ctx context.Context, filter bson.M, page, size int64) ([]RunRecord, error) {
+	if filter == nil {
+		filter = bson.M{}
+	}
+	var out []RunRecord
+	if err := paginate(ctx, s.Runs, filter, page, size, &out); err != nil {
+		return nil, fmt.Errorf("list runs: %w", err)
+	}
+	return out, nil
+}
+
+// GetRun fetches one run by id.
+func (s *Storage) GetRun(ctx context.Context, runID string) (*RunRecord, error) {
+	var out RunRecord
+	err := s.Runs.FindOne(ctx, bson.M{"run_id": runID}).Decode(&out)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get run: %w", err)
+	}
+	return &out, nil
 }
 
 // paginate is a generic find-with-skip/limit helper, newest first by created_at.

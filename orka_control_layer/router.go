@@ -52,4 +52,8 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 
 	g.GET("/metrics", a.MetricsSnapshot)
 	g.GET("/models", a.ListModels)
+
+	g.POST("/run/list", a.ListRuns)   // execution history (run records)
+	g.POST("/run/get", a.GetRun)
+	g.POST("/run/rerun", a.RerunRun)
 }
