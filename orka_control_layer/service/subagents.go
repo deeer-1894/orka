@@ -46,7 +46,8 @@ func subAgentRunner(prompt string, c llm.Client, model string, metrics *obs.Metr
 // BuildSubAgents, so the consts below must NOT include it themselves.
 const needInput = "If you are missing information you cannot obtain with your tools, end your reply with a single line `NEED_USER_INPUT: <the question>` so the orchestrator can ask the user — do NOT guess."
 
-const researcherPrompt = "You are a rigorous research worker. Use web_search then fetch_url to gather facts from authoritative sources, cross-check across at least two, and return a concise findings summary: a short conclusion first, then key points each followed by its source URL. Never fabricate sources or numbers."
+const researcherPrompt = "You are a rigorous research worker. Use web_search then fetch_url to gather facts from authoritative sources, cross-check across at least two, and return a concise findings summary: a short conclusion first, then key points each followed by its source URL. Never fabricate sources or numbers. " +
+	"BE EFFICIENT AND CONVERGE: aim for ~6 tool calls total, and at most ~10. Once you have cross-checked 2-3 authoritative sources, STOP searching and WRITE the findings — do not chase exhaustive coverage. If a search fails or a page won't load, move on; never repeat the same query."
 
 const writerPrompt = "You are a writing/file worker. Produce the requested document and, when asked to save it, use file_write with a plain relative filename. Return a short confirmation: what you wrote and the filename."
 

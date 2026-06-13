@@ -215,9 +215,13 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 	}
 	calls := map[string]pendingCall{} // tool_call_id → call info (for args)
 	tokens, toolCalls := 0, 0          // per-run audit counters (incl. sub-agents)
+	lastFinal := ""                    // orchestrator's final answer → run output
 	defer func() {
 		rc.Vars["run_tokens"] = tokens
 		rc.Vars["run_tools"] = toolCalls
+		if lastFinal != "" {
+			rc.Vars[middlewares.VarFinal] = lastFinal
+		}
 	}()
 
 	for {
@@ -226,6 +230,17 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 			break
 		}
 		if ev.Err != nil {
+			// Graceful degradation: hitting the iteration cap shouldn't hard-fail
+			// a long, expensive run — surface a note and return what we have so the
+			// run is recorded as done-with-partial rather than failed.
+			if errors.Is(ev.Err, adk.ErrExceedMaxIterations) {
+				if lastFinal == "" {
+					note := "(已达到本轮迭代上限,基于已获取的信息作答;如需更深入可继续追问。)"
+					emit(messages.Chat(messages.RoleAssistant, note, rc.Meta))
+					lastFinal = note
+				}
+				return nil
+			}
 			return ev.Err
 		}
 		out := ev.Output
@@ -267,6 +282,7 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 			if m.Content != "" {
 				if eventMeta.AgentID == "" {
 					rc.Messages = append(rc.Messages, messages.Chat(messages.RoleAssistant, m.Content, eventMeta))
+					lastFinal = m.Content // orchestrator's answer → run output summary
 				}
 				emit(messages.Chat(messages.RoleAssistant, m.Content, eventMeta))
 			}
