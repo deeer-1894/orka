@@ -8,14 +8,20 @@ import (
 	"strings"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/orka-oss/orka_core/agent"
+	"github.com/orka-oss/orka_core/config"
 	"github.com/orka-oss/orka_core/messages"
 	"github.com/orka-oss/orka_control_layer/llm"
 	"github.com/orka-oss/orka_control_layer/service/middlewares"
 )
+
+// einoOrchestratorName is the orchestrator agent's name; sub-agent events carry
+// their own AgentName, which we map to meta.agent_id for UI lane grouping.
+const einoOrchestratorName = "orka"
 
 // This file is the Phase-1 foundation of the Eino-library migration: it stands
 // up a real eino adk.ChatModelAgent + Runner backed by our existing llm.Client
@@ -34,6 +40,89 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 		Model:       llm.NewEinoModel(client, model),
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(tools)},
+		},
+		MaxIterations: maxIters,
+	})
+}
+
+// BuildEinoSubAgentTools builds each sub-agent spec as a NATIVE eino
+// ChatModelAgent (scoped tools, prompt, model) wrapped via adk.NewAgentTool, so
+// the orchestrator delegates to them as real eino agents (Phase 3) rather than
+// through the hand-rolled runner. Mirrors BuildSubAgents' scoping/model rules.
+func BuildEinoSubAgentTools(ctx context.Context, mainClient llm.Client, mainModel string, miniClient llm.Client, miniModel string, atomic []agent.BaseTool, specs []config.SubAgentConfig) ([]tool.BaseTool, error) {
+	if len(specs) == 0 {
+		specs = DefaultSubAgents()
+	}
+	byName := map[string]agent.BaseTool{}
+	for _, t := range atomic {
+		byName[t.Name()] = t
+	}
+	var out []tool.BaseTool
+	for _, sp := range specs {
+		if sp.Name == "" {
+			continue
+		}
+		var scoped []agent.BaseTool
+		for _, n := range sp.Tools {
+			if t, ok := byName[n]; ok {
+				scoped = append(scoped, t)
+			}
+		}
+		if len(scoped) == 0 {
+			continue // none of this agent's tools available; don't expose a dead agent
+		}
+		client, model := miniClient, miniModel
+		if sp.Model == "main" {
+			client, model = mainClient, mainModel
+		}
+		prompt := sp.Prompt
+		if prompt == "" {
+			prompt = needInput
+		} else {
+			prompt += " " + needInput
+		}
+		iters := sp.MaxIters
+		if iters <= 0 {
+			iters = 12
+		}
+		sub, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
+			Name:        sp.Name,
+			Description: sp.Description,
+			Instruction: prompt,
+			Model:       llm.NewEinoModel(client, model),
+			ToolsConfig: adk.ToolsConfig{
+				ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(scoped)},
+			},
+			MaxIterations: iters,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, adk.NewAgentTool(ctx, sub))
+	}
+	return out, nil
+}
+
+// BuildEinoOrchestrator builds the orchestrator agent: atomic tools PLUS native
+// sub-agent tools, with EmitInternalEvents so sub-agent events stream up to the
+// user (tagged by AgentName → meta.agent_id for lane grouping).
+func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel string, miniClient llm.Client, miniModel, instruction string, atomic []agent.BaseTool, specs []config.SubAgentConfig, maxIters int) (adk.Agent, error) {
+	subTools, err := BuildEinoSubAgentTools(ctx, mainClient, mainModel, miniClient, miniModel, atomic, specs)
+	if err != nil {
+		return nil, err
+	}
+	if maxIters <= 0 {
+		maxIters = 16
+	}
+	allTools := append(EinoTools(atomic), subTools...)
+	return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
+		Name:        einoOrchestratorName,
+		Description: "Orka orchestrator",
+		Instruction: instruction,
+		Model:       llm.NewEinoModel(mainClient, mainModel),
+		ToolsConfig: adk.ToolsConfig{
+			ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: allTools},
+			EmitInternalEvents: true, // stream sub-agent events up for lane rendering
 		},
 		MaxIterations: maxIters,
 	})
@@ -114,9 +203,16 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 		}
 		mv := out.MessageOutput
 
+		// Sub-agent events carry their own AgentName; map it to meta.agent_id so
+		// the UI groups them into a lane (the orchestrator's own events keep "").
+		eventMeta := rc.Meta
+		if ev.AgentName != "" && ev.AgentName != einoOrchestratorName {
+			eventMeta.AgentID = ev.AgentName
+		}
+
 		var m *schema.Message
 		if mv.IsStreaming {
-			full, err := drainEinoStream(mv.MessageStream, mv.Role, rc.Meta, emit)
+			full, err := drainEinoStream(mv.MessageStream, mv.Role, eventMeta, emit)
 			if err != nil {
 				return err
 			}
@@ -134,8 +230,10 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 				calls[tc.ID] = pendingCall{name: tc.Function.Name, args: parseJSONArgs(tc.Function.Arguments)}
 			}
 			if m.Content != "" {
-				rc.Messages = append(rc.Messages, messages.Chat(messages.RoleAssistant, m.Content, rc.Meta))
-				emit(messages.Chat(messages.RoleAssistant, m.Content, rc.Meta))
+				if eventMeta.AgentID == "" {
+					rc.Messages = append(rc.Messages, messages.Chat(messages.RoleAssistant, m.Content, eventMeta))
+				}
+				emit(messages.Chat(messages.RoleAssistant, m.Content, eventMeta))
 			}
 		case schema.Tool:
 			pc := calls[m.ToolCallID]
@@ -144,7 +242,7 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 				name = m.ToolName
 			}
 			payload := map[string]any{"tool": name, "args": pc.args, "result": m.Content}
-			emit(messages.Tool("call", payload, rc.Meta))
+			emit(messages.Tool("call", payload, eventMeta))
 		}
 	}
 	return nil
@@ -189,10 +287,23 @@ func drainEinoStream(s *schema.StreamReader[*schema.Message], role schema.RoleTy
 // model + tools + system prompt and streams its events into rc's emit sink.
 func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps PipelineDeps, tools []agent.BaseTool, client llm.Client, model string, _ func(messages.Message)) error {
 	instruction := deps.SystemPrompt
-	if instruction == "" {
-		instruction = middlewares.DefaultSystemPrompt
+	var ag adk.Agent
+	var err error
+	if s.Cfg.Agent.MultiAgent {
+		if instruction == "" {
+			instruction = OrchestratorPrompt
+		}
+		miniModel := s.Cfg.LLM.MiniModel
+		if miniModel == "" {
+			miniModel = model
+		}
+		ag, err = BuildEinoOrchestrator(ctx, client, model, s.Mini, miniModel, instruction, tools, s.Cfg.Agent.SubAgents, 16)
+	} else {
+		if instruction == "" {
+			instruction = middlewares.DefaultSystemPrompt
+		}
+		ag, err = BuildEinoAgent(ctx, client, model, instruction, tools, 16)
 	}
-	ag, err := BuildEinoAgent(ctx, client, model, instruction, tools, 16)
 	if err != nil {
 		return err
 	}

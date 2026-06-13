@@ -147,15 +147,19 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	}
 
 	// Multi-agent: the orchestrator (main model) gets the atomic tools PLUS
-	// sub-agents (researcher/writer/browser, mini model) it can delegate to.
+	// sub-agents (researcher/writer/browser, mini model) it can delegate to. The
+	// eino path builds NATIVE eino sub-agents inside runEino from the atomic tool
+	// set, so we only append the hand-rolled AgentTools for the legacy runner.
 	if s.Cfg.Agent.MultiAgent {
-		miniModel := s.Cfg.LLM.MiniModel
-		if miniModel == "" {
-			miniModel = modelName
-		}
-		subs := BuildSubAgents(tools, s.Main, s.Mini, modelName, miniModel, s.Metrics, s.Cfg.Agent.SubAgents)
-		tools = append(tools, subs...)
 		deps.SystemPrompt = OrchestratorPrompt
+		if !s.Cfg.Agent.EinoRuntime {
+			miniModel := s.Cfg.LLM.MiniModel
+			if miniModel == "" {
+				miniModel = modelName
+			}
+			subs := BuildSubAgents(tools, s.Main, s.Mini, modelName, miniModel, s.Metrics, s.Cfg.Agent.SubAgents)
+			tools = append(tools, subs...)
+		}
 	}
 
 	pipeline := BuildPipeline(SceneSimple, deps)
