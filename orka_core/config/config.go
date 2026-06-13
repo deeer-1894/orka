@@ -158,9 +158,9 @@ func (c *Config) applyEnv() {
 	if os.Getenv("MULTI_AGENT") == "1" {
 		c.Agent.MultiAgent = true
 	}
-	if os.Getenv("EINO_RUNTIME") == "1" {
-		c.Agent.EinoRuntime = true
-	}
+	// Eino is the default runtime as of the library migration; set EINO_RUNTIME=0
+	// to fall back to the legacy hand-rolled runner.
+	c.Agent.EinoRuntime = os.Getenv("EINO_RUNTIME") != "0"
 	envStr(&c.Security.CtxTokenSecret, "CTX_TOKEN_SECRET")
 	envInt(&c.Security.CtxTokenTTLSec, "CTX_TOKEN_TTL_SEC")
 	envStr(&c.Obs.LogLevel, "LOG_LEVEL")

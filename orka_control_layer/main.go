@@ -124,11 +124,16 @@ func main() {
 		logger.Info("tools via MCP", "url", toolsURL)
 	}
 
+	runtime := "eino"
+	if !cfg.Agent.EinoRuntime {
+		runtime = "legacy"
+	}
 	logger.Info("control layer starting",
 		"addr", cfg.Server.ControlAddr,
 		"mongo", cfg.Storage.MongoDB,
 		"redis", cfg.Storage.RedisAddr,
 		"run_mode", cfg.Agent.RunMode,
+		"runtime", runtime,
 		"cors_hosts", cfg.Server.CORSAllowedHosts,
 	)
 
