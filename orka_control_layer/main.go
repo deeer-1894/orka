@@ -23,6 +23,7 @@ import (
 	"github.com/orka-oss/orka_control_layer/message_utils"
 	"github.com/orka-oss/orka_control_layer/obs"
 	"github.com/orka-oss/orka_control_layer/service"
+	"github.com/orka-oss/orka_control_layer/service/middlewares"
 )
 
 // waitReady polls an HTTP endpoint until it accepts connections (or timeout),
@@ -101,6 +102,14 @@ func main() {
 
 	msg := message_utils.New(store, cfg.Obs.PersistSampling, logger)
 	chat := service.NewChatService(cfg, mainLLM, miniLLM, cpStore, msg, metrics, logger)
+
+	// Load Claude-Code-style SKILL.md packages from the global skills dir, merged
+	// over the built-in catalog; skill_create writes new ones here.
+	if n, err := middlewares.LoadSkills(cfg.Agent.SkillsDir); err != nil {
+		logger.Warn("skills load failed", "dir", cfg.Agent.SkillsDir, "err", err)
+	} else if n > 0 {
+		logger.Info("skills loaded", "dir", cfg.Agent.SkillsDir, "count", n)
+	}
 
 	// Wire the real GUI executor (run_agent) when configured; else keep the mock.
 	if wsURL := cfg.Agent.GUIAgentWSURL; wsURL != "" {

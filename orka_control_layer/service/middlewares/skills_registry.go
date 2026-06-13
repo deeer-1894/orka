@@ -2,26 +2,43 @@ package middlewares
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // ApplySkillTool is the built-in tool the model calls to adopt a skill. A skill
-// is an expertise "prompt pack": its guidance is returned as the tool result,
-// so the model reads it and operates accordingly for the rest of the turn. This
-// keeps skills model-driven (the agent picks the right expertise itself) without
-// breaking the tool/assistant message ordering that strict providers require.
+// is an expertise "prompt pack" (Claude-Code-style: a SKILL.md with name +
+// description frontmatter and a markdown body of instructions). The catalog only
+// exposes name+description; the body is loaded on demand when adopted, so it
+// scales to large skills without bloating every prompt (progressive disclosure).
 const ApplySkillTool = "apply_skill"
 
 // SkillDef is a named expertise the agent can adopt mid-conversation.
 type SkillDef struct {
 	Name   string
 	Desc   string // one-liner shown in the catalog so the model knows when to use it
-	Prompt string // the expert guidance injected when adopted
+	Prompt string // the expert guidance (SKILL.md body) injected when adopted
 }
 
-// builtinSkills is the default catalog. New skills are added here; nothing else
-// needs to change (catalog + tool enum are derived from this map).
+// skills is the live registry: builtins seeded below, plus any SKILL.md packages
+// loaded from the global skills dir (LoadSkills) and any created at runtime
+// (skill_create). Guarded because skill_create mutates it concurrently.
+var (
+	skillMu    sync.RWMutex
+	skills     = map[string]SkillDef{}
+	skillsRoot string // global skills dir; "" until LoadSkills is called
+)
+
+func init() {
+	for k, v := range builtinSkills {
+		skills[k] = v
+	}
+}
+
+// builtinSkills is the default catalog seeded into the registry at init.
 var builtinSkills = map[string]SkillDef{
 	"researcher": {
 		Name: "researcher",
@@ -73,30 +90,147 @@ var builtinSkills = map[string]SkillDef{
 
 // skillByName returns a skill (case-insensitive), and whether it exists.
 func skillByName(name string) (SkillDef, bool) {
-	s, ok := builtinSkills[strings.ToLower(strings.TrimSpace(name))]
+	skillMu.RLock()
+	defer skillMu.RUnlock()
+	s, ok := skills[strings.ToLower(strings.TrimSpace(name))]
 	return s, ok
 }
 
 // skillNames returns the catalog keys, sorted for stable prompts/tests.
 func skillNames() []string {
-	names := make([]string, 0, len(builtinSkills))
-	for k := range builtinSkills {
+	skillMu.RLock()
+	defer skillMu.RUnlock()
+	names := make([]string, 0, len(skills))
+	for k := range skills {
 		names = append(names, k)
 	}
 	sort.Strings(names)
 	return names
 }
 
+// AllSkills returns every registered skill (sorted), for the find_skills tool.
+func AllSkills() []SkillDef {
+	out := make([]SkillDef, 0)
+	for _, n := range skillNames() {
+		if s, ok := skillByName(n); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // skillsCatalog renders the one-liner catalog appended to the system prompt so
 // the model knows which skills exist and when to adopt one.
 func skillsCatalog() string {
 	var sb strings.Builder
-	sb.WriteString("\nAvailable skills (call `apply_skill` with one of these names to adopt that expertise before answering, when it would improve the result):\n")
+	sb.WriteString("\nAvailable skills (call `apply_skill` with one of these names to adopt that expertise before answering, when it would improve the result; use `find_skills` to search and `skill_create` to author a new one):\n")
 	for _, n := range skillNames() {
-		s := builtinSkills[n]
+		s, _ := skillByName(n)
 		fmt.Fprintf(&sb, "- %s: %s\n", s.Name, s.Desc)
 	}
 	return sb.String()
+}
+
+// LoadSkills scans <dir>/<name>/SKILL.md packages and registers them, merging
+// over the builtins. Returns the number loaded. A missing dir is not an error.
+func LoadSkills(dir string) (int, error) {
+	skillMu.Lock()
+	skillsRoot = dir
+	skillMu.Unlock()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	n := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		b, rerr := os.ReadFile(filepath.Join(dir, e.Name(), "SKILL.md"))
+		if rerr != nil {
+			continue
+		}
+		def, perr := parseSkillMD(string(b))
+		if perr != nil || def.Name == "" {
+			continue
+		}
+		skillMu.Lock()
+		skills[strings.ToLower(def.Name)] = def
+		skillMu.Unlock()
+		n++
+	}
+	return n, nil
+}
+
+// parseSkillMD parses a Claude-Code-style SKILL.md: a YAML-ish frontmatter block
+// (name, description) delimited by --- lines, then a markdown body (the prompt).
+func parseSkillMD(content string) (SkillDef, error) {
+	s := strings.ReplaceAll(content, "\r\n", "\n")
+	if !strings.HasPrefix(strings.TrimSpace(s), "---") {
+		return SkillDef{}, fmt.Errorf("missing frontmatter")
+	}
+	s = strings.TrimSpace(s)
+	rest := strings.TrimPrefix(s, "---")
+	end := strings.Index(rest, "\n---")
+	if end < 0 {
+		return SkillDef{}, fmt.Errorf("unterminated frontmatter")
+	}
+	front := rest[:end]
+	body := strings.TrimSpace(rest[end+len("\n---"):])
+	var def SkillDef
+	for _, ln := range strings.Split(front, "\n") {
+		k, v, ok := strings.Cut(ln, ":")
+		if !ok {
+			continue
+		}
+		val := strings.Trim(strings.TrimSpace(v), "\"'")
+		switch strings.ToLower(strings.TrimSpace(k)) {
+		case "name":
+			def.Name = val
+		case "description", "desc":
+			def.Desc = val
+		}
+	}
+	def.Prompt = body
+	return def, nil
+}
+
+// RegisterSkill adds a skill to the live registry and, when persist is set and a
+// skills dir is configured, writes it as <dir>/<name>/SKILL.md so it survives a
+// restart. Returns an error on an invalid name or write failure.
+func RegisterSkill(def SkillDef, persist bool) error {
+	name := strings.ToLower(strings.TrimSpace(def.Name))
+	if name == "" || !validSkillName(name) {
+		return fmt.Errorf("invalid skill name %q (use letters/digits/_/-)", def.Name)
+	}
+	def.Name = name
+	skillMu.Lock()
+	skills[name] = def
+	dir := skillsRoot
+	skillMu.Unlock()
+	if persist && dir != "" {
+		d := filepath.Join(dir, name)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return err
+		}
+		md := fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n%s\n", name, def.Desc, def.Prompt)
+		if err := os.WriteFile(filepath.Join(d, "SKILL.md"), []byte(md), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validSkillName(s string) bool {
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // SkillPrompt returns a skill's expert guidance for deterministic injection into

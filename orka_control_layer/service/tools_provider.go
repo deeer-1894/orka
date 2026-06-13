@@ -25,7 +25,8 @@ func LocalToolsProvider(baseStorage string) ToolsProvider {
 	return func(_ context.Context, req ChatRunRequest) ([]agent.BaseTool, func(), error) {
 		root := pathsafe.UserRoot(baseStorage, req.UserEmail)
 		tools := append(filesystem.New(root), GUITool)
-		return filterEnabled(tools, req.EnabledTools), nil, nil
+		tools = filterEnabled(tools, req.EnabledTools)
+		return append(tools, SkillTools()...), nil, nil // skill mgmt always available
 	}
 }
 
@@ -143,10 +144,10 @@ func MCPToolsProviderPooled(baseStorage, mcpURL, secret string, tokenTTL time.Du
 		if err != nil {
 			root := pathsafe.UserRoot(baseStorage, req.UserEmail)
 			fallback := append(filesystem.New(root), GUITool)
-			return filterEnabled(fallback, req.EnabledTools), nil, err
+			return append(filterEnabled(fallback, req.EnabledTools), SkillTools()...), nil, err
 		}
 		// no cleanup: the pool owns the connection lifecycle.
-		return filterEnabled(tools, req.EnabledTools), nil, nil
+		return append(filterEnabled(tools, req.EnabledTools), SkillTools()...), nil, nil
 	}
 }
 

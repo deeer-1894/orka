@@ -58,6 +58,7 @@ type AgentConfig struct {
 	MultiAgent       bool             `yaml:"multi_agent"`  // expose orchestrator sub-agents the model can delegate to
 	SubAgents        []SubAgentConfig `yaml:"sub_agents"`   // optional custom registry; empty = built-in researcher/writer/browser
 	EinoRuntime      bool             `yaml:"eino_runtime"` // run the chat path on the cloudwego/eino library instead of the hand-rolled runner
+	SkillsDir        string           `yaml:"skills_dir"`   // global dir of Claude-Code-style SKILL.md packages (default ./skills)
 }
 
 // SubAgentConfig declares one orchestrator-facing sub-agent. The Name+Description
@@ -155,6 +156,7 @@ func (c *Config) applyEnv() {
 	envStr(&c.Agent.RunMode, "RUN_MODE")
 	envInt(&c.Agent.CheckpointTTLSec, "CHECKPOINT_TTL_SEC")
 	envStr(&c.Agent.GUIAgentWSURL, "GUI_AGENT_WS_URL")
+	envStr(&c.Agent.SkillsDir, "SKILLS_DIR")
 	if os.Getenv("MULTI_AGENT") == "1" {
 		c.Agent.MultiAgent = true
 	}
@@ -180,6 +182,7 @@ func (c *Config) applyDefaults() {
 	setDefault(&c.Storage.RedisAddr, "localhost:6379")
 	setDefault(&c.Storage.BaseStoragePath, "./data/storage")
 	setDefault(&c.Agent.RunMode, "adk")
+	setDefault(&c.Agent.SkillsDir, "./skills")
 	setDefaultInt(&c.Agent.CheckpointTTLSec, 86400)
 	setDefault(&c.LLM.Model, "gpt-4o-mini")
 	setDefault(&c.LLM.MiniModel, c.LLM.Model)
