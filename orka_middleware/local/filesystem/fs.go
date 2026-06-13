@@ -9,10 +9,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/pathsafe"
 )
+
+// trashDir holds pre-overwrite backups so an agent's file_write can't silently
+// destroy earlier content (the model has no delete tool, so overwrite is the
+// only data-loss path; this makes it recoverable without any confirm friction).
+const trashDir = ".orka_trash"
 
 // New returns the file tool set rooted at root.
 func New(root string) []agent.BaseTool {
@@ -53,9 +59,15 @@ func (writeTool) Schema() map[string]any {
 	}, "path", "content")
 }
 func (t writeTool) Invoke(_ context.Context, args map[string]any) (string, error) {
-	p, err := pathsafe.Resolve(t.root, asString(args["path"]))
+	rel := asString(args["path"])
+	p, err := pathsafe.Resolve(t.root, rel)
 	if err != nil {
 		return "", err
+	}
+	// Back up an existing file before overwriting it (best-effort, recoverable).
+	backed := false
+	if old, rerr := os.ReadFile(p); rerr == nil {
+		backed = backupOverwrite(t.root, rel, old)
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)
@@ -63,7 +75,29 @@ func (t writeTool) Invoke(_ context.Context, args map[string]any) (string, error
 	if err := os.WriteFile(p, []byte(asString(args["content"])), 0o644); err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
-	return fmt.Sprintf("wrote %d bytes to %s", len(asString(args["content"])), asString(args["path"])), nil
+	msg := fmt.Sprintf("wrote %d bytes to %s", len(asString(args["content"])), rel)
+	if backed {
+		msg += " (previous version backed up to " + trashDir + ")"
+	}
+	return msg, nil
+}
+
+// backupOverwrite copies the prior file content to .orka_trash/<ts>/<path>.
+// Best-effort: failures never block the write. Paths under .orka_trash are
+// skipped so the trash never recurses on itself.
+func backupOverwrite(root, rel string, content []byte) bool {
+	if strings.HasPrefix(filepath.ToSlash(rel), trashDir+"/") || rel == trashDir {
+		return false
+	}
+	ts := time.Now().Format("20060102-150405")
+	dst, err := pathsafe.Resolve(root, filepath.Join(trashDir, ts, rel))
+	if err != nil {
+		return false
+	}
+	if os.MkdirAll(filepath.Dir(dst), 0o755) != nil {
+		return false
+	}
+	return os.WriteFile(dst, content, 0o644) == nil
 }
 
 type listTool struct{ root string }

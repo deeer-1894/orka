@@ -54,6 +54,7 @@ export function Thread({
   onOpenViewport,
   onPick,
   onRetry,
+  onSchedule,
 }: {
   messages: Message[];
   status: RunStatus;
@@ -61,6 +62,7 @@ export function Thread({
   onOpenViewport: () => void;
   onPick: (text: string) => void;
   onRetry: () => void;
+  onSchedule: (prompt: string) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -79,12 +81,13 @@ export function Thread({
     .filter((b): b is Extract<Block, { kind: "user" }> => b.kind === "user")
     .map((b) => ({ id: "turn-" + b.m.id, text: b.m.content || "" }));
 
-  // Index of the last assistant block — only it gets the "regenerate" action,
-  // since regenerate re-runs the most recent user turn.
+  // Index of the last assistant block — only it gets the "regenerate"/"schedule"
+  // actions, since they act on the most recent user turn.
   let lastAssistant = -1;
   blocks.forEach((b, i) => {
     if (b.kind === "assistant") lastAssistant = i;
   });
+  const lastUserPrompt = [...blocks].reverse().find((b) => b.kind === "user")?.m.content || "";
   const canAct = status !== "streaming";
 
   return (
@@ -95,7 +98,11 @@ export function Thread({
           <div key={i} id={b.kind === "user" ? "turn-" + b.m.id : undefined} className="rise scroll-mt-4">
             {b.kind === "user" && <UserBubble m={b.m} onEdit={canAct ? onPick : undefined} />}
             {b.kind === "assistant" && (
-              <Assistant m={b.m} onRegenerate={canAct && i === lastAssistant ? onRetry : undefined} />
+              <Assistant
+                m={b.m}
+                onRegenerate={canAct && i === lastAssistant ? onRetry : undefined}
+                onSchedule={canAct && i === lastAssistant && lastUserPrompt ? () => onSchedule(lastUserPrompt) : undefined}
+              />
             )}
             {b.kind === "clarify" && <Clarify m={b.m} onResume={onResume} />}
             {b.kind === "weather" && <WeatherCard data={b.data} />}
@@ -216,7 +223,7 @@ function UserBubble({ m, onEdit }: { m: Message; onEdit?: (text: string) => void
   );
 }
 
-function Assistant({ m, onRegenerate }: { m: Message; onRegenerate?: () => void }) {
+function Assistant({ m, onRegenerate, onSchedule }: { m: Message; onRegenerate?: () => void; onSchedule?: () => void }) {
   return (
     <div className="group mb-7 flex gap-3.5">
       <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent text-white font-serif text-[13px] leading-none">
@@ -227,6 +234,7 @@ function Assistant({ m, onRegenerate }: { m: Message; onRegenerate?: () => void 
         <div className="mt-1 flex gap-1 opacity-0 transition group-hover:opacity-100">
           <CopyButton text={m.content || ""} />
           {onRegenerate && <ActionButton label="重新生成" onClick={onRegenerate}>↻</ActionButton>}
+          {onSchedule && <ActionButton label="把这轮设为定时任务" onClick={onSchedule}>⏰</ActionButton>}
         </div>
       </div>
     </div>

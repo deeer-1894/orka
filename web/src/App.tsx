@@ -6,7 +6,7 @@ import { Sidebar } from "./components/Sidebar";
 import { Thread } from "./components/Thread";
 import { Composer } from "./components/Composer";
 import { ArtifactDrawer } from "./components/ArtifactDrawer";
-import { Toaster } from "./lib/toast";
+import { Toaster, toast } from "./lib/toast";
 import { useTheme } from "./lib/theme";
 import { loadTools, saveTools } from "./lib/toolGroups";
 import type { Conversation, Message } from "./types";
@@ -78,6 +78,7 @@ function Workbench({
   // Per-conversation enabled tool groups (empty = all tools, the default).
   const [toolGroups, setToolGroups] = useState<Set<string>>(() => loadTools(""));
   const [models, setModels] = useState<ModelOption[]>(MODELS_FALLBACK);
+  const [scheduleFor, setScheduleFor] = useState<string | null>(null); // prompt to schedule
 
   useEffect(() => {
     api.models().then((m) => m.length && setModels(m)).catch(() => {});
@@ -306,7 +307,7 @@ function Workbench({
           </button>
         </header>
 
-        <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} onPick={onSend} onRetry={onRetry} />
+        <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} />
         <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} enabledGroups={toolGroups} onToggleGroup={toggleGroup} />
       </main>
 
@@ -319,6 +320,78 @@ function Workbench({
         email={user.email}
         onJumpToConversation={onJumpToConversation}
       />
+
+      {scheduleFor !== null && (
+        <ScheduleDialog
+          prompt={scheduleFor}
+          onClose={() => setScheduleFor(null)}
+          onConfirm={async (sec) => {
+            await api.scheduleTask(scheduleFor, sec, scheduleFor.slice(0, 24), activeID).catch(() => {});
+            setScheduleFor(null);
+            refreshTasks();
+            toast("已设为定时任务", "success");
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+const INTERVALS = [
+  { label: "每 10 分钟", sec: 600 },
+  { label: "每小时", sec: 3600 },
+  { label: "每天", sec: 86400 },
+];
+
+// ScheduleDialog turns a conversation turn into a recurring task (with the prompt
+// prefilled). Supports the presets plus a custom minutes value (backend min 30s).
+function ScheduleDialog({ prompt, onClose, onConfirm }: { prompt: string; onClose: () => void; onConfirm: (sec: number) => void }) {
+  const [sec, setSec] = useState(3600);
+  const [customMin, setCustomMin] = useState("");
+  const effective = customMin ? Math.max(1, Math.round(Number(customMin))) * 60 : sec;
+  const valid = effective >= 30;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <h2 className="font-serif text-[18px] text-ink">设为定时任务</h2>
+        <p className="mt-1 line-clamp-2 text-[13px] text-muted">“{prompt}”</p>
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {INTERVALS.map((i) => (
+            <button
+              key={i.sec}
+              onClick={() => { setSec(i.sec); setCustomMin(""); }}
+              className={
+                "rounded-lg border px-3 py-1.5 text-[13px] transition " +
+                (!customMin && sec === i.sec ? "border-accent/40 bg-accentsoft text-accent" : "border-border text-muted hover:bg-surface2")
+              }
+            >
+              {i.label}
+            </button>
+          ))}
+          <div className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[13px]">
+            <span className="text-faint">每</span>
+            <input
+              value={customMin}
+              onChange={(e) => setCustomMin(e.target.value.replace(/[^\d]/g, ""))}
+              placeholder="—"
+              aria-label="自定义间隔（分钟）"
+              className="w-12 bg-transparent text-center outline-none"
+            />
+            <span className="text-faint">分钟</span>
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-[13px] text-muted hover:bg-surface2">取消</button>
+          <button
+            onClick={() => valid && onConfirm(effective)}
+            disabled={!valid}
+            className="rounded-lg bg-accent px-3.5 py-1.5 text-[13px] text-white disabled:opacity-40"
+          >
+            创建
+          </button>
+        </div>
+        {!valid && <div className="mt-2 text-right text-[11px] text-accent">间隔需 ≥ 30 秒</div>}
+      </div>
     </div>
   );
 }
