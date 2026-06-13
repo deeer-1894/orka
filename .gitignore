@@ -28,3 +28,6 @@ gui_agent/.venv/
 .idea/
 .vscode/
 .claude/
+
+# local tooling state (superpowers/brainstorm)
+.superpowers/
