@@ -331,8 +331,8 @@ function Workbench({
         <ScheduleDialog
           prompt={scheduleFor}
           onClose={() => setScheduleFor(null)}
-          onConfirm={async (sec) => {
-            await api.scheduleTask(scheduleFor, sec, scheduleFor.slice(0, 24), activeID).catch(() => {});
+          onConfirm={async (sec, retry) => {
+            await api.scheduleTask(scheduleFor, sec, scheduleFor.slice(0, 24), activeID, retry).catch(() => {});
             setScheduleFor(null);
             refreshTasks();
             toast("已设为定时任务", "success");
@@ -351,9 +351,10 @@ const INTERVALS = [
 
 // ScheduleDialog turns a conversation turn into a recurring task (with the prompt
 // prefilled). Supports the presets plus a custom minutes value (backend min 30s).
-function ScheduleDialog({ prompt, onClose, onConfirm }: { prompt: string; onClose: () => void; onConfirm: (sec: number) => void }) {
+function ScheduleDialog({ prompt, onClose, onConfirm }: { prompt: string; onClose: () => void; onConfirm: (sec: number, retry: number) => void }) {
   const [sec, setSec] = useState(3600);
   const [customMin, setCustomMin] = useState("");
+  const [retry, setRetry] = useState(0);
   const effective = customMin ? Math.max(1, Math.round(Number(customMin))) * 60 : sec;
   const valid = effective >= 30;
   return (
@@ -386,10 +387,20 @@ function ScheduleDialog({ prompt, onClose, onConfirm }: { prompt: string; onClos
             <span className="text-faint">分钟</span>
           </div>
         </div>
+        <div className="mt-3 flex items-center gap-2 text-[13px] text-muted">
+          <span>失败自动重试</span>
+          <input
+            value={retry}
+            onChange={(e) => setRetry(Math.max(0, Math.min(5, Number(e.target.value.replace(/[^\d]/g, "")) || 0)))}
+            aria-label="失败重试次数"
+            className="w-12 rounded-lg border border-border bg-surface px-2 py-1 text-center outline-none focus:border-accent/50"
+          />
+          <span>次</span>
+        </div>
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-[13px] text-muted hover:bg-surface2">取消</button>
           <button
-            onClick={() => valid && onConfirm(effective)}
+            onClick={() => valid && onConfirm(effective, retry)}
             disabled={!valid}
             className="rounded-lg bg-accent px-3.5 py-1.5 text-[13px] text-white disabled:opacity-40"
           >

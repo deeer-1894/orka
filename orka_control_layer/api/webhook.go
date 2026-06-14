@@ -9,7 +9,6 @@ import (
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 
-	"github.com/orka-oss/orka_core/messages"
 	"github.com/orka-oss/orka_control_layer/service"
 )
 
@@ -34,13 +33,13 @@ func (a *API) Webhook(ctx context.Context, c *app.RequestContext) {
 	if m, ok := body["message"].(string); ok && m != "" {
 		msg = m
 	}
-	go a.Chat.Run(context.Background(), service.ChatRunRequest{
+	go a.Chat.RunHeadless(context.Background(), service.ChatRunRequest{
 		Message:        msg,
 		ConversationID: t.ConversationID,
 		TaskID:         t.TaskID,
 		UserEmail:      t.OwnerEmail,
 		Trigger:        "webhook",
-	}, func(messages.Message) {})
+	})
 	c.JSON(consts.StatusAccepted, map[string]any{"code": 0, "data": map[string]string{"status": "triggered", "task_id": t.TaskID}})
 }
 

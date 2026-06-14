@@ -65,6 +65,7 @@ type scheduleReq struct {
 	Prompt         string `json:"prompt"`
 	IntervalSec    int64  `json:"interval_sec"`
 	Title          string `json:"title"`
+	RetryCount     int    `json:"retry_count"` // auto-retry failed runs N times
 }
 
 // ScheduleTask creates a recurring task: every IntervalSec the scheduler renders
@@ -94,6 +95,7 @@ func (a *API) ScheduleTask(ctx context.Context, c *app.RequestContext) {
 		CronStatus:     "on",
 		IntervalSec:    req.IntervalSec,
 		NextRunAt:      now + req.IntervalSec*1000, // first run one interval from now
+		RetryCount:     req.RetryCount,
 		CreatedAt:      now,
 	}
 	if err := a.Store.CreateTask(ctx, t); err != nil {

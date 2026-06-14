@@ -102,8 +102,8 @@ export const api = {
     post<Message[]>("/conversation/get-messages", { conversation_id, size: 200 }),
   getTasks: (filter: { conversation_id?: string } = {}) =>
     post<{ tasks: TaskMeta[]; owners: Record<string, OwnerInfo> }>("/task/get-tasks", { ...filter, size: 100 }),
-  scheduleTask: (prompt: string, interval_sec: number, title: string, conversation_id = "") =>
-    post<TaskMeta>("/task/schedule", { prompt, interval_sec, title, conversation_id }),
+  scheduleTask: (prompt: string, interval_sec: number, title: string, conversation_id = "", retry_count = 0) =>
+    post<TaskMeta>("/task/schedule", { prompt, interval_sec, title, conversation_id, retry_count }),
   unscheduleTask: (task_id: string) => post("/task/unschedule", { task_id }),
   enableWebhook: (task_id: string) => post<{ token: string; path: string }>("/task/webhook/enable", { task_id }),
   disableWebhook: (task_id: string) => post("/task/webhook/disable", { task_id }),

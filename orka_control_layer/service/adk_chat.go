@@ -104,7 +104,7 @@ func (s *ChatService) Kill(id string) bool {
 
 // Run executes one chat request, streaming events through raw. It blocks until
 // the run completes, interrupts (clarify) or is cancelled. raw writes SSE frames.
-func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(messages.Message)) {
+func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(messages.Message)) string {
 	traceID := trace.NewTraceID()
 	meta := messages.Meta{
 		ConversationID: req.ConversationID,
@@ -211,8 +211,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	if req.ResumeKey != "" {
 		err = s.resume(ctx, runner, rc, req, raw, deps, tools, model, modelName)
 		if err != nil {
-			s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err())
-			return // resume() already emitted the failure event
+			return s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err()) // resume() already emitted the failure event
 		}
 	} else {
 		// Seed with prior turns (memory) + persist the new user message
@@ -244,7 +243,33 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	}
 
 	s.finish(ctx, rc, meta, raw, err)
-	s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err())
+	return s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err())
+}
+
+// RunHeadless runs a detached (scheduled/webhook) request with task-level
+// auto-retry: if the run fails and the task declares RetryCount > 0, it re-runs
+// up to that many times with linear backoff. Each attempt is its own run record.
+func (s *ChatService) RunHeadless(ctx context.Context, req ChatRunRequest) {
+	retries := 0
+	if req.TaskID != "" && s.Msg != nil && s.Msg.Store != nil {
+		if t, err := s.Msg.Store.GetTask(ctx, req.TaskID); err == nil {
+			retries = t.RetryCount
+		}
+	}
+	for attempt := 0; ; attempt++ {
+		status := s.Run(ctx, req, func(messages.Message) {})
+		if status != db.RunFailed || attempt >= retries || ctx.Err() != nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Duration(attempt+1) * 5 * time.Second): // linear backoff
+		}
+		if s.Log != nil {
+			s.Log.Info("task retry", "task_id", req.TaskID, "attempt", attempt+1, "of", retries)
+		}
+	}
 }
 
 // createRun opens a RunRecord (status=running) for this execution.
@@ -272,10 +297,7 @@ func (s *ChatService) createRun(ctx context.Context, req ChatRunRequest, meta me
 
 // finalizeRun stamps a run's terminal state + execution stats. Uses a background
 // context since the request context may already be cancelled.
-func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt int64, req ChatRunRequest, runErr, ctxErr error) {
-	if runID == "" || s.Msg == nil || s.Msg.Store == nil {
-		return
-	}
+func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt int64, req ChatRunRequest, runErr, ctxErr error) string {
 	status, errStr := db.RunDone, ""
 	switch {
 	case runErr == context.Canceled || ctxErr == context.Canceled:
@@ -284,6 +306,9 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 		status, errStr = db.RunFailed, runErr.Error()
 	case rc.Interrupt != nil:
 		status = db.RunPaused
+	}
+	if runID == "" || s.Msg == nil || s.Msg.Store == nil {
+		return status
 	}
 	now := time.Now().UnixMilli()
 	out, _ := rc.Vars[middlewares.VarFinal].(string)
@@ -309,6 +334,7 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 			CreatedAt:      now,
 		})
 	}
+	return status
 }
 
 // trunc caps a string to n runes for storage/display.

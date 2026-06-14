@@ -11,7 +11,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/orka-oss/orka_core/config"
-	"github.com/orka-oss/orka_core/messages"
 	"github.com/orka-oss/orka_core/state"
 	"github.com/orka-oss/orka_core/trace"
 	"github.com/orka-oss/orka_control_layer/api"
@@ -167,11 +166,11 @@ func main() {
 		sched := &scheduled_task.Scheduler{
 			Source: scheduled_task.CronSource(store),
 			Trigger: func(ctx context.Context, task db.TaskMeta, content string) error {
-				chat.Run(context.Background(), service.ChatRunRequest{
+				chat.RunHeadless(context.Background(), service.ChatRunRequest{
 					Message: content, ConversationID: task.ConversationID,
 					TaskID: task.TaskID, UserEmail: task.OwnerEmail,
 					Trigger: "schedule",
-				}, func(messages.Message) {})
+				})
 				return nil
 			},
 			Advance: func(ctx context.Context, taskID string, nextRunAt int64) error {
