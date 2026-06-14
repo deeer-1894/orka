@@ -246,13 +246,16 @@ func toolGroup(t agent.BaseTool) string {
 
 func groupForName(name string) string {
 	switch {
-	case strings.HasPrefix(name, "file_"):
+	case strings.HasPrefix(name, "file_") || name == "memory":
 		return "file"
 	case name == "run_agent":
 		return "gui_agent"
 	case name == "web_search" || name == "fetch_url" || name == "weather" || name == "http_request":
 		return "web"
-	case name == "current_time" || name == "calculator" || name == "unit_convert":
+	case name == "current_time" || name == "calculator" || name == "unit_convert" ||
+		name == "base64" || name == "hash" || name == "uuid" || name == "json_format" ||
+		name == "text_stats" || name == "regex_extract" || name == "json_query" ||
+		name == "datetime" || name == "random":
 		return "util"
 	}
 	return ""

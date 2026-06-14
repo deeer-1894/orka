@@ -41,6 +41,11 @@ func Registry() map[string]Meta {
 		"uuid":         {Group: "util", Scope: ""},
 		"json_format":  {Group: "util", Scope: ""},
 		"text_stats":   {Group: "util", Scope: ""},
+		"regex_extract": {Group: "util", Scope: ""},
+		"json_query":    {Group: "util", Scope: ""},
+		"datetime":      {Group: "util", Scope: ""},
+		"random":        {Group: "util", Scope: ""},
+		"memory":        {Group: "file", Scope: "file:write"}, // persists to the user's storage
 		"http_request": {Group: "web", Scope: "web:search"}, // network egress → gated
 		"lark_whoami": {Group: "lark", Scope: "lark:read"},
 		"aio_echo":    {Group: "aio", Scope: "aio:read"},
@@ -133,6 +138,42 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 		mcp.WithDescription("Count characters, words, lines and CJK characters in text."),
 		mcp.WithString("text", mcp.Required(), mcp.Description("the input text")),
 	), textStatsTool())
+
+	add(mcp.NewTool("regex_extract",
+		mcp.WithDescription("Find all matches of a regular expression in text — pull structured bits out of fetched pages, logs, or free text."),
+		mcp.WithString("text", mcp.Required(), mcp.Description("the text to search")),
+		mcp.WithString("pattern", mcp.Required(), mcp.Description("a Go/RE2 regular expression")),
+	), regexExtract())
+
+	add(mcp.NewTool("json_query",
+		mcp.WithDescription("Extract a value from a JSON document by a dotted path with [index], e.g. data.items[0].name. Pair with http_request to read API responses."),
+		mcp.WithString("json", mcp.Required(), mcp.Description("the JSON text")),
+		mcp.WithString("path", mcp.Required(), mcp.Description("e.g. data.items[0].name")),
+	), jsonQuery())
+
+	add(mcp.NewTool("datetime",
+		mcp.WithDescription("Date arithmetic: add a duration to a date, diff two dates, or get a date's weekday. Use instead of computing dates in your head."),
+		mcp.WithString("op", mcp.Required(), mcp.Description("add | diff | weekday")),
+		mcp.WithString("date", mcp.Description("a date, e.g. 2026-06-14")),
+		mcp.WithString("date2", mcp.Description("second date (for diff)")),
+		mcp.WithNumber("days", mcp.Description("days to add (for add)")),
+		mcp.WithNumber("hours", mcp.Description("hours to add (for add)")),
+	), datetimeTool())
+
+	add(mcp.NewTool("random",
+		mcp.WithDescription("Get a random int/float in a range, or pick from a list of choices."),
+		mcp.WithString("type", mcp.Description("int (default) | float | choice")),
+		mcp.WithNumber("min", mcp.Description("range minimum")),
+		mcp.WithNumber("max", mcp.Description("range maximum")),
+		mcp.WithString("choices", mcp.Description("comma-separated options (for choice)")),
+	), randomTool())
+
+	add(mcp.NewTool("memory",
+		mcp.WithDescription("A persistent key-value scratchpad that survives across runs. Stash intermediate results (set), recall them later (get), list or delete. Use it to carry state through a long, multi-step task."),
+		mcp.WithString("op", mcp.Required(), mcp.Description("set | get | list | delete")),
+		mcp.WithString("key", mcp.Description("the key")),
+		mcp.WithString("value", mcp.Description("the value (for set)")),
+	), memoryTool(baseStorage))
 
 	add(mcp.NewTool("http_request",
 		mcp.WithDescription("Make an HTTP GET/POST to a public URL (e.g. a JSON API) and return status + body. Not for browser tasks."),
