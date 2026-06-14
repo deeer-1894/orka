@@ -71,7 +71,7 @@ function Workbench({
     typeof window === "undefined" ? true : window.innerWidth >= 768,
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<Tab>("browser");
+  const [drawerTab, setDrawerTab] = useState<Tab>("runs");
   const [totalTokens, setTotalTokens] = useState(0);
   const [version, setVersion] = useState(""); // selected model version ("" main, "mini")
   const [theme, toggleTheme] = useTheme();

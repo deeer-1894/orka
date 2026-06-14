@@ -3,7 +3,10 @@ package service
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_control_layer/service/middlewares"
@@ -76,8 +79,50 @@ func (skillCreateTool) Invoke(_ context.Context, args map[string]any) (string, e
 	return fmt.Sprintf("Created skill %q. It's now adoptable with apply_skill and will survive a restart.", strings.ToLower(strings.TrimSpace(def.Name))), nil
 }
 
+type skillInstallTool struct{}
+
+func (skillInstallTool) Name() string { return "skill_install" }
+func (skillInstallTool) Description() string {
+	return "Install a skill from the web: download a SKILL.md (Claude-Code-style: name + description frontmatter and a markdown body) from a URL and register it so it's adoptable with apply_skill and survives restart. Args: url (a raw SKILL.md URL, e.g. a GitHub raw link)."
+}
+func (skillInstallTool) Schema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"url": map[string]any{"type": "string", "description": "URL of a raw SKILL.md file"},
+		},
+		"required": []string{"url"},
+	}
+}
+func (skillInstallTool) Invoke(ctx context.Context, args map[string]any) (string, error) {
+	url := strings.TrimSpace(asStr(args["url"]))
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		return "", fmt.Errorf("url must be an http(s) link to a raw SKILL.md")
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return "", fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return "", fmt.Errorf("download failed: HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024)) // cap at 256KB
+	if err != nil {
+		return "", err
+	}
+	name, err := middlewares.InstallSkillMD(string(body))
+	if err != nil {
+		return "", fmt.Errorf("invalid SKILL.md: %w", err)
+	}
+	return fmt.Sprintf("Installed skill %q from %s. It's now adoptable with apply_skill.", name, url), nil
+}
+
 // SkillTools returns the always-available skill-management tools.
-func SkillTools() []agent.BaseTool { return []agent.BaseTool{findSkillsTool{}, skillCreateTool{}} }
+func SkillTools() []agent.BaseTool {
+	return []agent.BaseTool{findSkillsTool{}, skillCreateTool{}, skillInstallTool{}}
+}
 
 func asStr(v any) string {
 	if v == nil {

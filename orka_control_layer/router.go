@@ -73,4 +73,7 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/workflow/create", a.CreateWorkflow)
 	g.POST("/workflow/delete", a.DeleteWorkflow)
 	g.POST("/workflow/run", a.RunWorkflow)
+
+	g.POST("/skill/list", a.ListSkills)       // catalog (builtin + installed)
+	g.POST("/skill/install", a.InstallSkill)  // download + register a SKILL.md from a URL
 }

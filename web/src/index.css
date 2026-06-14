@@ -54,6 +54,9 @@ html.dark *::-webkit-scrollbar-thumb {
   border-radius: 4px;
 }
 
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

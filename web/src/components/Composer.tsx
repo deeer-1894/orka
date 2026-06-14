@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
 import { TOOL_GROUPS } from "../lib/toolGroups";
-import { files as fileApi } from "../api";
-import { toastError } from "../lib/toast";
+import { api, files as fileApi } from "../api";
+import { toast, toastError } from "../lib/toast";
+
+// Icons/labels for the built-in skills; installed/custom skills get a default.
+const SKILL_ICON: Record<string, { icon: string; label: string }> = {
+  researcher: { icon: "🔎", label: "调研" },
+  writer: { icon: "✍️", label: "写作" },
+  coder: { icon: "💻", label: "编程" },
+  analyst: { icon: "📊", label: "分析" },
+  translator: { icon: "🌐", label: "翻译" },
+};
 
 interface Attachment { name: string; path: string; image: boolean }
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
@@ -39,6 +48,29 @@ export function Composer({
   const [text, setText] = useState("");
   const [menu, setMenu] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [skills, setSkills] = useState<{ name: string; description: string }[]>([]);
+  const [installUrl, setInstallUrl] = useState("");
+  const [installing, setInstalling] = useState(false);
+
+  const loadSkills = () => api.listSkills().then((r) => setSkills(r.skills || [])).catch(() => {});
+  useEffect(() => { loadSkills(); }, []);
+  useEffect(() => { if (menu) loadSkills(); }, [menu]);
+
+  const installSkill = async () => {
+    const url = installUrl.trim();
+    if (!url) return;
+    setInstalling(true);
+    try {
+      const r = await api.installSkill(url);
+      toast(`已安装技能「${r.name}」`, "success");
+      setInstallUrl("");
+      loadSkills();
+    } catch {
+      toastError("安装失败：请确认这是一个可访问的 SKILL.md 链接");
+    } finally {
+      setInstalling(false);
+    }
+  };
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -83,31 +115,55 @@ export function Composer({
     setText((t) => t.replace(/^\/\w*\s*/, ""));
     requestAnimationFrame(() => taRef.current?.focus());
   };
-  const skill = activeSkill ? SKILLS.find((s) => s.name === activeSkill) : null;
+  const skill = activeSkill ? { icon: SKILL_ICON[activeSkill]?.icon || "🧩", label: SKILL_ICON[activeSkill]?.label || activeSkill } : null;
 
   return (
     <div className="px-5 pb-5">
       <div className="relative mx-auto max-w-3xl">
         {menu && (
-          <div className="absolute bottom-[calc(100%+8px)] left-0 z-20 w-72 rounded-2xl border border-border bg-surface p-1.5 shadow-lg">
+          <div className="absolute bottom-[calc(100%+8px)] left-0 z-20 w-80 rounded-2xl border border-border bg-surface p-1.5 shadow-lg">
             <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-faint">
               技能 · 让 Orka 切换专长
             </div>
-            {SKILLS.map((s) => (
-              <button
-                key={s.name}
-                onClick={() => pickSkill(s.name)}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-surface2"
-              >
-                <span className="text-[18px]">{s.icon}</span>
-                <span className="min-w-0">
-                  <span className="block text-[13px] text-ink">
-                    {s.label} <span className="text-faint">/{s.name}</span>
-                  </span>
-                  <span className="block truncate text-[12px] text-muted">{s.desc}</span>
-                </span>
-              </button>
-            ))}
+            <div className="max-h-[40vh] overflow-y-auto">
+              {skills.map((s) => {
+                const meta = SKILL_ICON[s.name];
+                return (
+                  <button
+                    key={s.name}
+                    onClick={() => pickSkill(s.name)}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-surface2"
+                  >
+                    <span className="text-[18px]">{meta?.icon || "🧩"}</span>
+                    <span className="min-w-0">
+                      <span className="block text-[13px] text-ink">
+                        {meta?.label || s.name} <span className="text-faint">/{s.name}</span>
+                      </span>
+                      <span className="block truncate text-[12px] text-muted">{s.description}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-1 border-t border-border px-1 pt-1.5">
+              <div className="mb-1 px-1 text-[11px] text-faint">从网上安装技能 (SKILL.md 链接)</div>
+              <div className="flex items-center gap-1">
+                <input
+                  value={installUrl}
+                  onChange={(e) => setInstallUrl(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); installSkill(); } }}
+                  placeholder="https://…/SKILL.md"
+                  className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-accent/50"
+                />
+                <button
+                  onClick={installSkill}
+                  disabled={installing || !installUrl.trim()}
+                  className="shrink-0 rounded-lg bg-accent px-2.5 py-1.5 text-[12px] text-white disabled:opacity-40"
+                >
+                  {installing ? "…" : "安装"}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

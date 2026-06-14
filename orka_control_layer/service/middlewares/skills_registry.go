@@ -198,6 +198,23 @@ func parseSkillMD(content string) (SkillDef, error) {
 	return def, nil
 }
 
+// InstallSkillMD parses a Claude-Code-style SKILL.md document and registers it
+// (persisted), returning the installed skill's name. Used to install skills
+// downloaded from the web.
+func InstallSkillMD(content string) (string, error) {
+	def, err := parseSkillMD(content)
+	if err != nil {
+		return "", err
+	}
+	if def.Name == "" || strings.TrimSpace(def.Prompt) == "" {
+		return "", fmt.Errorf("SKILL.md missing a name or body")
+	}
+	if err := RegisterSkill(def, true); err != nil {
+		return "", err
+	}
+	return strings.ToLower(def.Name), nil
+}
+
 // RegisterSkill adds a skill to the live registry and, when persist is set and a
 // skills dir is configured, writes it as <dir>/<name>/SKILL.md so it survives a
 // restart. Returns an error on an invalid name or write failure.

@@ -6,6 +6,11 @@ import { Markdown } from "./Markdown";
 
 type Tab = "browser" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
 
+const TAB_LABEL: Record<Tab, string> = {
+  runs: "运行", files: "文件", flows: "流程", tasks: "任务",
+  integrations: "集成", browser: "浏览器", metrics: "指标",
+};
+
 export function ArtifactDrawer({
   open,
   onClose,
@@ -31,24 +36,24 @@ export function ArtifactDrawer({
       }
     >
       <div className="flex h-full w-[400px] max-md:w-[86vw] flex-col">
-        <div className="flex items-center justify-between border-b border-border px-3 h-14">
-          <div className="flex gap-1">
-            {(["browser", "files", "runs", "tasks", "flows", "integrations", "metrics"] as Tab[]).map((t) => (
+        <div className="flex items-center gap-1 border-b border-border px-2 h-14">
+          <div className="flex flex-1 gap-0.5 overflow-x-auto no-scrollbar">
+            {(["runs", "files", "flows", "tasks", "integrations", "browser", "metrics"] as Tab[]).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
                 className={
-                  "rounded-lg px-2.5 py-1.5 text-[13px] capitalize transition " +
+                  "shrink-0 rounded-lg px-2 py-1.5 text-[12.5px] transition " +
                   (tab === t ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")
                 }
               >
-                {t}
+                {TAB_LABEL[t]}
               </button>
             ))}
           </div>
           <button
             onClick={onClose}
-            className="grid h-8 w-8 place-items-center rounded-lg text-faint hover:bg-surface2"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-faint hover:bg-surface2"
             title="Close"
             aria-label="关闭工件面板"
           >
