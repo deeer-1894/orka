@@ -108,6 +108,7 @@ export interface RunRecord {
   status: string; // running | done | failed | paused
   prompt: string;
   output: string;
+  result?: string; // structured JSON extracted from the answer
   error: string;
   tool_calls: number;
   tokens: number;

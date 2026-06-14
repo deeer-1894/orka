@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
@@ -317,7 +318,7 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 	bg := context.Background()
 	_ = s.Msg.Store.FinalizeRun(bg, db.RunRecord{
 		RunID: runID, Status: status, Error: errStr,
-		Output: trunc(out, 400), Tokens: tokens, ToolCalls: toolCalls,
+		Output: trunc(out, 400), Result: extractJSON(out), Tokens: tokens, ToolCalls: toolCalls,
 		FinishedAt: now, DurationMs: now - startedAt,
 	})
 	// Alert on UNATTENDED failures (scheduled/webhook/rerun) — a manual failure
@@ -335,6 +336,37 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 		})
 	}
 	return status
+}
+
+// extractJSON pulls a structured result out of an answer so runs are
+// programmatically consumable (chaining / external systems): prefers a ```json
+// fenced block, else a leading top-level {…} / […]. Returns "" when valid JSON
+// isn't present (most answers are prose). Capped to avoid bloating the record.
+func extractJSON(text string) string {
+	candidate := ""
+	if i := strings.Index(text, "```json"); i >= 0 {
+		rest := text[i+len("```json"):]
+		if j := strings.Index(rest, "```"); j >= 0 {
+			candidate = strings.TrimSpace(rest[:j])
+		}
+	}
+	if candidate == "" {
+		t := strings.TrimSpace(text)
+		if strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[") {
+			candidate = t
+		}
+	}
+	if candidate == "" {
+		return ""
+	}
+	var probe any
+	if json.Unmarshal([]byte(candidate), &probe) != nil {
+		return "" // not valid JSON
+	}
+	if len(candidate) > 8000 {
+		return ""
+	}
+	return candidate
 }
 
 // trunc caps a string to n runes for storage/display.

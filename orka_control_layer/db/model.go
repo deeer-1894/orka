@@ -87,6 +87,7 @@ type RunRecord struct {
 	Status         string `bson:"status" json:"status"`   // running | done | failed | paused
 	Prompt         string `bson:"prompt" json:"prompt"`
 	Output         string `bson:"output" json:"output"` // final answer summary (capped)
+	Result         string `bson:"result,omitempty" json:"result,omitempty"` // structured JSON extracted from the answer (chaining / external consumption)
 	Error          string `bson:"error" json:"error"`
 	ToolCalls      int    `bson:"tool_calls" json:"tool_calls"`
 	Tokens         int    `bson:"tokens" json:"tokens"`

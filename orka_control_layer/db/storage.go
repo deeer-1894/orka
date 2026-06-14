@@ -376,7 +376,7 @@ func (s *Storage) CreateRun(ctx context.Context, r *RunRecord) error {
 // context since it runs after the request context may be cancelled.
 func (s *Storage) FinalizeRun(ctx context.Context, r RunRecord) error {
 	set := bson.M{
-		"status": r.Status, "output": r.Output, "error": r.Error,
+		"status": r.Status, "output": r.Output, "result": r.Result, "error": r.Error,
 		"tokens": r.Tokens, "tool_calls": r.ToolCalls,
 		"finished_at": r.FinishedAt, "duration_ms": r.DurationMs,
 	}

@@ -490,6 +490,7 @@ function RunsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: strin
                 <span>耗时 {fmtDur(r.duration_ms)}</span>
                 {r.tool_calls > 0 && <span>工具 {r.tool_calls}</span>}
                 {r.tokens > 0 && <span>{r.tokens >= 1000 ? (r.tokens / 1000).toFixed(1) + "k" : r.tokens} tok</span>}
+                {r.result && <span title={r.result} className="text-ok">{"{ } 结构化"}</span>}
                 {r.conversation_id && (
                   <button onClick={() => onJumpToConversation(r.conversation_id)} className="text-accent hover:underline">↗ 对话</button>
                 )}
