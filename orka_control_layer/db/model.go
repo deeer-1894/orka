@@ -40,6 +40,24 @@ type MessagesTable struct {
 	CreatedAt      int64  `bson:"created_at" json:"created_at"`
 }
 
+// Workflow is a user-defined ordered pipeline of steps. Each step runs as a turn
+// in one shared conversation, so a step sees prior steps' output via conversation
+// memory — deterministic, repeatable multi-step automation built on the run
+// engine (schedulable + webhook-triggerable like any task).
+type Workflow struct {
+	WorkflowID string         `bson:"workflow_id" json:"workflow_id"`
+	OwnerEmail string         `bson:"owner_email" json:"owner_email"`
+	Name       string         `bson:"name" json:"name"`
+	Steps      []WorkflowStep `bson:"steps" json:"steps"`
+	CreatedAt  int64          `bson:"created_at" json:"created_at"`
+}
+
+// WorkflowStep is one stage of a workflow (v1: an agent prompt).
+type WorkflowStep struct {
+	Name   string `bson:"name" json:"name"`
+	Prompt string `bson:"prompt" json:"prompt"`
+}
+
 // Notification surfaces something the user should know about an unattended run
 // (a scheduled/webhook run that failed) — the alerting half of "敢托付":
 // run history records WHAT happened; notifications make sure you find out.

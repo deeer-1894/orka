@@ -7,6 +7,7 @@ import type {
   OwnerInfo,
   RunRecord,
   TaskMeta,
+  Workflow,
 } from "./types";
 import { toastError } from "./lib/toast";
 
@@ -116,6 +117,10 @@ export const api = {
   deleteConnector: (connector_id: string) => post("/connector/delete", { connector_id }),
   listNotifications: () => post<{ notifications: Notification[]; unread: number }>("/notification/list", {}),
   readNotifications: (notification_id = "") => post("/notification/read", { notification_id }),
+  listWorkflows: () => post<{ workflows: Workflow[] }>("/workflow/list", {}),
+  createWorkflow: (name: string, steps: { name: string; prompt: string }[]) => post<Workflow>("/workflow/create", { name, steps }),
+  deleteWorkflow: (workflow_id: string) => post("/workflow/delete", { workflow_id }),
+  runWorkflow: (workflow_id: string) => post<{ conversation_id: string }>("/workflow/run", { workflow_id }),
   metrics: async (): Promise<MetricsSnapshot> => {
     const res = await fetch(BASE + "/metrics", { headers: headers(false) });
     const j = await res.json();

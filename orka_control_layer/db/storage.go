@@ -26,6 +26,7 @@ type Storage struct {
 	Runs          *mongo.Collection
 	Connectors    *mongo.Collection
 	Notifications *mongo.Collection
+	Workflows     *mongo.Collection
 }
 
 // NewStorage connects to Mongo and pings it.
@@ -55,6 +56,7 @@ func NewStorage(ctx context.Context, uri, dbName string) (*Storage, error) {
 		Runs:          d.Collection("runs"),
 		Connectors:    d.Collection("connectors"),
 		Notifications: d.Collection("notifications"),
+		Workflows:     d.Collection("workflows"),
 	}
 	if err := s.EnsureIndexes(cctx); err != nil {
 		return nil, fmt.Errorf("mongo indexes: %w", err)
@@ -102,6 +104,10 @@ func (s *Storage) EnsureIndexes(ctx context.Context) error {
 			Options: options.Index().SetName("owner_created"),
 		}},
 		{s.Notifications, mongo.IndexModel{
+			Keys:    bson.D{{Key: "owner_email", Value: 1}, {Key: "created_at", Value: -1}},
+			Options: options.Index().SetName("owner_created"),
+		}},
+		{s.Workflows, mongo.IndexModel{
 			Keys:    bson.D{{Key: "owner_email", Value: 1}, {Key: "created_at", Value: -1}},
 			Options: options.Index().SetName("owner_created"),
 		}},
@@ -410,6 +416,43 @@ func (s *Storage) GetRun(ctx context.Context, runID string) (*RunRecord, error) 
 		return nil, fmt.Errorf("get run: %w", err)
 	}
 	return &out, nil
+}
+
+// --- workflows ---
+
+func (s *Storage) CreateWorkflow(ctx context.Context, w *Workflow) error {
+	if _, err := s.Workflows.InsertOne(ctx, w); err != nil {
+		return fmt.Errorf("insert workflow: %w", err)
+	}
+	return nil
+}
+
+func (s *Storage) ListWorkflows(ctx context.Context, owner string) ([]Workflow, error) {
+	var out []Workflow
+	if err := paginate(ctx, s.Workflows, bson.M{"owner_email": owner}, 0, 100, &out); err != nil {
+		return nil, fmt.Errorf("list workflows: %w", err)
+	}
+	return out, nil
+}
+
+func (s *Storage) GetWorkflow(ctx context.Context, id string) (*Workflow, error) {
+	var out Workflow
+	err := s.Workflows.FindOne(ctx, bson.M{"workflow_id": id}).Decode(&out)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get workflow: %w", err)
+	}
+	return &out, nil
+}
+
+func (s *Storage) DeleteWorkflow(ctx context.Context, id, owner string) error {
+	_, err := s.Workflows.DeleteOne(ctx, bson.M{"workflow_id": id, "owner_email": owner})
+	if err != nil {
+		return fmt.Errorf("delete workflow: %w", err)
+	}
+	return nil
 }
 
 // --- notifications ---

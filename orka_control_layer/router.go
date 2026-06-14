@@ -68,4 +68,9 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 
 	g.POST("/notification/list", a.ListNotifications)
 	g.POST("/notification/read", a.ReadNotifications)
+
+	g.POST("/workflow/list", a.ListWorkflows) // definable multi-step pipelines
+	g.POST("/workflow/create", a.CreateWorkflow)
+	g.POST("/workflow/delete", a.DeleteWorkflow)
+	g.POST("/workflow/run", a.RunWorkflow)
 }

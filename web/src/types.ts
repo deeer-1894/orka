@@ -118,6 +118,14 @@ export interface RunRecord {
   duration_ms: number;
 }
 
+export interface WorkflowStep { name: string; prompt: string }
+export interface Workflow {
+  workflow_id: string;
+  name: string;
+  steps: WorkflowStep[];
+  created_at: number;
+}
+
 export interface Notification {
   notification_id: string;
   kind: string;

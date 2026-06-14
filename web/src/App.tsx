@@ -11,7 +11,7 @@ import { useTheme } from "./lib/theme";
 import { loadTools, saveTools } from "./lib/toolGroups";
 import type { Conversation, Message, Notification } from "./types";
 
-type Tab = "browser" | "files" | "runs" | "tasks" | "integrations" | "metrics";
+type Tab = "browser" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
 
 interface ModelOption { version: string; label: string; hint: string }
 // Fallback until /models resolves (keeps the picker non-empty on first paint).

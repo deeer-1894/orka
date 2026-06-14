@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { api, auth, files as fileApi } from "../api";
-import type { BrowserPayload, Connector, Message, MetricsSnapshot, RunRecord, TaskMeta } from "../types";
+import type { BrowserPayload, Connector, Message, MetricsSnapshot, RunRecord, TaskMeta, Workflow } from "../types";
 import { toast } from "../lib/toast";
 import { Markdown } from "./Markdown";
 
-type Tab = "browser" | "files" | "runs" | "tasks" | "integrations" | "metrics";
+type Tab = "browser" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
 
 export function ArtifactDrawer({
   open,
@@ -33,7 +33,7 @@ export function ArtifactDrawer({
       <div className="flex h-full w-[400px] max-md:w-[86vw] flex-col">
         <div className="flex items-center justify-between border-b border-border px-3 h-14">
           <div className="flex gap-1">
-            {(["browser", "files", "runs", "tasks", "integrations", "metrics"] as Tab[]).map((t) => (
+            {(["browser", "files", "runs", "tasks", "flows", "integrations", "metrics"] as Tab[]).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -59,6 +59,7 @@ export function ArtifactDrawer({
           {tab === "browser" && <BrowserPanel messages={messages} />}
           {tab === "files" && <FilesPanel email={email} />}
           {tab === "runs" && <RunsPanel onJumpToConversation={onJumpToConversation} />}
+          {tab === "flows" && <WorkflowsPanel onJumpToConversation={onJumpToConversation} />}
           {tab === "integrations" && <ConnectorsPanel />}
           {tab === "metrics" && <MetricsPanel />}
           {tab === "tasks" && <TasksPanel onJumpToConversation={onJumpToConversation} />}
@@ -331,6 +332,66 @@ function fmtWhen(ms?: number): string {
   if (!ms) return "";
   const d = new Date(ms);
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+// WorkflowsPanel: define + run multi-step pipelines. Each non-empty line of the
+// editor is one step (a prompt); running it executes the steps as sequential
+// turns in one conversation (chaining via conversation memory).
+function WorkflowsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: string) => void }) {
+  const [flows, setFlows] = useState<Workflow[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [stepsText, setStepsText] = useState("");
+  const refresh = () => api.listWorkflows().then((r) => setFlows(r.workflows || [])).catch(() => {});
+  useEffect(() => { refresh(); }, []);
+
+  const save = async () => {
+    const steps = stepsText.split("\n").map((l) => l.trim()).filter(Boolean).map((p, i) => ({ name: `步骤 ${i + 1}`, prompt: p }));
+    if (!name.trim() || steps.length === 0) return;
+    await api.createWorkflow(name.trim(), steps).catch(() => {});
+    setName(""); setStepsText(""); setAdding(false); refresh();
+  };
+  const run = async (id: string) => {
+    const r = await api.runWorkflow(id).catch(() => null);
+    if (r?.conversation_id) { toast("流程已启动", "success"); onJumpToConversation(r.conversation_id); }
+  };
+
+  return (
+    <div className="p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[12px] text-faint">工作流 · {flows.length}</span>
+        <button onClick={() => setAdding((o) => !o)} className="rounded-lg border border-border px-2.5 py-1 text-[12px] text-muted hover:border-accent/40">
+          {adding ? "取消" : "+ 新建流程"}
+        </button>
+      </div>
+      {adding && (
+        <div className="mb-3 space-y-2 rounded-xl border border-border bg-surface2/40 p-3">
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="流程名称，如 每日竞品简报" className="w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] outline-none focus:border-accent/50" />
+          <textarea value={stepsText} onChange={(e) => setStepsText(e.target.value)} rows={4} placeholder="每行一个步骤（prompt），按顺序执行，后一步可引用前一步结果。例如：&#10;调研三家竞品最新定价&#10;把结果整理成表格&#10;写一段对比结论并存为 compare.md" className="w-full resize-none rounded-lg border border-border bg-surface px-2.5 py-2 text-[13px] outline-none focus:border-accent/50" />
+          <button onClick={save} disabled={!name.trim() || !stepsText.trim()} className="w-full rounded-lg bg-accent px-3 py-1.5 text-[13px] text-white disabled:opacity-40">保存流程</button>
+        </div>
+      )}
+      {flows.length === 0 && !adding && <Blank>暂无工作流。把一件多步骤的事拆成几步,Orka 按序执行。</Blank>}
+      <div className="space-y-1.5">
+        {flows.map((wf) => (
+          <div key={wf.workflow_id} className="rounded-xl border border-border bg-surface2/40 px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <span className="text-[15px]">🧩</span>
+              <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{wf.name}</span>
+              <span className="text-[11px] text-faint">{wf.steps.length} 步</span>
+            </div>
+            <ol className="mt-1 ml-5 list-decimal text-[11px] text-muted">
+              {wf.steps.slice(0, 4).map((s, i) => <li key={i} className="truncate">{s.prompt}</li>)}
+            </ol>
+            <div className="mt-1.5 flex items-center gap-3 text-[11px]">
+              <button onClick={() => run(wf.workflow_id)} className="text-accent hover:underline">▶ 运行</button>
+              <button onClick={() => api.deleteWorkflow(wf.workflow_id).then(refresh)} className="text-faint hover:text-accent">删除</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 // parseHeaders turns "Key: Value" lines into a header object.
