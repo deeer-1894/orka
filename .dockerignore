@@ -1,0 +1,13 @@
+# Keep the build context small + secrets out of the image.
+.git
+.env
+.env.*
+web/node_modules
+web/dist
+**/*.log
+**/*_test.go
+.mimocode
+.superpowers
+skills
+gui_agent
+.claude
