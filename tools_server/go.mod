@@ -3,8 +3,8 @@ module github.com/orka-oss/tools_server
 go 1.25.5
 
 require (
-	github.com/orka-oss/orka_core v0.0.0
 	github.com/mark3labs/mcp-go v0.54.1
+	github.com/orka-oss/orka_core v0.0.0
 )
 
 require (

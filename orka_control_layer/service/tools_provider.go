@@ -250,6 +250,8 @@ func groupForName(name string) string {
 		return "file"
 	case name == "run_agent":
 		return "gui_agent"
+	case name == "shell":
+		return "shell"
 	case name == "web_search" || name == "fetch_url" || name == "weather" || name == "http_request":
 		return "web"
 	case name == "current_time" || name == "calculator" || name == "unit_convert" ||

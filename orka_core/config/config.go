@@ -52,13 +52,11 @@ type StorageConfig struct {
 }
 
 type AgentConfig struct {
-	RunMode          string           `yaml:"run_mode"`
 	CheckpointTTLSec int              `yaml:"checkpoint_ttl_sec"`
 	GUIAgentWSURL    string           `yaml:"gui_agent_ws_url"`
-	MultiAgent       bool             `yaml:"multi_agent"`  // expose orchestrator sub-agents the model can delegate to
-	SubAgents        []SubAgentConfig `yaml:"sub_agents"`   // optional custom registry; empty = built-in researcher/writer/browser
-	EinoRuntime      bool             `yaml:"eino_runtime"` // run the chat path on the cloudwego/eino library instead of the hand-rolled runner
-	SkillsDir        string           `yaml:"skills_dir"`   // global dir of Claude-Code-style SKILL.md packages (default ./skills)
+	MultiAgent       bool             `yaml:"multi_agent"` // expose orchestrator sub-agents the model can delegate to
+	SubAgents        []SubAgentConfig `yaml:"sub_agents"`  // optional custom registry; empty = built-in researcher/writer/browser/engineer
+	SkillsDir        string           `yaml:"skills_dir"`  // global dir of Claude-Code-style SKILL.md packages (default ./skills)
 }
 
 // SubAgentConfig declares one orchestrator-facing sub-agent. The Name+Description
@@ -153,16 +151,12 @@ func (c *Config) applyEnv() {
 	envStr(&c.Storage.MongoDB, "MONGO_DB")
 	envStr(&c.Storage.RedisAddr, "REDIS_ADDR")
 	envStr(&c.Storage.BaseStoragePath, "BASE_STORAGE_PATH")
-	envStr(&c.Agent.RunMode, "RUN_MODE")
 	envInt(&c.Agent.CheckpointTTLSec, "CHECKPOINT_TTL_SEC")
 	envStr(&c.Agent.GUIAgentWSURL, "GUI_AGENT_WS_URL")
 	envStr(&c.Agent.SkillsDir, "SKILLS_DIR")
 	if os.Getenv("MULTI_AGENT") == "1" {
 		c.Agent.MultiAgent = true
 	}
-	// Eino is the default runtime as of the library migration; set EINO_RUNTIME=0
-	// to fall back to the legacy hand-rolled runner.
-	c.Agent.EinoRuntime = os.Getenv("EINO_RUNTIME") != "0"
 	envStr(&c.Security.CtxTokenSecret, "CTX_TOKEN_SECRET")
 	envInt(&c.Security.CtxTokenTTLSec, "CTX_TOKEN_TTL_SEC")
 	envStr(&c.Obs.LogLevel, "LOG_LEVEL")
@@ -181,7 +175,6 @@ func (c *Config) applyDefaults() {
 	setDefault(&c.Storage.MongoDB, "orka")
 	setDefault(&c.Storage.RedisAddr, "localhost:6379")
 	setDefault(&c.Storage.BaseStoragePath, "./data/storage")
-	setDefault(&c.Agent.RunMode, "adk")
 	setDefault(&c.Agent.SkillsDir, "./skills")
 	setDefaultInt(&c.Agent.CheckpointTTLSec, 86400)
 	setDefault(&c.LLM.Model, "gpt-4o-mini")

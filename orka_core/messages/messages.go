@@ -92,6 +92,17 @@ func StreamDelta(content string, meta Meta) Message {
 	return m
 }
 
+// ReasoningDelta is a live "thinking" token delta from a reasoning model, shown
+// in a collapsible indicator (not the answer, not persisted). Distinguished from
+// answer deltas by Action == "reasoning".
+func ReasoningDelta(content string, meta Meta) Message {
+	m := New(EventStream, RoleAssistant, meta)
+	m.Action = "reasoning"
+	m.Content = content
+	return m
+}
+
+
 // Tool builds a tool-event message.
 func Tool(action string, payload any, meta Meta) Message {
 	m := New(EventTool, RoleTool, meta)

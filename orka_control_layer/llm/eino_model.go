@@ -61,8 +61,10 @@ func (m *EinoModel) Stream(ctx context.Context, input []*schema.Message, opts ..
 	sr, sw := schema.Pipe[*schema.Message](8)
 	go func() {
 		defer sw.Close()
+		streamedContent := false
 		resp, err := sc.ChatStream(ctx, req, func(delta string) {
 			if delta != "" {
+				streamedContent = true
 				sw.Send(&schema.Message{Role: schema.Assistant, Content: delta}, nil)
 			}
 		})
@@ -70,9 +72,15 @@ func (m *EinoModel) Stream(ctx context.Context, input []*schema.Message, opts ..
 			sw.Send(nil, err)
 			return
 		}
-		// Final chunk carries tool calls + usage (content already streamed above).
+		// Final chunk carries tool calls + usage. If content was already streamed
+		// as deltas above, blank it here to avoid duplication. But a reasoning
+		// model (e.g. MiMo) may emit only reasoning_content deltas and no content
+		// deltas — in that case the client falls content back to the reasoning, so
+		// keep it on the final chunk or eino's summarizer sees an empty message.
 		final := fromResponse(resp)
-		final.Content = ""
+		if streamedContent {
+			final.Content = ""
+		}
 		sw.Send(final, nil)
 	}()
 	return sr, nil

@@ -108,6 +108,27 @@ func skillNames() []string {
 	return names
 }
 
+// materializeBuiltins writes each builtin skill to <dir>/<name>/SKILL.md when it
+// isn't already on disk, so builtins and installed skills share one source of
+// truth (the filesystem) and builtins become editable/hot-reloadable.
+func materializeBuiltins(dir string) {
+	for name, def := range builtinSkills {
+		p := filepath.Join(dir, name, "SKILL.md")
+		if _, err := os.Stat(p); err == nil {
+			continue // already on disk (possibly user-edited) — never overwrite
+		}
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			continue
+		}
+		md := fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n%s\n", name, def.Desc, def.Prompt)
+		_ = os.WriteFile(p, []byte(md), 0o644)
+	}
+}
+
+// GetSkill returns a skill's full definition (name, description, prompt body) for
+// the skill-content API / UI preview.
+func GetSkill(name string) (SkillDef, bool) { return skillByName(name) }
+
 // AllSkills returns every registered skill (sorted), for the find_skills tool.
 func AllSkills() []SkillDef {
 	out := make([]SkillDef, 0)
@@ -132,11 +153,18 @@ func skillsCatalog() string {
 }
 
 // LoadSkills scans <dir>/<name>/SKILL.md packages and registers them, merging
-// over the builtins. Returns the number loaded. A missing dir is not an error.
+// over the builtins. It first materializes any builtin that isn't on disk yet,
+// so EVERY skill lives in one place — the filesystem — and becomes editable and
+// hot-reloadable like installed ones (no more hardcoded-Go-only skills). Returns
+// the number loaded from disk. A missing dir is created.
 func LoadSkills(dir string) (int, error) {
 	skillMu.Lock()
 	skillsRoot = dir
 	skillMu.Unlock()
+	if dir != "" {
+		_ = os.MkdirAll(dir, 0o755)
+		materializeBuiltins(dir)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -237,6 +265,27 @@ func RegisterSkill(def SkillDef, persist bool) error {
 		if err := os.WriteFile(filepath.Join(d, "SKILL.md"), []byte(md), 0o644); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// DeleteSkill removes a non-builtin skill from the registry and deletes its
+// persisted SKILL.md. Built-in skills are protected.
+func DeleteSkill(name string) error {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if _, isBuiltin := builtinSkills[name]; isBuiltin {
+		return fmt.Errorf("built-in skill %q cannot be deleted", name)
+	}
+	skillMu.Lock()
+	_, exists := skills[name]
+	delete(skills, name)
+	dir := skillsRoot
+	skillMu.Unlock()
+	if !exists {
+		return fmt.Errorf("skill %q not found", name)
+	}
+	if dir != "" && validSkillName(name) {
+		_ = os.RemoveAll(filepath.Join(dir, name))
 	}
 	return nil
 }

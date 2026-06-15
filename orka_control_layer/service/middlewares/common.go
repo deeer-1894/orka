@@ -18,7 +18,26 @@ const (
 	VarPlan           = "plan"            // string: generated plan
 	VarPendingClarify = "pending_clarify" // messages.ClarifyMessage
 	VarResumeKey      = "resume_key"      // string: set by runner on resume
+	VarRunTokens      = "run_tokens"      // int: total tokens this run
+	VarRunTools       = "run_tools"       // int: total tool calls this run
 )
+
+// Typed, named accessors for the shared vars. Prefer these over raw
+// rc.Vars[...] / .(T) at call sites: they centralize the keys (so a typo is a
+// compile error, not a silent miss) and use comma-ok assertions (so a wrong type
+// degrades to a zero value instead of panicking).
+
+// Final / SetFinal carry the final assistant content (the run's output).
+func Final(rc *agent.RunContext) string       { return rc.Str(VarFinal) }
+func SetFinal(rc *agent.RunContext, s string) { rc.Put(VarFinal, s) }
+
+// RunTokens / AddRunTokens accumulate the token usage across a run.
+func RunTokens(rc *agent.RunContext) int       { return rc.IntVar(VarRunTokens) }
+func AddRunTokens(rc *agent.RunContext, n int) { rc.Put(VarRunTokens, rc.IntVar(VarRunTokens)+n) }
+
+// RunTools / AddRunTools accumulate the tool-call count across a run.
+func RunTools(rc *agent.RunContext) int       { return rc.IntVar(VarRunTools) }
+func AddRunTools(rc *agent.RunContext, n int) { rc.Put(VarRunTools, rc.IntVar(VarRunTools)+n) }
 
 // ClarifyToolName is the built-in tool the model calls to ask the user.
 const ClarifyToolName = "clarify"
@@ -31,11 +50,24 @@ const DefaultSystemPrompt = "You are Orka, a helpful enterprise AI agent. " +
 	"- For reading/writing the user's files: use the `file_*` tools. Pass a plain " +
 	"relative filename like `report.md` — never an absolute path or leading slash; " +
 	"your files already live at the workspace root.\n" +
-	"- Use `run_agent` (the GUI browser) ONLY for tasks that truly require interacting " +
-	"with a web page (logging in, clicking, filling forms). Never use it just to look up " +
-	"information — that is what web_search/fetch_url are for.\n" +
+	"- When a command line would do the job (running a script or code you wrote, git, " +
+	"data wrangling with CLI tools, file conversions, installing a package), use the `shell` " +
+	"tool if it is available — it is a real terminal in your workspace. Prefer writing code to " +
+	"a file and running it over doing complex transformations by hand.\n" +
+	"- Decide which tool fits from the task itself — never wait for the user to name a tool. " +
+	"Use `web_search`/`fetch_url` for plain information lookups. Reach for `run_agent` (the GUI " +
+	"browser) ON YOUR OWN whenever the task needs real page interaction (logging in, clicking, " +
+	"filling forms, navigating a JavaScript-heavy or dynamic site), AND escalate to it automatically " +
+	"when `web_search`/`fetch_url` fail, are blocked, or return nothing useful. The browser is slower, " +
+	"so prefer search for a lookup it can already answer — but never stall or ask the user which tool " +
+	"to use when the browser would get the job done.\n" +
 	"If the request is ambiguous or missing required info, call `clarify` to ask a concise " +
-	"question instead of guessing. Answer in the user's language."
+	"question instead of guessing.\n" +
+	"For a complex or multi-step request, FIRST open your reply with a short numbered plan " +
+	"(3–6 steps) of how you'll proceed, then carry it out — calling tools as needed and adjusting " +
+	"the plan if you learn something new along the way. For a simple one-step request, skip the " +
+	"plan and just answer.\n" +
+	"Answer in the user's language."
 
 // getHistory reads the LLM history from Vars, tolerating a JSON-restored value
 // (e.g. after a checkpoint round-trip where the concrete type is lost).

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/base64"
+	"mime"
 	"os"
 	"path/filepath"
 	"sync"
@@ -53,11 +54,20 @@ func (a *API) FileDownload(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, err.Error())
 		return
 	}
-	if _, err := os.Stat(p); err != nil {
+	data, err := os.ReadFile(p)
+	if err != nil {
 		fail(c, consts.StatusNotFound, "not found")
 		return
 	}
-	c.File(p)
+	// Serve the bytes directly. We deliberately avoid c.File(), whose Hertz
+	// static handler gzip-caches a "<name>.hertz.gz" sibling next to the file —
+	// littering the user's workspace with junk artifacts on every download.
+	ct := mime.TypeByExtension(filepath.Ext(p))
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	c.Response.Header.Set("Content-Disposition", "attachment; filename=\""+filepath.Base(p)+"\"")
+	c.Data(consts.StatusOK, ct, data)
 }
 
 // FileList lists a directory.

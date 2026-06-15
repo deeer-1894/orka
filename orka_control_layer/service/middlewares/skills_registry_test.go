@@ -66,9 +66,10 @@ func TestLoadAndCreateSkills(t *testing.T) {
 	}
 	os.WriteFile(filepath.Join(pkg, "SKILL.md"), []byte("---\nname: researcher2\ndescription: deep research v2\n---\n\nCross-check everything."), 0o644)
 
+	// LoadSkills also materializes the builtins to disk, so it loads them too.
 	n, err := LoadSkills(dir)
-	if err != nil || n != 1 {
-		t.Fatalf("LoadSkills n=%d err=%v", n, err)
+	if err != nil || n != 1+len(builtinSkills) {
+		t.Fatalf("LoadSkills n=%d err=%v (want %d)", n, err, 1+len(builtinSkills))
 	}
 	if s, ok := skillByName("researcher2"); !ok || s.Prompt != "Cross-check everything." {
 		t.Fatalf("loaded skill = %+v ok=%v", s, ok)

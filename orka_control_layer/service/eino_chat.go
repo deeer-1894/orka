@@ -159,7 +159,7 @@ func BuildEinoSubAgentTools(ctx context.Context, mainClient llm.Client, mainMode
 // BuildEinoOrchestrator builds the orchestrator agent: atomic tools PLUS native
 // sub-agent tools, with EmitInternalEvents so sub-agent events stream up to the
 // user (tagged by AgentName → meta.agent_id for lane grouping).
-func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel string, miniClient llm.Client, miniModel, instruction string, atomic []agent.BaseTool, specs []config.SubAgentConfig, maxIters int) (adk.Agent, error) {
+func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel string, miniClient llm.Client, miniModel, instruction string, atomic []agent.BaseTool, specs []config.SubAgentConfig, maxIters int, summarize bool) (adk.Agent, error) {
 	subTools, err := BuildEinoSubAgentTools(ctx, mainClient, mainModel, miniClient, miniModel, atomic, specs)
 	if err != nil {
 		return nil, err
@@ -168,6 +168,12 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 		maxIters = 16
 	}
 	allTools := append(EinoTools(withClarify(atomic)), subTools...)
+	handlers := []adk.ChatModelAgentMiddleware{newBudgetGuard(maxIters)}
+	if summarize {
+		// Summarize history compression on the FAST mini model — it's an auxiliary
+		// step, not user-facing synthesis, so it doesn't need the strong model.
+		handlers = append(handlers, summarizationHandlers(ctx, miniClient, miniModel)...)
+	}
 	return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        einoOrchestratorName,
 		Description: "Orka orchestrator",
@@ -179,7 +185,7 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 			EmitInternalEvents: true, // stream sub-agent events up for lane rendering
 		},
 		MaxIterations: maxIters,
-		Handlers:      append([]adk.ChatModelAgentMiddleware{newBudgetGuard(maxIters)}, summarizationHandlers(ctx, mainClient, mainModel)...),
+		Handlers:      handlers,
 	})
 }
 
@@ -238,6 +244,11 @@ func toEinoMessages(msgs []messages.Message) []*schema.Message {
 // deltas during generation, then the authoritative (persisted) EventChat; tool
 // calls correlated with their results into a {tool,args,result} receipt.
 func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit func(messages.Message)) error {
+	// Surface the model's live "thinking" tokens (reasoning_content) as a side
+	// channel so long reasoning calls show visible progress, not a stall.
+	ctx = llm.WithReasoningSink(ctx, func(delta string) {
+		emit(messages.ReasoningDelta(delta, rc.Meta))
+	})
 	runner := adk.NewRunner(ctx, adk.RunnerConfig{Agent: ag, EnableStreaming: true})
 	iter := runner.Run(ctx, toEinoMessages(rc.Messages))
 
@@ -249,10 +260,10 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 	tokens, toolCalls := 0, 0          // per-run audit counters (incl. sub-agents)
 	lastFinal := ""                    // orchestrator's final answer → run output
 	defer func() {
-		rc.Vars["run_tokens"] = tokens
-		rc.Vars["run_tools"] = toolCalls
+		rc.Put(middlewares.VarRunTokens, tokens)
+		rc.Put(middlewares.VarRunTools, toolCalls)
 		if lastFinal != "" {
-			rc.Vars[middlewares.VarFinal] = lastFinal
+			middlewares.SetFinal(rc, lastFinal)
 		}
 	}()
 
@@ -390,12 +401,24 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 		if miniModel == "" {
 			miniModel = model
 		}
-		ag, err = BuildEinoOrchestrator(ctx, client, model, s.Mini, miniModel, instruction, tools, s.Cfg.Agent.SubAgents, 16)
+		ag, err = BuildEinoOrchestrator(ctx, client, model, s.Mini, miniModel, instruction, tools, s.Cfg.Agent.SubAgents, 16, !s.DisableSummary)
 	} else {
 		if instruction == "" {
 			instruction = middlewares.DefaultSystemPrompt
 		}
-		ag, err = BuildEinoAgent(ctx, client, model, instruction, tools, einoMaxIters, summarizationHandlers(ctx, client, model)...)
+		var sum []adk.ChatModelAgentMiddleware
+		if !s.DisableSummary {
+			// Auxiliary history compression runs on the fast mini model.
+			sumClient, sumModel := s.Mini, s.Cfg.LLM.MiniModel
+			if sumClient == nil {
+				sumClient, sumModel = client, model
+			}
+			if sumModel == "" {
+				sumModel = model
+			}
+			sum = summarizationHandlers(ctx, sumClient, sumModel)
+		}
+		ag, err = BuildEinoAgent(ctx, client, model, instruction, tools, einoMaxIters, sum...)
 	}
 	if err != nil {
 		return err

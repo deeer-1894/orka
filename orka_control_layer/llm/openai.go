@@ -21,11 +21,31 @@ type OpenAIClient struct {
 }
 
 // NewOpenAIClient builds a client. baseURL should include the /v1 suffix.
+//
+// Deliberately NO http.Client.Timeout: that is a TOTAL deadline that also cuts
+// the streamed response body, so a long (e.g. reasoning-model) generation would
+// be killed mid-stream. Instead we bound the connection-level stages via the
+// Transport and rely on the request context for cancellation (Kill, or a caller
+// deadline like followups). Connection pooling is tuned so the many sequential
+// ReAct calls reuse warm TLS connections (also helps provider prefix-caching).
 func NewOpenAIClient(baseURL, apiKey string) *OpenAIClient {
 	return &OpenAIClient{
 		BaseURL: baseURL,
 		APIKey:  apiKey,
-		HTTP:    &http.Client{Timeout: 120 * time.Second},
+		HTTP: &http.Client{
+			Transport: &http.Transport{
+				Proxy:                 http.ProxyFromEnvironment,
+				MaxIdleConns:          100,
+				MaxIdleConnsPerHost:   32,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   15 * time.Second,
+				ExpectContinueTimeout: time.Second,
+				// Time-to-first-byte cap. Reasoning models think before the first
+				// byte on a NON-streamed call, so this is generous; streamed calls
+				// get their 200 header immediately and are unaffected.
+				ResponseHeaderTimeout: 180 * time.Second,
+			},
+		},
 	}
 }
 
@@ -65,6 +85,7 @@ type wireRequest struct {
 	Messages    []wireReqMessage `json:"messages"`
 	Tools       []wireTool       `json:"tools,omitempty"`
 	Temperature float32          `json:"temperature,omitempty"`
+	MaxTokens   int              `json:"max_tokens,omitempty"`
 	Stream      bool             `json:"stream,omitempty"`
 	StreamOpts  *streamOpts      `json:"stream_options,omitempty"`
 }
@@ -111,7 +132,7 @@ type wireResponse struct {
 
 // toWireRequest maps the public Request to the OpenAI wire format.
 func toWireRequest(req Request) wireRequest {
-	wr := wireRequest{Model: req.Model, Temperature: req.Temperature}
+	wr := wireRequest{Model: req.Model, Temperature: req.Temperature, MaxTokens: req.MaxTokens}
 	for _, m := range req.Messages {
 		wm := wireReqMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID, Name: m.Name}
 		if len(m.Images) > 0 {
@@ -189,6 +210,13 @@ func (c *OpenAIClient) Chat(ctx context.Context, req Request) (Response, error) 
 	for _, tc := range msg.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments})
 	}
+	// Reasoning models (e.g. MiMo) sometimes return their whole answer in
+	// reasoning_content with an empty content on a non-tool turn. Fall back to the
+	// reasoning so downstream consumers always get usable text — notably eino's
+	// summarizer, which fatally errors ("summary content is empty") otherwise.
+	if out.Content == "" && len(out.ToolCalls) == 0 && out.Reasoning != "" {
+		out.Content = out.Reasoning
+	}
 	return out, nil
 }
 
@@ -247,6 +275,7 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 	}
 
 	var content, reasoning strings.Builder
+	onReasoning := ReasoningSinkFrom(ctx)
 	type tcAcc struct {
 		id, name string
 		args     strings.Builder
@@ -283,6 +312,9 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 		ch := chunk.Choices[0]
 		if ch.Delta.ReasoningContent != "" {
 			reasoning.WriteString(ch.Delta.ReasoningContent)
+			if onReasoning != nil {
+				onReasoning(ch.Delta.ReasoningContent)
+			}
 		}
 		if ch.Delta.Content != "" {
 			content.WriteString(ch.Delta.Content)
@@ -317,6 +349,11 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 	for _, idx := range order {
 		acc := toolAcc[idx]
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: acc.id, Name: acc.name, Arguments: acc.args.String()})
+	}
+	// Reasoning models (e.g. MiMo) may stream only reasoning_content with no
+	// content on a non-tool turn; fall back so downstream never gets empty text.
+	if out.Content == "" && len(out.ToolCalls) == 0 && out.Reasoning != "" {
+		out.Content = out.Reasoning
 	}
 	return out, nil
 }

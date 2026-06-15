@@ -47,6 +47,7 @@ func Registry() map[string]Meta {
 		"random":        {Group: "util", Scope: ""},
 		"memory":        {Group: "file", Scope: "file:write"}, // persists to the user's storage
 		"http_request": {Group: "web", Scope: "web:search"}, // network egress → gated
+		"shell":        {Group: "shell", Scope: ""},         // env-gated (SHELL_TOOL=1); confined to the workspace
 		"lark_whoami": {Group: "lark", Scope: "lark:read"},
 		"aio_echo":    {Group: "aio", Scope: "aio:read"},
 	}
@@ -182,6 +183,17 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 		mcp.WithString("body", mcp.Description("request body for POST")),
 		mcp.WithString("content_type", mcp.Description("Content-Type for the body")),
 	), httpRequest())
+
+	// The shell/terminal is powerful, so it is opt-in via SHELL_TOOL=1 and is
+	// confined to the per-user workspace (see shellExec). Run the gateway inside a
+	// container/VM for hard isolation when exposing it to untrusted workloads.
+	if os.Getenv("SHELL_TOOL") == "1" {
+		add(mcp.NewTool("shell",
+			mcp.WithDescription("Run a shell command in your workspace (POSIX sh). Use it like a terminal: run CLI tools, scripts, git, package managers, data processing, or code you wrote (e.g. `python3 app.py`, `grep -rn foo .`, `ls -la`). The working directory is your workspace and output is captured. Prefer this over describing manual steps when one command would do the job."),
+			mcp.WithString("command", mcp.Required(), mcp.Description("the shell command to run")),
+			mcp.WithNumber("timeout_sec", mcp.Description("max seconds before it's killed (default 30, max 120)")),
+		), shellExec(baseStorage))
+	}
 
 	add(mcp.NewTool("lark_whoami",
 		mcp.WithDescription("Lark: return the current user (stub)."),

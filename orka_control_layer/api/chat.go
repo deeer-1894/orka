@@ -142,6 +142,19 @@ func (a *API) ChatKill(ctx context.Context, c *app.RequestContext) {
 // shows real labels (deepseek / vLLM / OpenAI…) instead of a hardcoded string.
 // Only the two user-facing tiers are surfaced (main / mini) — base_url and other
 // ops details are intentionally not exposed to the client.
+// Followups returns up to 3 suggested next questions for the last Q&A turn.
+func (a *API) Followups(ctx context.Context, c *app.RequestContext) {
+	var req struct {
+		Prompt string `json:"prompt"`
+		Answer string `json:"answer"`
+	}
+	if err := bind(c, &req); err != nil {
+		fail(c, consts.StatusBadRequest, "bad request")
+		return
+	}
+	ok(c, map[string]any{"suggestions": a.Chat.SuggestFollowups(ctx, req.Prompt, req.Answer)})
+}
+
 func (a *API) ListModels(_ context.Context, c *app.RequestContext) {
 	llm := a.Chat.Cfg.LLM
 	out := []map[string]string{{"version": "", "label": llm.Model, "hint": "主模型 · 更强"}}

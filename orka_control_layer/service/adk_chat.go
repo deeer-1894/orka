@@ -55,6 +55,10 @@ type ChatService struct {
 	// InvalidateTools busts a user's cached tool connections (e.g. after they
 	// add/remove an MCP connector). Set by main when the pooled provider is wired.
 	InvalidateTools func(email string)
+	// DisableSummary turns off the eino summarization middleware. Production keeps
+	// it on (folds long context into a running summary); deterministic tests set
+	// it so a scripted mock isn't consumed by the summarizer's extra model call.
+	DisableSummary bool
 
 	mu   sync.Mutex
 	runs map[string]context.CancelFunc
@@ -137,7 +141,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	spanCtx, endSpan := trace.StartSpan(trace.WithTraceID(ctx, traceID), "chat.run", map[string]string{
 		"conversation_id": req.ConversationID,
 		"model":           modelName,
-		"run_mode":        s.Cfg.Agent.RunMode,
+		"runtime":         "eino",
 		"resume":          boolStr(req.ResumeKey != ""),
 	})
 	defer endSpan()
@@ -153,20 +157,11 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		defer cleanup()
 	}
 
-	// Multi-agent: the orchestrator (main model) gets the atomic tools PLUS
-	// sub-agents (researcher/writer/browser, mini model) it can delegate to. The
-	// eino path builds NATIVE eino sub-agents inside runEino from the atomic tool
-	// set, so we only append the hand-rolled AgentTools for the legacy runner.
+	// Multi-agent: the orchestrator (main model) gets the atomic tools PLUS native
+	// eino sub-agents (researcher/writer/browser/engineer, mini model) it can
+	// delegate to. The sub-agents are built inside runEino from the atomic tool set.
 	if s.Cfg.Agent.MultiAgent {
 		deps.SystemPrompt = OrchestratorPrompt
-		if !s.Cfg.Agent.EinoRuntime {
-			miniModel := s.Cfg.LLM.MiniModel
-			if miniModel == "" {
-				miniModel = modelName
-			}
-			subs := BuildSubAgents(tools, s.Main, s.Mini, modelName, miniModel, s.Metrics, s.Cfg.Agent.SubAgents)
-			tools = append(tools, subs...)
-		}
 	}
 
 	// A user-locked skill deterministically injects its expert guidance into the
@@ -178,9 +173,6 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		}
 		deps.SystemPrompt = base + "\n\n[Active skill mode]\n" + sp
 	}
-
-	pipeline := BuildPipeline(SceneSimple, deps)
-	runner := RunnerForMode(s.Cfg.Agent.RunMode, pipeline...)
 
 	rc := &agent.RunContext{Ctx: ctx, Vars: map[string]any{}, Meta: meta, Tools: tools}
 	// Serialize emits PER RUN (not globally): parallel sub-agents stream events
@@ -210,7 +202,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	runRecID := s.createRun(ctx, req, meta, trigger)
 
 	if req.ResumeKey != "" {
-		err = s.resume(ctx, runner, rc, req, raw, deps, tools, model, modelName)
+		err = s.resume(ctx, rc, req, raw, deps, tools, model, modelName)
 		if err != nil {
 			return s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err()) // resume() already emitted the failure event
 		}
@@ -236,11 +228,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		rc.Messages = append(history, modelMsg)
 		s.Msg.Deliver(rc, nil, userMsg, true)
 		s.Msg.Deliver(rc, raw, messages.Task("start", meta), true)
-		if s.Cfg.Agent.EinoRuntime {
-			err = s.runEino(ctx, rc, deps, tools, model, modelName, raw)
-		} else {
-			err = runner.Run(rc)
-		}
+		err = s.runEino(ctx, rc, deps, tools, model, modelName, raw)
 	}
 
 	s.finish(ctx, rc, meta, raw, err)
@@ -312,9 +300,9 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 		return status
 	}
 	now := time.Now().UnixMilli()
-	out, _ := rc.Vars[middlewares.VarFinal].(string)
-	tokens, _ := rc.Vars["run_tokens"].(int)
-	toolCalls, _ := rc.Vars["run_tools"].(int)
+	out := middlewares.Final(rc)
+	tokens := middlewares.RunTokens(rc)
+	toolCalls := middlewares.RunTools(rc)
 	bg := context.Background()
 	_ = s.Msg.Store.FinalizeRun(bg, db.RunRecord{
 		RunID: runID, Status: status, Error: errStr,
@@ -403,7 +391,7 @@ func (s *ChatService) loadChatHistory(ctx context.Context, convID string, meta m
 }
 
 // resume claims the checkpoint (idempotent) and continues the run.
-func (s *ChatService) resume(ctx context.Context, runner agent.Runner, rc *agent.RunContext, req ChatRunRequest, raw func(messages.Message), deps PipelineDeps, tools []agent.BaseTool, model llm.Client, modelName string) error {
+func (s *ChatService) resume(ctx context.Context, rc *agent.RunContext, req ChatRunRequest, raw func(messages.Message), deps PipelineDeps, tools []agent.BaseTool, model llm.Client, modelName string) error {
 	c, err := s.CP.Claim(ctx, req.ResumeKey)
 	if err != nil {
 		// not found / already consumed -> reject duplicate or expired resume
@@ -419,19 +407,16 @@ func (s *ChatService) resume(ctx context.Context, runner agent.Runner, rc *agent
 		rc.Vars = c.Vars
 	}
 	s.Msg.Deliver(rc, raw, messages.Task("running", rc.Meta), true)
-	if s.Cfg.Agent.EinoRuntime {
-		// Stateless resume: fold the user's answer into history and re-run the
-		// eino agent over the augmented messages (the clarify question was already
-		// recorded into the checkpoint's history before the pause).
-		if req.Message != "" {
-			um := messages.Chat(messages.RoleUser, req.Message, rc.Meta)
-			rc.Messages = append(rc.Messages, um)
-			s.Msg.Deliver(rc, nil, um, true)
-		}
-		rc.Interrupt = nil
-		return s.runEino(ctx, rc, deps, tools, model, modelName, raw)
+	// Stateless resume: fold the user's answer into history and re-run the eino
+	// agent over the augmented messages (the clarify question was already recorded
+	// into the checkpoint's history before the pause).
+	if req.Message != "" {
+		um := messages.Chat(messages.RoleUser, req.Message, rc.Meta)
+		rc.Messages = append(rc.Messages, um)
+		s.Msg.Deliver(rc, nil, um, true)
 	}
-	return runner.ResumeWithParams(rc, req.ResumeKey, req.Message)
+	rc.Interrupt = nil
+	return s.runEino(ctx, rc, deps, tools, model, modelName, raw)
 }
 
 // finish handles the terminal state: error, clarify interrupt, or done.

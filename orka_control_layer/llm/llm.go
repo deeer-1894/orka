@@ -55,6 +55,7 @@ type Request struct {
 	Messages    []ChatMessage
 	Tools       []ToolSpec
 	Temperature float32
+	MaxTokens   int // 0 = provider default; caps output (also bounds reasoning latency)
 }
 
 // Usage reports token consumption for a call (when the provider returns it).

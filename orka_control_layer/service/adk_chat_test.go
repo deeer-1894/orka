@@ -53,11 +53,13 @@ func testService(t *testing.T, mainLLM llm.Client) (*ChatService, checkpoint.Sto
 	cfg.Agent.CheckpointTTLSec = 3600
 	cpStore := checkpoint.NewMemoryStore()
 	msg := message_utils.New(nil, 1.0, nil) // no Mongo
-	return NewChatService(cfg, mainLLM, mainLLM, cpStore, msg, obs.NewMetrics(), nil), cpStore
+	svc := NewChatService(cfg, mainLLM, mainLLM, cpStore, msg, obs.NewMetrics(), nil)
+	svc.DisableSummary = true // deterministic: don't let the summarizer consume scripted mock responses
+	return svc, cpStore
 }
 
 func TestChat_NormalRun(t *testing.T) {
-	svc, _ := testService(t, llm.NewMock(llm.Response{Content: "hello there"}))
+	svc, _ := testService(t, llm.NewMock(llm.Response{Content: "hello there", FinishReason: "stop"}))
 	col := &collector{}
 	svc.Run(context.Background(), ChatRunRequest{Message: "hi", ConversationID: "c1"}, col.sink)
 
@@ -72,8 +74,8 @@ func TestChat_NormalRun(t *testing.T) {
 
 func TestChat_ClarifyResumeAndDuplicateRejected(t *testing.T) {
 	mock := llm.NewMock(
-		llm.Response{ToolCalls: []llm.ToolCall{{ID: "1", Name: "clarify", Arguments: `{"question":"which?","options":["A","B"]}`}}},
-		llm.Response{Content: "resolved with A"},
+		llm.Response{ToolCalls: []llm.ToolCall{{ID: "1", Name: "clarify", Arguments: `{"question":"which?","options":["A","B"]}`}}, FinishReason: "tool_calls"},
+		llm.Response{Content: "resolved with A", FinishReason: "stop"},
 	)
 	svc, _ := testService(t, mock)
 

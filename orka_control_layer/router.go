@@ -56,6 +56,7 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 
 	g.GET("/metrics", a.MetricsSnapshot)
 	g.GET("/models", a.ListModels)
+	g.POST("/chat/followups", a.Followups) // suggested next questions for a Q&A turn
 
 	g.POST("/run/list", a.ListRuns)   // execution history (run records)
 	g.POST("/run/get", a.GetRun)
@@ -75,5 +76,7 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/workflow/run", a.RunWorkflow)
 
 	g.POST("/skill/list", a.ListSkills)       // catalog (builtin + installed)
+	g.POST("/skill/get", a.GetSkill)          // one skill's full content (for preview)
 	g.POST("/skill/install", a.InstallSkill)  // download + register a SKILL.md from a URL
+	g.POST("/skill/delete", a.DeleteSkill)    // remove a non-builtin (installed/custom) skill
 }

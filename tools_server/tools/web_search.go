@@ -46,32 +46,51 @@ func webSearch() mcpserver.ToolHandlerFunc {
 			}
 		}
 
-		endpoint := "https://html.duckduckgo.com/html/?q=" + url.QueryEscape(q)
+		// DuckDuckGo's html endpoint is frequently blocked/EOF; try it, then the
+		// lighter lite endpoint, then Wikipedia. Never return a hard error — a
+		// failed search should degrade to a useful note, not abort the run.
+		if out := ddgSearch(ctx, q, limit); out != "" {
+			return mcp.NewToolResultText(out), nil
+		}
+		if wiki := wikiSearch(ctx, q, limit); wiki != "" {
+			return mcp.NewToolResultText(wiki), nil
+		}
+		return mcp.NewToolResultText(
+			"Search is temporarily unavailable (the keyless search endpoints are blocked or rate-limited). " +
+				"For stable results configure SERPER_API_KEY / BRAVE_API_KEY / SEARXNG_URL. " +
+				"You can still proceed: if you already know a relevant URL, use `fetch_url` directly, " +
+				"or answer from your own knowledge and note that live search was unavailable. Query was: " + q), nil
+	}
+}
+
+// ddgSearch scrapes DuckDuckGo's keyless endpoints (the full html endpoint, then
+// the lighter lite endpoint as a fallback) and returns formatted results, or ""
+// if both fail/return nothing.
+func ddgSearch(ctx context.Context, q string, limit int) string {
+	endpoints := []string{
+		"https://html.duckduckgo.com/html/?q=" + url.QueryEscape(q),
+		"https://lite.duckduckgo.com/lite/?q=" + url.QueryEscape(q),
+	}
+	for _, endpoint := range endpoints {
 		hreq, _ := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-		hreq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; OrkaBot/0.1)")
+		hreq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+		hreq.Header.Set("Accept", "text/html")
 		resp, err := httpSearchC.Do(hreq)
 		if err != nil {
-			// DuckDuckGo unreachable/blocked → fall back to the keyless Wikipedia
-			// API rather than failing (which forces the model to over-fetch).
-			if wiki := wikiSearch(ctx, q, limit); wiki != "" {
-				return mcp.NewToolResultText(wiki), nil
-			}
-			return mcp.NewToolResultError("search failed: " + err.Error()), nil
+			continue
 		}
-		defer resp.Body.Close()
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
 
 		titles := reResultA.FindAllStringSubmatch(string(body), limit)
-		snips := reSnippet.FindAllStringSubmatch(string(body), limit)
 		if len(titles) == 0 {
-			// DuckDuckGo throttles scraping; fall back to the keyless Wikipedia
-			// search API so fact lookups still return something useful.
-			if wiki := wikiSearch(ctx, q, limit); wiki != "" {
-				return mcp.NewToolResultText(wiki), nil
+			// the lite endpoint uses a different markup — pull bare result links.
+			if liteOut := parseLite(string(body), q, limit); liteOut != "" {
+				return liteOut
 			}
-			return mcp.NewToolResultText("No results for: " + q), nil
+			continue
 		}
-
+		snips := reSnippet.FindAllStringSubmatch(string(body), limit)
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "Top results for %q:\n\n", q)
 		for i, t := range titles {
@@ -85,8 +104,25 @@ func webSearch() mcpserver.ToolHandlerFunc {
 			}
 			sb.WriteString("\n")
 		}
-		return mcp.NewToolResultText(sb.String()), nil
+		return sb.String()
 	}
+	return ""
+}
+
+var reLiteLink = regexp.MustCompile(`(?s)<a[^>]+class="result-link"[^>]*href="([^"]+)"[^>]*>(.*?)</a>`)
+
+// parseLite extracts results from lite.duckduckgo.com's simpler markup.
+func parseLite(body, q string, limit int) string {
+	m := reLiteLink.FindAllStringSubmatch(body, limit)
+	if len(m) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Top results for %q:\n\n", q)
+	for i, t := range m {
+		fmt.Fprintf(&sb, "%d. %s\n   %s\n\n", i+1, clean(t[2]), decodeDDG(t[1]))
+	}
+	return sb.String()
 }
 
 func clean(s string) string {

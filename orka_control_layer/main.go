@@ -137,16 +137,11 @@ func main() {
 		logger.Info("tools via MCP", "url", toolsURL)
 	}
 
-	runtime := "eino"
-	if !cfg.Agent.EinoRuntime {
-		runtime = "legacy"
-	}
 	logger.Info("control layer starting",
 		"addr", cfg.Server.ControlAddr,
 		"mongo", cfg.Storage.MongoDB,
 		"redis", cfg.Storage.RedisAddr,
-		"run_mode", cfg.Agent.RunMode,
-		"runtime", runtime,
+		"runtime", "eino",
 		"cors_hosts", cfg.Server.CORSAllowedHosts,
 	)
 
@@ -166,7 +161,10 @@ func main() {
 		sched := &scheduled_task.Scheduler{
 			Source: scheduled_task.CronSource(store),
 			Trigger: func(ctx context.Context, task db.TaskMeta, content string) error {
-				chat.RunHeadless(context.Background(), service.ChatRunRequest{
+				// Dispatch asynchronously: a scheduled run can take minutes, and the
+				// scheduler has already claimed the task (advanced next_run_at), so
+				// the loop must not block on it — otherwise other due tasks wait.
+				go chat.RunHeadless(context.Background(), service.ChatRunRequest{
 					Message: content, ConversationID: task.ConversationID,
 					TaskID: task.TaskID, UserEmail: task.OwnerEmail,
 					Trigger: "schedule",

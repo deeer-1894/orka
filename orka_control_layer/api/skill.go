@@ -24,6 +24,40 @@ func (a *API) ListSkills(ctx context.Context, c *app.RequestContext) {
 	ok(c, map[string]any{"skills": out})
 }
 
+// GetSkill returns one skill's full content (name, description, prompt body) so
+// the UI can preview what a skill actually does before adopting it.
+func (a *API) GetSkill(ctx context.Context, c *app.RequestContext) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := bind(c, &req); err != nil || req.Name == "" {
+		fail(c, consts.StatusBadRequest, "name required")
+		return
+	}
+	d, found := middlewares.GetSkill(req.Name)
+	if !found {
+		fail(c, consts.StatusNotFound, "skill not found")
+		return
+	}
+	ok(c, map[string]string{"name": d.Name, "description": d.Desc, "prompt": d.Prompt})
+}
+
+// DeleteSkill removes a non-builtin skill.
+func (a *API) DeleteSkill(ctx context.Context, c *app.RequestContext) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := bind(c, &req); err != nil || req.Name == "" {
+		fail(c, consts.StatusBadRequest, "name required")
+		return
+	}
+	if err := middlewares.DeleteSkill(req.Name); err != nil {
+		fail(c, consts.StatusBadRequest, err.Error())
+		return
+	}
+	ok(c, map[string]string{"status": "deleted"})
+}
+
 // InstallSkill downloads a SKILL.md from a URL and registers it (persisted).
 func (a *API) InstallSkill(ctx context.Context, c *app.RequestContext) {
 	var req struct {

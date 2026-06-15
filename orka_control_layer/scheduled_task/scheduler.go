@@ -36,6 +36,21 @@ func (s *Scheduler) RunDue(ctx context.Context) (int, error) {
 	}
 	n := 0
 	for _, t := range tasks {
+		// CLAIM FIRST: push next_run_at forward BEFORE triggering. The trigger may
+		// be slow or long-running, so if we advanced afterwards the next tick could
+		// re-select the same still-due task and fire it again. Advancing first makes
+		// an interval task fire at most once per period (idempotent). If the claim
+		// write fails we skip the task rather than risk a double-fire — a later tick
+		// will pick it up.
+		if s.Advance != nil && t.IntervalSec > 0 {
+			next := time.Now().Add(time.Duration(t.IntervalSec) * time.Second).UnixMilli()
+			if err := s.Advance(ctx, t.TaskID, next); err != nil {
+				if s.Log != nil {
+					s.Log.Warn("advance task; skipping to avoid double-fire", "task_id", t.TaskID, "err", err)
+				}
+				continue
+			}
+		}
 		tmpl, _ := t.Variables["prompt_template"].(string)
 		content := Render(tmpl, t.Variables)
 		if err := s.Trigger(ctx, t, content); err != nil {
@@ -43,14 +58,6 @@ func (s *Scheduler) RunDue(ctx context.Context) (int, error) {
 				s.Log.Error("trigger task", "task_id", t.TaskID, "err", err)
 			}
 			continue
-		}
-		// Push the next-due time forward so an interval task fires once per
-		// period rather than every tick.
-		if s.Advance != nil && t.IntervalSec > 0 {
-			next := time.Now().Add(time.Duration(t.IntervalSec) * time.Second).UnixMilli()
-			if err := s.Advance(ctx, t.TaskID, next); err != nil && s.Log != nil {
-				s.Log.Warn("advance task", "task_id", t.TaskID, "err", err)
-			}
 		}
 		n++
 	}
