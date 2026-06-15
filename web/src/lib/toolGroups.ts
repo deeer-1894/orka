@@ -7,6 +7,7 @@ export const TOOL_GROUPS = [
   { id: "web", label: "联网", icon: "🔎", desc: "搜索 / 抓网页 / 天气 / HTTP" },
   { id: "file", label: "文件", icon: "📄", desc: "读写你的工作区" },
   { id: "gui_agent", label: "浏览器", icon: "🌐", desc: "真实浏览器自动化" },
+  { id: "shell", label: "终端", icon: "⌨️", desc: "在工作区执行命令 / 脚本 / 代码" },
   { id: "util", label: "工具", icon: "🧮", desc: "时间 / 计算 / 换算" },
 ] as const;
 

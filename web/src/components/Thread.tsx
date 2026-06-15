@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
 import type { BrowserPayload, ClarifyPayload, Message, ToolPayload, WeatherCardData } from "../types";
-import { files as fileApi } from "../api";
+import { api, files as fileApi } from "../api";
 import { Markdown } from "./Markdown";
 import { WeatherCard, parseWeatherCard } from "./WeatherCard";
 
 type Block =
   | { kind: "user"; m: Message }
   | { kind: "assistant"; m: Message }
+  | { kind: "reasoning"; m: Message }
   | { kind: "clarify"; m: Message }
   | { kind: "weather"; data: WeatherCardData }
   | { kind: "steps"; items: Message[] };
@@ -23,7 +24,11 @@ function group(messages: Message[]): Block[] {
   };
   for (const m of messages) {
     if (m.type === "task" || m.type === "heartbeat") continue;
-    if (m.type === "chat" || m.type === "stream") {
+    if (m.type === "stream" && m.action === "reasoning") {
+      // live "thinking" tokens from a reasoning model → collapsible indicator.
+      flush();
+      blocks.push({ kind: "reasoning", m });
+    } else if (m.type === "chat" || m.type === "stream") {
       // "stream" is the live, transient assistant bubble (token deltas).
       flush();
       blocks.push({ kind: m.role === "user" ? "user" : "assistant", m });
@@ -84,8 +89,10 @@ export function Thread({
   // Index of the last assistant block — only it gets the "regenerate"/"schedule"
   // actions, since they act on the most recent user turn.
   let lastAssistant = -1;
+  let lastUser = -1;
   blocks.forEach((b, i) => {
     if (b.kind === "assistant") lastAssistant = i;
+    if (b.kind === "user") lastUser = i;
   });
   const lastUserPrompt = [...blocks].reverse().find((b) => b.kind === "user")?.m.content || "";
   const canAct = status !== "streaming";
@@ -100,16 +107,25 @@ export function Thread({
             {b.kind === "assistant" && (
               <Assistant
                 m={b.m}
+                live={status === "streaming" && i > lastUser}
                 onRegenerate={canAct && i === lastAssistant ? onRetry : undefined}
                 onSchedule={canAct && i === lastAssistant && lastUserPrompt ? () => onSchedule(lastUserPrompt) : undefined}
               />
             )}
+            {b.kind === "reasoning" && <Reasoning m={b.m} />}
             {b.kind === "clarify" && <Clarify m={b.m} onResume={onResume} />}
             {b.kind === "weather" && <WeatherCard data={b.data} />}
             {b.kind === "steps" && <Steps items={b.items} onOpenViewport={onOpenViewport} />}
           </div>
         ))}
         {thinking && <Thinking />}
+        {canAct && status !== "error" && lastAssistant >= 0 && lastUserPrompt && blocks[lastAssistant].kind === "assistant" && (
+          <FollowUps
+            prompt={lastUserPrompt}
+            answer={(blocks[lastAssistant] as Extract<Block, { kind: "assistant" }>).m.content || ""}
+            onPick={onPick}
+          />
+        )}
         {status === "error" && (
           <div className="mb-6 ml-[42px] flex items-center gap-3">
             <button
@@ -223,14 +239,84 @@ function UserBubble({ m, onEdit }: { m: Message; onEdit?: (text: string) => void
   );
 }
 
-function Assistant({ m, onRegenerate, onSchedule }: { m: Message; onRegenerate?: () => void; onSchedule?: () => void }) {
+// parsePlan detects the agent's opening numbered plan ("**计划：**\n1. …\n2. …")
+// so it can be rendered as a live checklist instead of plain markdown. It only
+// fires when a plan-marker header (计划/规划/步骤/方案/plan/steps) is followed by
+// ≥2 numbered items, so a final answer that merely contains a numbered list is
+// left untouched.
+function parsePlan(content: string): { lead: string; steps: string[]; tail: string } | null {
+  const lines = (content || "").split("\n");
+  let hi = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const bare = lines[i].replace(/[*#>`]/g, "").trim();
+    if (/(^|[^a-zA-Z])(计划|规划|步骤|方案|plan|steps)\s*[:：]?\s*$/i.test(bare)) { hi = i; break; }
+  }
+  if (hi === -1) return null;
+  const steps: string[] = [];
+  let last = hi;
+  for (let j = hi + 1; j < lines.length; j++) {
+    const mm = lines[j].match(/^\s*\d+[.、)]\s+(.*\S)\s*$/);
+    if (mm) { steps.push(mm[1].trim()); last = j; }
+    else if (lines[j].trim() === "") { if (!steps.length) { last = j; continue; } }
+    else if (steps.length) break;
+  }
+  if (steps.length < 2) return null;
+  return {
+    lead: lines.slice(0, hi).join("\n").trim(),
+    steps,
+    tail: lines.slice(last + 1).join("\n").trim(),
+  };
+}
+
+function PlanChecklist({ steps, live }: { steps: string[]; live: boolean }) {
+  return (
+    <div className="my-2 rounded-xl border border-border bg-surface2/40 p-3">
+      <div className="mb-2 flex items-center gap-2 text-[12.5px] font-medium text-ink">
+        <span>🗂️ 执行计划</span>
+        {live ? (
+          <span className="inline-flex items-center gap-1 text-accent">
+            <span className="dot h-1.5 w-1.5 rounded-full bg-accent" /> 进行中
+          </span>
+        ) : (
+          <span className="text-ok">已完成</span>
+        )}
+      </div>
+      <ol className="space-y-1.5">
+        {steps.map((s, i) => (
+          <li key={i} className="flex items-start gap-2 text-[13px]">
+            <span
+              className={
+                "mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full text-[9px] font-medium " +
+                (live ? "border border-faint text-faint" : "bg-ok text-white")
+              }
+            >
+              {live ? i + 1 : "✓"}
+            </span>
+            <span className={live ? "text-muted" : "text-ink"}>{s}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function Assistant({ m, live, onRegenerate, onSchedule }: { m: Message; live?: boolean; onRegenerate?: () => void; onSchedule?: () => void }) {
+  const plan = parsePlan(m.content ?? "");
   return (
     <div className="group mb-7 flex gap-3.5">
       <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent text-white font-serif text-[13px] leading-none">
         O
       </div>
       <div className="min-w-0 flex-1 pt-0.5">
-        <Markdown>{m.content ?? ""}</Markdown>
+        {plan ? (
+          <>
+            {plan.lead && <Markdown>{plan.lead}</Markdown>}
+            <PlanChecklist steps={plan.steps} live={!!live} />
+            {plan.tail && <Markdown>{plan.tail}</Markdown>}
+          </>
+        ) : (
+          <Markdown>{m.content ?? ""}</Markdown>
+        )}
         <div className="mt-1 flex gap-1 opacity-0 transition group-hover:opacity-100">
           <CopyButton text={m.content || ""} />
           {onRegenerate && <ActionButton label="重新生成" onClick={onRegenerate}>↻</ActionButton>}
@@ -510,41 +596,179 @@ function Spinner() {
   return <span className="h-1.5 w-1.5 rounded-full bg-ok" />;
 }
 
+// Reasoning renders a reasoning model's live "thinking" tokens as a compact,
+// collapsible indicator — so a long reasoning call shows visible progress.
+function Reasoning({ m }: { m: Message }) {
+  const [open, setOpen] = useState(true);
+  const endRef = useRef<HTMLDivElement>(null);
+  const text = m.content || "";
+  useEffect(() => {
+    if (open) endRef.current?.scrollIntoView({ block: "nearest" });
+  }, [text, open]);
+  return (
+    <div className="mb-4 ml-[42px]">
+      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-[12px] text-faint hover:text-muted">
+        <span className="dot h-1.5 w-1.5 rounded-full bg-accent" />
+        <span>💭 思考中{open ? "" : "…"}</span>
+        <span className="text-[10px]">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && text && (
+        <div className="mt-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-surface2/40 px-2.5 py-2 text-[11.5px] leading-relaxed text-faint">
+          {text}
+          <div ref={endRef} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// FollowUps shows 2–3 suggested next questions under the latest answer (Perplexity
+// style); clicking one sends it. Fetched lazily from the mini model once the turn
+// settles, keyed by the answer so it refreshes per turn.
+function FollowUps({ prompt, answer, onPick }: { prompt: string; answer: string; onPick: (t: string) => void }) {
+  const [items, setItems] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    setItems([]);
+    if (!answer.trim()) return;
+    api.followups(prompt, answer).then((r) => { if (!cancelled) setItems(r.suggestions || []); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [prompt, answer]);
+  if (items.length === 0) return null;
+  return (
+    <div className="rise mb-6 ml-[42px]">
+      <div className="mb-1.5 text-[11px] text-faint">追问</div>
+      <div className="flex flex-col items-start gap-1.5">
+        {items.map((q, i) => (
+          <button
+            key={i}
+            onClick={() => onPick(q)}
+            className="group max-w-full rounded-xl border border-border bg-surface px-3 py-1.5 text-left text-[13px] text-muted transition hover:border-accent/40 hover:bg-surface2 hover:text-ink"
+          >
+            <span className="mr-1 text-accent opacity-60 group-hover:opacity-100">+</span>
+            {q}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const EXAMPLES = [
-  { icon: "🌤️", title: "天气卡片", prompt: "西安今天天气怎么样" },
-  { icon: "🔎", title: "联网调研", prompt: "使用 researcher 技能,调研 Playwright 和 Puppeteer 的区别,给出带引用的结论" },
-  { icon: "🧮", title: "计算 / 换算", prompt: "现在几点了?顺便算 (3+4)*2^3,再把 100 公里换成英里" },
-  { icon: "🌐", title: "浏览器自动化", prompt: "用浏览器打开 https://duckduckgo.com/html/ 搜索 Playwright,告诉我第一条结果标题" },
-  { icon: "📝", title: "写文件", prompt: "把 Orka 的核心能力整理成一个 markdown 文件 capabilities.md 存到我的工作区" },
-  { icon: "🔐", title: "编码 / 哈希", prompt: "把 hello world 做 base64,再算它的 sha256" },
+  {
+    icon: "🔭",
+    cat: "深度调研",
+    title: "调研并产出对比报告",
+    desc: "多源交叉验证,写一份带引用的对比报告并存档",
+    steps: ["联网搜索", "读取网页", "写文件"],
+    prompt: "用 researcher 技能调研 2025 年主流 AI Agent 框架(LangGraph、Eino、AutoGen)的设计差异,交叉验证至少两个来源,写一份带引用的对比报告并存为 agent-frameworks.md",
+    tint: ["#b48ee6", "#8b5cf6"],
+  },
+  {
+    icon: "🕸️",
+    cat: "浏览器",
+    title: "抓取实时网页并归纳",
+    desc: "打开真实站点,抓取榜单并按主题总结要点",
+    steps: ["启动浏览器", "抓取内容", "归纳总结"],
+    prompt: "用浏览器打开 https://news.ycombinator.com 抓取首页前 10 条标题,挑出与 AI 相关的,逐条总结要点",
+    tint: ["#7db4f0", "#3f7fd8"],
+  },
+  {
+    icon: "🔮",
+    cat: "创意分析",
+    title: "玄学 × 大数据预测",
+    desc: "传统五行生肖结合真实数据的趣味推演报告",
+    steps: ["联网检索", "数据分析", "生成报告"],
+    prompt: "结合中国传统算命理论(五行、生肖)和近几届世界杯的真实数据,分析本届夺冠热门球队,给出一份有理有据又有趣的预测报告",
+    tint: ["#e8943f", "#d4674a"],
+  },
+  {
+    icon: "🔗",
+    cat: "自动化管线",
+    title: "多步管线一条龙",
+    desc: "多城市抓取 → 单位换算 → 整理成表格存档",
+    steps: ["天气 ×3", "单位换算", "写文件"],
+    prompt: "查北京、上海、西安今天的天气,把温度换算成华氏度,整理成一张 Markdown 表格存到工作区 weather.md",
+    tint: ["#3f9d5a", "#7bc88f"],
+  },
 ];
 
 function Empty({ onPick }: { onPick: (text: string) => void }) {
   return (
-    <div className="flex h-full items-center justify-center px-6">
-      <div className="w-full max-w-2xl text-center">
-        <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-2xl bg-accent text-white font-serif text-[22px]">
+    <div className="relative flex h-full items-center justify-center overflow-hidden px-6 py-10">
+      {/* animated aurora backdrop */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="aurora absolute left-[12%] top-[8%] h-72 w-72 rounded-full bg-accent/25 blur-[90px]" />
+        <div className="aurora-2 absolute right-[10%] top-[22%] h-80 w-80 rounded-full bg-[#e8943f]/20 blur-[100px]" />
+        <div className="aurora-3 absolute bottom-[6%] left-[34%] h-72 w-72 rounded-full bg-[#8b5cf6]/12 blur-[100px]" />
+      </div>
+
+      <div className="relative w-full max-w-2xl text-center">
+        <div className="rise mx-auto mb-4 inline-flex items-center gap-1.5 rounded-full border border-border bg-surface/70 px-3 py-1 text-[11px] font-medium text-muted backdrop-blur">
+          <span className="text-accent">⚡</span> AI 自动化执行平台
+        </div>
+        <div className="halo rise mx-auto mb-5 grid h-16 w-16 place-items-center rounded-[22px] bg-gradient-to-br from-[#e07a52] to-[#c45c3e] font-serif text-[28px] text-white ring-1 ring-black/5">
           O
         </div>
-        <h1 className="font-serif text-[32px] text-ink">今天想做点什么?</h1>
-        <p className="mt-2 text-[14px] text-muted">
-          Orka 会自动编排搜索 · 网页 · 天气 · 文件 · 浏览器 · 换算 · 编码等工具。试试:
+        <h1 className="grad-text rise font-serif text-[38px] font-medium leading-tight">交给 Orka 去执行</h1>
+        <p className="rise mx-auto mt-3 max-w-lg text-[14px] leading-relaxed text-muted">
+          描述一个目标,它会<span className="text-ink">自己拆解步骤、联网调研、调用工具</span>,
+          跑完整条链路再把结果交给你。挑一个复杂任务试试:
         </p>
-        <div className="mt-6 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-          {EXAMPLES.map((e) => (
+
+        <div className="mt-8 grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+          {EXAMPLES.map((e, i) => (
             <button
               key={e.title}
               onClick={() => onPick(e.prompt)}
-              className="group flex items-start gap-3 rounded-2xl border border-border bg-surface px-4 py-3 text-left transition hover:border-accent/40 hover:bg-surface2"
+              style={{ animationDelay: `${100 + i * 60}ms` }}
+              className="rise group relative flex items-start gap-3.5 overflow-hidden rounded-2xl border border-border bg-surface/70 px-4 py-4 text-left shadow-sm backdrop-blur transition-all duration-300 hover:-translate-y-1 hover:border-accent/30 hover:shadow-[0_14px_36px_rgba(40,38,32,0.12)]"
             >
-              <span className="mt-0.5 text-[20px]">{e.icon}</span>
-              <span className="min-w-0">
-                <span className="block text-[13px] font-medium text-ink">{e.title}</span>
-                <span className="mt-0.5 block line-clamp-2 text-[12.5px] text-muted">{e.prompt}</span>
+              <span className="sheen" />
+              {/* category accent bar that grows on hover */}
+              <span
+                aria-hidden
+                className="absolute left-0 top-1/2 h-8 w-[3px] -translate-y-1/2 rounded-r-full opacity-60 transition-all duration-300 group-hover:h-16 group-hover:opacity-100"
+                style={{ background: `linear-gradient(${e.tint[0]}, ${e.tint[1]})` }}
+              />
+              <span
+                className="relative grid h-11 w-11 shrink-0 place-items-center rounded-xl text-[20px] text-white shadow-sm transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6"
+                style={{ background: `linear-gradient(135deg, ${e.tint[0]}, ${e.tint[1]})`, boxShadow: `0 6px 16px ${e.tint[1]}44` }}
+              >
+                <span className="drop-shadow-sm">{e.icon}</span>
+              </span>
+              <span className="relative min-w-0 flex-1">
+                <span className="flex items-center gap-1.5">
+                  <span className="block text-[14px] font-semibold text-ink">{e.title}</span>
+                  <span
+                    className="rounded-full px-1.5 py-px text-[10px] font-medium"
+                    style={{ color: e.tint[1], background: `${e.tint[1]}1a` }}
+                  >
+                    {e.cat}
+                  </span>
+                </span>
+                <span className="mt-1 block text-[12.5px] leading-snug text-muted">{e.desc}</span>
+                <span className="mt-2 flex flex-wrap items-center gap-1">
+                  {e.steps.map((s, j) => (
+                    <span key={s} className="flex items-center gap-1">
+                      {j > 0 && <span className="text-[9px] text-faint">→</span>}
+                      <span className="rounded-md bg-surface2/80 px-1.5 py-0.5 text-[10px] text-faint transition-colors group-hover:text-muted">
+                        {s}
+                      </span>
+                    </span>
+                  ))}
+                </span>
+              </span>
+              <span className="relative mt-0.5 shrink-0 translate-x-1 text-[14px] text-faint opacity-0 transition-all duration-300 group-hover:translate-x-0 group-hover:text-accent group-hover:opacity-100">
+                →
               </span>
             </button>
           ))}
         </div>
+
+        <p className="rise mt-6 text-[12px] text-faint" style={{ animationDelay: "440ms" }}>
+          点卡片直接跑,或在下方描述你自己的任务
+        </p>
       </div>
     </div>
   );

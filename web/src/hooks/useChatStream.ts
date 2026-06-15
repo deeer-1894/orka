@@ -6,6 +6,8 @@ export type RunStatus = "idle" | "streaming" | "paused" | "error" | "done";
 
 // id of the per-conversation transient bubble that accumulates token deltas.
 const STREAM_ID = "__stream__";
+// transient bubble accumulating a reasoning model's live "thinking" deltas.
+const REASON_ID = "__reasoning__";
 
 export interface RunParams {
   message: string;
@@ -87,28 +89,35 @@ export function useChatStreams() {
           const msg = JSON.parse(data) as Message;
           if (msg.type === "heartbeat") return;
           if (msg.type === "stream") {
+            // Reasoning ("thinking") deltas accumulate in their own transient
+            // bubble so they render as a collapsible indicator, not the answer.
+            const bucket = msg.action === "reasoning" ? REASON_ID : STREAM_ID;
             setConvMessages(cid, (m) => {
-              const copy = [...m];
-              const i = copy.findIndex((x) => x.id === STREAM_ID);
+              // The first answer token ends the current thinking round → drop it.
+              let copy = bucket === STREAM_ID ? m.filter((x) => x.id !== REASON_ID) : m;
+              copy = [...copy];
+              const i = copy.findIndex((x) => x.id === bucket);
               if (i >= 0) {
                 copy[i] = { ...copy[i], content: (copy[i].content || "") + (msg.content || "") };
               } else {
-                copy.push({ ...msg, id: STREAM_ID });
+                copy.push({ ...msg, id: bucket });
               }
               return copy;
             });
             return;
           }
           setConvMessages(cid, (m) => {
-            const base =
-              msg.type === "chat" && msg.role === "assistant"
-                ? m.filter((x) => x.id !== STREAM_ID)
-                : m;
+            // A real assistant message or a tool step ends the thinking round.
+            const dropReason = msg.type === "tool" || (msg.type === "chat" && msg.role === "assistant");
+            let base = dropReason ? m.filter((x) => x.id !== REASON_ID) : m;
+            base = msg.type === "chat" && msg.role === "assistant" ? base.filter((x) => x.id !== STREAM_ID) : base;
             return [...base, msg];
           });
           if (msg.type === "clarify") state.terminal = "paused";
-          if (msg.type === "task" && msg.action === "done") state.terminal = "done";
-          if (msg.type === "task" && msg.action === "failed") state.terminal = "error";
+          if (msg.type === "task" && (msg.action === "done" || msg.action === "failed")) {
+            state.terminal = msg.action === "done" ? "done" : "error";
+            setConvMessages(cid, (m) => m.filter((x) => x.id !== REASON_ID));
+          }
         } catch {
           /* skip malformed frame */
         }

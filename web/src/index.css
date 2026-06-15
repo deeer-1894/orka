@@ -113,6 +113,43 @@ body {
 .dot:nth-child(2) { animation-delay: 0.18s; }
 .dot:nth-child(3) { animation-delay: 0.36s; }
 
+/* ── Welcome / empty-state flourishes ─────────────────────────── */
+@keyframes drift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(24px, -18px) scale(1.12); }
+  66%      { transform: translate(-18px, 14px) scale(0.94); }
+}
+@keyframes shimmer {
+  to { background-position: 200% center; }
+}
+@keyframes haloPulse {
+  0%, 100% { box-shadow: 0 12px 30px rgba(196, 92, 62, 0.30), 0 0 0 0 rgba(196, 92, 62, 0.22); }
+  50%      { box-shadow: 0 16px 40px rgba(196, 92, 62, 0.42), 0 0 0 10px rgba(196, 92, 62, 0); }
+}
+.aurora { animation: drift 16s ease-in-out infinite; }
+.aurora-2 { animation: drift 22s ease-in-out infinite reverse; }
+.aurora-3 { animation: drift 19s ease-in-out infinite; }
+.grad-text {
+  background-image: linear-gradient(100deg, var(--color-accent), #e89a44 35%, #d4674a 60%, var(--color-accent));
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 6s linear infinite;
+}
+.halo { animation: haloPulse 4.5s ease-in-out infinite; }
+/* diagonal sheen that sweeps across a card on hover */
+.sheen {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.55) 50%, transparent 65%);
+  transform: translateX(-130%);
+  transition: transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.group:hover .sheen { transform: translateX(130%); }
+.dark .sheen { background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.14) 50%, transparent 65%); }
+
 /* assistant markdown prose */
 .md {
   line-height: 1.7;

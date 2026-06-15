@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { api, auth, files as fileApi } from "../api";
-import type { BrowserPayload, Connector, Message, MetricsSnapshot, RunRecord, TaskMeta, Workflow } from "../types";
+import type { BrowserPayload, Connector, Message, MetricsSnapshot, RunRecord, TaskMeta, ToolPayload, Workflow } from "../types";
 import { toast } from "../lib/toast";
 import { Markdown } from "./Markdown";
 
-type Tab = "browser" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
+type Tab = "overview" | "computer" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
 
 const TAB_LABEL: Record<Tab, string> = {
-  runs: "运行", files: "文件", flows: "流程", tasks: "任务",
-  integrations: "集成", browser: "浏览器", metrics: "指标",
+  overview: "概览", runs: "运行", computer: "电脑", files: "文件", flows: "流程", tasks: "任务",
+  integrations: "集成", metrics: "指标",
 };
 
 export function ArtifactDrawer({
@@ -16,6 +16,8 @@ export function ArtifactDrawer({
   onClose,
   tab,
   setTab,
+  computerView,
+  setComputerView,
   messages,
   email,
   onJumpToConversation,
@@ -24,21 +26,56 @@ export function ArtifactDrawer({
   onClose: () => void;
   tab: Tab;
   setTab: (t: Tab) => void;
+  computerView: "terminal" | "browser";
+  setComputerView: (v: "terminal" | "browser") => void;
   messages: Message[];
   email: string;
   onJumpToConversation: (cid: string) => void;
 }) {
+  const [width, setWidth] = useState<number>(() => {
+    const w = Number(localStorage.getItem("orka.drawerWidth"));
+    return w >= 320 && w <= 760 ? w : 400;
+  });
+  const [dragging, setDragging] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(() => typeof window === "undefined" || window.innerWidth >= 768);
+  useEffect(() => { localStorage.setItem("orka.drawerWidth", String(width)); }, [width]);
+  useEffect(() => {
+    const f = () => setIsDesktop(window.innerWidth >= 768);
+    window.addEventListener("resize", f);
+    return () => window.removeEventListener("resize", f);
+  }, []);
+  const effWidth = open ? (isDesktop ? width : Math.round(window.innerWidth * 0.86)) : 0;
+
+  const startDrag = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setDragging(true);
+    const startX = e.clientX;
+    const startW = width;
+    const onMove = (ev: MouseEvent) => setWidth(Math.min(760, Math.max(320, startW + (startX - ev.clientX))));
+    const onUp = () => {
+      setDragging(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   return (
     <aside
-      className={
-        "fixed inset-y-0 right-0 z-40 shrink-0 overflow-hidden border-l border-border bg-surface md:static md:z-auto transition-all duration-300 " +
-        (open ? "w-[400px] max-md:w-[86vw]" : "w-0")
-      }
+      style={{ width: effWidth, transition: dragging ? "none" : "width 0.3s" }}
+      className="fixed inset-y-0 right-0 z-40 shrink-0 overflow-hidden border-l border-border bg-surface md:static md:z-auto"
     >
-      <div className="flex h-full w-[400px] max-md:w-[86vw] flex-col">
+      {/* desktop resize handle */}
+      <div
+        onMouseDown={startDrag}
+        className="absolute left-0 top-0 z-10 hidden h-full w-1.5 cursor-col-resize hover:bg-accent/30 md:block"
+        title="拖动调整宽度"
+      />
+      <div className="flex h-full w-full flex-col" style={{ minWidth: 280 }}>
         <div className="flex items-center gap-1 border-b border-border px-2 h-14">
           <div className="flex flex-1 gap-0.5 overflow-x-auto no-scrollbar">
-            {(["runs", "files", "flows", "tasks", "integrations", "browser", "metrics"] as Tab[]).map((t) => (
+            {(["overview", "runs", "computer", "files", "flows", "tasks", "integrations", "metrics"] as Tab[]).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -61,7 +98,10 @@ export function ArtifactDrawer({
           </button>
         </div>
         <div className="flex-1 overflow-y-auto">
-          {tab === "browser" && <BrowserPanel messages={messages} />}
+          {tab === "overview" && <DashboardPanel onJumpToConversation={onJumpToConversation} />}
+          {tab === "computer" && (
+            <ComputerPanel messages={messages} view={computerView} setView={setComputerView} />
+          )}
           {tab === "files" && <FilesPanel email={email} />}
           {tab === "runs" && <RunsPanel onJumpToConversation={onJumpToConversation} />}
           {tab === "flows" && <WorkflowsPanel onJumpToConversation={onJumpToConversation} />}
@@ -71,6 +111,226 @@ export function ArtifactDrawer({
         </div>
       </div>
     </aside>
+  );
+}
+
+// DashboardPanel is the at-a-glance overview: it aggregates the run history and
+// live metrics into headline stats, a recent-activity strip, and trigger mix —
+// so the platform's activity is visible without digging through the run list.
+function DashboardPanel({ onJumpToConversation }: { onJumpToConversation: (cid: string) => void }) {
+  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [metrics, setMetrics] = useState<MetricsSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    Promise.all([api.listRuns({}).catch(() => ({ runs: [] })), api.metrics().catch(() => null)])
+      .then(([r, m]) => { setRuns(r.runs || []); setMetrics(m); })
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <Blank>加载中…</Blank>;
+  if (runs.length === 0) return <Blank>还没有运行记录。跑一个任务后这里会出现统计。</Blank>;
+
+  const done = runs.filter((r) => r.status === "done").length;
+  const failed = runs.filter((r) => r.status === "failed").length;
+  const finished = done + failed;
+  const successRate = finished ? Math.round((done / finished) * 100) : 0;
+  const totalTokens = runs.reduce((a, r) => a + (r.tokens || 0), 0);
+  const totalTools = runs.reduce((a, r) => a + (r.tool_calls || 0), 0);
+  const durs = runs.filter((r) => r.duration_ms > 0).map((r) => r.duration_ms);
+  const avgDur = durs.length ? Math.round(durs.reduce((a, b) => a + b, 0) / durs.length / 1000) : 0;
+  const triggers = runs.reduce((acc, r) => { const k = r.trigger || "manual"; acc[k] = (acc[k] || 0) + 1; return acc; }, {} as Record<string, number>);
+  const fmtNum = (n: number) => (n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(n));
+  const dot = (s: string) => (s === "done" ? "var(--color-ok)" : s === "failed" ? "#e0695f" : s === "running" ? "#e3b341" : "var(--color-faint)");
+  const recent = runs.slice(0, 28).reverse();
+  const TRIGGER_LABEL: Record<string, string> = { manual: "手动", schedule: "定时", workflow: "流程", webhook: "Webhook", rerun: "重跑", resume: "恢复" };
+
+  const Stat = ({ label, value, sub }: { label: string; value: string; sub?: string }) => (
+    <div className="rounded-xl border border-border bg-surface px-3 py-2.5">
+      <div className="text-[11px] text-faint">{label}</div>
+      <div className="mt-0.5 text-[20px] font-semibold leading-tight text-ink">{value}</div>
+      {sub && <div className="mt-0.5 text-[11px] text-muted">{sub}</div>}
+    </div>
+  );
+
+  return (
+    <div className="space-y-3 p-3">
+      <div className="grid grid-cols-2 gap-2">
+        <Stat label="总运行" value={String(runs.length)} sub={`${done} 成功 · ${failed} 失败`} />
+        <Stat label="成功率" value={successRate + "%"} sub={`${finished} 个已完成`} />
+        <Stat label="累计 Token" value={fmtNum(totalTokens)} sub={`${fmtNum(totalTools)} 次工具调用`} />
+        <Stat label="平均耗时" value={avgDur + "s"} sub={durs.length ? `基于 ${durs.length} 个运行` : "—"} />
+      </div>
+
+      <div className="rounded-xl border border-border bg-surface p-3">
+        <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-faint">近期运行 · {recent.length}</div>
+        <div className="flex items-end gap-[3px]">
+          {recent.map((r) => (
+            <button
+              key={r.run_id}
+              onClick={() => r.conversation_id && onJumpToConversation(r.conversation_id)}
+              title={`${r.status} · ${fmtNum(r.tokens || 0)} tok · ${(r.prompt || "").slice(0, 40)}`}
+              className="h-7 flex-1 rounded-sm transition hover:opacity-70"
+              style={{ background: dot(r.status), minWidth: 4 }}
+            />
+          ))}
+        </div>
+        <div className="mt-1.5 flex gap-3 text-[10.5px] text-faint">
+          <span><span style={{ color: "var(--color-ok)" }}>●</span> 成功</span>
+          <span><span style={{ color: "#e0695f" }}>●</span> 失败</span>
+          <span><span style={{ color: "#e3b341" }}>●</span> 进行中</span>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-surface p-3">
+        <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-faint">触发来源</div>
+        <div className="flex flex-wrap gap-1.5">
+          {Object.entries(triggers).sort((a, b) => b[1] - a[1]).map(([k, v]) => (
+            <span key={k} className="rounded-full bg-surface2 px-2 py-0.5 text-[12px] text-muted">
+              {TRIGGER_LABEL[k] || k} · {v}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {metrics && (
+        <div className="rounded-xl border border-border bg-surface p-3 text-[12px] text-muted">
+          <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-faint">实时指标</div>
+          <div className="grid grid-cols-2 gap-y-1">
+            <span>活跃会话 <b className="text-ink">{metrics.active_sessions}</b></span>
+            <span>检查点 <b className="text-ink">{metrics.checkpoints}</b></span>
+            <span>LLM 调用 <b className="text-ink">{metrics.llm_calls}</b></span>
+            <span>工具调用 <b className="text-ink">{metrics.tool_calls}</b></span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ComputerPanel is the Manus-style "watch it work" surface: one place for the
+// agent's whole computer — a terminal (shell + files it wrote) and the browser
+// (live view + captured frames) — switchable via sub-tabs. The browser is just
+// another part of the computer, so it lives here rather than as a sibling tab.
+function ComputerPanel({
+  messages,
+  view,
+  setView,
+}: {
+  messages: Message[];
+  view: "terminal" | "browser";
+  setView: (v: "terminal" | "browser") => void;
+}) {
+  const shotCount = messages.filter(
+    (m) => m.type === "browser" && (m.payload as BrowserPayload)?.data,
+  ).length;
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex gap-1 px-3 pt-2.5">
+        {([
+          ["terminal", "⌨️ 终端"],
+          ["browser", `🌐 浏览器${shotCount ? ` (${shotCount})` : ""}`],
+        ] as const).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setView(id)}
+            className={
+              "rounded-lg px-2.5 py-1 text-[12.5px] transition " +
+              (view === id ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")
+            }
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {view === "terminal" ? <TerminalView messages={messages} /> : <BrowserPanel messages={messages} />}
+      </div>
+    </div>
+  );
+}
+
+// TerminalView shows the agent's shell commands + output and the files it wrote.
+function TerminalView({ messages }: { messages: Message[] }) {
+  const endRef = useRef<HTMLDivElement>(null);
+  const tools = messages
+    .filter((m) => m.type === "tool")
+    .map((m) => m.payload as ToolPayload)
+    .filter(Boolean);
+  const shellRuns = tools.filter((p) => p.tool === "shell");
+  const files = [
+    ...new Set(
+      tools
+        .filter((p) => p.tool === "file_write")
+        .map((p) => String(p.args?.path ?? ""))
+        .filter(Boolean),
+    ),
+  ];
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [shellRuns.length]);
+
+  if (shellRuns.length === 0 && files.length === 0) {
+    return <Blank>还没有终端活动。让 Orka 运行脚本或命令后,这里会实时显示终端输出与生成的文件。</Blank>;
+  }
+
+  return (
+    <div className="space-y-3 p-3">
+      <div className="overflow-hidden rounded-xl border border-border">
+        <div className="flex items-center gap-1.5 border-b border-border bg-surface2 px-3 py-2">
+          <span className="h-2.5 w-2.5 rounded-full bg-[#e0695f]" />
+          <span className="h-2.5 w-2.5 rounded-full bg-[#e3b341]" />
+          <span className="h-2.5 w-2.5 rounded-full bg-[#5aa469]" />
+          <span className="ml-2 text-[12px] text-faint">workspace · terminal</span>
+        </div>
+        <div className="max-h-[460px] overflow-y-auto bg-[#161513] px-3 py-2.5 font-mono text-[12px] leading-relaxed">
+          {shellRuns.length === 0 ? (
+            <div className="text-[#837d72]">尚无命令执行(仅写入了文件)</div>
+          ) : (
+            shellRuns.map((r, i) => {
+              const cmd = String(r.args?.command ?? "");
+              const out = (r.result ?? "").trim();
+              return (
+                <div key={i} className="mb-3">
+                  <div className="flex gap-1.5">
+                    <span className="shrink-0 text-[#6fa57d]">$</span>
+                    <span className="whitespace-pre-wrap break-all text-[#ece9e2]">{cmd}</span>
+                  </div>
+                  {out && (
+                    <pre className="mt-1 whitespace-pre-wrap break-all text-[#a8a399]">
+                      {out.length > 1500 ? out.slice(0, 1500) + "\n…" : out}
+                    </pre>
+                  )}
+                </div>
+              );
+            })
+          )}
+          <div ref={endRef} />
+        </div>
+      </div>
+
+      {files.length > 0 && (
+        <div className="rounded-xl border border-border p-2.5">
+          <div className="mb-1.5 px-1 text-[11px] font-medium uppercase tracking-wide text-faint">
+            工作区文件 · {files.length}
+          </div>
+          <div className="space-y-0.5">
+            {files.map((f) => (
+              <a
+                key={f}
+                href={fileApi.downloadURL(f)}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] text-ink hover:bg-surface2"
+              >
+                <span>📄</span>
+                <span className="truncate">{f}</span>
+                <span className="ml-auto text-[11px] text-faint">↓</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -166,10 +426,30 @@ function FramesView({
   );
 }
 
+// File "kinds" group the flat workspace into tidy, labelled sections so a busy
+// workspace reads as 文档 / 代码 / 数据 / 图片 / 其他 instead of one long dump.
+const FILE_KINDS: { id: string; icon: string; label: string; exts?: string[] }[] = [
+  { id: "folder", icon: "📁", label: "文件夹" },
+  { id: "doc", icon: "📄", label: "文档 / 报告", exts: ["md", "markdown", "txt", "pdf", "doc", "docx", "rtf"] },
+  { id: "code", icon: "💻", label: "代码", exts: ["py", "js", "jsx", "ts", "tsx", "go", "java", "c", "h", "cpp", "rs", "sh", "rb", "php", "html", "css", "yaml", "yml", "sql"] },
+  { id: "data", icon: "📊", label: "数据", exts: ["json", "csv", "tsv", "xml", "ndjson"] },
+  { id: "image", icon: "🖼️", label: "图片", exts: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"] },
+  { id: "other", icon: "🗂️", label: "其他" },
+];
+function kindOf(name: string, dir: boolean): string {
+  if (dir) return "folder";
+  const ext = name.split(".").pop()?.toLowerCase() || "";
+  for (const k of FILE_KINDS) if (k.exts?.includes(ext)) return k.id;
+  return "other";
+}
+
+type FileItem = { name: string; dir: boolean; size: number };
+
 function FilesPanel({ email }: { email: string }) {
-  const [items, setItems] = useState<{ name: string; dir: boolean; size: number }[]>([]);
+  const [items, setItems] = useState<FileItem[]>([]);
   const [pct, setPct] = useState<number | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const refresh = () => fileApi.list(".").then(setItems).catch(() => setItems([]));
   useEffect(() => {
@@ -184,58 +464,72 @@ function FilesPanel({ email }: { email: string }) {
       setPct(null);
     }
   };
+  const del = (name: string) => fileApi.delete(name).then(refresh);
+
+  const q = query.trim().toLowerCase();
+  const filtered = items
+    .filter((it) => !q || it.name.toLowerCase().includes(q))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const grouped = FILE_KINDS.map((k) => ({ ...k, files: filtered.filter((it) => kindOf(it.name, it.dir) === k.id) })).filter(
+    (g) => g.files.length > 0,
+  );
+
+  const Row = (it: FileItem) => (
+    <div key={it.name} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface2">
+      <span className="text-faint">{it.dir ? "📁" : "📄"}</span>
+      {it.dir ? (
+        <span className="flex-1 truncate text-[14px] text-ink">{it.name}</span>
+      ) : (
+        <button onClick={() => setPreview(it.name)} className="flex-1 truncate text-left text-[14px] text-ink hover:text-accent" title="预览">
+          {it.name}
+        </button>
+      )}
+      <span className="text-[11px] text-faint">{fmtBytes(it.size)}</span>
+      {!it.dir && (
+        <a href={fileApi.downloadURL(it.name)} className="text-[12px] text-accent opacity-0 group-hover:opacity-100" aria-label={"下载 " + it.name}>
+          ↓
+        </a>
+      )}
+      <button onClick={() => del(it.name)} className="text-[12px] text-faint opacity-0 hover:text-accent group-hover:opacity-100" aria-label={"删除 " + it.name}>
+        ✕
+      </button>
+    </div>
+  );
+
   return (
     <div className="p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-[12px] text-faint">/{email}</span>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="truncate text-[12px] text-faint">/{email}</span>
         <button
           onClick={() => inputRef.current?.click()}
-          className="rounded-lg border border-border px-2.5 py-1 text-[12px] text-muted hover:border-accent/40"
+          className="shrink-0 rounded-lg border border-border px-2.5 py-1 text-[12px] text-muted hover:border-accent/40"
         >
           Upload
         </button>
         <input ref={inputRef} type="file" hidden onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])} />
       </div>
+      {items.length > 6 && (
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="筛选文件…"
+          className="mb-2 w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[12.5px] outline-none focus:border-accent/50"
+        />
+      )}
       {pct !== null && (
         <div className="mb-2 h-1 w-full overflow-hidden rounded bg-surface2">
           <div className="h-full bg-accent transition-all" style={{ width: pct + "%" }} />
         </div>
       )}
-      {items.length === 0 && <Blank>Empty</Blank>}
-      <div className="space-y-0.5">
-        {items.map((it) => (
-          <div key={it.name} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface2">
-            <span className="text-faint">{it.dir ? "📁" : "📄"}</span>
-            {it.dir ? (
-              <span className="flex-1 truncate text-[14px] text-ink">{it.name}</span>
-            ) : (
-              <button
-                onClick={() => setPreview(it.name)}
-                className="flex-1 truncate text-left text-[14px] text-ink hover:text-accent"
-                title="预览"
-              >
-                {it.name}
-              </button>
-            )}
-            <span className="text-[11px] text-faint">{fmtBytes(it.size)}</span>
-            {!it.dir && (
-              <a
-                href={fileApi.downloadURL(it.name)}
-                className="text-[12px] text-accent opacity-0 group-hover:opacity-100"
-                aria-label={"下载 " + it.name}
-              >
-                ↓
-              </a>
-            )}
-            <button
-              onClick={() => fileApi.delete(it.name).then(refresh)}
-              className="text-[12px] text-faint opacity-0 hover:text-accent group-hover:opacity-100"
-            >
-              ✕
-            </button>
+      {filtered.length === 0 && <Blank>{items.length === 0 ? "Empty" : "无匹配文件"}</Blank>}
+      {grouped.map((g) => (
+        <div key={g.id} className="mb-3">
+          <div className="mb-1 px-1 text-[11px] font-medium uppercase tracking-wide text-faint">
+            {g.icon} {g.label} · {g.files.length}
           </div>
-        ))}
-      </div>
+          <div className="space-y-0.5">{g.files.map(Row)}</div>
+        </div>
+      ))}
       {preview && <FilePreview name={preview} onClose={() => setPreview(null)} />}
     </div>
   );

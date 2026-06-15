@@ -11,7 +11,7 @@ import { useTheme } from "./lib/theme";
 import { loadTools, saveTools } from "./lib/toolGroups";
 import type { Conversation, Message, Notification } from "./types";
 
-type Tab = "browser" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
+type Tab = "overview" | "computer" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
 
 interface ModelOption { version: string; label: string; hint: string }
 // Fallback until /models resolves (keeps the picker non-empty on first paint).
@@ -71,7 +71,8 @@ function Workbench({
     typeof window === "undefined" ? true : window.innerWidth >= 768,
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<Tab>("runs");
+  const [drawerTab, setDrawerTab] = useState<Tab>("overview");
+  const [computerView, setComputerView] = useState<"terminal" | "browser">("terminal");
   const [totalTokens, setTotalTokens] = useState(0);
   const [version, setVersion] = useState(""); // selected model version ("" main, "mini")
   const [theme, toggleTheme] = useTheme();
@@ -93,6 +94,24 @@ function Workbench({
   // conversations whose history we've already loaded (or that have a live run),
   // so switching back never clobbers an in-flight stream with stale history.
   const seen = useRef<Set<string>>(new Set());
+
+  // Global keyboard shortcuts (mirrors what ChatGPT/Claude/Cursor offer):
+  //   ⌘/Ctrl+K  → jump focus to the composer
+  //   Esc       → stop the running task (when one is streaming)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        document.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+      } else if (e.key === "Escape" && statusOf(activeID) === "streaming") {
+        const el = document.activeElement;
+        // don't hijack Esc while typing in an input (it closes menus there)
+        if (!el || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA")) kill(activeID);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeID, statusOf, kill]);
 
   // Pull tasks to learn which conversations are scheduled (for the sidebar 🔁).
   const refreshTasks = useCallback(() => {
@@ -238,7 +257,8 @@ function Workbench({
   );
 
   const openViewport = useCallback(() => {
-    setDrawerTab("browser");
+    setComputerView("browser");
+    setDrawerTab("computer");
     setDrawerOpen(true);
   }, []);
 
@@ -322,6 +342,8 @@ function Workbench({
         onClose={() => setDrawerOpen(false)}
         tab={drawerTab}
         setTab={setDrawerTab}
+        computerView={computerView}
+        setComputerView={setComputerView}
         messages={messages}
         email={user.email}
         onJumpToConversation={onJumpToConversation}
