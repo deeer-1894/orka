@@ -49,6 +49,19 @@ func docExport(base string) mcpserver.ToolHandlerFunc {
 		out = filepath.Base(out)
 
 		args := []string{in, "-o", out, "--standalone"}
+		if ext == "pdf" || ext == "html" {
+			// Pandoc's default HTML font stack resolves `sans-serif` to DejaVu Sans,
+			// which has no CJK glyphs — so Chinese/Japanese/Korean text renders as
+			// tofu boxes in the PDF. Force a CJK-capable family via an injected
+			// <head> include. (The chart tool sidesteps this by naming the font
+			// directly; pandoc needs it in CSS.)
+			if hdr, herr := os.CreateTemp(root, ".pandoc-cjk-*.html"); herr == nil {
+				hdr.WriteString(cjkFontHeader)
+				hdr.Close()
+				defer os.Remove(hdr.Name())
+				args = append(args, "-H", filepath.Base(hdr.Name()))
+			}
+		}
 		if ext == "pdf" {
 			args = append(args, "--pdf-engine=wkhtmltopdf")
 		}
@@ -61,6 +74,13 @@ func docExport(base string) mcpserver.ToolHandlerFunc {
 		return mcp.NewToolResultText("exported " + in + " → " + out), nil
 	}
 }
+
+// cjkFontHeader is injected into pandoc's HTML <head> so PDF/HTML exports render
+// CJK text with the bundled Noto Sans CJK instead of glyph-less DejaVu Sans.
+const cjkFontHeader = `<style>
+html, body, * { font-family: "Noto Sans CJK SC", "Noto Sans CJK TC", "Noto Sans CJK JP", "DejaVu Sans", sans-serif !important; }
+code, pre, kbd, samp { font-family: "DejaVu Sans Mono", "Noto Sans CJK SC", monospace !important; }
+</style>`
 
 func humanBytes(n int64) string {
 	switch {
