@@ -57,6 +57,14 @@ func Registry() map[string]Meta {
 		"csv_to_json": {Group: "office", Scope: "file:read"},
 		"doc_export":  {Group: "office", Scope: "file:write"},
 		"chart":       {Group: "office", Scope: "file:write"},
+		"xlsx_to_csv": {Group: "office", Scope: "file:write"},
+		"csv_to_xlsx": {Group: "office", Scope: "file:write"},
+		"pdf_extract": {Group: "office", Scope: "file:read"},
+		"doc_read":    {Group: "office", Scope: "file:read"},
+		"sql_query":   {Group: "office", Scope: "file:read"},
+		"csv_join":    {Group: "office", Scope: "file:write"},
+		"slides":      {Group: "office", Scope: "file:write"},
+		"python":      {Group: "code", Scope: ""}, // confined to the workspace container, like shell
 		"lark_whoami": {Group: "lark", Scope: "lark:read"},
 		"aio_echo":    {Group: "aio", Scope: "aio:read"},
 	}
@@ -264,6 +272,65 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 		mcp.WithString("title", mcp.Description("chart title")),
 		mcp.WithString("out", mcp.Description("output png filename (default chart.png)")),
 	), chartGenerate(baseStorage))
+
+	add(mcp.NewTool("xlsx_to_csv",
+		mcp.WithDescription("Convert an Excel .xlsx sheet in your workspace to CSV so the csv_* tools can analyze it. Args: path (the .xlsx), sheet (name or 0-based index, default first), out (default <name>.csv)."),
+		mcp.WithString("path", mcp.Required(), mcp.Description("the .xlsx file")),
+		mcp.WithString("sheet", mcp.Description("sheet name or 0-based index (default first)")),
+		mcp.WithString("out", mcp.Description("output .csv filename")),
+	), xlsxToCSV(baseStorage))
+
+	add(mcp.NewTool("csv_to_xlsx",
+		mcp.WithDescription("Convert a workspace CSV into a formatted Excel .xlsx file. Args: path (the .csv), out (default <name>.xlsx), sheet (sheet name)."),
+		mcp.WithString("path", mcp.Required(), mcp.Description("the .csv file")),
+		mcp.WithString("out", mcp.Description("output .xlsx filename")),
+		mcp.WithString("sheet", mcp.Description("sheet name (default Sheet1)")),
+	), csvToXLSX(baseStorage))
+
+	add(mcp.NewTool("pdf_extract",
+		mcp.WithDescription("Extract the text of a workspace PDF (for reading/summarizing). Args: path (the .pdf), pages (e.g. 1-3, optional), out (write to a .txt file; omit to return the text inline)."),
+		mcp.WithString("path", mcp.Required(), mcp.Description("the .pdf file")),
+		mcp.WithString("pages", mcp.Description("page range like 1-3 or 2 (default all)")),
+		mcp.WithString("out", mcp.Description("optional .txt output filename")),
+	), pdfExtract(baseStorage))
+
+	add(mcp.NewTool("doc_read",
+		mcp.WithDescription("Read an office document (Word .docx, .html, .rtf, .odt, .epub) as Markdown text. The inverse of doc_export. Args: path, out (write to a .md file; omit to return inline)."),
+		mcp.WithString("path", mcp.Required(), mcp.Description("the document to read")),
+		mcp.WithString("out", mcp.Description("optional .md output filename")),
+	), docRead(baseStorage))
+
+	add(mcp.NewTool("sql_query",
+		mcp.WithDescription("Run a SQL query over one or more workspace CSVs (in-memory SQLite). Each CSV becomes a table named after its filename stem. Args: query (SQL), tables (comma-separated .csv files), out (optional .csv to save results)."),
+		mcp.WithString("query", mcp.Required(), mcp.Description("SQL, e.g. SELECT product_name, SUM(amount) FROM sales GROUP BY 1 ORDER BY 2 DESC")),
+		mcp.WithString("tables", mcp.Required(), mcp.Description("comma-separated .csv files to load, e.g. sales.csv,products.csv")),
+		mcp.WithString("out", mcp.Description("optional .csv filename to save the result")),
+	), sqlQuery(baseStorage))
+
+	add(mcp.NewTool("csv_join",
+		mcp.WithDescription("Join two workspace CSVs on a key column (like a SQL JOIN). Args: left, right (the .csv files), on (shared key column) or left_on/right_on, how (inner|left|right|outer, default inner), out."),
+		mcp.WithString("left", mcp.Required(), mcp.Description("left .csv file")),
+		mcp.WithString("right", mcp.Required(), mcp.Description("right .csv file")),
+		mcp.WithString("on", mcp.Description("shared key column (or use left_on/right_on)")),
+		mcp.WithString("left_on", mcp.Description("left key column (if names differ)")),
+		mcp.WithString("right_on", mcp.Description("right key column (if names differ)")),
+		mcp.WithString("how", mcp.Description("inner | left | right | outer (default inner)")),
+		mcp.WithString("out", mcp.Description("output .csv filename (default joined.csv)")),
+	), csvJoin(baseStorage))
+
+	add(mcp.NewTool("slides",
+		mcp.WithDescription("Generate a PowerPoint .pptx from Markdown. `# X` is the title slide; each `## Y` starts a new slide whose `- bullets` become its bullet points. Args: content (the Markdown), title (optional title-slide override), out (default slides.pptx)."),
+		mcp.WithString("content", mcp.Required(), mcp.Description("Markdown: # title, ## slide headings, - bullets")),
+		mcp.WithString("title", mcp.Description("optional title-slide text")),
+		mcp.WithString("out", mcp.Description("output .pptx filename (default slides.pptx)")),
+	), slidesGenerate(baseStorage))
+
+	add(mcp.NewTool("python",
+		mcp.WithDescription("Run Python in the sandboxed workspace and capture its output — for writing code, computing, and data analysis. pandas/numpy/matplotlib/openpyxl are preinstalled; files read/written are relative to your workspace. Args: code (a snippet) OR path (a .py file to run), and optional argv."),
+		mcp.WithString("code", mcp.Description("Python source to execute (use this or path)")),
+		mcp.WithString("path", mcp.Description("a workspace .py file to run instead of inline code")),
+		mcp.WithString("argv", mcp.Description("optional space-separated args passed to the script")),
+	), pythonRun(baseStorage))
 
 	add(mcp.NewTool("lark_whoami",
 		mcp.WithDescription("Lark: return the current user (stub)."),
