@@ -66,7 +66,13 @@ func (a *API) FileDownload(ctx context.Context, c *app.RequestContext) {
 	if ct == "" {
 		ct = "application/octet-stream"
 	}
-	c.Response.Header.Set("Content-Disposition", "attachment; filename=\""+filepath.Base(p)+"\"")
+	// `inline=1` lets the web file-preview render the bytes in-page (e.g. a PDF in
+	// an <iframe>); the default stays `attachment` so the "下载" links save a file.
+	disp := "attachment"
+	if string(c.Query("inline")) == "1" {
+		disp = "inline"
+	}
+	c.Response.Header.Set("Content-Disposition", disp+"; filename=\""+filepath.Base(p)+"\"")
 	c.Data(consts.StatusOK, ct, data)
 }
 

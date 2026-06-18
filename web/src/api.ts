@@ -145,6 +145,10 @@ export const files = {
   delete: (path: string) => post("/file/delete", { path }),
   downloadURL: (path: string) =>
     `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}`,
+  // previewURL serves the same bytes with Content-Disposition: inline so the
+  // browser renders them in-page (PDF in an <iframe>) instead of downloading.
+  previewURL: (path: string) =>
+    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}&inline=1`,
   upload: async (file: File, dir: string, onProgress?: (pct: number) => void) => {
     const CHUNK = 256 * 1024;
     const total = Math.max(1, Math.ceil(file.size / CHUNK));
