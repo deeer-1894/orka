@@ -5,6 +5,7 @@ go 1.25.5
 require (
 	github.com/mark3labs/mcp-go v0.54.1
 	github.com/orka-oss/orka_core v0.0.0
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 )
 
 require (

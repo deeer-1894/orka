@@ -259,6 +259,10 @@ func groupForName(name string) string {
 		name == "text_stats" || name == "regex_extract" || name == "json_query" ||
 		name == "datetime" || name == "random":
 		return "util"
+	case name == "currency" || name == "timezone" || name == "qrcode" ||
+		name == "csv_query" || name == "csv_stats" || name == "csv_to_json" ||
+		name == "doc_export" || name == "chart":
+		return "office"
 	}
 	return ""
 }

@@ -48,6 +48,15 @@ func Registry() map[string]Meta {
 		"memory":        {Group: "file", Scope: "file:write"}, // persists to the user's storage
 		"http_request": {Group: "web", Scope: "web:search"}, // network egress → gated
 		"shell":        {Group: "shell", Scope: ""},         // env-gated (SHELL_TOOL=1); confined to the workspace
+		// Office / productivity tools.
+		"currency":    {Group: "office", Scope: ""},
+		"timezone":    {Group: "office", Scope: ""},
+		"qrcode":      {Group: "office", Scope: "file:write"},
+		"csv_query":   {Group: "office", Scope: "file:read"},
+		"csv_stats":   {Group: "office", Scope: "file:read"},
+		"csv_to_json": {Group: "office", Scope: "file:read"},
+		"doc_export":  {Group: "office", Scope: "file:write"},
+		"chart":       {Group: "office", Scope: "file:write"},
 		"lark_whoami": {Group: "lark", Scope: "lark:read"},
 		"aio_echo":    {Group: "aio", Scope: "aio:read"},
 	}
@@ -194,6 +203,67 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 			mcp.WithNumber("timeout_sec", mcp.Description("max seconds before it's killed (default 30, max 120)")),
 		), shellExec(baseStorage))
 	}
+
+	// ---- Office / productivity tools ----
+	add(mcp.NewTool("currency",
+		mcp.WithDescription("Convert an amount between currencies using live daily rates. Args: from, to (ISO codes like USD/CNY/EUR), amount."),
+		mcp.WithString("from", mcp.Required(), mcp.Description("source currency code, e.g. USD")),
+		mcp.WithString("to", mcp.Required(), mcp.Description("target currency code, e.g. CNY")),
+		mcp.WithString("amount", mcp.Description("amount to convert (default 1)")),
+	), currencyConvert())
+
+	add(mcp.NewTool("timezone",
+		mcp.WithDescription("Convert a wall-clock time from one timezone to another. Args: time (YYYY-MM-DD HH:MM, blank = now), from, to (IANA names like Asia/Shanghai, America/New_York)."),
+		mcp.WithString("from", mcp.Required(), mcp.Description("source IANA timezone")),
+		mcp.WithString("to", mcp.Required(), mcp.Description("target IANA timezone")),
+		mcp.WithString("time", mcp.Description("the time to convert (default: now)")),
+	), timezoneConvert())
+
+	add(mcp.NewTool("qrcode",
+		mcp.WithDescription("Generate a QR-code PNG (for a URL or text) saved to your workspace. Args: text, path (default qrcode.png), size."),
+		mcp.WithString("text", mcp.Required(), mcp.Description("the text/URL to encode")),
+		mcp.WithString("path", mcp.Description("output filename (default qrcode.png)")),
+		mcp.WithNumber("size", mcp.Description("pixel size 64–1024 (default 256)")),
+	), qrGenerate(baseStorage))
+
+	add(mcp.NewTool("csv_query",
+		mcp.WithDescription("Filter/select rows from a workspace CSV. Args: path, filter (col=value), columns (comma-separated), limit."),
+		mcp.WithString("path", mcp.Required(), mcp.Description("the .csv file in your workspace")),
+		mcp.WithString("filter", mcp.Description("keep rows where col=value")),
+		mcp.WithString("columns", mcp.Description("only output these columns (comma-separated)")),
+		mcp.WithNumber("limit", mcp.Description("max rows (default 50)")),
+	), csvQuery(baseStorage))
+
+	add(mcp.NewTool("csv_stats",
+		mcp.WithDescription("Compute count/sum/avg/min/max on a numeric column of a workspace CSV, optionally grouped. Args: path, column, group_by."),
+		mcp.WithString("path", mcp.Required(), mcp.Description("the .csv file")),
+		mcp.WithString("column", mcp.Required(), mcp.Description("the numeric column to aggregate")),
+		mcp.WithString("group_by", mcp.Description("optional column to group by")),
+	), csvStats(baseStorage))
+
+	add(mcp.NewTool("csv_to_json",
+		mcp.WithDescription("Convert a workspace CSV to a JSON array of objects. Args: path, limit."),
+		mcp.WithString("path", mcp.Required(), mcp.Description("the .csv file")),
+		mcp.WithNumber("limit", mcp.Description("max rows (default 200)")),
+	), csvToJSON(baseStorage))
+
+	add(mcp.NewTool("doc_export",
+		mcp.WithDescription("Export a workspace Markdown file to HTML, Word (docx) or PDF. Args: path (the .md), to (html|docx|pdf), out (optional)."),
+		mcp.WithString("path", mcp.Required(), mcp.Description("the source .md file")),
+		mcp.WithString("to", mcp.Description("html | docx | pdf (default pdf)")),
+		mcp.WithString("out", mcp.Description("output filename (optional)")),
+	), docExport(baseStorage))
+
+	add(mcp.NewTool("chart",
+		mcp.WithDescription("Render a workspace CSV into a bar/line/pie chart PNG. Repeated x labels are aggregated so large tables stay legible (e.g. 1000 sales rows → one bar per product). Args: data (the .csv), type (bar|line|pie), x (label column), y (value column), agg, title, out."),
+		mcp.WithString("data", mcp.Required(), mcp.Description("the .csv file to plot")),
+		mcp.WithString("type", mcp.Description("bar | line | pie (default bar)")),
+		mcp.WithString("x", mcp.Description("label/category column (default first)")),
+		mcp.WithString("y", mcp.Description("value column (default second)")),
+		mcp.WithString("agg", mcp.Description("aggregate y per x label: auto|sum|avg|count|none (default auto — sums when labels repeat)")),
+		mcp.WithString("title", mcp.Description("chart title")),
+		mcp.WithString("out", mcp.Description("output png filename (default chart.png)")),
+	), chartGenerate(baseStorage))
 
 	add(mcp.NewTool("lark_whoami",
 		mcp.WithDescription("Lark: return the current user (stub)."),

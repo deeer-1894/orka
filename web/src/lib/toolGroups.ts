@@ -9,6 +9,7 @@ export const TOOL_GROUPS = [
   { id: "gui_agent", label: "浏览器", icon: "🌐", desc: "真实浏览器自动化" },
   { id: "shell", label: "终端", icon: "⌨️", desc: "在工作区执行命令 / 脚本 / 代码" },
   { id: "util", label: "工具", icon: "🧮", desc: "时间 / 计算 / 换算" },
+  { id: "office", label: "办公", icon: "📊", desc: "汇率 / 时区 / 二维码 / CSV / 文档导出 / 图表" },
 ] as const;
 
 export type ToolGroupId = (typeof TOOL_GROUPS)[number]["id"];

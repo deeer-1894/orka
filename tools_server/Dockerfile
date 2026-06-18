@@ -20,9 +20,13 @@ RUN go build -o /out/orka_tools .
 # python:slim gives the agent's shell a usable "computer": python3 + pip out of
 # the box, plus git/curl/jq below. Debian-based so apt is available.
 FROM python:3.12-slim-bookworm
+# git/curl/jq for the shell + engineer; pandoc/wkhtmltopdf back the doc_export
+# tool (md → html/docx/pdf); matplotlib backs the chart tool; fonts-noto-cjk so
+# charts/exports render Chinese/Japanese/Korean labels instead of tofu boxes.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git curl ca-certificates jq \
-    && rm -rf /var/lib/apt/lists/*
+        git curl ca-certificates jq pandoc wkhtmltopdf fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir matplotlib
 # Run as a non-root user; the container is the sandbox, not the in-container uid.
 RUN useradd -m -u 10001 orka && mkdir -p /workspace && chown orka:orka /workspace
 COPY --from=build /out/orka_tools /usr/local/bin/orka_tools
