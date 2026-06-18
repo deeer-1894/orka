@@ -535,6 +535,19 @@ function FilesPanel({ email }: { email: string }) {
   );
 }
 
+// resolveWorkspaceImage maps a markdown image src to the workspace file API,
+// relative to the directory of the .md file being previewed. Absolute/data/blob
+// URLs are left untouched. Without this, ![](chart.png) loads from the page
+// origin (localhost:5173/chart.png) and 404s.
+function resolveWorkspaceImage(mdPath: string) {
+  const dir = mdPath.includes("/") ? mdPath.slice(0, mdPath.lastIndexOf("/") + 1) : "";
+  return (src: string) => {
+    if (/^([a-z]+:|\/\/|#)/i.test(src)) return src; // http(s):, data:, blob:, protocol-relative
+    const rel = (dir + src.replace(/^\.\//, "")).replace(/^\//, "");
+    return fileApi.previewURL(rel);
+  };
+}
+
 // FilePreview renders a workspace file inline by type: images as <img>, PDFs in
 // an <iframe> (native browser viewer), text/markdown fetched and rendered, and
 // any other binary (docx, xlsx, zip…) as a download card — never dumped as raw
@@ -588,7 +601,7 @@ function FilePreview({ name, onClose }: { name: string; onClose: () => void }) {
           ) : content === null ? (
             <div className="text-[13px] text-faint">加载中…</div>
           ) : isMd ? (
-            <Markdown>{content}</Markdown>
+            <Markdown resolveImage={resolveWorkspaceImage(name)}>{content}</Markdown>
           ) : (
             <pre className="whitespace-pre-wrap break-words font-mono text-[12.5px] text-ink">{content}</pre>
           )}
