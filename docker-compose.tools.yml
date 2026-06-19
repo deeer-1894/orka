@@ -34,3 +34,36 @@ services:
     # Cap resources so a runaway command can't exhaust the host.
     mem_limit: 2g
     pids_limit: 256
+
+  # The GUI executor backing the run_agent tool: a headful Chromium driven by
+  # Playwright on a virtual X display, streamed live over noVNC. The control
+  # layer (on the host) reaches it at ws://localhost:8100 (GUI_AGENT_WS_URL);
+  # the live browser view is at http://localhost:6080/vnc.html. Planner runs in
+  # `llm` mode — numbered DOM elements go to a TEXT model (MiMo), so no separate
+  # vision model is needed.
+  gui:
+    build:
+      context: ./gui_agent
+      dockerfile: Dockerfile
+    image: orka-gui
+    container_name: orka-gui
+    ports:
+      - "127.0.0.1:8100:8100" # WebSocket exec API (run_agent)
+      - "127.0.0.1:6080:6080" # noVNC live browser view
+    environment:
+      - GUI_PORT=8100
+      - GUI_PLANNER=llm # text Set-of-Marks: any chat model can click/type
+      - VLM_ENABLE=0
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:?set OPENAI_BASE_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      - MODEL=${MODEL:-mimo-v2.5-pro}
+      # Optional shared secret; when set, the control layer must send the same
+      # GUI_AUTH_TOKEN. Left empty in dev (port is bound to 127.0.0.1 only).
+      - GUI_AUTH_TOKEN=${GUI_AUTH_TOKEN:-}
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    # Chromium needs a roomy /dev/shm or it crashes rendering large pages.
+    shm_size: 1gb
+    mem_limit: 3g
+    pids_limit: 512
