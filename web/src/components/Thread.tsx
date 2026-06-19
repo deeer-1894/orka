@@ -1,9 +1,72 @@
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
 import type { BrowserPayload, ClarifyPayload, Message, ToolPayload, WeatherCardData } from "../types";
 import { api, files as fileApi } from "../api";
 import { Markdown } from "./Markdown";
+import { FilePreview } from "./FilePreview";
 import { WeatherCard, parseWeatherCard } from "./WeatherCard";
+
+// Opening a workspace file is shared down the step tree (Steps → Step, AgentLane)
+// via context so a filename is clickable wherever it appears without prop drilling.
+const OpenFileCtx = createContext<(name: string) => void>(() => {});
+
+// File-producing tools and how to find the file they touched: prefer the explicit
+// out/path arg, else scrape a filename out of the result text (e.g. "… → a.pdf").
+const FILE_TOOLS = new Set([
+  "file_write", "file_read", "doc_export", "doc_read", "chart", "qrcode",
+  "csv_to_json", "csv_to_xlsx", "xlsx_to_csv", "csv_join", "sql_query", "pdf_extract", "slides",
+]);
+// Tools that *create* a workspace file (subset of FILE_TOOLS minus read/list).
+// Only these — plus filenames the assistant explicitly names — seed the session
+// strip, so a `ls`/file_list/file_read dump doesn't pull in the whole workspace.
+const WRITE_TOOLS = new Set([
+  "file_write", "doc_export", "chart", "qrcode",
+  "csv_to_json", "csv_to_xlsx", "xlsx_to_csv", "csv_join", "slides",
+]);
+const FILE_RE = /[\w./-]+\.(?:png|jpe?g|gif|webp|svg|pdf|csv|tsv|xlsx?|docx?|md|markdown|txt|json|pptx|html?|py)\b/gi;
+function outputFile(p: ToolPayload): string | undefined {
+  if (!FILE_TOOLS.has(p.tool || "")) return undefined;
+  const a = (p.args || {}) as Record<string, unknown>;
+  const explicit = (a.out ?? a.path) == null ? "" : String(a.out ?? a.path).trim();
+  if (explicit) return explicit.replace(/^\.?\//, "");
+  const m = stripCard(p.result || "").match(FILE_RE);
+  return m ? m[m.length - 1] : undefined; // the produced file is usually last
+}
+
+// sessionFiles collects the workspace files this conversation produced — the
+// basis for the "本会话文件" strip. It scans tool results AND assistant text for
+// filename tokens, then keeps only those that actually exist in the workspace
+// (`exists` set). The intersection is what ties files to the session: it catches
+// shell/python-produced files (chart.png, report.pdf) that aren't in any tool's
+// args, while dropping filenames merely mentioned in prose but never created.
+function sessionFiles(messages: Message[], exists: Set<string>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const add = (raw: string) => {
+    const name = raw.replace(/^\.?\//, "").split("/").pop() || "";
+    if (name && exists.has(name) && !seen.has(name)) {
+      seen.add(name);
+      out.push(name);
+    }
+  };
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    let text = "";
+    if (m.type === "tool") {
+      const p = m.payload as ToolPayload;
+      if (!WRITE_TOOLS.has(p.tool || "")) continue; // ignore read/list/shell dumps
+      const a = (p.args || {}) as Record<string, unknown>;
+      if (a.out != null) add(String(a.out));
+      if (a.path != null) add(String(a.path));
+      text = stripCard(p.result || "");
+    } else if ((m.type === "chat" || m.type === "stream") && m.role !== "user") {
+      text = m.content || ""; // the assistant naming its deliverables
+    } else continue;
+    const hits = text.match(FILE_RE);
+    if (hits) hits.forEach(add);
+  }
+  return out;
+}
 
 type Block =
   | { kind: "user"; m: Message }
@@ -70,10 +133,22 @@ export function Thread({
   onSchedule: (prompt: string) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
+  const [previewFile, setPreviewFile] = useState<string | null>(null);
+  const [wsFiles, setWsFiles] = useState<Set<string>>(new Set());
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, status]);
+  // Refresh the workspace listing on load and whenever a run settles, so files
+  // the agent just produced are recognized by the session strip.
+  useEffect(() => {
+    if (status === "streaming") return;
+    fileApi
+      .list(".")
+      .then((items) => setWsFiles(new Set(items.filter((i) => !i.dir).map((i) => i.name))))
+      .catch(() => {});
+  }, [status]);
 
+  const files = sessionFiles(messages, wsFiles);
   const blocks = group(messages);
   const thinking =
     status === "streaming" &&
@@ -98,6 +173,7 @@ export function Thread({
   const canAct = status !== "streaming";
 
   return (
+    <OpenFileCtx.Provider value={setPreviewFile}>
     <div className="relative flex-1 overflow-y-auto">
       <ThreadOutline turns={turns} />
       <div className="mx-auto max-w-3xl px-5 py-8">
@@ -140,7 +216,42 @@ export function Thread({
             <span className="text-[12px] text-faint">出错了 — 可重试,或检查工具/沙箱服务是否在运行</span>
           </div>
         )}
+        {files.length > 0 && <SessionFiles files={files} onOpen={setPreviewFile} />}
         <div ref={endRef} className="h-2" />
+      </div>
+      {previewFile && <FilePreview name={previewFile} onClose={() => setPreviewFile(null)} />}
+    </div>
+    </OpenFileCtx.Provider>
+  );
+}
+
+// SessionFiles pins the workspace files this conversation produced, so they're
+// tied to the session instead of lost in the flat global file panel. Click a
+// chip to preview (image / pdf / md / text), reusing the shared FilePreview.
+function SessionFiles({ files, onOpen }: { files: string[]; onOpen: (name: string) => void }) {
+  const icon = (n: string) =>
+    /\.(png|jpe?g|gif|webp|svg)$/i.test(n) ? "🖼️"
+    : /\.pdf$/i.test(n) ? "📕"
+    : /\.(xlsx?|csv|tsv)$/i.test(n) ? "📊"
+    : /\.(docx?|md|markdown|txt|rtf)$/i.test(n) ? "📄"
+    : /\.pptx$/i.test(n) ? "📑"
+    : /\.py$/i.test(n) ? "🐍"
+    : "📎";
+  return (
+    <div className="mb-6 ml-[42px] rounded-xl border border-border bg-surface2/40 p-3">
+      <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-faint">📎 本会话文件 · {files.length}</div>
+      <div className="flex flex-wrap gap-1.5">
+        {files.map((f) => (
+          <button
+            key={f}
+            onClick={() => onOpen(f)}
+            className="flex max-w-full items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-[12.5px] text-ink hover:border-accent/40 hover:text-accent transition"
+            title={"预览 " + f}
+          >
+            <span className="shrink-0">{icon(f)}</span>
+            <span className="truncate">{f}</span>
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -443,39 +554,46 @@ function toolReceipt(p: ToolPayload): { icon: string; label: string; detail: str
   const a = (p.args || {}) as Record<string, unknown>;
   const s = (k: string) => (a[k] == null ? "" : String(a[k]));
   const res = stripCard(p.result || "");
-  switch (p.tool) {
-    case "file_write":
-      return { icon: "📄", label: "写入", detail: res, file: s("path") };
-    case "file_read":
-      return { icon: "📄", label: "读取", detail: trunc(res, 70), file: s("path") };
-    case "file_list":
-      return { icon: "📁", label: `列目录 ${s("path") || "/"}`, detail: trunc(res, 70) };
-    case "web_search":
-      return { icon: "🔎", label: `搜索 “${s("query")}”`, detail: trunc(res, 70) };
-    case "fetch_url":
-      return { icon: "🔗", label: `读取网页`, detail: trunc(s("url") || res, 70) };
-    case "weather":
-      return { icon: "🌤️", label: `天气 ${s("location")}`, detail: "" };
-    case "current_time":
-      return { icon: "🕐", label: "当前时间", detail: trunc(res, 60) };
-    case "calculator":
-      return { icon: "🧮", label: "计算", detail: trunc(res, 60) };
-    case "unit_convert":
-      return { icon: "📐", label: "单位换算", detail: trunc(res, 60) };
-    case "http_request":
-      return { icon: "🌍", label: `HTTP ${s("method") || "GET"}`, detail: trunc(s("url"), 60) };
-    case "apply_skill":
-      return { icon: "✨", label: `采纳技能 ${s("name")}`, detail: "" };
-    case "researcher":
-    case "writer":
-    case "browser":
-      return { icon: "🤝", label: `委派 ${p.tool}`, detail: trunc(s("task") || res, 64) };
-    default:
-      return { icon: "🔧", label: p.tool || "tool", detail: trunc(res, 70) };
+  const file = outputFile(p); // produced/touched workspace file, if any
+  const base: Record<string, { icon: string; label: string; detail: string }> = {
+    file_write: { icon: "📄", label: "写入", detail: res },
+    file_read: { icon: "📄", label: "读取", detail: trunc(res, 70) },
+    file_list: { icon: "📁", label: `列目录 ${s("path") || "/"}`, detail: trunc(res, 70) },
+    web_search: { icon: "🔎", label: `搜索 “${s("query")}”`, detail: trunc(res, 70) },
+    fetch_url: { icon: "🔗", label: "读取网页", detail: trunc(s("url") || res, 70) },
+    weather: { icon: "🌤️", label: `天气 ${s("location")}`, detail: "" },
+    current_time: { icon: "🕐", label: "当前时间", detail: trunc(res, 60) },
+    calculator: { icon: "🧮", label: "计算", detail: trunc(res, 60) },
+    unit_convert: { icon: "📐", label: "单位换算", detail: trunc(res, 60) },
+    http_request: { icon: "🌍", label: `HTTP ${s("method") || "GET"}`, detail: trunc(s("url"), 60) },
+    apply_skill: { icon: "✨", label: `采纳技能 ${s("name")}`, detail: "" },
+    // Office / data / code tools.
+    doc_export: { icon: "📄", label: "导出文档", detail: trunc(res, 60) },
+    doc_read: { icon: "📖", label: "读取文档", detail: trunc(res, 60) },
+    chart: { icon: "📊", label: "生成图表", detail: trunc(res, 60) },
+    qrcode: { icon: "🔳", label: "二维码", detail: trunc(res, 60) },
+    csv_query: { icon: "📊", label: "查询表格", detail: trunc(res, 60) },
+    csv_stats: { icon: "📊", label: "统计表格", detail: trunc(res, 60) },
+    csv_to_json: { icon: "📊", label: "CSV→JSON", detail: trunc(res, 60) },
+    csv_to_xlsx: { icon: "📊", label: "CSV→Excel", detail: trunc(res, 60) },
+    xlsx_to_csv: { icon: "📊", label: "Excel→CSV", detail: trunc(res, 60) },
+    csv_join: { icon: "🔗", label: "连接表格", detail: trunc(res, 60) },
+    sql_query: { icon: "🗃️", label: "SQL 查询", detail: trunc(res, 60) },
+    pdf_extract: { icon: "📖", label: "提取 PDF", detail: trunc(res, 60) },
+    slides: { icon: "📑", label: "生成 PPT", detail: trunc(res, 60) },
+    python: { icon: "🐍", label: "运行 Python", detail: trunc(res, 70) },
+    currency: { icon: "💱", label: "汇率换算", detail: trunc(res, 60) },
+    timezone: { icon: "🕑", label: "时区换算", detail: trunc(res, 60) },
+  };
+  if (p.tool === "researcher" || p.tool === "writer" || p.tool === "browser") {
+    return { icon: "🤝", label: `委派 ${p.tool}`, detail: trunc(s("task") || res, 64), file };
   }
+  const r = base[p.tool || ""] || { icon: "🔧", label: p.tool || "tool", detail: trunc(res, 70) };
+  return { ...r, file };
 }
 
 function Step({ m }: { m: Message }) {
+  const openFile = useContext(OpenFileCtx);
   if (m.type === "tool") {
     const p = (m.payload as ToolPayload) || ({} as ToolPayload);
     const r = toolReceipt(p);
@@ -483,15 +601,16 @@ function Step({ m }: { m: Message }) {
       <div className="text-[13px]">
         <span className="text-ink">{r.icon} {r.label} </span>
         {r.file ? (
-          <a
-            href={fileApi.downloadURL(r.file)}
-            download
-            onClick={(e) => e.stopPropagation()}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              openFile(r.file!);
+            }}
             className="text-accent hover:underline"
-            title="下载文件"
+            title="点击预览文件"
           >
-            {r.file} ↓
-          </a>
+            {r.file} ↗
+          </button>
         ) : null}
         {p.error ? (
           <span className="text-accent"> · {trunc(p.error, 80)}</span>
