@@ -139,10 +139,14 @@ export const api = {
   kill: (id: string) => post("/chat/kill", { conversation_id: id, task_id: id }),
 };
 
+export type FileVersion = { ts: string; when: number; size: number; path: string };
+
 export const files = {
   list: (path: string) =>
     post<{ name: string; dir: boolean; size: number }[]>("/file/list", { path }),
   delete: (path: string) => post("/file/delete", { path }),
+  versions: (path: string) => post<FileVersion[]>("/file/versions", { path }),
+  restore: (path: string, ts: string) => post<{ restored: string }>("/file/restore", { path, ts }),
   downloadURL: (path: string) =>
     `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}`,
   // previewURL serves the same bytes with Content-Disposition: inline so the

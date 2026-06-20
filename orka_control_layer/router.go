@@ -53,6 +53,8 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.GET("/file/download", a.FileDownload)
 	g.POST("/file/list", a.FileList)
 	g.DELETE("/file/delete", a.FileDelete)
+	g.POST("/file/versions", a.FileVersions) // overwrite history of a file
+	g.POST("/file/restore", a.FileRestore)   // roll a file back to a version
 
 	g.GET("/metrics", a.MetricsSnapshot)
 	g.GET("/models", a.ListModels)

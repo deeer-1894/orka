@@ -376,11 +376,17 @@ func fileWrite(base string) mcpserver.ToolHandlerFunc {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		// Back up the prior version before overwriting (recoverable + diffable).
+		backed := backupBeforeWrite(base, identity.From(ctx).Email, rel)
 		content := req.GetString("content", "")
 		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("wrote %d bytes to %s", len(content), rel)), nil
+		msg := fmt.Sprintf("wrote %d bytes to %s", len(content), rel)
+		if backed {
+			msg += " (previous version saved to history)"
+		}
+		return mcp.NewToolResultText(msg), nil
 	}
 }
 
