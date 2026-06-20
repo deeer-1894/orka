@@ -47,9 +47,20 @@ func (a *API) FileUpload(ctx context.Context, c *app.RequestContext) {
 	ok(c, map[string]any{"path": rel, "size": fh.Size})
 }
 
-// FileDownload streams a file by ?path=.
+// FileDownload streams a file by ?path=. An optional ?conv=<id> lets a user who
+// can read a shared conversation fetch files from that conversation's OWNER
+// workspace (read-only); without it, files resolve under the caller's own root.
 func (a *API) FileDownload(ctx context.Context, c *app.RequestContext) {
-	p, err := a.resolve(c, string(c.Query("path")))
+	root := a.userRoot(c)
+	if convID := string(c.Query("conv")); convID != "" {
+		conv, err := a.Store.GetConversation(ctx, convID)
+		if err != nil || !conv.CanRead(authEmail(c)) {
+			fail(c, consts.StatusNotFound, "not found")
+			return
+		}
+		root = pathsafe.UserRoot(a.BaseStorage, conv.OwnerEmail)
+	}
+	p, err := pathsafe.Resolve(root, string(c.Query("path")))
 	if err != nil {
 		fail(c, consts.StatusBadRequest, err.Error())
 		return

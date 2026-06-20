@@ -26,8 +26,22 @@ func (a *API) ChatRun(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	// authenticated identity always wins over any client-supplied email
-	if e := authEmail(c); e != "" {
-		req.UserEmail = e
+	me := authEmail(c)
+	if me != "" {
+		req.UserEmail = me
+	}
+	// Sharing authz: for an existing conversation owned by someone else, only an
+	// editor may send (viewers are read-only), and the run executes in the
+	// OWNER's context (files/memory/workspace) so the shared thread stays
+	// coherent. A brand-new conversation has no record yet → the sender owns it.
+	if req.ConversationID != "" {
+		if conv, err := a.Store.GetConversation(ctx, req.ConversationID); err == nil && conv.OwnerEmail != "" && conv.OwnerEmail != me {
+			if !conv.CanWrite(me) {
+				fail(c, consts.StatusForbidden, "只读访问:你没有此会话的编辑权限")
+				return
+			}
+			req.UserEmail = conv.OwnerEmail
+		}
 	}
 
 	runID := firstNonEmptyStr(req.ConversationID, req.TaskID)

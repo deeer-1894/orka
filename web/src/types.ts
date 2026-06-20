@@ -76,11 +76,18 @@ export interface BrowserPayload {
   tokens?: number;
 }
 
+export interface ConversationShare {
+  email: string;
+  role: "viewer" | "editor";
+}
+
 export interface Conversation {
   conversation_id: string;
   title: string;
   task_ids: string[];
   created_at: number;
+  owner_email?: string;
+  shares?: ConversationShare[];
 }
 
 export interface TaskMeta {

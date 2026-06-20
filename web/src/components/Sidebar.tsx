@@ -4,6 +4,7 @@ import type { Conversation } from "../types";
 export function Sidebar({
   open,
   conversations,
+  shared,
   activeID,
   runningIds,
   scheduledIds,
@@ -13,12 +14,14 @@ export function Sidebar({
   onRename,
   onDelete,
   onPrune,
+  onShare,
   name,
   email,
   onSignOut,
 }: {
   open: boolean;
   conversations: Conversation[];
+  shared: Conversation[];
   activeID: string;
   runningIds: string[];
   scheduledIds: Set<string>;
@@ -28,6 +31,7 @@ export function Sidebar({
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
   onPrune: () => void;
+  onShare: (id: string) => void;
   name: string;
   email: string;
   onSignOut: () => void;
@@ -119,6 +123,18 @@ export function Sidebar({
                   <span className="shrink-0 text-[12px]" title="由定时任务驱动">🔁</span>
                 )}
                 <span className="flex-1 truncate text-[14px]" title={c.title}>{c.title}</span>
+                {(c.shares?.length ?? 0) > 0 && <span className="shrink-0 text-[11px]" title={`已分享给 ${c.shares!.length} 人`}>🔗</span>}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onShare(c.conversation_id);
+                  }}
+                  className="opacity-0 group-hover:opacity-100 px-1 text-faint hover:text-accent"
+                  title="分享"
+                  aria-label="分享会话"
+                >
+                  ⤴
+                </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -145,6 +161,34 @@ export function Sidebar({
               </div>
             );
           })}
+
+          {shared.length > 0 && (
+            <>
+              <div className="mt-4 mb-1 px-3 text-[11px] uppercase tracking-wider text-faint">分享给我的</div>
+              {shared.map((c) => {
+                const active = c.conversation_id === activeID;
+                const role = c.shares?.find((s) => s.email === email)?.role;
+                return (
+                  <div
+                    key={c.conversation_id}
+                    onClick={() => {
+                      onSelect(c.conversation_id);
+                      onSelectClose?.();
+                    }}
+                    className={
+                      "group flex items-center gap-1 rounded-lg px-3 py-2 cursor-pointer transition " +
+                      (active ? "bg-accentsoft text-ink" : "text-muted hover:bg-surface")
+                    }
+                    title={`由 ${c.owner_email} 分享`}
+                  >
+                    <span className="shrink-0 text-[11px]">{role === "editor" ? "✏️" : "👁"}</span>
+                    <span className="flex-1 truncate text-[14px]" title={c.title}>{c.title}</span>
+                    <span className="shrink-0 truncate text-[10.5px] text-faint">{c.owner_email?.split("@")[0]}</span>
+                  </div>
+                );
+              })}
+            </>
+          )}
         </div>
 
         <div className="flex items-center gap-2.5 border-t border-border px-3 py-3">

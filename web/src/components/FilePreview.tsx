@@ -20,12 +20,12 @@ function fmtWhen(ms: number): string {
 // relative to the directory of the .md file being previewed. Absolute/data/blob
 // URLs are left untouched. Without this, ![](chart.png) loads from the page
 // origin (localhost:5173/chart.png) and 404s.
-export function resolveWorkspaceImage(mdPath: string) {
+export function resolveWorkspaceImage(mdPath: string, conv?: string) {
   const dir = mdPath.includes("/") ? mdPath.slice(0, mdPath.lastIndexOf("/") + 1) : "";
   return (src: string) => {
     if (/^([a-z]+:|\/\/|#)/i.test(src)) return src; // http(s):, data:, blob:, protocol-relative
     const rel = (dir + src.replace(/^\.\//, "")).replace(/^\//, "");
-    return fileApi.previewURL(rel);
+    return fileApi.previewURL(rel, conv);
   };
 }
 
@@ -34,7 +34,7 @@ export function resolveWorkspaceImage(mdPath: string) {
 // any other binary (docx, xlsx, zip…) as a download card — never dumped as raw
 // bytes, which is what produced the "乱码" for PDFs. Shared by the Files panel
 // and the chat thread so a filename is clickable anywhere it appears.
-export function FilePreview({ name, onClose }: { name: string; onClose: () => void }) {
+export function FilePreview({ name, onClose, conv }: { name: string; onClose: () => void; conv?: string }) {
   const [content, setContent] = useState<string | null>(null);
   const [err, setErr] = useState("");
   const [showHistory, setShowHistory] = useState(false);
@@ -45,7 +45,10 @@ export function FilePreview({ name, onClose }: { name: string; onClose: () => vo
   // Allowlist of extensions safe to show as text; anything else binary.
   const isText =
     isMd || /\.(txt|csv|tsv|json|ya?ml|xml|html?|css|js|ts|tsx|jsx|py|go|rs|java|c|cpp|h|sh|sql|toml|ini|conf|log|rtf)$/i.test(name);
-  const url = fileApi.downloadURL(name);
+  const url = fileApi.downloadURL(name, conv);
+  // Version history reads the caller's own workspace — not meaningful for a file
+  // viewed from someone else's shared conversation.
+  const canHistory = !conv;
 
   useEffect(() => {
     if (!isText) return;
@@ -70,13 +73,15 @@ export function FilePreview({ name, onClose }: { name: string; onClose: () => vo
         <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
           <span className="text-faint">📄</span>
           <span className="flex-1 truncate text-[14px] text-ink">{name}</span>
-          <button
-            onClick={() => setShowHistory((v) => !v)}
-            className={"text-[12px] hover:underline " + (showHistory ? "text-accent font-medium" : "text-muted")}
-            title="版本历史"
-          >
-            🕘 历史{hasHistory ? ` · ${versions!.length}` : ""}
-          </button>
+          {canHistory && (
+            <button
+              onClick={() => setShowHistory((v) => !v)}
+              className={"text-[12px] hover:underline " + (showHistory ? "text-accent font-medium" : "text-muted")}
+              title="版本历史"
+            >
+              🕘 历史{hasHistory ? ` · ${versions!.length}` : ""}
+            </button>
+          )}
           <a href={url} className="text-[12px] text-accent hover:underline">下载</a>
           <button onClick={onClose} className="ml-1 text-faint hover:text-ink">✕</button>
         </div>
@@ -87,7 +92,7 @@ export function FilePreview({ name, onClose }: { name: string; onClose: () => vo
           {isImage ? (
             <img src={url} alt={name} className="mx-auto max-w-full rounded" />
           ) : isPdf ? (
-            <iframe src={fileApi.previewURL(name)} title={name} className="h-[70vh] w-full border-0 bg-white" />
+            <iframe src={fileApi.previewURL(name, conv)} title={name} className="h-[70vh] w-full border-0 bg-white" />
           ) : !isText ? (
             <div className="px-4 py-10 text-center">
               <div className="text-[34px]">📄</div>
@@ -101,7 +106,7 @@ export function FilePreview({ name, onClose }: { name: string; onClose: () => vo
           ) : content === null ? (
             <div className="text-[13px] text-faint">加载中…</div>
           ) : isMd ? (
-            <Markdown resolveImage={resolveWorkspaceImage(name)}>{content}</Markdown>
+            <Markdown resolveImage={resolveWorkspaceImage(name, conv)}>{content}</Markdown>
           ) : (
             <pre className="whitespace-pre-wrap break-words font-mono text-[12.5px] text-ink">{content}</pre>
           )}

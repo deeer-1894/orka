@@ -6,6 +6,7 @@ import { Sidebar } from "./components/Sidebar";
 import { Thread } from "./components/Thread";
 import { Composer } from "./components/Composer";
 import { ArtifactDrawer } from "./components/ArtifactDrawer";
+import { ShareDialog } from "./components/ShareDialog";
 import { Toaster, toast } from "./lib/toast";
 import { useTheme } from "./lib/theme";
 import { loadTools, saveTools } from "./lib/toolGroups";
@@ -64,6 +65,8 @@ function Workbench({
   onSignOut: () => void;
 }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [shared, setShared] = useState<Conversation[]>([]); // conversations others shared with me
+  const [shareFor, setShareFor] = useState<Conversation | null>(null); // open share dialog
   const [activeID, setActiveID] = useState("");
 
   // Sidebar starts open on desktop, closed on narrow screens (where it overlays).
@@ -129,6 +132,7 @@ function Workbench({
 
   const refreshConversations = useCallback(() => {
     api.listConversations().then((c) => setConversations(c || [])).catch(() => {});
+    api.sharedWithMe().then((c) => setShared(c || [])).catch(() => {});
   }, []);
 
   // load conversation list + tasks on mount (persists across refresh)
@@ -136,6 +140,12 @@ function Workbench({
     refreshConversations();
     refreshTasks();
   }, [refreshConversations, refreshTasks]);
+
+  // The active conversation may be one I own or one shared with me; resolve it
+  // and my role so the composer can go read-only for viewers.
+  const activeConv = conversations.find((c) => c.conversation_id === activeID) || shared.find((c) => c.conversation_id === activeID);
+  const isShared = !!activeConv?.owner_email && activeConv.owner_email !== user.email;
+  const readOnly = isShared && !(activeConv?.shares ?? []).some((s) => s.email === user.email && s.role === "editor");
 
   // live token-usage chip in the header
   useEffect(() => {
@@ -274,6 +284,7 @@ function Workbench({
         open={sidebarOpen}
         onSelectClose={() => window.innerWidth < 768 && setSidebarOpen(false)}
         conversations={conversations}
+        shared={shared}
         activeID={activeID}
         runningIds={runningIds}
         scheduledIds={scheduledIds}
@@ -282,6 +293,7 @@ function Workbench({
         onRename={onRename}
         onDelete={onDelete}
         onPrune={onPrune}
+        onShare={(id) => setShareFor(conversations.find((c) => c.conversation_id === id) || null)}
         name={user.name}
         email={user.email}
         onSignOut={onSignOut}
@@ -328,8 +340,16 @@ function Workbench({
           </button>
         </header>
 
-        <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} />
-        <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
+        <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} fileConv={isShared ? activeID : undefined} />
+        {readOnly ? (
+          <div className="mx-auto mb-4 w-full max-w-3xl px-5">
+            <div className="rounded-xl border border-border bg-surface2/50 px-4 py-3 text-center text-[13px] text-muted">
+              👁 只读会话 · 由 {activeConv?.owner_email} 分享 · 你无法发送消息
+            </div>
+          </div>
+        ) : (
+          <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
+        )}
       </main>
 
       <ArtifactDrawer
@@ -353,6 +373,17 @@ function Workbench({
             setScheduleFor(null);
             refreshTasks();
             toast("已设为定时任务", "success");
+          }}
+        />
+      )}
+
+      {shareFor && (
+        <ShareDialog
+          conv={shareFor}
+          onClose={() => setShareFor(null)}
+          onChanged={(shares) => {
+            setConversations((cs) => cs.map((c) => (c.conversation_id === shareFor.conversation_id ? { ...c, shares } : c)));
+            setShareFor((f) => (f ? { ...f, shares } : f));
           }}
         />
       )}

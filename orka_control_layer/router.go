@@ -33,6 +33,8 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/conversation/rename", a.RenameConversation)
 	g.POST("/conversation/delete", a.DeleteConversation)
 	g.POST("/conversation/prune-empty", a.PruneConversations)
+	g.POST("/conversation/share", a.ShareConversation)       // owner grants/revokes access
+	g.POST("/conversation/shared-with-me", a.SharedWithMe)   // conversations others shared with me
 
 	g.POST("/task/create", a.CreateTask)
 	g.POST("/task/get-tasks", a.GetTasks)

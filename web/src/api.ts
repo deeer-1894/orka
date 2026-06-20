@@ -123,6 +123,9 @@ export const api = {
   deleteConversation: (conversation_id: string) =>
     post("/conversation/delete", { conversation_id }),
   pruneConversations: () => post<{ removed: number }>("/conversation/prune-empty", {}),
+  shareConversation: (conversation_id: string, email: string, role: "viewer" | "editor" | "none") =>
+    post<{ shares: { email: string; role: string }[] }>("/conversation/share", { conversation_id, email, role }),
+  sharedWithMe: () => post<Conversation[]>("/conversation/shared-with-me", {}),
   getMessages: (conversation_id: string) =>
     post<Message[]>("/conversation/get-messages", { conversation_id, size: 200 }),
   getTasks: (filter: { conversation_id?: string } = {}) =>
@@ -171,12 +174,13 @@ export const files = {
   delete: (path: string) => post("/file/delete", { path }),
   versions: (path: string) => post<FileVersion[]>("/file/versions", { path }),
   restore: (path: string, ts: string) => post<{ restored: string }>("/file/restore", { path, ts }),
-  downloadURL: (path: string) =>
-    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}`,
+  // conv (optional) reads the file from a shared conversation's OWNER workspace.
+  downloadURL: (path: string, conv?: string) =>
+    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}${conv ? "&conv=" + encodeURIComponent(conv) : ""}`,
   // previewURL serves the same bytes with Content-Disposition: inline so the
   // browser renders them in-page (PDF in an <iframe>) instead of downloading.
-  previewURL: (path: string) =>
-    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}&inline=1`,
+  previewURL: (path: string, conv?: string) =>
+    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}&inline=1${conv ? "&conv=" + encodeURIComponent(conv) : ""}`,
   upload: async (file: File, dir: string, onProgress?: (pct: number) => void) => {
     const CHUNK = 256 * 1024;
     const total = Math.max(1, Math.ceil(file.size / CHUNK));

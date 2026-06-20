@@ -25,6 +25,55 @@ type ConversationTable struct {
 	Title          string   `bson:"title" json:"title"`
 	TaskIds        []string `bson:"task_ids" json:"task_ids"`
 	CreatedAt      int64    `bson:"created_at" json:"created_at"`
+	// Shares grants other users access to this conversation (read-only by
+	// default). Empty = private to the owner. The owner stays the single source
+	// of identity for file/workspace effects, even when an editor sends.
+	Shares []ConversationShare `bson:"shares,omitempty" json:"shares,omitempty"`
+}
+
+// ConversationShare grants one user access to a conversation.
+type ConversationShare struct {
+	Email string `bson:"email" json:"email"`
+	Role  string `bson:"role" json:"role"` // viewer (read-only) | editor (may also send)
+}
+
+// Conversation roles.
+const (
+	RoleViewer = "viewer"
+	RoleEditor = "editor"
+)
+
+// CanRead reports whether email may view this conversation.
+func (c *ConversationTable) CanRead(email string) bool {
+	if email == "" {
+		return false
+	}
+	if c.OwnerEmail == "" || c.OwnerEmail == email {
+		return true
+	}
+	for _, s := range c.Shares {
+		if s.Email == email {
+			return true
+		}
+	}
+	return false
+}
+
+// CanWrite reports whether email may send messages in this conversation (owner
+// or an explicit editor). Viewers are read-only.
+func (c *ConversationTable) CanWrite(email string) bool {
+	if email == "" {
+		return false
+	}
+	if c.OwnerEmail == "" || c.OwnerEmail == email {
+		return true
+	}
+	for _, s := range c.Shares {
+		if s.Email == email && s.Role == RoleEditor {
+			return true
+		}
+	}
+	return false
 }
 
 // MessagesTable is the event-message model (not a plain chat transcript).

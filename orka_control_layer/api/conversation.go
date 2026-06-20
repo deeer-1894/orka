@@ -68,7 +68,7 @@ func (a *API) GetConversation(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusInternalServerError, "get failed")
 		return
 	}
-	if conv.OwnerEmail != "" && conv.OwnerEmail != authEmail(c) {
+	if !conv.CanRead(authEmail(c)) {
 		fail(c, consts.StatusNotFound, "not found") // don't leak existence
 		return
 	}
@@ -152,9 +152,8 @@ func (a *API) GetMessages(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "conversation_id required")
 		return
 	}
-	// ownership check: only the conversation's owner may read its messages
-	if conv, err := a.Store.GetConversation(ctx, req.ConversationID); err == nil &&
-		conv.OwnerEmail != "" && conv.OwnerEmail != authEmail(c) {
+	// access check: owner or a shared user (viewer/editor) may read messages
+	if conv, err := a.Store.GetConversation(ctx, req.ConversationID); err == nil && !conv.CanRead(authEmail(c)) {
 		fail(c, consts.StatusNotFound, "not found")
 		return
 	}
@@ -165,4 +164,63 @@ func (a *API) GetMessages(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	ok(c, msgs)
+}
+
+type shareReq struct {
+	ConversationID string `json:"conversation_id"`
+	Email          string `json:"email"`
+	Role           string `json:"role"` // viewer | editor | none (none removes)
+}
+
+// ShareConversation adds, updates, or removes a user's access (owner only).
+func (a *API) ShareConversation(ctx context.Context, c *app.RequestContext) {
+	var req shareReq
+	if err := bind(c, &req); err != nil || req.ConversationID == "" || req.Email == "" {
+		fail(c, consts.StatusBadRequest, "conversation_id and email required")
+		return
+	}
+	me := authEmail(c)
+	conv, err := a.Store.GetConversation(ctx, req.ConversationID)
+	if err != nil || conv.OwnerEmail != me { // only the owner manages sharing
+		fail(c, consts.StatusNotFound, "not found")
+		return
+	}
+	if req.Email == conv.OwnerEmail {
+		fail(c, consts.StatusBadRequest, "owner already has full access")
+		return
+	}
+	// Rebuild the share list: drop any existing entry for this email, then add
+	// the new role unless it's "none" (removal).
+	next := make([]db.ConversationShare, 0, len(conv.Shares)+1)
+	for _, s := range conv.Shares {
+		if s.Email != req.Email {
+			next = append(next, s)
+		}
+	}
+	switch req.Role {
+	case db.RoleViewer, db.RoleEditor:
+		next = append(next, db.ConversationShare{Email: req.Email, Role: req.Role})
+	case "", "none", "remove":
+		// removal — leave it out
+	default:
+		fail(c, consts.StatusBadRequest, "role must be viewer, editor, or none")
+		return
+	}
+	if err := a.Store.UpdateConversationShares(ctx, req.ConversationID, next); err != nil {
+		a.Log.Error("share conversation", "err", err)
+		fail(c, consts.StatusInternalServerError, "share failed")
+		return
+	}
+	ok(c, map[string]any{"conversation_id": req.ConversationID, "shares": next})
+}
+
+// SharedWithMe lists conversations other users have shared with the caller.
+func (a *API) SharedWithMe(ctx context.Context, c *app.RequestContext) {
+	convs, err := a.Store.ListSharedWith(ctx, authEmail(c), 0, 100)
+	if err != nil {
+		a.Log.Error("shared with me", "err", err)
+		fail(c, consts.StatusInternalServerError, "list failed")
+		return
+	}
+	ok(c, convs)
 }

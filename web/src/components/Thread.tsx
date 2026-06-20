@@ -123,6 +123,7 @@ export function Thread({
   onPick,
   onRetry,
   onSchedule,
+  fileConv,
 }: {
   messages: Message[];
   status: RunStatus;
@@ -131,6 +132,7 @@ export function Thread({
   onPick: (text: string) => void;
   onRetry: () => void;
   onSchedule: (prompt: string) => void;
+  fileConv?: string; // when viewing a shared conversation, read files from its owner via this id
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   const [previewFile, setPreviewFile] = useState<string | null>(null);
@@ -219,7 +221,7 @@ export function Thread({
         {files.length > 0 && <SessionFiles files={files} onOpen={setPreviewFile} />}
         <div ref={endRef} className="h-2" />
       </div>
-      {previewFile && <FilePreview name={previewFile} onClose={() => setPreviewFile(null)} />}
+      {previewFile && <FilePreview name={previewFile} conv={fileConv} onClose={() => setPreviewFile(null)} />}
     </div>
     </OpenFileCtx.Provider>
   );

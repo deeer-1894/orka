@@ -194,6 +194,32 @@ func (s *Storage) ListConversations(ctx context.Context, page, size int64) ([]Co
 	return out, nil
 }
 
+// UpdateConversationShares replaces a conversation's share list.
+func (s *Storage) UpdateConversationShares(ctx context.Context, id string, shares []ConversationShare) error {
+	if shares == nil {
+		shares = []ConversationShare{}
+	}
+	_, err := s.Conversations.UpdateOne(ctx,
+		bson.M{"conversation_id": id},
+		bson.M{"$set": bson.M{"shares": shares}},
+	)
+	if err != nil {
+		return fmt.Errorf("update conversation shares: %w", err)
+	}
+	return nil
+}
+
+// ListSharedWith returns conversations shared with email (not owned by them),
+// newest first.
+func (s *Storage) ListSharedWith(ctx context.Context, email string, page, size int64) ([]ConversationTable, error) {
+	var out []ConversationTable
+	filter := bson.M{"shares.email": email, "owner_email": bson.M{"$ne": email}}
+	if err := paginate(ctx, s.Conversations, filter, page, size, &out); err != nil {
+		return nil, fmt.Errorf("list shared conversations: %w", err)
+	}
+	return out, nil
+}
+
 func (s *Storage) UpdateConversationTitle(ctx context.Context, id, title string) error {
 	_, err := s.Conversations.UpdateOne(ctx,
 		bson.M{"conversation_id": id},
