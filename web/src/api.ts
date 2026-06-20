@@ -65,6 +65,30 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return (j.data ?? j) as T;
 }
 
+async function get<T>(path: string): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(BASE + path, { headers: headers() });
+  } catch {
+    toastError("网络连接失败，请检查后端服务");
+    throw new Error("network");
+  }
+  if (res.status === 401) {
+    auth.clear();
+    unauthorizedHandler?.();
+    throw new Error("unauthorized");
+  }
+  const j = await res.json().catch(() => ({}));
+  return (j.data ?? j) as T;
+}
+
+export type ToolInfo = { name: string; description: string; group: string; danger: boolean };
+
+export const tools = {
+  // Available tools (with descriptions + groups) — drives the tool picker.
+  catalog: () => get<ToolInfo[]>("/tools/catalog"),
+};
+
 export interface Session {
   token: string;
   email: string;

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -242,6 +243,49 @@ func toolGroup(t agent.BaseTool) string {
 		}
 	}
 	return groupForName(t.Name())
+}
+
+// ToolInfo describes one available tool for the UI's tool picker, so the
+// frontend can show real descriptions + grouping instead of bare tool ids.
+type ToolInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Group       string `json:"group"`
+	Danger      bool   `json:"danger"` // runs code or makes network egress — flag it
+}
+
+// dangerTools run arbitrary code or reach the network; the UI marks them so a
+// user enabling them does so deliberately.
+var dangerTools = map[string]bool{"shell": true, "python": true, "run_agent": true, "http_request": true}
+
+// ToolCatalog returns the tools actually available to a user (gateway + their
+// connectors), with descriptions and groups — the single source of truth for
+// the tool picker, replacing the frontend's hardcoded list. Derived from the
+// live tool set so it never drifts from what the agent can really call.
+func (s *ChatService) ToolCatalog(ctx context.Context, email string) []ToolInfo {
+	if s.ToolsFor == nil {
+		return nil
+	}
+	tools, cleanup, _ := s.ToolsFor(ctx, ChatRunRequest{UserEmail: email})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	out := make([]ToolInfo, 0, len(tools))
+	for _, t := range tools {
+		out = append(out, ToolInfo{
+			Name:        t.Name(),
+			Description: t.Description(),
+			Group:       toolGroup(t),
+			Danger:      dangerTools[t.Name()],
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Group != out[j].Group {
+			return out[i].Group < out[j].Group
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
 }
 
 func groupForName(name string) string {

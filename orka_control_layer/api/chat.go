@@ -163,3 +163,10 @@ func (a *API) ListModels(_ context.Context, c *app.RequestContext) {
 	}
 	ok(c, out)
 }
+
+// ToolsCatalog lists the tools available to the caller (with descriptions +
+// groups), so the tool picker reflects what the agent can really call instead
+// of a hardcoded frontend list.
+func (a *API) ToolsCatalog(ctx context.Context, c *app.RequestContext) {
+	ok(c, a.Chat.ToolCatalog(ctx, authEmail(c)))
+}

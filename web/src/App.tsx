@@ -175,21 +175,16 @@ function Workbench({
     setToolGroups(loadTools(activeID));
   }, [activeID]);
 
-  const toggleGroup = useCallback(
-    (id: string) => {
-      setToolGroups((prev) => {
-        const next = new Set(prev);
-        next.has(id) ? next.delete(id) : next.add(id);
-        saveTools(activeID, next);
-        return next;
-      });
+  // Persist a new tool selection (group ids and/or individual tool names) for
+  // the active conversation. Replaces the old per-group toggle so the picker can
+  // express "this group minus one tool".
+  const setTools = useCallback(
+    (next: Set<string>) => {
+      setToolGroups(next);
+      saveTools(activeID, next);
     },
     [activeID],
   );
-  const clearGroups = useCallback(() => {
-    setToolGroups(new Set());
-    saveTools(activeID, new Set());
-  }, [activeID]);
 
   const ensureConversation = useCallback(async (): Promise<string> => {
     if (activeID) return activeID;
@@ -334,7 +329,7 @@ function Workbench({
         </header>
 
         <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} />
-        <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} enabledGroups={toolGroups} onToggleGroup={toggleGroup} onClearGroups={clearGroups} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
+        <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
       </main>
 
       <ArtifactDrawer
