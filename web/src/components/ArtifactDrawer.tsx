@@ -605,22 +605,37 @@ function fmtWhen(ms?: number): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-// WorkflowsPanel: define + run multi-step pipelines. Each non-empty line of the
-// editor is one step (a prompt); running it executes the steps as sequential
-// turns in one conversation (chaining via conversation memory).
+// WorkflowsPanel: define + run multi-step pipelines as a DAG. Each step has a
+// prompt plus optional dependencies (the DAG edges — independent steps run in
+// parallel), a run-if guard, and an on-error policy. Steps can reference a
+// prior step's output with {{step_name}}.
+type DraftStep = { name: string; prompt: string; depends_on: string[]; run_if: string; on_error: string };
+const emptyStep = (i: number): DraftStep => ({ name: `step${i + 1}`, prompt: "", depends_on: [], run_if: "", on_error: "stop" });
+
 function WorkflowsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: string) => void }) {
   const [flows, setFlows] = useState<Workflow[]>([]);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
-  const [stepsText, setStepsText] = useState("");
+  const [steps, setSteps] = useState<DraftStep[]>([emptyStep(0)]);
   const refresh = () => api.listWorkflows().then((r) => setFlows(r.workflows || [])).catch(() => {});
   useEffect(() => { refresh(); }, []);
 
+  const setStep = (i: number, patch: Partial<DraftStep>) => setSteps((ss) => ss.map((s, j) => (j === i ? { ...s, ...patch } : s)));
+  const reset = () => { setName(""); setSteps([emptyStep(0)]); setAdding(false); };
+
   const save = async () => {
-    const steps = stepsText.split("\n").map((l) => l.trim()).filter(Boolean).map((p, i) => ({ name: `步骤 ${i + 1}`, prompt: p }));
-    if (!name.trim() || steps.length === 0) return;
-    await api.createWorkflow(name.trim(), steps).catch(() => {});
-    setName(""); setStepsText(""); setAdding(false); refresh();
+    const clean = steps
+      .filter((s) => s.prompt.trim())
+      .map((s) => ({
+        name: s.name.trim() || "step",
+        prompt: s.prompt.trim(),
+        depends_on: s.depends_on.filter(Boolean),
+        run_if: s.run_if.trim() || undefined,
+        on_error: s.on_error !== "stop" ? s.on_error : undefined,
+      }));
+    if (!name.trim() || clean.length === 0) return;
+    await api.createWorkflow(name.trim(), clean).catch(() => {});
+    reset(); refresh();
   };
   const run = async (id: string) => {
     const r = await api.runWorkflow(id).catch(() => null);
@@ -631,18 +646,55 @@ function WorkflowsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: 
     <div className="p-3">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-[12px] text-faint">工作流 · {flows.length}</span>
-        <button onClick={() => setAdding((o) => !o)} className="rounded-lg border border-border px-2.5 py-1 text-[12px] text-muted hover:border-accent/40">
+        <button onClick={() => (adding ? reset() : setAdding(true))} className="rounded-lg border border-border px-2.5 py-1 text-[12px] text-muted hover:border-accent/40">
           {adding ? "取消" : "+ 新建流程"}
         </button>
       </div>
       {adding && (
         <div className="mb-3 space-y-2 rounded-xl border border-border bg-surface2/40 p-3">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="流程名称，如 每日竞品简报" className="w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[13px] outline-none focus:border-accent/50" />
-          <textarea value={stepsText} onChange={(e) => setStepsText(e.target.value)} rows={4} placeholder="每行一个步骤（prompt），按顺序执行，后一步可引用前一步结果。例如：&#10;调研三家竞品最新定价&#10;把结果整理成表格&#10;写一段对比结论并存为 compare.md" className="w-full resize-none rounded-lg border border-border bg-surface px-2.5 py-2 text-[13px] outline-none focus:border-accent/50" />
-          <button onClick={save} disabled={!name.trim() || !stepsText.trim()} className="w-full rounded-lg bg-accent px-3 py-1.5 text-[13px] text-white disabled:opacity-40">保存流程</button>
+          {steps.map((s, i) => {
+            const priors = steps.slice(0, i).map((p) => p.name).filter(Boolean);
+            return (
+              <div key={i} className="space-y-1.5 rounded-lg border border-border/70 bg-surface p-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-faint">#{i + 1}</span>
+                  <input value={s.name} onChange={(e) => setStep(i, { name: e.target.value.replace(/\s+/g, "_") })} placeholder="步骤名" className="w-24 rounded border border-border bg-surface2 px-1.5 py-0.5 text-[12px] outline-none" />
+                  {steps.length > 1 && <button onClick={() => setSteps((ss) => ss.filter((_, j) => j !== i))} className="ml-auto text-[12px] text-faint hover:text-accent">✕</button>}
+                </div>
+                <textarea value={s.prompt} onChange={(e) => setStep(i, { prompt: e.target.value })} rows={2} placeholder={'该步要做什么(可用 {{前一步名}} 引用其输出)'} className="w-full resize-none rounded border border-border bg-surface2 px-2 py-1 text-[12.5px] outline-none focus:border-accent/50" />
+                {priors.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1 text-[11px]">
+                    <span className="text-faint">依赖:</span>
+                    {priors.map((p) => {
+                      const on = s.depends_on.includes(p);
+                      return (
+                        <button key={p} onClick={() => setStep(i, { depends_on: on ? s.depends_on.filter((d) => d !== p) : [...s.depends_on, p] })}
+                          className={"rounded-full border px-1.5 py-0.5 " + (on ? "border-accent/40 bg-accentsoft text-accent" : "border-border text-faint")}>
+                          {p}
+                        </button>
+                      );
+                    })}
+                    <span className="text-faint/60">空=接在上一步后</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-1.5">
+                  <input value={s.run_if} onChange={(e) => setStep(i, { run_if: e.target.value })} placeholder="条件(可选)，如 step1 contains FOUND" className="min-w-0 flex-1 rounded border border-border bg-surface2 px-1.5 py-0.5 text-[11.5px] outline-none" />
+                  <select value={s.on_error} onChange={(e) => setStep(i, { on_error: e.target.value })} className="rounded border border-border bg-surface2 px-1 py-0.5 text-[11.5px] text-muted outline-none" title="出错时">
+                    <option value="stop">出错停止</option>
+                    <option value="continue">出错继续</option>
+                    <option value="retry:2">重试 2 次</option>
+                    <option value="retry:3">重试 3 次</option>
+                  </select>
+                </div>
+              </div>
+            );
+          })}
+          <button onClick={() => setSteps((ss) => [...ss, emptyStep(ss.length)])} className="w-full rounded-lg border border-dashed border-border py-1 text-[12px] text-faint hover:border-accent/40 hover:text-accent">+ 添加步骤</button>
+          <button onClick={save} disabled={!name.trim() || !steps.some((s) => s.prompt.trim())} className="w-full rounded-lg bg-accent px-3 py-1.5 text-[13px] text-white disabled:opacity-40">保存流程</button>
         </div>
       )}
-      {flows.length === 0 && !adding && <Blank>暂无工作流。把一件多步骤的事拆成几步,Orka 按序执行。</Blank>}
+      {flows.length === 0 && !adding && <Blank>暂无工作流。把一件多步骤的事拆成几步,可设依赖/条件/重试,Orka 按 DAG 执行。</Blank>}
       <div className="space-y-1.5">
         {flows.map((wf) => (
           <div key={wf.workflow_id} className="rounded-xl border border-border bg-surface2/40 px-3 py-2.5">
@@ -652,7 +704,14 @@ function WorkflowsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: 
               <span className="text-[11px] text-faint">{wf.steps.length} 步</span>
             </div>
             <ol className="mt-1 ml-5 list-decimal text-[11px] text-muted">
-              {wf.steps.slice(0, 4).map((s, i) => <li key={i} className="truncate">{s.prompt}</li>)}
+              {wf.steps.slice(0, 5).map((s, i) => (
+                <li key={i} className="truncate">
+                  <span className="text-ink/80">{s.name}</span>
+                  {(s.depends_on?.length ?? 0) > 0 && <span className="text-faint"> ←{s.depends_on!.join(",")}</span>}
+                  {s.run_if && <span className="text-accent"> ?{s.run_if}</span>}
+                  <span className="text-faint"> · {s.prompt}</span>
+                </li>
+              ))}
             </ol>
             <div className="mt-1.5 flex items-center gap-3 text-[11px]">
               <button onClick={() => run(wf.workflow_id)} className="text-accent hover:underline">▶ 运行</button>

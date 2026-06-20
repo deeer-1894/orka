@@ -101,10 +101,20 @@ type Workflow struct {
 	CreatedAt  int64          `bson:"created_at" json:"created_at"`
 }
 
-// WorkflowStep is one stage of a workflow (v1: an agent prompt).
+// WorkflowStep is one node of a workflow DAG. Beyond a prompt it carries the
+// flow-control that lifts workflows past a linear pipeline:
+//   - DependsOn: names of steps that must finish first (the DAG edges). Empty =
+//     an entry node. Independent steps in the same "layer" may run in parallel.
+//   - RunIf: a guard like `research contains FOUND` evaluated against prior step
+//     outputs; if false the step is skipped (its dependents still run).
+//   - OnError: stop | continue | retry:N — what to do when this step fails.
+// Prompts and RunIf may reference a prior step's output with {{step_name}}.
 type WorkflowStep struct {
-	Name   string `bson:"name" json:"name"`
-	Prompt string `bson:"prompt" json:"prompt"`
+	Name      string   `bson:"name" json:"name"`
+	Prompt    string   `bson:"prompt" json:"prompt"`
+	DependsOn []string `bson:"depends_on,omitempty" json:"depends_on,omitempty"`
+	RunIf     string   `bson:"run_if,omitempty" json:"run_if,omitempty"`
+	OnError   string   `bson:"on_error,omitempty" json:"on_error,omitempty"` // stop (default) | continue | retry:N
 }
 
 // Notification surfaces something the user should know about an unattended run

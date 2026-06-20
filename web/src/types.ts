@@ -125,7 +125,13 @@ export interface RunRecord {
   duration_ms: number;
 }
 
-export interface WorkflowStep { name: string; prompt: string }
+export interface WorkflowStep {
+  name: string;
+  prompt: string;
+  depends_on?: string[];
+  run_if?: string;
+  on_error?: string; // stop | continue | retry:N
+}
 export interface Workflow {
   workflow_id: string;
   name: string;

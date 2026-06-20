@@ -8,6 +8,7 @@ import type {
   RunRecord,
   TaskMeta,
   Workflow,
+  WorkflowStep,
 } from "./types";
 import { toastError } from "./lib/toast";
 
@@ -145,7 +146,7 @@ export const api = {
   listNotifications: () => post<{ notifications: Notification[]; unread: number }>("/notification/list", {}),
   readNotifications: (notification_id = "") => post("/notification/read", { notification_id }),
   listWorkflows: () => post<{ workflows: Workflow[] }>("/workflow/list", {}),
-  createWorkflow: (name: string, steps: { name: string; prompt: string }[]) => post<Workflow>("/workflow/create", { name, steps }),
+  createWorkflow: (name: string, steps: WorkflowStep[]) => post<Workflow>("/workflow/create", { name, steps }),
   deleteWorkflow: (workflow_id: string) => post("/workflow/delete", { workflow_id }),
   runWorkflow: (workflow_id: string) => post<{ conversation_id: string }>("/workflow/run", { workflow_id }),
   followups: (prompt: string, answer: string) => post<{ suggestions: string[] }>("/chat/followups", { prompt, answer }),
