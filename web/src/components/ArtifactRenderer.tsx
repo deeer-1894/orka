@@ -1,5 +1,6 @@
 import type { ArtifactBlock } from "../types";
 import { Markdown } from "./Markdown";
+import { MermaidBlock } from "./MermaidBlock";
 
 // ArtifactRenderer turns an artifact's typed blocks into a page using trusted
 // components — no arbitrary HTML/JS, so it's safe to render on a public link.
@@ -40,6 +41,12 @@ function Block({ block }: { block: ArtifactBlock }) {
       return <DiffBlock path={s(d.path)} patch={s(d.patch)} />;
     case "code":
       return <CodeBlock language={s(d.language)} text={s(d.text)} />;
+    case "chart":
+      return <ChartBlock kind={s(d.kind) || "bar"} title={s(d.title)} data={Array.isArray(d.data) ? (d.data as ChartPoint[]) : []} />;
+    case "mermaid":
+      return <MermaidBlock src={s(d.src)} />;
+    case "html":
+      return <HtmlBlock html={s(d.src || d.html)} height={Number(d.height) || 300} />;
     default:
       return (
         <div className="rounded-lg border border-border bg-surface2/40 p-3 text-[12px] text-muted">
@@ -150,4 +157,114 @@ function DiffBlock({ path, patch }: { path: string; patch: string }) {
 function CodeBlock({ language, text }: { language: string; text: string }) {
   // Render through Markdown's fenced-code path for consistent styling.
   return <Markdown>{"```" + (language || "") + "\n" + text + "\n```"}</Markdown>;
+}
+
+// ── chart: lightweight themeable SVG (no chart dependency) ────────────────────
+type ChartPoint = { label?: string; value?: number };
+const CHART_COLORS = ["#e8927c", "#7fb88a", "#7c9fe8", "#e8c97c", "#b88ad9", "#7cd0e8", "#e87cae"];
+function ChartBlock({ kind, title, data }: { kind: string; title: string; data: ChartPoint[] }) {
+  const pts = data.map((p) => ({ label: s(p.label), value: Number(p.value) || 0 }));
+  return (
+    <div className="rounded-xl border border-border bg-surface2/30 p-3">
+      {title && <div className="mb-2 text-[12.5px] font-medium text-ink">{title}</div>}
+      {pts.length === 0 ? (
+        <div className="py-6 text-center text-[12px] text-faint">(无数据)</div>
+      ) : kind === "pie" ? (
+        <PieChart pts={pts} />
+      ) : kind === "line" ? (
+        <LineChart pts={pts} />
+      ) : (
+        <BarChart pts={pts} />
+      )}
+    </div>
+  );
+}
+
+function BarChart({ pts }: { pts: { label: string; value: number }[] }) {
+  const max = Math.max(1, ...pts.map((p) => p.value));
+  const W = 520, H = 180, pad = 28, bw = (W - pad * 2) / pts.length;
+  return (
+    <svg viewBox={`0 0 ${W} ${H + 24}`} className="w-full">
+      {pts.map((p, i) => {
+        const h = ((H - pad) * p.value) / max;
+        const x = pad + i * bw + bw * 0.15;
+        return (
+          <g key={i}>
+            <rect x={x} y={H - h} width={bw * 0.7} height={h} rx="3" fill="var(--color-accent)" opacity="0.85" />
+            <text x={x + bw * 0.35} y={H - h - 4} textAnchor="middle" className="fill-[var(--color-muted)]" fontSize="9">{p.value}</text>
+            <text x={x + bw * 0.35} y={H + 14} textAnchor="middle" className="fill-[var(--color-faint)]" fontSize="9">{trunc(p.label, 8)}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function LineChart({ pts }: { pts: { label: string; value: number }[] }) {
+  const max = Math.max(1, ...pts.map((p) => p.value));
+  const W = 520, H = 180, pad = 28;
+  const xs = (i: number) => pad + (i * (W - pad * 2)) / Math.max(1, pts.length - 1);
+  const ys = (v: number) => H - pad - ((H - pad * 1.5) * v) / max;
+  const path = pts.map((p, i) => `${i ? "L" : "M"}${xs(i)},${ys(p.value)}`).join(" ");
+  return (
+    <svg viewBox={`0 0 ${W} ${H + 24}`} className="w-full">
+      <path d={path} fill="none" stroke="var(--color-accent)" strokeWidth="2" />
+      {pts.map((p, i) => (
+        <g key={i}>
+          <circle cx={xs(i)} cy={ys(p.value)} r="3" fill="var(--color-accent)" />
+          <text x={xs(i)} y={H + 14} textAnchor="middle" className="fill-[var(--color-faint)]" fontSize="9">{trunc(p.label, 8)}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+function PieChart({ pts }: { pts: { label: string; value: number }[] }) {
+  const total = pts.reduce((a, p) => a + p.value, 0) || 1;
+  let acc = 0;
+  const R = 70, C = 90;
+  return (
+    <div className="flex flex-wrap items-center gap-4">
+      <svg viewBox="0 0 180 180" className="h-[150px] w-[150px]">
+        {pts.map((p, i) => {
+          const a0 = (acc / total) * 2 * Math.PI;
+          acc += p.value;
+          const a1 = (acc / total) * 2 * Math.PI;
+          const large = a1 - a0 > Math.PI ? 1 : 0;
+          const x0 = C + R * Math.sin(a0), y0 = C - R * Math.cos(a0);
+          const x1 = C + R * Math.sin(a1), y1 = C - R * Math.cos(a1);
+          return <path key={i} d={`M${C},${C} L${x0},${y0} A${R},${R} 0 ${large} 1 ${x1},${y1} Z`} fill={CHART_COLORS[i % CHART_COLORS.length]} />;
+        })}
+      </svg>
+      <div className="flex flex-col gap-1 text-[12px]">
+        {pts.map((p, i) => (
+          <div key={i} className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
+            <span className="text-muted">{p.label}</span>
+            <span className="text-faint">{Math.round((p.value / total) * 100)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function trunc(s2: string, n: number) { return s2.length > n ? s2.slice(0, n) + "…" : s2; }
+
+// ── html: free-form escape hatch, isolated in a sandboxed iframe ──────────────
+// sandbox=allow-scripts (NOT allow-same-origin) blocks access to the parent
+// origin/cookies; an injected CSP blocks network egress so a public page can't
+// exfiltrate. For static mockups/visualizations, not data access.
+function HtmlBlock({ html, height }: { html: string; height: number }) {
+  const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; script-src 'unsafe-inline'; connect-src 'none'">`;
+  const doc = `<!doctype html><html><head><meta charset="utf-8">${csp}<style>body{margin:0;font-family:system-ui,sans-serif;color:#222}</style></head><body>${html}</body></html>`;
+  return (
+    <iframe
+      title="html-block"
+      sandbox="allow-scripts"
+      srcDoc={doc}
+      className="w-full rounded-xl border border-border bg-white"
+      style={{ height: Math.min(800, Math.max(80, height)) }}
+    />
+  );
 }

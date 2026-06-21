@@ -144,7 +144,15 @@ const artifactBlocksDoc = `Block types and their data: ` +
 	`checklist {items:[{label, status: done|doing|todo|blocked}]}; ` +
 	`metric {label, value, delta}; diff {path, patch (unified diff text)}; ` +
 	`timeline {events:[{time, title, detail}]}; code {language, text}; ` +
-	`badge {label, tone: ok|warn|danger|info}.`
+	`badge {label, tone: ok|warn|danger|info} (or {items:[{label,tone}]}); ` +
+	`chart {kind: bar|line|pie, title, data:[{label, value}]} (e.g. an error-rate curve); ` +
+	`mermaid {src} (a mermaid diagram — flowchart/sequence/ER, for architecture, ` +
+	`service topology, or data-flow; derive it from real import/call relationships); ` +
+	`html {src, height} (free-form static HTML for a custom layout/mockup; runs ` +
+	`sandboxed with no network — use only when the typed blocks don't fit). ` +
+	`Recipes by kind: pr_review → diff + checklist(tests) + metric(coverage); ` +
+	`architecture → mermaid + markdown; incident → timeline + chart(error rate) + ` +
+	`code(suspect commit); checklist → checklist + metric; audit → table + badge.`
 
 func parseBlocks(v any) ([]db.ArtifactBlock, error) {
 	if v == nil {
