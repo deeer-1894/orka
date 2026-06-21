@@ -125,6 +125,29 @@ export interface RunRecord {
   duration_ms: number;
 }
 
+export type ArtifactBlock = { type: string; data: Record<string, unknown> };
+export interface ArtifactVersion {
+  artifact_id: string;
+  version: number;
+  blocks: ArtifactBlock[];
+  note?: string;
+  created_at: number;
+}
+export interface Artifact {
+  artifact_id: string;
+  owner_email: string;
+  conversation_id: string;
+  title: string;
+  kind: string;
+  slug: string;
+  visibility: "private" | "shared" | "public";
+  shares?: ConversationShare[];
+  share_token?: string;
+  current_version: number;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface WorkflowStep {
   name: string;
   prompt: string;

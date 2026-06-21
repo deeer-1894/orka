@@ -41,6 +41,7 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 
 	// live artifacts — shareable, auto-updating visualization pages
 	g.POST("/artifact/list", a.ListArtifacts)
+	g.POST("/artifact/by-conversation", a.ArtifactByConversation)
 	g.POST("/artifact/get", a.GetArtifact)
 	g.POST("/artifact/versions", a.ArtifactVersions)
 	g.POST("/artifact/share", a.ShareArtifact)

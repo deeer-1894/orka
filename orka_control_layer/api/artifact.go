@@ -46,6 +46,24 @@ func (a *API) GetArtifact(ctx context.Context, c *app.RequestContext) {
 	a.respondArtifact(ctx, c, art, req.Version)
 }
 
+// ArtifactByConversation returns the artifact attached to a conversation (if
+// any), so the chat thread can show a live card. 404 when there's none.
+func (a *API) ArtifactByConversation(ctx context.Context, c *app.RequestContext) {
+	var req struct {
+		ConversationID string `json:"conversation_id"`
+	}
+	if err := bind(c, &req); err != nil || req.ConversationID == "" {
+		fail(c, consts.StatusBadRequest, "conversation_id required")
+		return
+	}
+	art, err := a.Store.GetArtifactByConversation(ctx, req.ConversationID)
+	if err != nil || !art.CanRead(authEmail(c)) {
+		fail(c, consts.StatusNotFound, "none")
+		return
+	}
+	ok(c, art)
+}
+
 // ArtifactVersions lists a artifact's version history (no blocks).
 func (a *API) ArtifactVersions(ctx context.Context, c *app.RequestContext) {
 	var req artifactGetReq

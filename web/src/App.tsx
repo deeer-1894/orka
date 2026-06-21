@@ -7,12 +7,13 @@ import { Thread } from "./components/Thread";
 import { Composer } from "./components/Composer";
 import { ArtifactDrawer } from "./components/ArtifactDrawer";
 import { ShareDialog } from "./components/ShareDialog";
+import { PublicArtifactPage, ArtifactViewer, ArtifactBanner } from "./components/Artifacts";
 import { Toaster, toast } from "./lib/toast";
 import { useTheme } from "./lib/theme";
 import { loadTools, saveTools } from "./lib/toolGroups";
 import type { Conversation, Message, Notification } from "./types";
 
-type Tab = "overview" | "computer" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
+type Tab = "overview" | "artifacts" | "computer" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
 
 interface ModelOption { version: string; label: string; hint: string }
 // Fallback until /models resolves (keeps the picker non-empty on first paint).
@@ -22,6 +23,18 @@ const MODELS_FALLBACK: ModelOption[] = [
 ];
 
 export default function App() {
+  // Public artifact page: /a/<slug>?t=<token> renders standalone, no login.
+  const pubMatch = typeof window !== "undefined" && window.location.pathname.match(/^\/a\/([^/]+)$/);
+  if (pubMatch) {
+    const token = new URLSearchParams(window.location.search).get("t") || "";
+    return (
+      <>
+        <PublicArtifactPage slug={decodeURIComponent(pubMatch[1])} token={token} />
+        <Toaster />
+      </>
+    );
+  }
+
   const [user, setUser] = useState<{ email: string; name: string } | null>(null);
   const [authReady, setAuthReady] = useState(false);
 
@@ -67,6 +80,7 @@ function Workbench({
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [shared, setShared] = useState<Conversation[]>([]); // conversations others shared with me
   const [shareFor, setShareFor] = useState<Conversation | null>(null); // open share dialog
+  const [openArtifact, setOpenArtifact] = useState<string | null>(null); // artifact viewer modal
   const [activeID, setActiveID] = useState("");
 
   // Sidebar starts open on desktop, closed on narrow screens (where it overlays).
@@ -341,6 +355,7 @@ function Workbench({
         </header>
 
         <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} fileConv={isShared ? activeID : undefined} />
+        {activeID && <div className="px-5"><ArtifactBanner conversationId={activeID} onOpen={setOpenArtifact} /></div>}
         {readOnly ? (
           <div className="mx-auto mb-4 w-full max-w-3xl px-5">
             <div className="rounded-xl border border-border bg-surface2/50 px-4 py-3 text-center text-[13px] text-muted">
@@ -362,6 +377,7 @@ function Workbench({
         messages={messages}
         email={user.email}
         onJumpToConversation={onJumpToConversation}
+        onOpenArtifact={setOpenArtifact}
       />
 
       {scheduleFor !== null && (
@@ -387,6 +403,8 @@ function Workbench({
           }}
         />
       )}
+
+      {openArtifact && <ArtifactViewer artifactId={openArtifact} onClose={() => setOpenArtifact(null)} />}
     </div>
   );
 }

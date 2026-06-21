@@ -3,11 +3,12 @@ import { api, files as fileApi } from "../api";
 import type { BrowserPayload, Connector, Message, MetricsSnapshot, RunRecord, TaskMeta, ToolPayload, Workflow } from "../types";
 import { toast } from "../lib/toast";
 import { FilePreview } from "./FilePreview";
+import { ArtifactGallery } from "./Artifacts";
 
-type Tab = "overview" | "computer" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
+type Tab = "overview" | "artifacts" | "computer" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
 
 const TAB_LABEL: Record<Tab, string> = {
-  overview: "概览", runs: "运行", computer: "电脑", files: "文件", flows: "流程", tasks: "任务",
+  overview: "概览", artifacts: "页面", runs: "运行", computer: "电脑", files: "文件", flows: "流程", tasks: "任务",
   integrations: "集成", metrics: "指标",
 };
 
@@ -21,6 +22,7 @@ export function ArtifactDrawer({
   messages,
   email,
   onJumpToConversation,
+  onOpenArtifact,
 }: {
   open: boolean;
   onClose: () => void;
@@ -31,6 +33,7 @@ export function ArtifactDrawer({
   messages: Message[];
   email: string;
   onJumpToConversation: (cid: string) => void;
+  onOpenArtifact: (id: string) => void;
 }) {
   const [width, setWidth] = useState<number>(() => {
     const w = Number(localStorage.getItem("orka.drawerWidth"));
@@ -75,7 +78,7 @@ export function ArtifactDrawer({
       <div className="flex h-full w-full flex-col" style={{ minWidth: 280 }}>
         <div className="flex items-center gap-1 border-b border-border px-2 h-14">
           <div className="flex flex-1 gap-0.5 overflow-x-auto no-scrollbar">
-            {(["overview", "runs", "computer", "files", "flows", "tasks", "integrations", "metrics"] as Tab[]).map((t) => (
+            {(["overview", "artifacts", "runs", "computer", "files", "flows", "tasks", "integrations", "metrics"] as Tab[]).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -99,6 +102,7 @@ export function ArtifactDrawer({
         </div>
         <div className="flex-1 overflow-y-auto">
           {tab === "overview" && <DashboardPanel onJumpToConversation={onJumpToConversation} />}
+          {tab === "artifacts" && <ArtifactGallery onOpen={onOpenArtifact} />}
           {tab === "computer" && (
             <ComputerPanel messages={messages} view={computerView} setView={setComputerView} />
           )}

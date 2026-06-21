@@ -1,4 +1,6 @@
 import type {
+  Artifact,
+  ArtifactVersion,
   Connector,
   Conversation,
   MetricsSnapshot,
@@ -89,6 +91,59 @@ export const tools = {
   // Available tools (with descriptions + groups) — drives the tool picker.
   catalog: () => get<ToolInfo[]>("/tools/catalog"),
 };
+
+export const artifacts = {
+  list: () => post<{ artifacts: Artifact[] }>("/artifact/list", {}),
+  byConversation: (conversation_id: string) => post<Artifact>("/artifact/by-conversation", { conversation_id }),
+  get: (artifact_id: string, version = 0) =>
+    post<{ artifact: Artifact; version: ArtifactVersion }>("/artifact/get", { artifact_id, version }),
+  getBySlug: (slug: string, version = 0) =>
+    post<{ artifact: Artifact; version: ArtifactVersion }>("/artifact/get", { slug, version }),
+  versions: (artifact_id: string) => post<ArtifactVersion[]>("/artifact/versions", { artifact_id }),
+  // share reuses the conversation_id field as the artifact id (server-side).
+  share: (artifact_id: string, email: string, role: "viewer" | "editor" | "none") =>
+    post<{ shares: { email: string; role: string }[]; visibility: string }>("/artifact/share", { conversation_id: artifact_id, email, role }),
+  setPublic: (artifact_id: string, isPublic: boolean) =>
+    post<{ visibility: string; share_token: string; slug: string }>("/artifact/visibility", { artifact_id, public: isPublic }),
+  del: (artifact_id: string) => post("/artifact/delete", { artifact_id }),
+  // The public page URL anyone-with-link can open.
+  publicURL: (slug: string, token: string) => `${location.origin}/a/${slug}?t=${encodeURIComponent(token)}`,
+};
+
+// subscribeArtifact opens a fetch-based SSE stream of version numbers for an
+// artifact (Bearer-authed, unlike EventSource). Calls onVersion on each frame;
+// returns an unsubscribe function.
+export function subscribeArtifact(artifactID: string, onVersion: (v: number) => void): () => void {
+  const ctrl = new AbortController();
+  (async () => {
+    try {
+      const res = await fetch(`${BASE}/artifact/stream?artifact_id=${encodeURIComponent(artifactID)}`, {
+        headers: { ...(auth.token() ? { Authorization: "Bearer " + auth.token() } : {}) },
+        signal: ctrl.signal,
+      });
+      if (!res.body) return;
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const ln of lines) {
+          if (ln.startsWith("data:")) {
+            const v = parseInt(ln.slice(5).trim(), 10);
+            if (!Number.isNaN(v)) onVersion(v);
+          }
+        }
+      }
+    } catch {
+      /* aborted or network drop — caller re-subscribes if still mounted */
+    }
+  })();
+  return () => ctrl.abort();
+}
 
 export interface Session {
   token: string;
