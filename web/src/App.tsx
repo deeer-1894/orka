@@ -8,6 +8,7 @@ import { Composer } from "./components/Composer";
 import { ArtifactDrawer } from "./components/ArtifactDrawer";
 import { ShareDialog } from "./components/ShareDialog";
 import { PublicArtifactPage, ArtifactViewer, ArtifactBanner } from "./components/Artifacts";
+import { useOverlay } from "./lib/useOverlay";
 import { Toaster, toast } from "./lib/toast";
 import { useTheme } from "./lib/theme";
 import { loadTools, saveTools } from "./lib/toolGroups";
@@ -423,9 +424,10 @@ function ScheduleDialog({ prompt, onClose, onConfirm }: { prompt: string; onClos
   const [retry, setRetry] = useState(0);
   const effective = customMin ? Math.max(1, Math.round(Number(customMin))) * 60 : sec;
   const valid = effective >= 30;
+  useOverlay(onClose);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6" onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+    <div className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6" onClick={onClose}>
+      <div className="pop-in w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <h2 className="font-serif text-[18px] text-ink">设为定时任务</h2>
         <p className="mt-1 line-clamp-2 text-[13px] text-muted">“{prompt}”</p>
         <div className="mt-3 flex flex-wrap gap-1.5">

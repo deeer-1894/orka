@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { auth, files as fileApi, type FileVersion } from "../api";
 import { lineDiff, diffStats } from "../lib/diff";
+import { useOverlay } from "../lib/useOverlay";
 import { Markdown } from "./Markdown";
 
 // fetchText pulls a workspace file's text content (auth via Bearer header).
@@ -49,6 +50,7 @@ export function FilePreview({ name, onClose, conv }: { name: string; onClose: ()
   // Version history reads the caller's own workspace — not meaningful for a file
   // viewed from someone else's shared conversation.
   const canHistory = !conv;
+  useOverlay(onClose);
 
   useEffect(() => {
     if (!isText) return;
@@ -65,9 +67,9 @@ export function FilePreview({ name, onClose, conv }: { name: string; onClose: ()
 
   const hasHistory = (versions?.length ?? 0) > 0;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6" onClick={onClose}>
+    <div className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6" onClick={onClose}>
       <div
-        className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl"
+        className="pop-in flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">

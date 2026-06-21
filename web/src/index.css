@@ -109,6 +109,14 @@ body {
   50% { opacity: 1; }
 }
 .rise { animation: rise 0.3s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+/* Consistent overlay entrance: backdrop fades, panel pops in. */
+@keyframes overlayFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes overlayPop {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.overlay-in { animation: overlayFade 0.15s ease-out both; }
+.pop-in { animation: overlayPop 0.2s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 .dot { animation: blink 1.2s ease-in-out infinite; }
 .dot:nth-child(2) { animation-delay: 0.18s; }
 .dot:nth-child(3) { animation-delay: 0.36s; }

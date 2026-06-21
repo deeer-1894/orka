@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import type { Conversation, ConversationShare } from "../types";
 import { toast, toastError } from "../lib/toast";
+import { useOverlay } from "../lib/useOverlay";
 
 // ShareDialog lets a conversation owner grant/revoke access by email. viewer =
 // read-only; editor = may also send (running in the owner's workspace).
@@ -10,6 +11,7 @@ export function ShareDialog({ conv, onClose, onChanged }: { conv: Conversation; 
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<"viewer" | "editor">("viewer");
   const [busy, setBusy] = useState(false);
+  useOverlay(onClose);
 
   const apply = async (e: string, r: "viewer" | "editor" | "none") => {
     setBusy(true);
@@ -34,8 +36,8 @@ export function ShareDialog({ conv, onClose, onChanged }: { conv: Conversation; 
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6" onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+    <div className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6" onClick={onClose}>
+      <div className="pop-in w-full max-w-md rounded-2xl border border-border bg-surface p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-1 flex items-center gap-2">
           <span className="text-[15px]">🔗</span>
           <span className="flex-1 truncate text-[15px] font-medium text-ink">分享会话</span>

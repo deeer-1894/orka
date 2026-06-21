@@ -3,6 +3,7 @@ import { artifacts as artApi, subscribeArtifact } from "../api";
 import type { Artifact, ArtifactVersion } from "../types";
 import { ArtifactRenderer } from "./ArtifactRenderer";
 import { toast, toastError } from "../lib/toast";
+import { useOverlay } from "../lib/useOverlay";
 
 const KIND_ICON: Record<string, string> = {
   pr_review: "🔀", architecture: "🗺️", incident: "🚨", checklist: "✅", audit: "🔍", custom: "📊",
@@ -100,6 +101,7 @@ export function ArtifactViewer({ artifactId, onClose }: { artifactId: string; on
   const [viewing, setViewing] = useState(0); // 0 = latest
   const [live, setLive] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  useOverlay(onClose);
 
   const load = (version = 0) =>
     artApi.get(artifactId, version).then((r) => { setArt(r.artifact); setVer(r.version); }).catch(() => {});
@@ -121,8 +123,8 @@ export function ArtifactViewer({ artifactId, onClose }: { artifactId: string; on
   }, [artifactId, viewing]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6" onClick={onClose}>
-      <div className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl" onClick={(e) => e.stopPropagation()}>
+    <div className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6" onClick={onClose}>
+      <div className="pop-in flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
           <span className="text-[16px]">{kindIcon(art?.kind || "")}</span>
           <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink">{art?.title || "Artifact"}</span>
