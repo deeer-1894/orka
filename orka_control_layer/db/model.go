@@ -101,6 +101,68 @@ type Workflow struct {
 	CreatedAt  int64          `bson:"created_at" json:"created_at"`
 }
 
+// Artifact is a live, shareable visualization page generated from a
+// conversation's context. Its content is versioned (each publish = a new
+// ArtifactVersion); the page renders the current version and refreshes in place
+// when a new one is published. Visibility follows the same model as
+// conversations, plus an optional public share link.
+type Artifact struct {
+	ArtifactID     string              `bson:"artifact_id" json:"artifact_id"`
+	OwnerEmail     string              `bson:"owner_email" json:"owner_email"`
+	ConversationID string              `bson:"conversation_id" json:"conversation_id"` // source of context
+	Title          string              `bson:"title" json:"title"`
+	Kind           string              `bson:"kind" json:"kind"` // pr_review|architecture|incident|checklist|audit|custom
+	Slug           string              `bson:"slug" json:"slug"` // stable public URL segment
+	Visibility     string              `bson:"visibility" json:"visibility"` // private | shared | public
+	Shares         []ConversationShare `bson:"shares,omitempty" json:"shares,omitempty"`
+	ShareToken     string              `bson:"share_token,omitempty" json:"share_token,omitempty"` // public-link auth
+	CurrentVersion int                 `bson:"current_version" json:"current_version"`
+	CreatedAt      int64               `bson:"created_at" json:"created_at"`
+	UpdatedAt      int64               `bson:"updated_at" json:"updated_at"`
+}
+
+// ArtifactVersion is one immutable published snapshot of an artifact's content.
+type ArtifactVersion struct {
+	ArtifactID string          `bson:"artifact_id" json:"artifact_id"`
+	Version    int             `bson:"version" json:"version"`
+	Blocks     []ArtifactBlock `bson:"blocks" json:"blocks"`
+	Note       string          `bson:"note,omitempty" json:"note,omitempty"` // what changed this publish
+	CreatedAt  int64           `bson:"created_at" json:"created_at"`
+}
+
+// ArtifactBlock is one typed content block. Data is interpreted by Type:
+//
+//	markdown {text}        heading {text, level}
+//	table {columns[], rows[][]}   checklist {items:[{label,status}]}
+//	metric {label, value, delta}  diff {path, patch}
+//	timeline {events:[{time,title,detail}]}  code {language, text}
+//	badge {label, tone}    mermaid {src}   html {src}  (sandboxed)
+type ArtifactBlock struct {
+	Type string         `bson:"type" json:"type"`
+	Data map[string]any `bson:"data" json:"data"`
+}
+
+// Artifact visibility values.
+const (
+	ArtifactPrivate = "private"
+	ArtifactShared  = "shared"
+	ArtifactPublic  = "public"
+)
+
+// CanRead reports whether email may view this artifact (independent of the
+// public link, which is checked separately by token).
+func (a *Artifact) CanRead(email string) bool {
+	if email != "" && (a.OwnerEmail == "" || a.OwnerEmail == email) {
+		return true
+	}
+	for _, s := range a.Shares {
+		if s.Email == email && email != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // WorkflowStep is one node of a workflow DAG. Beyond a prompt it carries the
 // flow-control that lifts workflows past a linear pipeline:
 //   - DependsOn: names of steps that must finish first (the DAG edges). Empty =

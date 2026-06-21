@@ -20,6 +20,9 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/auth/login", a.Login)
 	// public webhook trigger — the opaque token in the path is the auth.
 	g.POST("/hook/:token", a.Webhook)
+	// public artifact pages — the share token in the query is the auth.
+	g.GET("/pub/a/:slug", a.GetPublicArtifact)
+	g.GET("/pub/a/:slug/stream", a.PublicArtifactStream)
 
 	// everything below requires a valid session token
 	g.Use(a.AuthMiddleware())
@@ -35,6 +38,15 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/conversation/prune-empty", a.PruneConversations)
 	g.POST("/conversation/share", a.ShareConversation)       // owner grants/revokes access
 	g.POST("/conversation/shared-with-me", a.SharedWithMe)   // conversations others shared with me
+
+	// live artifacts — shareable, auto-updating visualization pages
+	g.POST("/artifact/list", a.ListArtifacts)
+	g.POST("/artifact/get", a.GetArtifact)
+	g.POST("/artifact/versions", a.ArtifactVersions)
+	g.POST("/artifact/share", a.ShareArtifact)
+	g.POST("/artifact/visibility", a.SetArtifactVisibility)
+	g.POST("/artifact/delete", a.DeleteArtifact)
+	g.GET("/artifact/stream", a.ArtifactStream)
 
 	g.POST("/task/create", a.CreateTask)
 	g.POST("/task/get-tasks", a.GetTasks)

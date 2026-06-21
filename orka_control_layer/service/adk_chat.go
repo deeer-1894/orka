@@ -146,6 +146,8 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	})
 	defer endSpan()
 	ctx = spanCtx
+	// Local tools (e.g. artifact_publish) learn whose run they're in from ctx.
+	ctx = WithRunInfo(ctx, req.ConversationID, req.UserEmail)
 
 	deps := PipelineDeps{LLM: model, Model: modelName, Metrics: s.Metrics}
 

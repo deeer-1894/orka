@@ -31,7 +31,8 @@ func LocalToolsProvider(baseStorage string) ToolsProvider {
 		root := pathsafe.UserRoot(baseStorage, req.UserEmail)
 		tools := append(filesystem.New(root), GUITool)
 		tools = filterEnabled(tools, req.EnabledTools)
-		return append(tools, SkillTools()...), nil, nil // skill mgmt always available
+		// skill mgmt + artifact publishing are always available (local tools).
+		return append(append(tools, SkillTools()...), ArtifactTools...), nil, nil
 	}
 }
 
@@ -221,10 +222,12 @@ func MCPToolsProviderPooled(baseStorage, mcpURL, secret string, tokenTTL time.Du
 		if err != nil {
 			root := pathsafe.UserRoot(baseStorage, req.UserEmail)
 			fallback := append(filesystem.New(root), GUITool)
-			return append(filterEnabled(fallback, req.EnabledTools), SkillTools()...), nil, err
+			local := append(SkillTools(), ArtifactTools...)
+			return append(filterEnabled(fallback, req.EnabledTools), local...), nil, err
 		}
 		// no cleanup: the pool owns the connection lifecycle.
-		return append(filterEnabled(tools, req.EnabledTools), SkillTools()...), nil, nil
+		local := append(SkillTools(), ArtifactTools...)
+		return append(filterEnabled(tools, req.EnabledTools), local...), nil, nil
 	}
 	return provider, pool.invalidate
 }
@@ -311,6 +314,10 @@ func groupForName(name string) string {
 		return "office"
 	case name == "python":
 		return "code"
+	case name == "artifact_publish" || name == "artifact_get":
+		return "artifact"
+	case strings.HasPrefix(name, "find_skills") || strings.HasPrefix(name, "skill_"):
+		return "skill"
 	}
 	return ""
 }

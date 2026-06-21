@@ -27,6 +27,8 @@ type Storage struct {
 	Connectors    *mongo.Collection
 	Notifications *mongo.Collection
 	Workflows     *mongo.Collection
+	Artifacts     *mongo.Collection
+	ArtifactVers  *mongo.Collection
 }
 
 // NewStorage connects to Mongo and pings it.
@@ -57,6 +59,8 @@ func NewStorage(ctx context.Context, uri, dbName string) (*Storage, error) {
 		Connectors:    d.Collection("connectors"),
 		Notifications: d.Collection("notifications"),
 		Workflows:     d.Collection("workflows"),
+		Artifacts:     d.Collection("artifacts"),
+		ArtifactVers:  d.Collection("artifact_versions"),
 	}
 	if err := s.EnsureIndexes(cctx); err != nil {
 		return nil, fmt.Errorf("mongo indexes: %w", err)
@@ -119,6 +123,22 @@ func (s *Storage) EnsureIndexes(ctx context.Context) error {
 		{s.Conversations, mongo.IndexModel{
 			Keys: bson.D{{Key: "conversation_id", Value: 1}},
 			Options: options.Index().SetName("conversation_id"),
+		}},
+		{s.Artifacts, mongo.IndexModel{
+			Keys:    bson.D{{Key: "slug", Value: 1}},
+			Options: options.Index().SetUnique(true).SetName("slug_unique"),
+		}},
+		{s.Artifacts, mongo.IndexModel{
+			Keys:    bson.D{{Key: "owner_email", Value: 1}, {Key: "updated_at", Value: -1}},
+			Options: options.Index().SetName("owner_updated"),
+		}},
+		{s.Artifacts, mongo.IndexModel{
+			Keys:    bson.D{{Key: "conversation_id", Value: 1}},
+			Options: options.Index().SetName("artifact_conversation"),
+		}},
+		{s.ArtifactVers, mongo.IndexModel{
+			Keys:    bson.D{{Key: "artifact_id", Value: 1}, {Key: "version", Value: -1}},
+			Options: options.Index().SetUnique(true).SetName("artifact_version"),
 		}},
 	}
 	for _, sp := range specs {
@@ -478,6 +498,156 @@ func (s *Storage) DeleteWorkflow(ctx context.Context, id, owner string) error {
 	if err != nil {
 		return fmt.Errorf("delete workflow: %w", err)
 	}
+	return nil
+}
+
+// --- artifacts ---
+
+func (s *Storage) CreateArtifact(ctx context.Context, a *Artifact) error {
+	if _, err := s.Artifacts.InsertOne(ctx, a); err != nil {
+		return fmt.Errorf("insert artifact: %w", err)
+	}
+	return nil
+}
+
+func (s *Storage) GetArtifact(ctx context.Context, id string) (*Artifact, error) {
+	var out Artifact
+	err := s.Artifacts.FindOne(ctx, bson.M{"artifact_id": id}).Decode(&out)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get artifact: %w", err)
+	}
+	return &out, nil
+}
+
+func (s *Storage) GetArtifactBySlug(ctx context.Context, slug string) (*Artifact, error) {
+	var out Artifact
+	err := s.Artifacts.FindOne(ctx, bson.M{"slug": slug}).Decode(&out)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get artifact by slug: %w", err)
+	}
+	return &out, nil
+}
+
+// GetArtifactByConversation finds the artifact attached to a conversation (one
+// per conversation), so a step can update it instead of creating a new one.
+func (s *Storage) GetArtifactByConversation(ctx context.Context, convID string) (*Artifact, error) {
+	var out Artifact
+	err := s.Artifacts.FindOne(ctx, bson.M{"conversation_id": convID}).Decode(&out)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get artifact by conversation: %w", err)
+	}
+	return &out, nil
+}
+
+func (s *Storage) ListArtifacts(ctx context.Context, owner string) ([]Artifact, error) {
+	var out []Artifact
+	opts := options.Find().SetSort(bson.D{{Key: "updated_at", Value: -1}}).SetLimit(200)
+	cur, err := s.Artifacts.Find(ctx, bson.M{"owner_email": owner}, opts)
+	if err != nil {
+		return nil, fmt.Errorf("list artifacts: %w", err)
+	}
+	if err := cur.All(ctx, &out); err != nil {
+		return nil, fmt.Errorf("decode artifacts: %w", err)
+	}
+	return out, nil
+}
+
+// AppendArtifactVersion stores a new immutable version and bumps the artifact's
+// current_version + updated_at. Returns the new version number.
+func (s *Storage) AppendArtifactVersion(ctx context.Context, id string, blocks []ArtifactBlock, note string) (int, error) {
+	art, err := s.GetArtifact(ctx, id)
+	if err != nil {
+		return 0, err
+	}
+	v := art.CurrentVersion + 1
+	ver := ArtifactVersion{ArtifactID: id, Version: v, Blocks: blocks, Note: note, CreatedAt: time.Now().UnixMilli()}
+	if _, err := s.ArtifactVers.InsertOne(ctx, &ver); err != nil {
+		return 0, fmt.Errorf("insert artifact version: %w", err)
+	}
+	if _, err := s.Artifacts.UpdateOne(ctx, bson.M{"artifact_id": id},
+		bson.M{"$set": bson.M{"current_version": v, "updated_at": ver.CreatedAt}}); err != nil {
+		return 0, fmt.Errorf("bump artifact version: %w", err)
+	}
+	return v, nil
+}
+
+// GetArtifactVersion returns a specific version (0/negative → current).
+func (s *Storage) GetArtifactVersion(ctx context.Context, id string, version int) (*ArtifactVersion, error) {
+	if version <= 0 {
+		art, err := s.GetArtifact(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		version = art.CurrentVersion
+	}
+	var out ArtifactVersion
+	err := s.ArtifactVers.FindOne(ctx, bson.M{"artifact_id": id, "version": version}).Decode(&out)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get artifact version: %w", err)
+	}
+	return &out, nil
+}
+
+// ListArtifactVersions returns version metadata (without blocks) newest first.
+func (s *Storage) ListArtifactVersions(ctx context.Context, id string) ([]ArtifactVersion, error) {
+	var out []ArtifactVersion
+	opts := options.Find().SetSort(bson.D{{Key: "version", Value: -1}}).SetProjection(bson.M{"blocks": 0})
+	cur, err := s.ArtifactVers.Find(ctx, bson.M{"artifact_id": id}, opts)
+	if err != nil {
+		return nil, fmt.Errorf("list artifact versions: %w", err)
+	}
+	if err := cur.All(ctx, &out); err != nil {
+		return nil, fmt.Errorf("decode artifact versions: %w", err)
+	}
+	return out, nil
+}
+
+func (s *Storage) UpdateArtifactTitle(ctx context.Context, id, title string) error {
+	_, err := s.Artifacts.UpdateOne(ctx, bson.M{"artifact_id": id}, bson.M{"$set": bson.M{"title": title}})
+	if err != nil {
+		return fmt.Errorf("update artifact title: %w", err)
+	}
+	return nil
+}
+
+func (s *Storage) UpdateArtifactShares(ctx context.Context, id string, shares []ConversationShare) error {
+	if shares == nil {
+		shares = []ConversationShare{}
+	}
+	_, err := s.Artifacts.UpdateOne(ctx, bson.M{"artifact_id": id}, bson.M{"$set": bson.M{"shares": shares}})
+	if err != nil {
+		return fmt.Errorf("update artifact shares: %w", err)
+	}
+	return nil
+}
+
+// SetArtifactVisibility flips private/shared/public and (re)sets the share token.
+func (s *Storage) SetArtifactVisibility(ctx context.Context, id, visibility, token string) error {
+	_, err := s.Artifacts.UpdateOne(ctx, bson.M{"artifact_id": id},
+		bson.M{"$set": bson.M{"visibility": visibility, "share_token": token}})
+	if err != nil {
+		return fmt.Errorf("set artifact visibility: %w", err)
+	}
+	return nil
+}
+
+func (s *Storage) DeleteArtifact(ctx context.Context, id, owner string) error {
+	if _, err := s.Artifacts.DeleteOne(ctx, bson.M{"artifact_id": id, "owner_email": owner}); err != nil {
+		return fmt.Errorf("delete artifact: %w", err)
+	}
+	_, _ = s.ArtifactVers.DeleteMany(ctx, bson.M{"artifact_id": id})
 	return nil
 }
 

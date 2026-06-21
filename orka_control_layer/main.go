@@ -102,6 +102,10 @@ func main() {
 	msg := message_utils.New(store, cfg.Obs.PersistSampling, logger)
 	chat := service.NewChatService(cfg, mainLLM, miniLLM, cpStore, msg, metrics, logger)
 
+	// Artifact tools (publish/get a live shareable page) are local tools with DB
+	// access; the providers append them to every run's tool set.
+	service.ArtifactTools = service.BuildArtifactTools(store)
+
 	// Load Claude-Code-style SKILL.md packages from the global skills dir, merged
 	// over the built-in catalog; skill_create writes new ones here.
 	if n, err := middlewares.LoadSkills(cfg.Agent.SkillsDir); err != nil {
