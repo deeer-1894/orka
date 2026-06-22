@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, files as fileApi } from "../api";
+import { api, artifacts as artifactApi, files as fileApi } from "../api";
 import type { BrowserPayload, Connector, Message, MetricsSnapshot, RunRecord, TaskMeta, ToolPayload, Workflow } from "../types";
 import { toast } from "../lib/toast";
 import { FilePreview } from "./FilePreview";
@@ -7,10 +7,23 @@ import { ArtifactGallery } from "./Artifacts";
 
 type Tab = "overview" | "artifacts" | "computer" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
 
-const TAB_LABEL: Record<Tab, string> = {
-  overview: "概览", artifacts: "页面", runs: "运行", computer: "电脑", files: "文件", flows: "流程", tasks: "任务",
-  integrations: "集成", metrics: "指标",
+// Each tab carries a one-line tip — the words 运行/流程/任务 are ambiguous on
+// their own (execution log? workflow definition? schedule?), so the tooltip
+// disambiguates them.
+const TAB_META: Record<Tab, { label: string; tip: string }> = {
+  overview: { label: "概览", tip: "工作区概览与近期活动" },
+  artifacts: { label: "页面", tip: "实时、可分享的可视化页面(Artifacts)" },
+  files: { label: "文件", tip: "工作区里的文件" },
+  computer: { label: "电脑", tip: "实时浏览器 / 终端画面" },
+  runs: { label: "运行", tip: "执行历史:每次任务运行的记录" },
+  flows: { label: "流程", tip: "工作流定义:可复用的多步 DAG 管线" },
+  tasks: { label: "任务", tip: "定时 / 触发的任务(调度与待办)" },
+  integrations: { label: "集成", tip: "外部工具 / MCP 连接器" },
+  metrics: { label: "指标", tip: "用量与性能指标" },
 };
+// Basic tabs stay visible; advanced ones fold behind 更多 to cut first-run load.
+const BASIC_TABS: Tab[] = ["overview", "artifacts", "files", "computer"];
+const ADV_TABS: Tab[] = ["runs", "flows", "tasks", "integrations", "metrics"];
 
 export function ArtifactDrawer({
   open,
@@ -49,6 +62,55 @@ export function ArtifactDrawer({
   }, []);
   const effWidth = open ? (isDesktop ? width : Math.round(window.innerWidth * 0.86)) : 0;
 
+  // Advanced tabs fold away by default; auto-expand if one is active.
+  const [adv, setAdv] = useState(false);
+  useEffect(() => { if (ADV_TABS.includes(tab)) setAdv(true); }, [tab]);
+
+  // Badge a tab that gains content (a new artifact/file) while you're elsewhere,
+  // so you don't sit on 文件 and miss that 页面 just updated.
+  const [newTabs, setNewTabs] = useState<Set<Tab>>(new Set());
+  const seen = useRef<{ artifacts: number; files: number }>({ artifacts: -1, files: -1 });
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    const tick = async () => {
+      const [a, f] = await Promise.all([
+        artifactApi.list().then((r) => (r.artifacts || []).length).catch(() => -1),
+        fileApi.list(".").then((items) => items.filter((x) => !x.dir && !x.name.startsWith(".")).length).catch(() => -1),
+      ]);
+      if (!alive) return;
+      setNewTabs((prev) => {
+        const next = new Set(prev);
+        if (seen.current.artifacts >= 0 && a > seen.current.artifacts && tab !== "artifacts") next.add("artifacts");
+        if (seen.current.files >= 0 && f > seen.current.files && tab !== "files") next.add("files");
+        return next;
+      });
+      seen.current = { artifacts: a, files: f };
+    };
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => { alive = false; clearInterval(id); };
+  }, [open, tab]);
+  // Clear a tab's badge once it's viewed.
+  useEffect(() => {
+    setNewTabs((prev) => { if (!prev.has(tab)) return prev; const n = new Set(prev); n.delete(tab); return n; });
+  }, [tab]);
+
+  const TabBtn = (t: Tab) => (
+    <button
+      key={t}
+      onClick={() => setTab(t)}
+      title={TAB_META[t].tip}
+      className={
+        "relative shrink-0 rounded-lg px-2 py-1.5 text-[12.5px] transition " +
+        (tab === t ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")
+      }
+    >
+      {TAB_META[t].label}
+      {newTabs.has(t) && <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-accent" />}
+    </button>
+  );
+
   const startDrag = (e: React.MouseEvent) => {
     e.preventDefault();
     setDragging(true);
@@ -77,19 +139,19 @@ export function ArtifactDrawer({
       />
       <div className="flex h-full w-full flex-col" style={{ minWidth: 280 }}>
         <div className="flex items-center gap-1 border-b border-border px-2 h-14">
-          <div className="flex flex-1 gap-0.5 overflow-x-auto no-scrollbar">
-            {(["overview", "artifacts", "runs", "computer", "files", "flows", "tasks", "integrations", "metrics"] as Tab[]).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={
-                  "shrink-0 rounded-lg px-2 py-1.5 text-[12.5px] transition " +
-                  (tab === t ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")
-                }
-              >
-                {TAB_LABEL[t]}
-              </button>
-            ))}
+          <div className="flex flex-1 items-center gap-0.5 overflow-x-auto no-scrollbar">
+            {BASIC_TABS.map(TabBtn)}
+            <button
+              onClick={() => setAdv((v) => !v)}
+              className="shrink-0 rounded-lg px-1.5 py-1.5 text-[12px] text-faint hover:bg-surface2"
+              title="高级:运行 / 流程 / 任务 / 集成 / 指标"
+            >
+              {adv ? "更多 ▴" : (() => {
+                const n = ADV_TABS.filter((t) => newTabs.has(t)).length;
+                return n > 0 ? "更多 •" : "更多 ▾";
+              })()}
+            </button>
+            {adv && ADV_TABS.map(TabBtn)}
           </div>
           <button
             onClick={onClose}
