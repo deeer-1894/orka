@@ -109,11 +109,12 @@ func (a *API) FileList(ctx context.Context, c *app.RequestContext) {
 	out := make([]map[string]any, 0, len(entries))
 	for _, e := range entries {
 		info, _ := e.Info()
-		var size int64
+		var size, mtime int64
 		if info != nil {
 			size = info.Size()
+			mtime = info.ModTime().UnixMilli()
 		}
-		out = append(out, map[string]any{"name": e.Name(), "dir": e.IsDir(), "size": size})
+		out = append(out, map[string]any{"name": e.Name(), "dir": e.IsDir(), "size": size, "mtime": mtime})
 	}
 	ok(c, out)
 }

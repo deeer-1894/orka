@@ -1,5 +1,36 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { Conversation } from "../types";
+
+// Time buckets so a long history reads as 今天/昨天/近7天/更早 instead of one
+// undifferentiated list.
+function groupByTime(cs: Conversation[]): { label: string; items: Conversation[] }[] {
+  const d = new Date();
+  const today = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const day = 86400000;
+  const order = ["今天", "昨天", "近 7 天", "更早"];
+  const buckets: Record<string, Conversation[]> = { 今天: [], 昨天: [], "近 7 天": [], 更早: [] };
+  for (const c of cs) {
+    const t = c.created_at || 0;
+    if (t >= today) buckets["今天"].push(c);
+    else if (t >= today - day) buckets["昨天"].push(c);
+    else if (t >= today - 6 * day) buckets["近 7 天"].push(c);
+    else buckets["更早"].push(c);
+  }
+  return order.filter((l) => buckets[l].length).map((label) => ({ label, items: buckets[label] }));
+}
+
+// relTime is a compact "2小时前 / 3天前 / 6/21" used to disambiguate same-titled
+// conversations and on hover.
+function relTime(ms?: number): string {
+  if (!ms) return "";
+  const diff = Date.now() - ms;
+  if (diff < 60000) return "刚刚";
+  if (diff < 3600000) return Math.floor(diff / 60000) + "分钟前";
+  if (diff < 86400000) return Math.floor(diff / 3600000) + "小时前";
+  if (diff < 7 * 86400000) return Math.floor(diff / 86400000) + "天前";
+  const d = new Date(ms);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
 
 export function Sidebar({
   open,
@@ -38,6 +69,68 @@ export function Sidebar({
 }) {
   const [editing, setEditing] = useState("");
   const [draft, setDraft] = useState("");
+  const [query, setQuery] = useState("");
+
+  const q = query.trim().toLowerCase();
+  const filtered = useMemo(
+    () => (q ? conversations.filter((c) => (c.title || "").toLowerCase().includes(q)) : conversations),
+    [conversations, q],
+  );
+  const groups = useMemo(() => groupByTime(filtered), [filtered]);
+  // Titles that appear more than once → show a timestamp to tell them apart.
+  const dupTitles = useMemo(() => {
+    const seen = new Map<string, number>();
+    for (const c of conversations) seen.set(c.title, (seen.get(c.title) || 0) + 1);
+    return new Set([...seen].filter(([, n]) => n > 1).map(([t]) => t));
+  }, [conversations]);
+
+  const ConvRow = (c: Conversation) => {
+    const active = c.conversation_id === activeID;
+    const running = runningIds.includes(c.conversation_id);
+    const scheduled = scheduledIds.has(c.conversation_id);
+    if (editing === c.conversation_id) {
+      return (
+        <input
+          key={c.conversation_id}
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => {
+            if (draft.trim()) onRename(c.conversation_id, draft.trim());
+            setEditing("");
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            if (e.key === "Escape") setEditing("");
+          }}
+          className="w-full rounded-lg border border-accent/50 bg-surface px-3 py-2 text-[14px] outline-none"
+        />
+      );
+    }
+    const dup = dupTitles.has(c.title);
+    return (
+      <div
+        key={c.conversation_id}
+        onClick={() => { onSelect(c.conversation_id); onSelectClose?.(); }}
+        className={
+          "group flex items-center gap-1 rounded-lg px-3 py-2 cursor-pointer transition " +
+          (active ? "bg-accentsoft text-ink" : "text-muted hover:bg-surface")
+        }
+        title={`${c.title}${c.created_at ? " · " + relTime(c.created_at) : ""}`}
+      >
+        {running && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ok" title="运行中" />}
+        {scheduled && <span className="shrink-0 text-[12px]" title="由定时任务驱动">🔁</span>}
+        <span className="flex-1 truncate text-[14px]">{c.title}</span>
+        {/* disambiguate same-titled conversations with a timestamp */}
+        {dup && <span className="shrink-0 text-[10px] text-faint group-hover:hidden">{relTime(c.created_at)}</span>}
+        {(c.shares?.length ?? 0) > 0 && <span className="shrink-0 text-[11px] group-hover:hidden" title={`已分享给 ${c.shares!.length} 人`}>🔗</span>}
+        <button onClick={(e) => { e.stopPropagation(); onShare(c.conversation_id); }} className="hidden px-1 text-faint hover:text-accent group-hover:block" title="分享" aria-label="分享会话">⤴</button>
+        <button onClick={(e) => { e.stopPropagation(); setDraft(c.title); setEditing(c.conversation_id); }} className="hidden px-1 text-faint hover:text-ink group-hover:block" title="重命名" aria-label="重命名会话">✎</button>
+        <button onClick={(e) => { e.stopPropagation(); if (confirm("删除这个会话?")) onDelete(c.conversation_id); }} className="hidden px-1 text-faint hover:text-accent group-hover:block" title="删除" aria-label="删除会话">✕</button>
+      </div>
+    );
+  };
+
   return (
     <aside
       className={
@@ -62,107 +155,37 @@ export function Sidebar({
           </button>
         </div>
 
-        <div className="mt-4 flex items-center justify-between px-3">
-          <span className="text-[11px] uppercase tracking-wider text-faint">Recent</span>
+        <div className="mt-3 px-3">
+          <div className="relative">
+            <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[12px] text-faint">🔍</span>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜索会话…"
+              className="w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 pl-7 text-[12.5px] outline-none focus:border-accent/50"
+            />
+          </div>
+        </div>
+
+        <div className="mt-2 flex items-center justify-between px-3">
+          <span className="text-[11px] uppercase tracking-wider text-faint">{q ? `${filtered.length} 个结果` : "会话"}</span>
           {conversations.length > 1 && (
-            <button
-              onClick={onPrune}
-              className="text-[11px] text-faint hover:text-accent"
-              title="删除所有没有消息的空会话"
-            >
+            <button onClick={onPrune} className="text-[11px] text-faint hover:text-accent" title="删除所有没有消息的空会话">
               清理空会话
             </button>
           )}
         </div>
         <div className="mt-1 flex-1 overflow-y-auto px-2 pb-2">
-          {conversations.length === 0 && (
-            <div className="px-2 py-2 text-[13px] text-faint">No conversations yet</div>
-          )}
-          {conversations.map((c) => {
-            const active = c.conversation_id === activeID;
-            const running = runningIds.includes(c.conversation_id);
-            const scheduled = scheduledIds.has(c.conversation_id);
-            if (editing === c.conversation_id) {
-              return (
-                <input
-                  key={c.conversation_id}
-                  autoFocus
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onBlur={() => {
-                    if (draft.trim()) onRename(c.conversation_id, draft.trim());
-                    setEditing("");
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                    if (e.key === "Escape") setEditing("");
-                  }}
-                  className="w-full rounded-lg border border-accent/50 bg-surface px-3 py-2 text-[14px] outline-none"
-                />
-              );
-            }
-            return (
-              <div
-                key={c.conversation_id}
-                onClick={() => {
-                  onSelect(c.conversation_id);
-                  onSelectClose?.();
-                }}
-                className={
-                  "group flex items-center gap-1 rounded-lg px-3 py-2 cursor-pointer transition " +
-                  (active ? "bg-accentsoft text-ink" : "text-muted hover:bg-surface")
-                }
-              >
-                {running && (
-                  <span
-                    className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ok"
-                    title="运行中"
-                  />
-                )}
-                {scheduled && (
-                  <span className="shrink-0 text-[12px]" title="由定时任务驱动">🔁</span>
-                )}
-                <span className="flex-1 truncate text-[14px]" title={c.title}>{c.title}</span>
-                {(c.shares?.length ?? 0) > 0 && <span className="shrink-0 text-[11px]" title={`已分享给 ${c.shares!.length} 人`}>🔗</span>}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onShare(c.conversation_id);
-                  }}
-                  className="opacity-0 group-hover:opacity-100 px-1 text-faint hover:text-accent"
-                  title="分享"
-                  aria-label="分享会话"
-                >
-                  ⤴
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDraft(c.title);
-                    setEditing(c.conversation_id);
-                  }}
-                  className="opacity-0 group-hover:opacity-100 px-1 text-faint hover:text-ink"
-                  title="重命名"
-                  aria-label="重命名会话"
-                >
-                  ✎
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (confirm("删除这个会话?")) onDelete(c.conversation_id);
-                  }}
-                  className="opacity-0 group-hover:opacity-100 px-1 text-faint hover:text-accent"
-                  title="删除"
-                  aria-label="删除会话"
-                >
-                  ✕
-                </button>
-              </div>
-            );
-          })}
+          {conversations.length === 0 && <div className="px-2 py-2 text-[13px] text-faint">还没有会话</div>}
+          {conversations.length > 0 && filtered.length === 0 && <div className="px-2 py-2 text-[13px] text-faint">无匹配会话</div>}
+          {groups.map((g) => (
+            <div key={g.label}>
+              <div className="px-3 pb-0.5 pt-2 text-[10.5px] uppercase tracking-wider text-faint/80">{g.label}</div>
+              {g.items.map(ConvRow)}
+            </div>
+          ))}
 
-          {shared.length > 0 && (
+          {!q && shared.length > 0 && (
             <>
               <div className="mt-4 mb-1 px-3 text-[11px] uppercase tracking-wider text-faint">分享给我的</div>
               {shared.map((c) => {

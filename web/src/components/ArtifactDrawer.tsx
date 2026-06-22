@@ -347,23 +347,28 @@ function BrowserPanel({ messages }: { messages: Message[] }) {
     .map((m) => m.payload as BrowserPayload);
   const [i, setI] = useState(0);
   const [mode, setMode] = useState<"live" | "frames">("live");
+  const [debug, setDebug] = useState(false);
   useEffect(() => setI(Math.max(0, shots.length - 1)), [shots.length]);
 
   return (
     <div className="p-3">
-      <div className="mb-2 flex gap-1">
-        {(["live", "frames"] as const).map((m) => (
+      <div className="mb-2 flex items-center gap-1">
+        <button
+          onClick={() => setMode("live")}
+          className={"rounded-lg px-2.5 py-1 text-[12px] transition " + (mode === "live" ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")}
+        >
+          实时画面
+        </button>
+        {/* Only offer the回放 tab once there are actually captured frames, so a
+            confusing "frames (0)" never shows. */}
+        {shots.length > 0 && (
           <button
-            key={m}
-            onClick={() => setMode(m)}
-            className={
-              "rounded-lg px-2.5 py-1 text-[12px] capitalize transition " +
-              (mode === m ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")
-            }
+            onClick={() => setMode("frames")}
+            className={"rounded-lg px-2.5 py-1 text-[12px] transition " + (mode === "frames" ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")}
           >
-            {m === "frames" ? `frames (${shots.length})` : "live"}
+            回放 · {shots.length}
           </button>
-        ))}
+        )}
       </div>
 
       {mode === "live" ? (
@@ -372,7 +377,10 @@ function BrowserPanel({ messages }: { messages: Message[] }) {
             <span className="h-2.5 w-2.5 rounded-full bg-[#e0695f]" />
             <span className="h-2.5 w-2.5 rounded-full bg-[#e3b341]" />
             <span className="h-2.5 w-2.5 rounded-full bg-[#5aa469]" />
-            <span className="ml-2 text-[12px] text-faint">sandbox · live</span>
+            <span className="ml-2 text-[12px] text-muted">远程浏览器 · 实时</span>
+            <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-faint" title="你可以直接在下方画面里点击 / 输入,临时接管浏览器;松手后 Orka 会接着干">
+              🖐 可点击接管
+            </span>
           </div>
           <iframe
             src={novnc}
@@ -380,12 +388,18 @@ function BrowserPanel({ messages }: { messages: Message[] }) {
             className="block w-full bg-white"
             style={{ height: 520, border: 0 }}
           />
-          <div className="border-t border-border px-3 py-1.5 text-[11px] text-faint">
-            Live noVNC at {novnc}. Start the sandbox if blank: <code>make browser</code>
+          <div className="flex items-center gap-2 border-t border-border px-3 py-1.5 text-[11px] text-faint">
+            <span>画面空白?远程环境可能还在连接 / 未启动。</span>
+            <button onClick={() => setDebug((v) => !v)} className="ml-auto hover:text-accent">{debug ? "隐藏调试信息" : "调试信息"}</button>
           </div>
+          {debug && (
+            <div className="border-t border-border bg-surface2/40 px-3 py-1.5 font-mono text-[10.5px] text-faint">
+              noVNC: {novnc}<br />未启动时运行 <code>make browser</code> 启动沙箱浏览器。
+            </div>
+          )}
         </div>
       ) : shots.length === 0 ? (
-        <Blank>No frames yet. Enable gui and open a page.</Blank>
+        <Blank>还没有画面。开启浏览器工具并打开一个页面后,这里会显示回放。</Blank>
       ) : (
         <FramesView shots={shots} i={i} setI={setI} />
       )}
@@ -432,13 +446,15 @@ function FramesView({
 
 // File "kinds" group the flat workspace into tidy, labelled sections so a busy
 // workspace reads as 文档 / 代码 / 数据 / 图片 / 其他 instead of one long dump.
-const FILE_KINDS: { id: string; icon: string; label: string; exts?: string[] }[] = [
-  { id: "folder", icon: "📁", label: "文件夹" },
-  { id: "doc", icon: "📄", label: "文档 / 报告", exts: ["md", "markdown", "txt", "pdf", "doc", "docx", "rtf"] },
-  { id: "code", icon: "💻", label: "代码", exts: ["py", "js", "jsx", "ts", "tsx", "go", "java", "c", "h", "cpp", "rs", "sh", "rb", "php", "html", "css", "yaml", "yml", "sql"] },
-  { id: "data", icon: "📊", label: "数据", exts: ["json", "csv", "tsv", "xml", "ndjson"] },
-  { id: "image", icon: "🖼️", label: "图片", exts: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"] },
-  { id: "other", icon: "🗂️", label: "其他" },
+const FILE_KINDS: { id: string; icon: string; label: string; color: string; exts?: string[] }[] = [
+  { id: "folder", icon: "📁", label: "文件夹", color: "text-[#c79a5a]" },
+  { id: "doc", icon: "📝", label: "文档 / 报告", color: "text-[#5a86c7]", exts: ["md", "markdown", "txt", "doc", "docx", "rtf"] },
+  { id: "pdf", icon: "📕", label: "PDF", color: "text-[#d06363]", exts: ["pdf"] },
+  { id: "code", icon: "🧑‍💻", label: "代码", color: "text-[#7a9a6a]", exts: ["py", "js", "jsx", "ts", "tsx", "go", "java", "c", "h", "cpp", "rs", "sh", "rb", "php", "html", "css", "yaml", "yml", "sql"] },
+  { id: "data", icon: "📊", label: "数据 / 表格", color: "text-[#5aa48a]", exts: ["json", "csv", "tsv", "xml", "ndjson", "xlsx", "xls"] },
+  { id: "image", icon: "🖼️", label: "图片", color: "text-[#b07ac7]", exts: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"] },
+  { id: "slides", icon: "📑", label: "演示", color: "text-[#c78a5a]", exts: ["pptx", "ppt", "key"] },
+  { id: "other", icon: "🗂️", label: "其他", color: "text-faint" },
 ];
 function kindOf(name: string, dir: boolean): string {
   if (dir) return "folder";
@@ -446,8 +462,13 @@ function kindOf(name: string, dir: boolean): string {
   for (const k of FILE_KINDS) if (k.exts?.includes(ext)) return k.id;
   return "other";
 }
+function kindMeta(name: string, dir: boolean) {
+  const id = kindOf(name, dir);
+  return FILE_KINDS.find((k) => k.id === id)!;
+}
 
-type FileItem = { name: string; dir: boolean; size: number };
+type FileItem = { name: string; dir: boolean; size: number; mtime?: number };
+type SortKey = "name" | "time" | "size";
 
 // Runtime junk the sandbox leaves in the workspace (HOME=root → caches, python
 // bytecode) — hidden by default so the panel shows the user's actual files.
@@ -462,6 +483,7 @@ function FilesPanel({ email }: { email: string }) {
   const [preview, setPreview] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [showHidden, setShowHidden] = useState(false);
+  const [sort, setSort] = useState<SortKey>("name");
   const inputRef = useRef<HTMLInputElement>(null);
   const refresh = () => fileApi.list(".").then(setItems).catch(() => setItems([]));
   useEffect(() => {
@@ -480,17 +502,25 @@ function FilesPanel({ email }: { email: string }) {
 
   const q = query.trim().toLowerCase();
   const hiddenCount = items.filter((it) => isHidden(it.name)).length;
+  const cmp =
+    sort === "time"
+      ? (a: FileItem, b: FileItem) => (b.mtime || 0) - (a.mtime || 0)
+      : sort === "size"
+        ? (a: FileItem, b: FileItem) => b.size - a.size
+        : (a: FileItem, b: FileItem) => a.name.localeCompare(b.name);
   const filtered = items
     .filter((it) => showHidden || !isHidden(it.name))
     .filter((it) => !q || it.name.toLowerCase().includes(q))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort(cmp);
   const grouped = FILE_KINDS.map((k) => ({ ...k, files: filtered.filter((it) => kindOf(it.name, it.dir) === k.id) })).filter(
     (g) => g.files.length > 0,
   );
 
-  const Row = (it: FileItem) => (
+  const Row = (it: FileItem) => {
+    const meta = kindMeta(it.name, it.dir);
+    return (
     <div key={it.name} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface2">
-      <span className="text-faint">{it.dir ? "📁" : "📄"}</span>
+      <span className={meta.color}>{meta.icon}</span>
       {it.dir ? (
         <span className="flex-1 truncate text-[14px] text-ink">{it.name}</span>
       ) : (
@@ -508,12 +538,13 @@ function FilesPanel({ email }: { email: string }) {
         ✕
       </button>
     </div>
-  );
+    );
+  };
 
   return (
     <div className="p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="truncate text-[12px] text-faint">/{email}</span>
+        <span className="truncate text-[12px] text-faint" title={email}>📂 我的文件</span>
         <button
           onClick={() => inputRef.current?.click()}
           className="shrink-0 rounded-lg border border-border px-2.5 py-1 text-[12px] text-muted hover:border-accent/40"
@@ -523,12 +554,24 @@ function FilesPanel({ email }: { email: string }) {
         <input ref={inputRef} type="file" hidden onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])} />
       </div>
       {items.length > 6 && (
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="筛选文件…"
-          className="mb-2 w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[12.5px] outline-none focus:border-accent/50"
-        />
+        <div className="mb-2 flex items-center gap-1.5">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="筛选文件…"
+            className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[12.5px] outline-none focus:border-accent/50"
+          />
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortKey)}
+            className="shrink-0 rounded-lg border border-border bg-surface px-1.5 py-1.5 text-[12px] text-muted outline-none"
+            title="排序方式"
+          >
+            <option value="name">名称</option>
+            <option value="time">时间</option>
+            <option value="size">大小</option>
+          </select>
+        </div>
       )}
       {hiddenCount > 0 && (
         <button
