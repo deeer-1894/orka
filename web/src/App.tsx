@@ -326,7 +326,15 @@ function Workbench({
               <path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
           </button>
-          <span className="font-serif text-[16px] text-ink">Orka</span>
+          {/* Show the active conversation (with live status) instead of a
+              redundant brand — "Orka" already lives in the sidebar. */}
+          <div className="flex min-w-0 items-center gap-1.5">
+            {status === "streaming" && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ok" title="运行中" />}
+            <span className="max-w-[40vw] truncate text-[15px] text-ink md:max-w-[260px]" title={activeConv?.title || "新会话"}>
+              {activeConv?.title || "新会话"}
+            </span>
+            {isShared && <span className="shrink-0 text-[11px] text-faint" title={`由 ${activeConv?.owner_email} 分享`}>· 共享</span>}
+          </div>
           <ModelSelect value={version} onChange={setVersion} models={models} />
           {totalTokens > 0 && (
             <span className="text-[11px] text-faint" title="本进程累计 token 用量">

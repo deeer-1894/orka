@@ -413,6 +413,28 @@ export function Composer({
             hidden
             onChange={(e) => onFiles(e.target.files)}
           />
+          {/* Surface the two hidden affordances as real buttons (discoverability) */}
+          <button
+            onClick={() => { setMenu(true); taRef.current?.focus(); }}
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-muted hover:bg-surface2 transition"
+            title="选技能(也可输入 /)"
+            aria-label="选技能"
+          >
+            <span className="text-[16px]">🧩</span>
+          </button>
+          <button
+            onClick={() => {
+              const v = text + (text && !/\s$/.test(text) ? " @" : "@");
+              setText(v);
+              taRef.current?.focus();
+              syncAt(v, v.length);
+            }}
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-muted hover:bg-surface2 transition"
+            title="引用工作区文件(也可输入 @)"
+            aria-label="引用文件"
+          >
+            <span className="text-[15px] font-semibold">@</span>
+          </button>
           <textarea
             ref={taRef}
             value={text}
@@ -432,7 +454,7 @@ export function Composer({
               if (e.key === "Escape") setMenu(false);
             }}
             rows={1}
-            placeholder="给 Orka 发消息…  / 选技能 · @ 引用文件 · 拖拽或粘贴上传"
+            placeholder="给 Orka 发消息…"
             className="block max-h-[200px] flex-1 resize-none bg-transparent px-1 py-2 text-[15px] outline-none placeholder:text-faint"
           />
           {busy ? (

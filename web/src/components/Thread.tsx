@@ -786,6 +786,15 @@ const EXAMPLES = [
     tint: ["#b48ee6", "#8b5cf6"],
   },
   {
+    icon: "🔗",
+    cat: "自动化管线",
+    title: "多步管线一条龙",
+    desc: "多城市抓取 → 单位换算 → 整理成表格存档",
+    steps: ["天气 ×3", "单位换算", "写文件"],
+    prompt: "查北京、上海、西安今天的天气,把温度换算成华氏度,整理成一张 Markdown 表格存到工作区 weather.md",
+    tint: ["#3f9d5a", "#7bc88f"],
+  },
+  {
     icon: "🕸️",
     cat: "浏览器",
     title: "抓取实时网页并归纳",
@@ -802,19 +811,15 @@ const EXAMPLES = [
     steps: ["联网检索", "数据分析", "生成报告"],
     prompt: "结合中国传统算命理论(五行、生肖)和近几届世界杯的真实数据,分析本届夺冠热门球队,给出一份有理有据又有趣的预测报告",
     tint: ["#e8943f", "#d4674a"],
-  },
-  {
-    icon: "🔗",
-    cat: "自动化管线",
-    title: "多步管线一条龙",
-    desc: "多城市抓取 → 单位换算 → 整理成表格存档",
-    steps: ["天气 ×3", "单位换算", "写文件"],
-    prompt: "查北京、上海、西安今天的天气,把温度换算成华氏度,整理成一张 Markdown 表格存到工作区 weather.md",
-    tint: ["#3f9d5a", "#7bc88f"],
+    playful: true,
   },
 ];
 
 function Empty({ onPick }: { onPick: (text: string) => void }) {
+  const [showMore, setShowMore] = useState(false);
+  // Lead with work-oriented scenarios; keep the playful one behind 探索更多.
+  const shown = EXAMPLES.filter((e) => showMore || !(e as { playful?: boolean }).playful);
+  const hiddenCount = EXAMPLES.length - EXAMPLES.filter((e) => !(e as { playful?: boolean }).playful).length;
   return (
     <div className="relative flex h-full items-center justify-center overflow-hidden px-6 py-10">
       {/* animated aurora backdrop */}
@@ -838,7 +843,7 @@ function Empty({ onPick }: { onPick: (text: string) => void }) {
         </p>
 
         <div className="mt-8 grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-          {EXAMPLES.map((e, i) => (
+          {shown.map((e, i) => (
             <button
               key={e.title}
               onClick={() => onPick(e.prompt)}
@@ -887,7 +892,13 @@ function Empty({ onPick }: { onPick: (text: string) => void }) {
           ))}
         </div>
 
-        <p className="rise mt-6 text-[12px] text-faint" style={{ animationDelay: "440ms" }}>
+        {hiddenCount > 0 && !showMore && (
+          <button onClick={() => setShowMore(true)} className="rise mt-4 text-[12px] text-faint hover:text-accent" style={{ animationDelay: "440ms" }}>
+            探索更多示例 →
+          </button>
+        )}
+
+        <p className="rise mt-6 text-[12px] text-faint" style={{ animationDelay: "480ms" }}>
           点卡片直接跑,或在下方描述你自己的任务
         </p>
       </div>
