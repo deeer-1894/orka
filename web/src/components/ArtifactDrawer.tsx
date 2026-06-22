@@ -529,6 +529,17 @@ function kindMeta(name: string, dir: boolean) {
   return FILE_KINDS.find((k) => k.id === id)!;
 }
 
+// dupKey normalizes a filename to spot likely-duplicate artifacts the agent may
+// have generated several times: drop the extension, lowercase, strip separators
+// and trailing language/version/date suffixes so e.g. "Report_EN" /
+// "report-en-v2" / "ai_agent_research" / "ai-agent-research" collapse together.
+function dupKey(name: string, dir: boolean): string {
+  let s = dir ? name : name.replace(/\.[^.]+$/, "");
+  s = s.toLowerCase().replace(/[\s_\-.]+/g, "");
+  s = s.replace(/(business|analysis|report|经营分析|报告|en|zh|cn|final|copy|v?\d{1,4}|\d{6,8})/g, "");
+  return s;
+}
+
 type FileItem = { name: string; dir: boolean; size: number; mtime?: number };
 type SortKey = "name" | "time" | "size";
 
@@ -578,8 +589,22 @@ function FilesPanel({ email }: { email: string }) {
     (g) => g.files.length > 0,
   );
 
+  // Flag likely-duplicate files (same normalized stem) so a workspace full of
+  // near-identical agent exports is legible at a glance.
+  const dupSiblings = new Map<string, string[]>();
+  {
+    const byKey = new Map<string, string[]>();
+    for (const it of filtered) {
+      const k = dupKey(it.name, it.dir);
+      if (k.length < 3) continue;
+      (byKey.get(k) ?? byKey.set(k, []).get(k)!).push(it.name);
+    }
+    for (const names of byKey.values()) if (names.length > 1) for (const n of names) dupSiblings.set(n, names.filter((x) => x !== n));
+  }
+
   const Row = (it: FileItem) => {
     const meta = kindMeta(it.name, it.dir);
+    const dups = dupSiblings.get(it.name);
     return (
     <div key={it.name} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface2">
       <span className={meta.color}>{meta.icon}</span>
@@ -589,6 +614,9 @@ function FilesPanel({ email }: { email: string }) {
         <button onClick={() => setPreview(it.name)} className="flex-1 truncate text-left text-[14px] text-ink hover:text-accent" title="预览">
           {it.name}
         </button>
+      )}
+      {dups && dups.length > 0 && (
+        <span className="shrink-0 text-[11px] text-[#c79a5a] group-hover:hidden" title={"可能与以下文件重复:\n" + dups.join("\n")}>🔁</span>
       )}
       <span className="text-[11px] text-faint">{fmtBytes(it.size)}</span>
       {!it.dir && (
