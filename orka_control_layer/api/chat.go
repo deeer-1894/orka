@@ -184,3 +184,20 @@ func (a *API) ListModels(_ context.Context, c *app.RequestContext) {
 func (a *API) ToolsCatalog(ctx context.Context, c *app.RequestContext) {
 	ok(c, a.Chat.ToolCatalog(ctx, authEmail(c)))
 }
+
+// ConfirmAction approves or rejects a paused side-effecting tool call.
+func (a *API) ConfirmAction(ctx context.Context, c *app.RequestContext) {
+	var req struct {
+		ID      string `json:"id"`
+		Approve bool   `json:"approve"`
+	}
+	if err := bind(c, &req); err != nil || req.ID == "" {
+		fail(c, consts.StatusBadRequest, "id required")
+		return
+	}
+	if !a.Chat.ResolveConfirm(req.ID, req.Approve) {
+		fail(c, consts.StatusNotFound, "no pending confirmation (expired?)")
+		return
+	}
+	ok(c, map[string]bool{"resolved": true})
+}

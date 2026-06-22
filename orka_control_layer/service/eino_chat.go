@@ -423,7 +423,13 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	if err != nil {
 		return err
 	}
-	return StreamEinoRun(ctx, rc, ag, rc.Emit)
+	// Run with rc.Ctx (carries the emit sink + run meta), so tools invoked by the
+	// eino runner — e.g. the confirmation gate — can stream events into the SSE.
+	runCtx := ctx
+	if rc.Ctx != nil {
+		runCtx = rc.Ctx
+	}
+	return StreamEinoRun(runCtx, rc, ag, rc.Emit)
 }
 
 func parseJSONArgs(s string) map[string]any {

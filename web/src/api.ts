@@ -92,6 +92,11 @@ export const tools = {
   catalog: () => get<ToolInfo[]>("/tools/catalog"),
 };
 
+export const chat = {
+  // Approve/reject a paused side-effecting tool call.
+  confirm: (id: string, approve: boolean) => post<{ resolved: boolean }>("/chat/confirm", { id, approve }),
+};
+
 export const artifacts = {
   list: () => post<{ artifacts: Artifact[] }>("/artifact/list", {}),
   byConversation: (conversation_id: string) => post<Artifact>("/artifact/by-conversation", { conversation_id }),

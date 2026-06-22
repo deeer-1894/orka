@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
 import type { BrowserPayload, ClarifyPayload, Message, ToolPayload, WeatherCardData } from "../types";
-import { api, files as fileApi } from "../api";
+import { api, chat as chatApi, files as fileApi } from "../api";
+import type { ConfirmPayload } from "../types";
 import { Markdown } from "./Markdown";
 import { FilePreview } from "./FilePreview";
 import { WeatherCard, parseWeatherCard } from "./WeatherCard";
@@ -73,6 +74,7 @@ type Block =
   | { kind: "assistant"; m: Message }
   | { kind: "reasoning"; m: Message }
   | { kind: "clarify"; m: Message }
+  | { kind: "confirm"; m: Message }
   | { kind: "weather"; data: WeatherCardData }
   | { kind: "steps"; items: Message[] };
 
@@ -98,6 +100,9 @@ function group(messages: Message[]): Block[] {
     } else if (m.type === "clarify") {
       flush();
       blocks.push({ kind: "clarify", m });
+    } else if (m.type === "confirm") {
+      flush();
+      blocks.push({ kind: "confirm", m });
     } else {
       // A weather tool result carries a structured card → surface it as its own
       // rich block (and still keep the tool step in the collapsible list).
@@ -192,6 +197,7 @@ export function Thread({
             )}
             {b.kind === "reasoning" && <Reasoning m={b.m} />}
             {b.kind === "clarify" && <Clarify m={b.m} onResume={onResume} />}
+            {b.kind === "confirm" && <ConfirmCard m={b.m} />}
             {b.kind === "weather" && <WeatherCard data={b.data} />}
             {b.kind === "steps" && <Steps items={b.items} onOpenViewport={onOpenViewport} />}
           </div>
@@ -655,6 +661,40 @@ function Step({ m }: { m: Message }) {
   return (
     <div className="text-[13px] text-muted">
       <span className="font-mono">{m.type}</span> {m.action} {trunc(m.content, 80)}
+    </div>
+  );
+}
+
+const TOOL_LABEL: Record<string, string> = { shell: "终端命令", run_agent: "浏览器操作", http_request: "网络请求", python: "运行代码" };
+
+// ConfirmCard is the human-in-the-loop gate: a side-effecting tool call is
+// paused until the user approves or rejects it.
+function ConfirmCard({ m }: { m: Message }) {
+  const p = m.payload as ConfirmPayload;
+  const [done, setDone] = useState<"" | "approve" | "reject">("");
+  const decide = async (approve: boolean) => {
+    if (done) return;
+    setDone(approve ? "approve" : "reject");
+    try {
+      await chatApi.confirm(p.id, approve);
+    } catch {
+      setDone(""); // let them retry on failure
+    }
+  };
+  return (
+    <div className="mb-6 ml-[42px] rounded-xl border border-accent/40 bg-accentsoft/40 p-3.5">
+      <div className="mb-1 flex items-center gap-1.5 text-[13px] font-medium text-ink">
+        <span>⚠️</span> 需要你确认 · {TOOL_LABEL[p.tool] || p.tool}
+      </div>
+      <div className="mb-2.5 break-words rounded-lg bg-surface/70 px-2.5 py-1.5 font-mono text-[12px] text-muted">{p.summary}</div>
+      {done ? (
+        <div className="text-[12.5px] text-faint">{done === "approve" ? "✅ 已批准,继续执行" : "🚫 已拒绝,跳过该操作"}</div>
+      ) : (
+        <div className="flex gap-2">
+          <button onClick={() => decide(true)} className="rounded-lg bg-accent px-3 py-1.5 text-[12.5px] text-white hover:opacity-90">批准执行</button>
+          <button onClick={() => decide(false)} className="rounded-lg border border-border bg-surface px-3 py-1.5 text-[12.5px] text-muted hover:border-accent/40">拒绝</button>
+        </div>
+      )}
     </div>
   );
 }

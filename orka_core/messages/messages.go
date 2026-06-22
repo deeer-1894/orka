@@ -23,6 +23,7 @@ const (
 	EventBrowser   EventType = "browser"   // GUI process event
 	EventHeartbeat EventType = "heartbeat" // keep-alive
 	EventStream    EventType = "stream"    // streaming token delta (not persisted)
+	EventConfirm   EventType = "confirm"   // approval gate before a risky tool runs
 )
 
 // Roles.
@@ -114,6 +115,21 @@ func Tool(action string, payload any, meta Meta) Message {
 // Clarify builds an interrupt-question message.
 func Clarify(c ClarifyMessage, meta Meta) Message {
 	m := New(EventClarify, RoleAssistant, meta)
+	m.Payload = c
+	return m
+}
+
+// ConfirmRequest is the payload of an EventConfirm message: the agent is about
+// to run a side-effecting tool and is waiting for the user to approve or reject.
+type ConfirmRequest struct {
+	ID      string `json:"id"`      // resolve via /chat/confirm
+	Tool    string `json:"tool"`    // tool name (e.g. shell, run_agent)
+	Summary string `json:"summary"` // human-readable action (the command / instruction / URL)
+}
+
+// Confirm builds an approval-gate message.
+func Confirm(c ConfirmRequest, meta Meta) Message {
+	m := New(EventConfirm, RoleAssistant, meta)
 	m.Payload = c
 	return m
 }

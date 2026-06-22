@@ -18,6 +18,7 @@ export interface RunParams {
   selectedVersion?: string; // "" = main model, "mini" = the cheaper/faster model
   activeSkill?: string; // user-locked skill mode (researcher / writer / …)
   fileIDs?: string[]; // uploaded attachment paths (text injected; images → VLM)
+  confirmRisky?: boolean; // gate side-effecting tools behind user approval
 }
 
 interface ConvStream {
@@ -156,6 +157,7 @@ export function useChatStreams() {
             selected_version: p.selectedVersion ?? "",
             active_skill: p.activeSkill ?? "",
             file_ids: p.fileIDs ?? [],
+            confirm_risky: p.confirmRisky ?? false,
           }),
           signal: ctrl.signal,
         });

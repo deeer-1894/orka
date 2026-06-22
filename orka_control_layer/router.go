@@ -74,6 +74,7 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.GET("/metrics", a.MetricsSnapshot)
 	g.GET("/models", a.ListModels)
 	g.GET("/tools/catalog", a.ToolsCatalog) // available tools + descriptions for the picker
+	g.POST("/chat/confirm", a.ConfirmAction) // approve/reject a paused risky tool call
 	g.POST("/chat/followups", a.Followups) // suggested next questions for a Q&A turn
 
 	g.POST("/run/list", a.ListRuns)   // execution history (run records)

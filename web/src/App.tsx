@@ -99,6 +99,9 @@ function Workbench({
   const [models, setModels] = useState<ModelOption[]>(MODELS_FALLBACK);
   const [scheduleFor, setScheduleFor] = useState<string | null>(null); // prompt to schedule
   const [activeSkill, setActiveSkill] = useState<string | null>(null); // locked skill mode
+  // Gate side-effecting tools (terminal/browser/network/code) behind approval.
+  const [confirmRisky, setConfirmRisky] = useState(() => localStorage.getItem("orka.confirmRisky") !== "0");
+  const toggleConfirm = useCallback(() => setConfirmRisky((v) => { localStorage.setItem("orka.confirmRisky", v ? "0" : "1"); return !v; }), []);
 
   useEffect(() => {
     api.models().then((m) => m.length && setModels(m)).catch(() => {});
@@ -230,12 +233,12 @@ function Workbench({
       const enabledTools = toolGroups.size ? [...toolGroups] : [];
       // fire-and-forget: do NOT await, so other conversations stay interactive
       // while this one streams. The backend runs each conversation concurrently.
-      run({ message: msg, conversationID: id, userEmail: user.email, enabledTools, selectedVersion: version, activeSkill: activeSkill ?? "", fileIDs }).then(() => {
+      run({ message: msg, conversationID: id, userEmail: user.email, enabledTools, selectedVersion: version, activeSkill: activeSkill ?? "", fileIDs, confirmRisky }).then(() => {
         refreshConversations(); // pick up the auto-generated title
       });
       refreshTasks();
     },
-    [ensureConversation, run, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill],
+    [ensureConversation, run, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill, confirmRisky],
   );
 
   // Re-send the last user message after a failure (network drop, sandbox down…).
@@ -372,7 +375,7 @@ function Workbench({
             </div>
           </div>
         ) : (
-          <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
+          <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} confirmRisky={confirmRisky} onToggleConfirm={toggleConfirm} />
         )}
       </main>
 

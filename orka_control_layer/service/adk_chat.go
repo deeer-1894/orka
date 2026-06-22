@@ -36,6 +36,7 @@ type ChatRunRequest struct {
 	UserEmail       string   `json:"user_email"`
 	ActiveSkill     string   `json:"active_skill"` // user-locked skill mode (deterministic prompt injection)
 	Trigger         string   `json:"trigger"`      // manual | schedule (audit: how the run was started)
+	ConfirmRisky    bool     `json:"confirm_risky"` // gate side-effecting tools behind user approval
 }
 
 // ToolsProvider supplies the tool set for a request and an optional cleanup
@@ -59,6 +60,9 @@ type ChatService struct {
 	// it on (folds long context into a running summary); deterministic tests set
 	// it so a scripted mock isn't consumed by the summarizer's extra model call.
 	DisableSummary bool
+
+	confirms    *confirmHub // pending approval gates for risky tools
+	confirmInit sync.Once
 
 	mu   sync.Mutex
 	runs map[string]context.CancelFunc
@@ -157,6 +161,11 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	}
 	if cleanup != nil {
 		defer cleanup()
+	}
+	// Gate side-effecting tools behind a user approval when requested (only for
+	// interactive runs — a scheduled/headless run has no one to approve).
+	if req.ConfirmRisky && req.Trigger != "schedule" && req.Trigger != "workflow" {
+		tools = s.wrapConfirm(tools)
 	}
 
 	// Multi-agent: the orchestrator (main model) gets the atomic tools PLUS native

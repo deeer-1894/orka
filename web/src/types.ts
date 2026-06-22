@@ -4,6 +4,7 @@ export type EventType =
   | "task"
   | "chat"
   | "clarify"
+  | "confirm"
   | "file"
   | "skill"
   | "agent"
@@ -38,6 +39,12 @@ export interface ClarifyPayload {
   options?: string[];
   context?: string;
   resume_key: string;
+}
+
+export interface ConfirmPayload {
+  id: string;
+  tool: string;
+  summary: string;
 }
 
 export interface ToolPayload {
