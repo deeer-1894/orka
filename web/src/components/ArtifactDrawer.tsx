@@ -4,7 +4,7 @@ import type { BrowserPayload, Connector, Message, MetricsSnapshot, RunRecord, Ta
 import { toast } from "../lib/toast";
 import { useResource, refreshResource } from "../lib/useResource";
 import { FilePreview } from "./FilePreview";
-import { ArtifactGallery } from "./Artifacts";
+import { ArtifactGallery, ArtifactPane } from "./Artifacts";
 
 type Tab = "overview" | "artifacts" | "computer" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
 
@@ -47,7 +47,8 @@ export function ArtifactDrawer({
   messages,
   email,
   onJumpToConversation,
-  onOpenArtifact,
+  focusArtifact,
+  onClearArtifact,
 }: {
   open: boolean;
   onClose: () => void;
@@ -59,7 +60,8 @@ export function ArtifactDrawer({
   messages: Message[];
   email: string;
   onJumpToConversation: (cid: string) => void;
-  onOpenArtifact: (id: string) => void;
+  focusArtifact: string | null; // artifact to open inline (from the in-chat card)
+  onClearArtifact: () => void;
 }) {
   const [width, setWidth] = useState<number>(() => {
     const w = Number(localStorage.getItem("orka.drawerWidth"));
@@ -77,6 +79,12 @@ export function ArtifactDrawer({
 
   const activeFace = faceOf(tab);
   const liveFace = liveTab ? faceOf(liveTab) : null;
+
+  // The 页面 face shows the gallery, or a focused artifact rendered large/inline.
+  const [focusArt, setFocusArt] = useState<string | null>(null);
+  useEffect(() => {
+    if (focusArtifact) { setFocusArt(focusArtifact); setTab("artifacts"); onClearArtifact(); }
+  }, [focusArtifact, setTab, onClearArtifact]);
 
   // Live Focus: when the drawer is open and the agent moves to a new activity,
   // follow it (writing a file → 文件, browsing → 电脑, publishing → 页面). Only
@@ -205,7 +213,7 @@ export function ArtifactDrawer({
         )}
         <div className="flex-1 overflow-y-auto">
           {tab === "overview" && <DashboardPanel onJumpToConversation={onJumpToConversation} />}
-          {tab === "artifacts" && <ArtifactGallery onOpen={onOpenArtifact} />}
+          {tab === "artifacts" && (focusArt ? <ArtifactPane artifactId={focusArt} onBack={() => setFocusArt(null)} /> : <ArtifactGallery onOpen={setFocusArt} />)}
           {tab === "computer" && (
             <ComputerPanel messages={messages} view={computerView} setView={setComputerView} />
           )}

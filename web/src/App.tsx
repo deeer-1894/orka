@@ -7,7 +7,7 @@ import { Thread } from "./components/Thread";
 import { Composer } from "./components/Composer";
 import { ArtifactDrawer } from "./components/ArtifactDrawer";
 import { ShareDialog } from "./components/ShareDialog";
-import { PublicArtifactPage, ArtifactViewer, ArtifactBanner } from "./components/Artifacts";
+import { PublicArtifactPage, ArtifactBanner } from "./components/Artifacts";
 import { useOverlay } from "./lib/useOverlay";
 import { Toaster, toast } from "./lib/toast";
 import { useTheme } from "./lib/theme";
@@ -106,7 +106,8 @@ function Workbench({
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [shared, setShared] = useState<Conversation[]>([]); // conversations others shared with me
   const [shareFor, setShareFor] = useState<Conversation | null>(null); // open share dialog
-  const [openArtifact, setOpenArtifact] = useState<string | null>(null); // artifact viewer modal
+  const [drawerArtifact, setDrawerArtifact] = useState<string | null>(null); // artifact to open inline in the drawer
+  const openArtifactInDrawer = useCallback((id: string) => { setDrawerArtifact(id); setDrawerOpen(true); setDrawerTab("artifacts"); }, []);
   const [activeID, setActiveID] = useState("");
 
   // Sidebar starts open on desktop, closed on narrow screens (where it overlays).
@@ -388,7 +389,7 @@ function Workbench({
         </header>
 
         <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} fileConv={isShared ? activeID : undefined} />
-        {activeID && <div className="px-5"><ArtifactBanner conversationId={activeID} onOpen={setOpenArtifact} /></div>}
+        {activeID && <div className="px-5"><ArtifactBanner conversationId={activeID} onOpen={openArtifactInDrawer} /></div>}
         {readOnly ? (
           <div className="mx-auto mb-4 w-full max-w-3xl px-5">
             <div className="rounded-xl border border-border bg-surface2/50 px-4 py-3 text-center text-[13px] text-muted">
@@ -411,7 +412,8 @@ function Workbench({
         messages={messages}
         email={user.email}
         onJumpToConversation={onJumpToConversation}
-        onOpenArtifact={setOpenArtifact}
+        focusArtifact={drawerArtifact}
+        onClearArtifact={() => setDrawerArtifact(null)}
       />
 
       {scheduleFor !== null && (
@@ -438,7 +440,6 @@ function Workbench({
         />
       )}
 
-      {openArtifact && <ArtifactViewer artifactId={openArtifact} onClose={() => setOpenArtifact(null)} />}
     </div>
   );
 }

@@ -95,13 +95,14 @@ export function ArtifactBanner({ conversationId, onOpen }: { conversationId: str
 }
 
 // ── Viewer: in-app modal with live updates, versions, sharing ────────────────
-export function ArtifactViewer({ artifactId, onClose }: { artifactId: string; onClose: () => void }) {
+// ArtifactBody is the artifact view (header + version select + share + render),
+// shared by the inline drawer pane and the (legacy) modal.
+function ArtifactBody({ artifactId, onClose, inline, backLabel }: { artifactId: string; onClose: () => void; inline?: boolean; backLabel?: string }) {
   const [art, setArt] = useState<Artifact | null>(null);
   const [ver, setVer] = useState<ArtifactVersion | null>(null);
   const [viewing, setViewing] = useState(0); // 0 = latest
   const [live, setLive] = useState(false);
   const [showShare, setShowShare] = useState(false);
-  useOverlay(onClose);
 
   const load = (version = 0) =>
     artApi.get(artifactId, version).then((r) => { setArt(r.artifact); setVer(r.version); }).catch(() => {});
@@ -123,38 +124,59 @@ export function ArtifactViewer({ artifactId, onClose }: { artifactId: string; on
   }, [artifactId, viewing]);
 
   return (
-    <div className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6" onClick={onClose}>
-      <div className="pop-in flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
+    <div
+      className={inline ? "flex h-full flex-col bg-surface" : "pop-in flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl"}
+      onClick={inline ? undefined : (e) => e.stopPropagation()}
+    >
+      <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
+        {inline ? (
+          <button onClick={onClose} className="shrink-0 text-[12px] text-muted hover:text-accent" title="返回画廊">← {backLabel || "画廊"}</button>
+        ) : (
           <span className="text-[16px]">{kindIcon(art?.kind || "")}</span>
-          <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink">{art?.title || "Artifact"}</span>
-          {live && <span className="rounded-full bg-ok/15 px-2 py-0.5 text-[11px] text-ok">● 已更新</span>}
-          {art && art.current_version > 1 && (
-            <select
-              value={viewing}
-              onChange={(e) => setViewing(Number(e.target.value))}
-              className="rounded-lg border border-border bg-surface2 px-1.5 py-1 text-[12px] text-muted outline-none"
-              title="版本"
-            >
-              <option value={0}>最新 v{art.current_version}</option>
-              {Array.from({ length: art.current_version }, (_, i) => art.current_version - i).map((v) => (
-                <option key={v} value={v}>v{v}</option>
-              ))}
-            </select>
-          )}
-          <button onClick={() => setShowShare((x) => !x)} className={"text-[12px] hover:underline " + (showShare ? "text-accent font-medium" : "text-muted")}>分享</button>
-          <button onClick={onClose} className="ml-1 text-faint hover:text-ink">✕</button>
-        </div>
+        )}
+        <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink">{art?.title || "Artifact"}</span>
+        {live && <span className="rounded-full bg-ok/15 px-2 py-0.5 text-[11px] text-ok">● 已更新</span>}
+        {art && art.current_version > 1 && (
+          <select
+            value={viewing}
+            onChange={(e) => setViewing(Number(e.target.value))}
+            className="rounded-lg border border-border bg-surface2 px-1.5 py-1 text-[12px] text-muted outline-none"
+            title="版本"
+          >
+            <option value={0}>最新 v{art.current_version}</option>
+            {Array.from({ length: art.current_version }, (_, i) => art.current_version - i).map((v) => (
+              <option key={v} value={v}>v{v}</option>
+            ))}
+          </select>
+        )}
+        <button onClick={() => setShowShare((x) => !x)} className={"text-[12px] hover:underline " + (showShare ? "text-accent font-medium" : "text-muted")}>分享</button>
+        {!inline && <button onClick={onClose} className="ml-1 text-faint hover:text-ink">✕</button>}
+      </div>
 
-        {showShare && art && <ShareBar art={art} onChange={(a) => setArt(a)} />}
+      {showShare && art && <ShareBar art={art} onChange={(a) => setArt(a)} />}
 
-        <div className="overflow-y-auto px-5 py-4">
-          {ver ? <ArtifactRenderer blocks={ver.blocks} /> : <div className="text-[13px] text-faint">加载…</div>}
-          {ver?.note && <div className="mt-4 border-t border-border pt-2 text-[11px] text-faint">本版更新: {ver.note}</div>}
-        </div>
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        {ver ? <ArtifactRenderer blocks={ver.blocks} /> : <div className="text-[13px] text-faint">加载…</div>}
+        {ver?.note && <div className="mt-4 border-t border-border pt-2 text-[11px] text-faint">本版更新: {ver.note}</div>}
       </div>
     </div>
   );
+}
+
+// ArtifactViewer is the legacy modal (kept for the public page / fallbacks).
+export function ArtifactViewer({ artifactId, onClose }: { artifactId: string; onClose: () => void }) {
+  useOverlay(onClose);
+  return (
+    <div className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6" onClick={onClose}>
+      <ArtifactBody artifactId={artifactId} onClose={onClose} />
+    </div>
+  );
+}
+
+// ArtifactPane renders the artifact large + persistent inside the drawer 舞台 —
+// "conversation + preview" instead of a transient modal.
+export function ArtifactPane({ artifactId, onBack }: { artifactId: string; onBack: () => void }) {
+  return <ArtifactBody artifactId={artifactId} onClose={onBack} inline backLabel="画廊" />;
 }
 
 // ShareBar: owner controls — public link toggle + copy. (Per-user email sharing
