@@ -41,6 +41,7 @@ export function ArtifactDrawer({
   onClose,
   tab,
   setTab,
+  liveTab,
   computerView,
   setComputerView,
   messages,
@@ -52,6 +53,7 @@ export function ArtifactDrawer({
   onClose: () => void;
   tab: Tab;
   setTab: (t: Tab) => void;
+  liveTab: Tab | null; // where the agent is working now (Live Focus)
   computerView: "terminal" | "browser";
   setComputerView: (v: "terminal" | "browser") => void;
   messages: Message[];
@@ -74,6 +76,16 @@ export function ArtifactDrawer({
   const effWidth = open ? (isDesktop ? width : Math.round(window.innerWidth * 0.86)) : 0;
 
   const activeFace = faceOf(tab);
+  const liveFace = liveTab ? faceOf(liveTab) : null;
+
+  // Live Focus: when the drawer is open and the agent moves to a new activity,
+  // follow it (writing a file → 文件, browsing → 电脑, publishing → 页面). Only
+  // reacts to *changes* in liveTab, so a manual click isn't immediately undone.
+  const prevLive = useRef<Tab | null>(null);
+  useEffect(() => {
+    if (open && liveTab && liveTab !== prevLive.current) setTab(liveTab);
+    prevLive.current = liveTab;
+  }, [open, liveTab, setTab]);
 
   // Badge a tab that gains content (a new artifact/file) while you're elsewhere,
   // so you don't sit on 文件 and miss that 页面 just updated.
@@ -105,24 +117,28 @@ export function ArtifactDrawer({
     setNewTabs((prev) => { if (!prev.has(tab)) return prev; const n = new Set(prev); n.delete(tab); return n; });
   }, [tab]);
 
-  // A face is "new" if any of its sub-tabs gained content.
+  // A face is "new" if any of its sub-tabs gained content; the LIVE face (where
+  // the agent is working now) gets a pulsing ring so the drawer reads as a stage.
   const FaceBtn = (f: (typeof FACES)[number]) => {
     const on = f.id === activeFace;
+    const live = f.id === liveFace;
     const dot = f.subs.some((s) => newTabs.has(s));
     return (
       <button
         key={f.id}
         onClick={() => setTab(f.subs[0])}
-        title={f.tip}
+        title={live ? f.tip + " · Orka 正在这里工作" : f.tip}
         role="tab"
         aria-selected={on}
         className={
           "relative shrink-0 rounded-lg px-3 py-1.5 text-[13px] transition " +
-          (on ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")
+          (on ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2") +
+          (live && !on ? " ring-1 ring-accent/50" : "")
         }
       >
+        {live && <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-ok align-middle" />}
         {f.label}
-        {dot && !on && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-accent" />}
+        {dot && !on && !live && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-accent" />}
       </button>
     );
   };

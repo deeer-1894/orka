@@ -17,6 +17,30 @@ import type { Conversation, Message, Notification } from "./types";
 
 type Tab = "overview" | "artifacts" | "computer" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
 
+// Tools whose output the user watches in the 文件 face.
+const FILE_TOOLS = new Set([
+  "file_write", "file_read", "doc_export", "doc_read", "chart", "qrcode",
+  "csv_to_json", "csv_to_xlsx", "xlsx_to_csv", "csv_join", "sql_query", "pdf_extract", "slides",
+]);
+
+// liveTab derives where the agent is working RIGHT NOW from the latest event, so
+// the drawer can follow it (Live Focus). Null when idle.
+function liveTabFromMessages(messages: Message[], streaming: boolean): Tab | null {
+  if (!streaming) return null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.type === "browser") return "computer";
+    if (m.type === "tool") {
+      const tool = (m.payload as { tool?: string })?.tool || "";
+      if (tool === "run_agent") return "computer";
+      if (tool === "artifact_publish" || tool === "artifact_get") return "artifacts";
+      if (FILE_TOOLS.has(tool)) return "files";
+      return null; // some other tool → no specific focus
+    }
+  }
+  return null;
+}
+
 interface ModelOption { version: string; label: string; hint: string }
 // Fallback until /models resolves (keeps the picker non-empty on first paint).
 const MODELS_FALLBACK: ModelOption[] = [
@@ -115,6 +139,8 @@ function Workbench({
   const { run, kill, setConvMessages, messagesOf, statusOf, runningIds } = useChatStreams();
   const messages = messagesOf(activeID);
   const status = statusOf(activeID);
+  // Where the agent is working right now → the drawer follows it (Live Focus).
+  const liveTab = liveTabFromMessages(messages, status === "streaming");
   // conversations whose history we've already loaded (or that have a live run),
   // so switching back never clobbers an in-flight stream with stale history.
   const seen = useRef<Set<string>>(new Set());
@@ -379,6 +405,7 @@ function Workbench({
         onClose={() => setDrawerOpen(false)}
         tab={drawerTab}
         setTab={setDrawerTab}
+        liveTab={liveTab}
         computerView={computerView}
         setComputerView={setComputerView}
         messages={messages}
