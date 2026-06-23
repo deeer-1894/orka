@@ -17,7 +17,8 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
-  useOverlay(onClose);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useOverlay(onClose, panelRef);
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -45,7 +46,7 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
   let idx = -1;
   return (
     <div className="overlay-in fixed inset-0 z-[60] flex items-start justify-center bg-black/30 p-6 pt-[12vh]" onClick={onClose}>
-      <div className="pop-in flex max-h-[70vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label="命令面板" className="pop-in flex max-h-[70vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl" onClick={(e) => e.stopPropagation()}>
         <input
           autoFocus
           value={q}

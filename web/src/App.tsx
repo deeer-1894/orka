@@ -12,6 +12,7 @@ import { Icon } from "./components/Icon";
 import { PublicArtifactPage, ArtifactBanner } from "./components/Artifacts";
 import { useOverlay } from "./lib/useOverlay";
 import { Toaster, toast } from "./lib/toast";
+import { ConfirmHost } from "./lib/confirm";
 import { useTheme } from "./lib/theme";
 import { useResource, refreshResource } from "./lib/useResource";
 import { loadTools, saveTools } from "./lib/toolGroups";
@@ -94,6 +95,7 @@ export default function App() {
         <Workbench user={user} onSignOut={() => { auth.clear(); setUser(null); }} />
       )}
       <Toaster />
+      <ConfirmHost />
     </>
   );
 }
