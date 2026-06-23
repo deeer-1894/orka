@@ -11,6 +11,7 @@ import { PublicArtifactPage, ArtifactViewer, ArtifactBanner } from "./components
 import { useOverlay } from "./lib/useOverlay";
 import { Toaster, toast } from "./lib/toast";
 import { useTheme } from "./lib/theme";
+import { useResource, refreshResource } from "./lib/useResource";
 import { loadTools, saveTools } from "./lib/toolGroups";
 import type { Conversation, Message, Notification } from "./types";
 
@@ -91,7 +92,9 @@ function Workbench({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<Tab>("overview");
   const [computerView, setComputerView] = useState<"terminal" | "browser">("terminal");
-  const [totalTokens, setTotalTokens] = useState(0);
+  // Shared metrics resource (also feeds the 指标 panel) — one poll, paused when hidden.
+  const metricsRes = useResource("metrics", api.metrics, { interval: 4000 });
+  const totalTokens = metricsRes?.total_tokens ?? 0;
   const [version, setVersion] = useState(""); // selected model version ("" main, "mini")
   const [theme, toggleTheme] = useTheme();
   // Per-conversation enabled tool groups (empty = all tools, the default).
@@ -164,14 +167,6 @@ function Workbench({
   const activeConv = conversations.find((c) => c.conversation_id === activeID) || shared.find((c) => c.conversation_id === activeID);
   const isShared = !!activeConv?.owner_email && activeConv.owner_email !== user.email;
   const readOnly = isShared && !(activeConv?.shares ?? []).some((s) => s.email === user.email && s.role === "editor");
-
-  // live token-usage chip in the header
-  useEffect(() => {
-    const t = () => api.metrics().then((s) => setTotalTokens(s.total_tokens || 0)).catch(() => {});
-    t();
-    const id = setInterval(t, 4000);
-    return () => clearInterval(id);
-  }, []);
 
   // "New chat" just resets to the empty state — the server conversation is
   // created lazily on the first send (ensureConversation), so clicking around
@@ -498,15 +493,12 @@ function ScheduleDialog({ prompt, onClose, onConfirm }: { prompt: string; onClos
 // history): a header bell with an unread badge + a dropdown that jumps to the
 // failed run's conversation.
 function NotificationBell({ onJump }: { onJump: (cid: string) => void }) {
-  const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Notification[]>([]);
-  const load = () => api.listNotifications().then((r) => { setUnread(r.unread); setItems(r.notifications || []); }).catch(() => {});
-  useEffect(() => {
-    load();
-    const id = setInterval(() => api.listNotifications().then((r) => setUnread(r.unread)).catch(() => {}), 20000);
-    return () => clearInterval(id);
-  }, []);
+  // Shared, hidden-paused poll for the unread badge.
+  const notif = useResource("notifications", () => api.listNotifications(), { interval: 20000 });
+  const unread = notif?.unread ?? 0;
+  const load = () => api.listNotifications().then((r) => setItems(r.notifications || [])).catch(() => {});
   return (
     <div className="relative ml-auto">
       <button
@@ -525,14 +517,14 @@ function NotificationBell({ onJump }: { onJump: (cid: string) => void }) {
           <div className="absolute right-0 z-20 mt-1 w-80 rounded-xl border border-border bg-surface p-1.5 shadow-lg">
             <div className="flex items-center justify-between px-2 py-1">
               <span className="text-[11px] font-medium uppercase tracking-wide text-faint">通知</span>
-              {items.length > 0 && <button onClick={() => api.readNotifications().then(load)} className="text-[11px] text-faint hover:text-accent">全部已读</button>}
+              {items.length > 0 && <button onClick={() => api.readNotifications().then(() => { load(); refreshResource("notifications"); })} className="text-[11px] text-faint hover:text-accent">全部已读</button>}
             </div>
             {items.length === 0 && <div className="px-2 py-4 text-center text-[13px] text-faint">暂无通知</div>}
             <div className="max-h-[60vh] overflow-y-auto">
               {items.map((n) => (
                 <button
                   key={n.notification_id}
-                  onClick={() => { api.readNotifications(n.notification_id).then(load); if (n.conversation_id) { onJump(n.conversation_id); setOpen(false); } }}
+                  onClick={() => { api.readNotifications(n.notification_id).then(() => { load(); refreshResource("notifications"); }); if (n.conversation_id) { onJump(n.conversation_id); setOpen(false); } }}
                   className={"flex w-full flex-col items-start gap-0.5 rounded-lg px-2 py-1.5 text-left hover:bg-surface2 " + (n.read ? "opacity-60" : "")}
                 >
                   <span className="text-[13px] text-ink">

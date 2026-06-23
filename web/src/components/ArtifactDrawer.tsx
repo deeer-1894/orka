@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, artifacts as artifactApi, files as fileApi } from "../api";
 import type { BrowserPayload, Connector, Message, MetricsSnapshot, RunRecord, TaskMeta, ToolPayload, Workflow } from "../types";
 import { toast } from "../lib/toast";
+import { useResource, refreshResource } from "../lib/useResource";
 import { FilePreview } from "./FilePreview";
 import { ArtifactGallery } from "./Artifacts";
 
@@ -692,13 +693,8 @@ function FilesPanel({ email }: { email: string }) {
 }
 
 function MetricsPanel() {
-  const [m, setM] = useState<MetricsSnapshot | null>(null);
-  useEffect(() => {
-    const t = () => api.metrics().then(setM).catch(() => {});
-    t();
-    const id = setInterval(t, 2000);
-    return () => clearInterval(id);
-  }, []);
+  // Shares the same "metrics" channel as the header chip — no duplicate poll.
+  const m = useResource("metrics", api.metrics, { interval: 4000 }) ?? null;
   const fmt = (n: number) => (n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n));
   const stats = [
     { k: "运行中会话", v: m?.active_sessions ?? 0 },
@@ -976,15 +972,13 @@ function fmtDur(ms: number): string {
 // Every run (manual / scheduled / rerun) lands here with status, duration,
 // tokens, tool count; click to open its conversation, or re-run it.
 function RunsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: string) => void }) {
-  const [runs, setRuns] = useState<RunRecord[]>([]);
   const [onlyFailed, setOnlyFailed] = useState(false);
-  const refresh = () =>
-    api.listRuns(onlyFailed ? { status: "failed" } : {}).then((r) => setRuns(r.runs || [])).catch(() => {});
-  useEffect(() => {
-    refresh();
-    const id = setInterval(refresh, 5000);
-    return () => clearInterval(id); /* eslint-disable-next-line */
-  }, [onlyFailed]);
+  const runs =
+    useResource<RunRecord[]>(
+      "runs:" + (onlyFailed ? "failed" : "all"),
+      () => api.listRuns(onlyFailed ? { status: "failed" } : {}).then((r) => r.runs || []),
+      { interval: 5000 },
+    ) ?? [];
 
   return (
     <div className="p-3">
@@ -1023,7 +1017,7 @@ function RunsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: strin
                   <button onClick={() => onJumpToConversation(r.conversation_id)} className="text-accent hover:underline">↗ 对话</button>
                 )}
                 <button
-                  onClick={() => api.rerunRun(r.run_id).then(() => { toast("已重新触发", "success"); setTimeout(refresh, 800); }).catch(() => {})}
+                  onClick={() => api.rerunRun(r.run_id).then(() => { toast("已重新触发", "success"); setTimeout(() => refreshResource("runs:all"), 800); }).catch(() => {})}
                   className="hover:text-accent"
                 >
                   ↻ 重跑
@@ -1038,18 +1032,13 @@ function RunsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: strin
 }
 
 function TasksPanel({ onJumpToConversation }: { onJumpToConversation: (cid: string) => void }) {
-  const [tasks, setTasks] = useState<TaskMeta[]>([]);
   const [hookUrl, setHookUrl] = useState<Record<string, string>>({});
   const [creating, setCreating] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [sec, setSec] = useState(3600);
 
-  const refresh = () => api.getTasks().then((r) => setTasks(r.tasks || [])).catch(() => {});
-  useEffect(() => {
-    refresh();
-    const id = setInterval(refresh, 5000);
-    return () => clearInterval(id);
-  }, []);
+  const tasks = useResource<TaskMeta[]>("tasks", () => api.getTasks().then((r) => r.tasks || []), { interval: 5000 }) ?? [];
+  const refresh = () => refreshResource("tasks");
 
   const create = async () => {
     if (!prompt.trim()) return;
