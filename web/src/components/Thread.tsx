@@ -140,10 +140,16 @@ export function Thread({
   fileConv?: string; // when viewing a shared conversation, read files from its owner via this id
 }) {
   const endRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [previewFile, setPreviewFile] = useState<string | null>(null);
   const [wsFiles, setWsFiles] = useState<Set<string>>(new Set());
+  // Smart auto-scroll: only follow new content when the user is already near the
+  // bottom, so scrolling up to read history isn't yanked back down.
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (nearBottom) endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, status]);
   // Refresh the workspace listing on load and whenever a run settles, so files
   // the agent just produced are recognized by the session strip.
@@ -172,16 +178,18 @@ export function Thread({
   // actions, since they act on the most recent user turn.
   let lastAssistant = -1;
   let lastUser = -1;
+  let lastSteps = -1;
   blocks.forEach((b, i) => {
     if (b.kind === "assistant") lastAssistant = i;
     if (b.kind === "user") lastUser = i;
+    if (b.kind === "steps") lastSteps = i;
   });
   const lastUserPrompt = [...blocks].reverse().find((b) => b.kind === "user")?.m.content || "";
   const canAct = status !== "streaming";
 
   return (
     <OpenFileCtx.Provider value={setPreviewFile}>
-    <div className="relative flex-1 overflow-y-auto">
+    <div ref={scrollRef} className="relative flex-1 overflow-y-auto">
       <ThreadOutline turns={turns} />
       <div className="mx-auto max-w-3xl px-5 py-8">
         {blocks.map((b, i) => (
@@ -199,7 +207,7 @@ export function Thread({
             {b.kind === "clarify" && <Clarify m={b.m} onResume={onResume} />}
             {b.kind === "confirm" && <ConfirmCard m={b.m} />}
             {b.kind === "weather" && <WeatherCard data={b.data} />}
-            {b.kind === "steps" && <Steps items={b.items} onOpenViewport={onOpenViewport} />}
+            {b.kind === "steps" && <Steps items={b.items} onOpenViewport={onOpenViewport} live={status === "streaming" && i === lastSteps} />}
           </div>
         ))}
         {thinking && <Thinking />}
@@ -478,12 +486,16 @@ function CopyButton({ text }: { text: string }) {
 
 const AGENT_ICON: Record<string, string> = { researcher: "🔎", writer: "✍️", browser: "🌐" };
 
-function Steps({ items, onOpenViewport }: { items: Message[]; onOpenViewport: () => void }) {
-  const [open, setOpen] = useState(false);
+function Steps({ items, onOpenViewport, live }: { items: Message[]; onOpenViewport: () => void; live?: boolean }) {
+  // Default-expanded while the run is live (the execution timeline IS the
+  // product's differentiator); the user can still collapse, and it auto-folds
+  // once the run settles — unless they pinned it open.
+  const [pinned, setPinned] = useState<boolean | null>(null);
+  const open = pinned ?? !!live;
   const hasShot = items.some((m) => m.type === "browser" && (m.payload as BrowserPayload)?.data);
 
   // Partition: the orchestrator's own steps render flat; each sub-agent's steps
-  // (tagged with meta.agent_id) collapse into their own labeled lane.
+  // (tagged with meta.agent_id) collapse into their own labeled lane (a swimlane).
   const own = items.filter((m) => !m.meta?.agent_id);
   const lanes = new Map<string, Message[]>();
   for (const m of items) {
@@ -497,36 +509,50 @@ function Steps({ items, onOpenViewport }: { items: Message[]; onOpenViewport: ()
   return (
     <div className="mb-6 ml-[42px]">
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => setPinned(!open)}
         className="flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-[13px] text-muted hover:border-accent/40 transition"
       >
-        <Spinner />
+        {live ? <Spinner /> : <span className="text-faint">⚙</span>}
         <span>
-          {open ? "Hide" : "Show"} {items.length} step{items.length > 1 ? "s" : ""}
-          {lanes.size > 0 && ` · ${lanes.size} agent`}
+          {live ? "执行中" : open ? "收起" : "查看"} · {items.length} 步{lanes.size > 0 && ` · ${lanes.size} 个子 Agent`}
         </span>
         {hasShot && (
-          <span
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenViewport();
-            }}
-            className="ml-1 text-accent hover:underline"
-          >
-            · view browser
-          </span>
+          <span onClick={(e) => { e.stopPropagation(); onOpenViewport(); }} className="ml-1 text-accent hover:underline">· 看浏览器</span>
         )}
       </button>
       {open && (
-        <div className="mt-2 space-y-1.5 border-l-2 border-border pl-4">
-          {own.map((m) => (
-            <Step key={m.id} m={m} />
+        <div className="mt-2 border-l-2 border-border pl-4">
+          {own.map((m, i) => (
+            <TimelineRow key={m.id} m={m} prev={own[i - 1]} />
           ))}
+          {live && (
+            <div className="flex items-center gap-2 py-1 text-[12px] text-muted">
+              <span className="-ml-[21px] h-2 w-2 animate-pulse rounded-full bg-ok ring-2 ring-surface" />
+              进行中…
+            </div>
+          )}
           {[...lanes.entries()].map(([agent, msgs]) => (
             <AgentLane key={agent} agent={agent} items={msgs} />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// TimelineRow wraps one Step with a status node on the spine + elapsed time, so
+// the steps read as a timeline ("图标 + 动作 + 耗时 + 状态") not a flat list.
+function TimelineRow({ m, prev }: { m: Message; prev?: Message }) {
+  const err = m.type === "tool" && !!(m.payload as ToolPayload)?.error;
+  const dur = prev && m.ts && prev.ts ? m.ts - prev.ts : 0;
+  return (
+    <div className="relative flex items-start gap-2 py-0.5">
+      <span
+        className={"-ml-[21px] mt-1.5 h-2 w-2 shrink-0 rounded-full ring-2 ring-surface " + (err ? "bg-accent" : "bg-ok/70")}
+        title={err ? "失败" : "完成"}
+      />
+      <div className="min-w-0 flex-1"><Step m={m} /></div>
+      {dur > 400 && <span className="shrink-0 pt-0.5 text-[10px] text-faint">{(dur / 1000).toFixed(1)}s</span>}
     </div>
   );
 }
