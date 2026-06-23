@@ -7,6 +7,7 @@ import { Thread } from "./components/Thread";
 import { Composer } from "./components/Composer";
 import { ArtifactDrawer } from "./components/ArtifactDrawer";
 import { ShareDialog } from "./components/ShareDialog";
+import { CommandPalette, type Command } from "./components/CommandPalette";
 import { PublicArtifactPage, ArtifactBanner } from "./components/Artifacts";
 import { useOverlay } from "./lib/useOverlay";
 import { Toaster, toast } from "./lib/toast";
@@ -146,14 +147,16 @@ function Workbench({
   // so switching back never clobbers an in-flight stream with stale history.
   const seen = useRef<Set<string>>(new Set());
 
+  const [cmdOpen, setCmdOpen] = useState(false);
+
   // Global keyboard shortcuts (mirrors what ChatGPT/Claude/Cursor offer):
-  //   ⌘/Ctrl+K  → jump focus to the composer
+  //   ⌘/Ctrl+K  → open the command palette
   //   Esc       → stop the running task (when one is streaming)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        document.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+        setCmdOpen((o) => !o);
       } else if (e.key === "Escape" && statusOf(activeID) === "streaming") {
         const el = document.activeElement;
         // don't hijack Esc while typing in an input (it closes menus there)
@@ -307,8 +310,25 @@ function Workbench({
     setDrawerOpen(true);
   }, []);
 
+  // ⌘K command palette: collapse the app's scattered actions into one entry.
+  const openPanel = (t: Tab) => { setDrawerTab(t); setDrawerOpen(true); };
+  const commands: Command[] = [
+    { id: "new", group: "操作", icon: "✚", label: "新建会话", hint: "New chat", run: newConversation },
+    { id: "share", group: "操作", icon: "⤴", label: "分享当前会话", run: () => activeConv && setShareFor(conversations.find((c) => c.conversation_id === activeID) || null) },
+    { id: "schedule", group: "操作", icon: "⏰", label: "把上一条设为定时任务", run: () => lastMsgRef.current && setScheduleFor(lastMsgRef.current) },
+    { id: "theme", group: "设置", icon: theme === "dark" ? "☀" : "☾", label: theme === "dark" ? "切换到亮色" : "切换到暗色", run: toggleTheme },
+    { id: "confirm", group: "设置", icon: "🛡", label: confirmRisky ? "关闭高危操作确认" : "开启高危操作确认", run: toggleConfirm },
+    ...models.map((m): Command => ({ id: "model:" + m.version, group: "切换模型", icon: "◆", label: m.label, hint: m.hint, keywords: m.version, run: () => setVersion(m.version) })),
+    ...([
+      ["overview", "概览"], ["artifacts", "页面 Artifacts"], ["computer", "电脑"], ["files", "文件"],
+      ["runs", "运行历史"], ["flows", "流程 / 工作流"], ["tasks", "定时任务"], ["integrations", "集成"], ["metrics", "指标"],
+    ] as [Tab, string][]).map(([t, label]): Command => ({ id: "panel:" + t, group: "打开面板", icon: "▸", label, run: () => openPanel(t) })),
+    ...conversations.slice(0, 60).map((c): Command => ({ id: "conv:" + c.conversation_id, group: "跳转会话", icon: "💬", label: c.title || "未命名会话", keywords: c.title, run: () => selectConversation(c.conversation_id) })),
+  ];
+
   return (
     <div className="relative flex h-screen">
+      {cmdOpen && <CommandPalette commands={commands} onClose={() => setCmdOpen(false)} />}
       {/* mobile backdrop: tapping it closes whichever overlay is open */}
       {(sidebarOpen || drawerOpen) && (
         <div
