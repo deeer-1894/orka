@@ -11,6 +11,7 @@ import {
 } from "../lib/toolGroups";
 import { api, files as fileApi, tools as toolsApi, type ToolInfo } from "../api";
 import { toast, toastError } from "../lib/toast";
+import { Icon } from "./Icon";
 
 // Icons/labels for the built-in skills; installed/custom skills get a default.
 const SKILL_ICON: Record<string, { icon: string; label: string }> = {
@@ -407,7 +408,7 @@ export function Composer({
             title="上传文件 / 图片（也可拖拽或粘贴）"
             aria-label="上传文件或图片"
           >
-            <span className="text-[17px]">📎</span>
+            <Icon name="paperclip" size={18} />
           </button>
           <input
             ref={fileRef}
@@ -424,7 +425,7 @@ export function Composer({
             title="选技能(也可输入 /)"
             aria-label="选技能"
           >
-            <span className="text-[16px]">🧩</span>
+            <Icon name="sparkle" size={17} />
           </button>
           <button
             onClick={() => {

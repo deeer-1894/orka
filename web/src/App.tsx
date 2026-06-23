@@ -8,6 +8,7 @@ import { Composer } from "./components/Composer";
 import { ArtifactDrawer } from "./components/ArtifactDrawer";
 import { ShareDialog } from "./components/ShareDialog";
 import { CommandPalette, type Command } from "./components/CommandPalette";
+import { Icon } from "./components/Icon";
 import { PublicArtifactPage, ArtifactBanner } from "./components/Artifacts";
 import { useOverlay } from "./lib/useOverlay";
 import { Toaster, toast } from "./lib/toast";
@@ -382,8 +383,8 @@ function Workbench({
           </div>
           <ModelSelect value={version} onChange={setVersion} models={models} />
           {totalTokens > 0 && (
-            <span className="text-[11px] text-faint" title="本进程累计 token 用量">
-              🪙 {totalTokens >= 1000 ? (totalTokens / 1000).toFixed(1) + "k" : totalTokens} tokens
+            <span className="inline-flex items-center gap-1 text-[11px] text-faint" title="本进程累计 token 用量">
+              <Icon name="coin" size={13} /> {totalTokens >= 1000 ? (totalTokens / 1000).toFixed(1) + "k" : totalTokens} tokens
             </span>
           )}
           <NotificationBell onJump={onJumpToConversation} />
@@ -393,7 +394,7 @@ function Workbench({
             title={theme === "dark" ? "切换到亮色" : "切换到暗色"}
             aria-label={theme === "dark" ? "切换到亮色模式" : "切换到暗色模式"}
           >
-            {theme === "dark" ? "☀️" : "🌙"}
+            <Icon name={theme === "dark" ? "sun" : "moon"} />
           </button>
           <button
             onClick={() => setDrawerOpen((o) => !o)}
@@ -552,9 +553,9 @@ function NotificationBell({ onJump }: { onJump: (cid: string) => void }) {
       <button
         onClick={() => { setOpen((o) => !o); if (!open) load(); }}
         aria-label={"通知" + (unread > 0 ? `（${unread} 条未读）` : "")}
-        className="relative grid h-8 w-8 place-items-center rounded-lg text-[16px] text-muted hover:bg-surface2"
+        className="relative grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-surface2"
       >
-        🔔
+        <Icon name="bell" />
         {unread > 0 && (
           <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-[16px] place-items-center rounded-full bg-accent px-1 text-[10px] text-white">{unread > 9 ? "9+" : unread}</span>
         )}

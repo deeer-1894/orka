@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { Conversation } from "../types";
+import { Icon } from "./Icon";
 
 // Time buckets so a long history reads as 今天/昨天/近7天/更早 instead of one
 // undifferentiated list.
@@ -124,7 +125,7 @@ export function Sidebar({
         {/* disambiguate same-titled conversations with a timestamp */}
         {dup && <span className="shrink-0 text-[10px] text-faint group-hover:hidden">{relTime(c.created_at)}</span>}
         {(c.shares?.length ?? 0) > 0 && <span className="shrink-0 text-[11px] group-hover:hidden" title={`已分享给 ${c.shares!.length} 人`}>🔗</span>}
-        <button onClick={(e) => { e.stopPropagation(); onShare(c.conversation_id); }} className="hidden px-1 text-faint hover:text-accent group-hover:block" title="分享" aria-label="分享会话">⤴</button>
+        <button onClick={(e) => { e.stopPropagation(); onShare(c.conversation_id); }} className="hidden px-1 text-faint hover:text-accent group-hover:block" title="分享" aria-label="分享会话"><Icon name="share" size={14} /></button>
         <button onClick={(e) => { e.stopPropagation(); setDraft(c.title); setEditing(c.conversation_id); }} className="hidden px-1 text-faint hover:text-ink group-hover:block" title="重命名" aria-label="重命名会话">✎</button>
         <button onClick={(e) => { e.stopPropagation(); if (confirm("删除这个会话?")) onDelete(c.conversation_id); }} className="hidden px-1 text-faint hover:text-accent group-hover:block" title="删除" aria-label="删除会话">✕</button>
       </div>
@@ -157,7 +158,7 @@ export function Sidebar({
 
         <div className="mt-3 px-3">
           <div className="relative">
-            <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[12px] text-faint">🔍</span>
+            <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-faint"><Icon name="search" size={13} /></span>
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
