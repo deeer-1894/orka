@@ -22,9 +22,19 @@ const TAB_META: Record<Tab, { label: string; tip: string }> = {
   integrations: { label: "集成", tip: "外部工具 / MCP 连接器" },
   metrics: { label: "指标", tip: "用量与性能指标" },
 };
-// Basic tabs stay visible; advanced ones fold behind 更多 to cut first-run load.
-const BASIC_TABS: Tab[] = ["overview", "artifacts", "files", "computer"];
-const ADV_TABS: Tab[] = ["runs", "flows", "tasks", "integrations", "metrics"];
+// Nine tabs is a back-office crammed into a chat sidebar. Collapse them into 4
+// semantic FACES; multi-tab faces (舞台/运营台) get an inline sub-nav. runs/flows/
+// tasks/integrations/metrics are all "execution & observability" → one 运营台.
+type Face = "overview" | "stage" | "files" | "ops";
+const FACES: { id: Face; label: string; tip: string; subs: Tab[] }[] = [
+  { id: "overview", label: "概览", tip: "工作区概览与近期活动", subs: ["overview"] },
+  { id: "stage", label: "舞台", tip: "看 Orka 产出与干活:页面 + 电脑", subs: ["artifacts", "computer"] },
+  { id: "files", label: "文件", tip: "工作区里的文件", subs: ["files"] },
+  { id: "ops", label: "运营台", tip: "执行与可观测:运行 / 流程 / 任务 / 集成 / 指标", subs: ["runs", "flows", "tasks", "integrations", "metrics"] },
+];
+function faceOf(tab: Tab): Face {
+  return (FACES.find((f) => f.subs.includes(tab)) || FACES[0]).id;
+}
 
 export function ArtifactDrawer({
   open,
@@ -63,9 +73,7 @@ export function ArtifactDrawer({
   }, []);
   const effWidth = open ? (isDesktop ? width : Math.round(window.innerWidth * 0.86)) : 0;
 
-  // Advanced tabs fold away by default; auto-expand if one is active.
-  const [adv, setAdv] = useState(false);
-  useEffect(() => { if (ADV_TABS.includes(tab)) setAdv(true); }, [tab]);
+  const activeFace = faceOf(tab);
 
   // Badge a tab that gains content (a new artifact/file) while you're elsewhere,
   // so you don't sit on 文件 and miss that 页面 just updated.
@@ -97,18 +105,39 @@ export function ArtifactDrawer({
     setNewTabs((prev) => { if (!prev.has(tab)) return prev; const n = new Set(prev); n.delete(tab); return n; });
   }, [tab]);
 
-  const TabBtn = (t: Tab) => (
+  // A face is "new" if any of its sub-tabs gained content.
+  const FaceBtn = (f: (typeof FACES)[number]) => {
+    const on = f.id === activeFace;
+    const dot = f.subs.some((s) => newTabs.has(s));
+    return (
+      <button
+        key={f.id}
+        onClick={() => setTab(f.subs[0])}
+        title={f.tip}
+        role="tab"
+        aria-selected={on}
+        className={
+          "relative shrink-0 rounded-lg px-3 py-1.5 text-[13px] transition " +
+          (on ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")
+        }
+      >
+        {f.label}
+        {dot && !on && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-accent" />}
+      </button>
+    );
+  };
+  const SubBtn = (t: Tab) => (
     <button
       key={t}
       onClick={() => setTab(t)}
       title={TAB_META[t].tip}
       className={
-        "relative shrink-0 rounded-lg px-2 py-1.5 text-[12.5px] transition " +
-        (tab === t ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")
+        "relative shrink-0 rounded-md px-2 py-1 text-[12px] transition " +
+        (tab === t ? "bg-surface2 text-ink" : "text-faint hover:text-muted")
       }
     >
       {TAB_META[t].label}
-      {newTabs.has(t) && <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-accent" />}
+      {newTabs.has(t) && tab !== t && <span className="absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-accent" />}
     </button>
   );
 
@@ -140,19 +169,8 @@ export function ArtifactDrawer({
       />
       <div className="flex h-full w-full flex-col" style={{ minWidth: 280 }}>
         <div className="flex items-center gap-1 border-b border-border px-2 h-14">
-          <div className="flex flex-1 items-center gap-0.5 overflow-x-auto no-scrollbar">
-            {BASIC_TABS.map(TabBtn)}
-            <button
-              onClick={() => setAdv((v) => !v)}
-              className="shrink-0 rounded-lg px-1.5 py-1.5 text-[12px] text-faint hover:bg-surface2"
-              title="高级:运行 / 流程 / 任务 / 集成 / 指标"
-            >
-              {adv ? "更多 ▴" : (() => {
-                const n = ADV_TABS.filter((t) => newTabs.has(t)).length;
-                return n > 0 ? "更多 •" : "更多 ▾";
-              })()}
-            </button>
-            {adv && ADV_TABS.map(TabBtn)}
+          <div role="tablist" className="flex flex-1 items-center gap-0.5 overflow-x-auto no-scrollbar">
+            {FACES.map(FaceBtn)}
           </div>
           <button
             onClick={onClose}
@@ -163,6 +181,12 @@ export function ArtifactDrawer({
             ✕
           </button>
         </div>
+        {/* Sub-nav for multi-tab faces (舞台 / 运营台). */}
+        {(FACES.find((f) => f.id === activeFace)?.subs.length ?? 0) > 1 && (
+          <div className="flex items-center gap-1 border-b border-border bg-surface2/30 px-3 py-1.5">
+            {FACES.find((f) => f.id === activeFace)!.subs.map(SubBtn)}
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto">
           {tab === "overview" && <DashboardPanel onJumpToConversation={onJumpToConversation} />}
           {tab === "artifacts" && <ArtifactGallery onOpen={onOpenArtifact} />}
