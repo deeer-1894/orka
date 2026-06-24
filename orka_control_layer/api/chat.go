@@ -190,12 +190,13 @@ func (a *API) ConfirmAction(ctx context.Context, c *app.RequestContext) {
 	var req struct {
 		ID      string `json:"id"`
 		Approve bool   `json:"approve"`
+		Always  bool   `json:"always"` // approve for the rest of this conversation
 	}
 	if err := bind(c, &req); err != nil || req.ID == "" {
 		fail(c, consts.StatusBadRequest, "id required")
 		return
 	}
-	if !a.Chat.ResolveConfirm(req.ID, req.Approve) {
+	if !a.Chat.ResolveConfirm(req.ID, req.Approve, req.Always) {
 		fail(c, consts.StatusNotFound, "no pending confirmation (expired?)")
 		return
 	}

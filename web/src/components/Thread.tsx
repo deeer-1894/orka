@@ -6,6 +6,7 @@ import type { ConfirmPayload } from "../types";
 import { Markdown } from "./Markdown";
 import { FilePreview } from "./FilePreview";
 import { WeatherCard, parseWeatherCard } from "./WeatherCard";
+import { Icon, type IconName } from "./Icon";
 
 // Opening a workspace file is shared down the step tree (Steps → Step, AgentLane)
 // via context so a filename is clickable wherever it appears without prop drilling.
@@ -484,7 +485,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-const AGENT_ICON: Record<string, string> = { researcher: "🔎", writer: "✍️", browser: "🌐" };
+const AGENT_ICON: Record<string, IconName> = { researcher: "search", writer: "rename", browser: "globe" };
 
 function Steps({ items, onOpenViewport, live }: { items: Message[]; onOpenViewport: () => void; live?: boolean }) {
   // Default-expanded while the run is live (the execution timeline IS the
@@ -566,7 +567,7 @@ function AgentLane({ agent, items }: { agent: string; items: Message[] }) {
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center gap-2 px-2.5 py-1.5 text-[13px]"
       >
-        <span className="text-[15px]">{AGENT_ICON[agent] || "🤖"}</span>
+        <Icon name={AGENT_ICON[agent] || "users"} size={15} className="text-muted" />
         <span className="font-medium text-ink">{agent}</span>
         <span className="text-faint">· {items.length} 步</span>
         <span className="ml-auto text-faint">{open ? "▾" : "▸"}</span>
@@ -584,45 +585,45 @@ function AgentLane({ agent, items }: { agent: string; items: Message[] }) {
 
 // toolReceipt turns a tool payload into a readable {icon,label,detail} receipt,
 // so a step reads like "📄 wrote report.md · 1,785 bytes" instead of raw JSON.
-function toolReceipt(p: ToolPayload): { icon: string; label: string; detail: string; file?: string } {
+function toolReceipt(p: ToolPayload): { icon: IconName; label: string; detail: string; file?: string } {
   const a = (p.args || {}) as Record<string, unknown>;
   const s = (k: string) => (a[k] == null ? "" : String(a[k]));
   const res = stripCard(p.result || "");
   const file = outputFile(p); // produced/touched workspace file, if any
-  const base: Record<string, { icon: string; label: string; detail: string }> = {
-    file_write: { icon: "📄", label: "写入", detail: res },
-    file_read: { icon: "📄", label: "读取", detail: trunc(res, 70) },
-    file_list: { icon: "📁", label: `列目录 ${s("path") || "/"}`, detail: trunc(res, 70) },
-    web_search: { icon: "🔎", label: `搜索 “${s("query")}”`, detail: trunc(res, 70) },
-    fetch_url: { icon: "🔗", label: "读取网页", detail: trunc(s("url") || res, 70) },
-    weather: { icon: "🌤️", label: `天气 ${s("location")}`, detail: "" },
-    current_time: { icon: "🕐", label: "当前时间", detail: trunc(res, 60) },
-    calculator: { icon: "🧮", label: "计算", detail: trunc(res, 60) },
-    unit_convert: { icon: "📐", label: "单位换算", detail: trunc(res, 60) },
-    http_request: { icon: "🌍", label: `HTTP ${s("method") || "GET"}`, detail: trunc(s("url"), 60) },
-    apply_skill: { icon: "✨", label: `采纳技能 ${s("name")}`, detail: "" },
+  const base: Record<string, { icon: IconName; label: string; detail: string }> = {
+    file_write: { icon: "file", label: "写入", detail: res },
+    file_read: { icon: "file", label: "读取", detail: trunc(res, 70) },
+    file_list: { icon: "folder", label: `列目录 ${s("path") || "/"}`, detail: trunc(res, 70) },
+    web_search: { icon: "search", label: `搜索 “${s("query")}”`, detail: trunc(res, 70) },
+    fetch_url: { icon: "link", label: "读取网页", detail: trunc(s("url") || res, 70) },
+    weather: { icon: "sun", label: `天气 ${s("location")}`, detail: "" },
+    current_time: { icon: "clock", label: "当前时间", detail: trunc(res, 60) },
+    calculator: { icon: "calc", label: "计算", detail: trunc(res, 60) },
+    unit_convert: { icon: "ruler", label: "单位换算", detail: trunc(res, 60) },
+    http_request: { icon: "globe", label: `HTTP ${s("method") || "GET"}`, detail: trunc(s("url"), 60) },
+    apply_skill: { icon: "sparkle", label: `采纳技能 ${s("name")}`, detail: "" },
     // Office / data / code tools.
-    doc_export: { icon: "📄", label: "导出文档", detail: trunc(res, 60) },
-    doc_read: { icon: "📖", label: "读取文档", detail: trunc(res, 60) },
-    chart: { icon: "📊", label: "生成图表", detail: trunc(res, 60) },
-    qrcode: { icon: "🔳", label: "二维码", detail: trunc(res, 60) },
-    csv_query: { icon: "📊", label: "查询表格", detail: trunc(res, 60) },
-    csv_stats: { icon: "📊", label: "统计表格", detail: trunc(res, 60) },
-    csv_to_json: { icon: "📊", label: "CSV→JSON", detail: trunc(res, 60) },
-    csv_to_xlsx: { icon: "📊", label: "CSV→Excel", detail: trunc(res, 60) },
-    xlsx_to_csv: { icon: "📊", label: "Excel→CSV", detail: trunc(res, 60) },
-    csv_join: { icon: "🔗", label: "连接表格", detail: trunc(res, 60) },
-    sql_query: { icon: "🗃️", label: "SQL 查询", detail: trunc(res, 60) },
-    pdf_extract: { icon: "📖", label: "提取 PDF", detail: trunc(res, 60) },
-    slides: { icon: "📑", label: "生成 PPT", detail: trunc(res, 60) },
-    python: { icon: "🐍", label: "运行 Python", detail: trunc(res, 70) },
-    currency: { icon: "💱", label: "汇率换算", detail: trunc(res, 60) },
-    timezone: { icon: "🕑", label: "时区换算", detail: trunc(res, 60) },
+    doc_export: { icon: "file", label: "导出文档", detail: trunc(res, 60) },
+    doc_read: { icon: "book", label: "读取文档", detail: trunc(res, 60) },
+    chart: { icon: "chart", label: "生成图表", detail: trunc(res, 60) },
+    qrcode: { icon: "qr", label: "二维码", detail: trunc(res, 60) },
+    csv_query: { icon: "table", label: "查询表格", detail: trunc(res, 60) },
+    csv_stats: { icon: "table", label: "统计表格", detail: trunc(res, 60) },
+    csv_to_json: { icon: "table", label: "CSV→JSON", detail: trunc(res, 60) },
+    csv_to_xlsx: { icon: "table", label: "CSV→Excel", detail: trunc(res, 60) },
+    xlsx_to_csv: { icon: "table", label: "Excel→CSV", detail: trunc(res, 60) },
+    csv_join: { icon: "link", label: "连接表格", detail: trunc(res, 60) },
+    sql_query: { icon: "table", label: "SQL 查询", detail: trunc(res, 60) },
+    pdf_extract: { icon: "book", label: "提取 PDF", detail: trunc(res, 60) },
+    slides: { icon: "deck", label: "生成 PPT", detail: trunc(res, 60) },
+    python: { icon: "code", label: "运行 Python", detail: trunc(res, 70) },
+    currency: { icon: "coin", label: "汇率换算", detail: trunc(res, 60) },
+    timezone: { icon: "clock", label: "时区换算", detail: trunc(res, 60) },
   };
   if (p.tool === "researcher" || p.tool === "writer" || p.tool === "browser") {
-    return { icon: "🤝", label: `委派 ${p.tool}`, detail: trunc(s("task") || res, 64), file };
+    return { icon: "users", label: `委派 ${p.tool}`, detail: trunc(s("task") || res, 64), file };
   }
-  const r = base[p.tool || ""] || { icon: "🔧", label: p.tool || "tool", detail: trunc(res, 70) };
+  const r = base[p.tool || ""] || { icon: "wrench" as IconName, label: p.tool || "tool", detail: trunc(res, 70) };
   return { ...r, file };
 }
 
@@ -633,7 +634,7 @@ function Step({ m }: { m: Message }) {
     const r = toolReceipt(p);
     return (
       <div className="text-[13px]">
-        <span className="text-ink">{r.icon} {r.label} </span>
+        <span className="inline-flex items-center gap-1.5 align-middle text-ink"><Icon name={r.icon} size={14} className="shrink-0 text-muted" /> {r.label} </span>
         {r.file ? (
           <button
             onClick={(e) => {
@@ -670,7 +671,7 @@ function Step({ m }: { m: Message }) {
             className="mt-0.5 h-10 w-16 shrink-0 rounded border border-border object-cover"
           />
         ) : (
-          <span>🌐</span>
+          <Icon name="globe" size={14} className="mt-0.5 text-muted" />
         )}
         <span className="min-w-0">
           <span className="text-ink">{verb[kind] || kind}</span>
@@ -682,7 +683,7 @@ function Step({ m }: { m: Message }) {
     );
   }
   if (m.type === "skill") {
-    return <div className="text-[13px] text-muted">✨ 采纳技能</div>;
+    return <div className="flex items-center gap-1.5 text-[13px] text-muted"><Icon name="sparkle" size={14} /> 采纳技能</div>;
   }
   return (
     <div className="text-[13px] text-muted">
@@ -697,28 +698,31 @@ const TOOL_LABEL: Record<string, string> = { shell: "终端命令", run_agent: "
 // paused until the user approves or rejects it.
 function ConfirmCard({ m }: { m: Message }) {
   const p = m.payload as ConfirmPayload;
-  const [done, setDone] = useState<"" | "approve" | "reject">("");
-  const decide = async (approve: boolean) => {
+  const [done, setDone] = useState<"" | "once" | "always" | "reject">("");
+  const decide = async (approve: boolean, always: boolean) => {
     if (done) return;
-    setDone(approve ? "approve" : "reject");
+    setDone(approve ? (always ? "always" : "once") : "reject");
     try {
-      await chatApi.confirm(p.id, approve);
+      await chatApi.confirm(p.id, approve, always);
     } catch {
       setDone(""); // let them retry on failure
     }
   };
+  const doneLabel =
+    done === "always" ? "✅ 本会话始终允许 · 继续执行" : done === "once" ? "✅ 已允许一次 · 继续执行" : "🚫 已拒绝,跳过该操作";
   return (
     <div className="mb-6 ml-[42px] rounded-xl border border-accent/40 bg-accentsoft/40 p-3.5">
       <div className="mb-1 flex items-center gap-1.5 text-[13px] font-medium text-ink">
-        <span>⚠️</span> 需要你确认 · {TOOL_LABEL[p.tool] || p.tool}
+        <Icon name="shield" size={14} className="text-accent" /> 需要你确认 · {TOOL_LABEL[p.tool] || p.tool}
       </div>
       <div className="mb-2.5 break-words rounded-lg bg-surface/70 px-2.5 py-1.5 font-mono text-[12px] text-muted">{p.summary}</div>
       {done ? (
-        <div className="text-[12.5px] text-faint">{done === "approve" ? "✅ 已批准,继续执行" : "🚫 已拒绝,跳过该操作"}</div>
+        <div className="text-[12.5px] text-faint">{doneLabel}</div>
       ) : (
-        <div className="flex gap-2">
-          <button onClick={() => decide(true)} className="rounded-lg bg-accent px-3 py-1.5 text-[12.5px] text-white hover:opacity-90">批准执行</button>
-          <button onClick={() => decide(false)} className="rounded-lg border border-border bg-surface px-3 py-1.5 text-[12.5px] text-muted hover:border-accent/40">拒绝</button>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => decide(true, false)} className="rounded-lg bg-accent px-3 py-1.5 text-[12.5px] text-white hover:opacity-90">允许一次</button>
+          <button onClick={() => decide(true, true)} className="rounded-lg border border-accent/40 bg-surface px-3 py-1.5 text-[12.5px] text-ink hover:bg-accentsoft/60" title={`本会话内不再询问“${TOOL_LABEL[p.tool] || p.tool}”`}>本会话始终允许</button>
+          <button onClick={() => decide(false, false)} className="rounded-lg border border-border bg-surface px-3 py-1.5 text-[12.5px] text-muted hover:border-accent/40">拒绝</button>
         </div>
       )}
     </div>

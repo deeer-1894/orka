@@ -94,7 +94,7 @@ export const tools = {
 
 export const chat = {
   // Approve/reject a paused side-effecting tool call.
-  confirm: (id: string, approve: boolean) => post<{ resolved: boolean }>("/chat/confirm", { id, approve }),
+  confirm: (id: string, approve: boolean, always = false) => post<{ resolved: boolean }>("/chat/confirm", { id, approve, always }),
 };
 
 export const artifacts = {

@@ -11,19 +11,30 @@ import (
 	"github.com/orka-oss/orka_core/messages"
 )
 
-// confirmHub holds the channels that pause a risky tool call until the user
-// approves or rejects it from the UI (POST /chat/confirm).
-type confirmHub struct {
-	mu      sync.Mutex
-	pending map[string]chan bool
+// pending is one paused tool call awaiting the user's decision.
+type pending struct {
+	ch   chan bool
+	conv string
+	tool string
 }
 
-func newConfirmHub() *confirmHub { return &confirmHub{pending: map[string]chan bool{}} }
+// confirmHub pauses risky tool calls until the user decides (POST /chat/confirm).
+// "always this session" records the tool as pre-approved for that conversation,
+// so subsequent calls of the same tool skip the gate (Claude-Code-style).
+type confirmHub struct {
+	mu      sync.Mutex
+	pending map[string]*pending
+	allowed map[string]map[string]bool // conv -> tool -> approved for the session
+}
 
-func (h *confirmHub) register(id string) chan bool {
+func newConfirmHub() *confirmHub {
+	return &confirmHub{pending: map[string]*pending{}, allowed: map[string]map[string]bool{}}
+}
+
+func (h *confirmHub) register(id, conv, tool string) chan bool {
 	ch := make(chan bool, 1)
 	h.mu.Lock()
-	h.pending[id] = ch
+	h.pending[id] = &pending{ch: ch, conv: conv, tool: tool}
 	h.mu.Unlock()
 	return ch
 }
@@ -34,19 +45,31 @@ func (h *confirmHub) drop(id string) {
 	h.mu.Unlock()
 }
 
-// resolve fulfills a pending confirmation; returns false if the id is unknown
-// (already resolved or timed out).
-func (h *confirmHub) resolve(id string, approve bool) bool {
+func (h *confirmHub) isAllowed(conv, tool string) bool {
 	h.mu.Lock()
-	ch, ok := h.pending[id]
+	defer h.mu.Unlock()
+	return h.allowed[conv][tool]
+}
+
+// resolve fulfills a pending confirmation; when approve+always, the tool becomes
+// pre-approved for that conversation. Returns false if the id is unknown.
+func (h *confirmHub) resolve(id string, approve, always bool) bool {
+	h.mu.Lock()
+	p, ok := h.pending[id]
 	if ok {
 		delete(h.pending, id)
+		if approve && always && p.conv != "" {
+			if h.allowed[p.conv] == nil {
+				h.allowed[p.conv] = map[string]bool{}
+			}
+			h.allowed[p.conv][p.tool] = true
+		}
 	}
 	h.mu.Unlock()
 	if !ok {
 		return false
 	}
-	ch <- approve
+	p.ch <- approve
 	return true
 }
 
@@ -57,8 +80,9 @@ func (s *ChatService) confirmReady() *confirmHub {
 }
 
 // ResolveConfirm is the API entry point to approve/reject a pending action.
-func (s *ChatService) ResolveConfirm(id string, approve bool) bool {
-	return s.confirmReady().resolve(id, approve)
+// always = approve for the rest of this conversation.
+func (s *ChatService) ResolveConfirm(id string, approve, always bool) bool {
+	return s.confirmReady().resolve(id, approve, always)
 }
 
 // confirmTimeout bounds how long a tool call waits for the user before it is
@@ -79,11 +103,15 @@ func (g confirmGate) Schema() map[string]any          { return g.inner.Schema() 
 
 func (g confirmGate) Invoke(ctx context.Context, args map[string]any) (string, error) {
 	emit := agent.EmitFrom(ctx)
+	conv := agent.MetaFrom(ctx).ConversationID
 	if emit == nil { // no UI channel (e.g. headless) → don't block
 		return g.inner.Invoke(ctx, args)
 	}
+	if g.hub.isAllowed(conv, g.inner.Name()) { // already approved for this session
+		return g.inner.Invoke(ctx, args)
+	}
 	id := messages.NewID()
-	ch := g.hub.register(id)
+	ch := g.hub.register(id, conv, g.inner.Name())
 	defer g.hub.drop(id)
 
 	emit(messages.Confirm(messages.ConfirmRequest{
