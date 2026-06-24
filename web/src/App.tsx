@@ -275,13 +275,23 @@ function Workbench({
   }, [onSend]);
 
   const onRename = useCallback(async (id: string, title: string) => {
-    await api.renameConversation(id, title);
+    try {
+      await api.renameConversation(id, title);
+    } catch {
+      toast("重命名失败,请重试", "error");
+      return; // don't apply a rename the server rejected
+    }
     setConversations((cs) => cs.map((c) => (c.conversation_id === id ? { ...c, title } : c)));
   }, []);
 
   const onDelete = useCallback(
     async (id: string) => {
-      await api.deleteConversation(id);
+      try {
+        await api.deleteConversation(id);
+      } catch {
+        toast("删除失败,请重试", "error");
+        return; // keep it in the list — it still exists on the server
+      }
       setConversations((cs) => cs.filter((c) => c.conversation_id !== id));
       seen.current.delete(id);
       if (activeID === id) setActiveID("");
@@ -444,7 +454,12 @@ function Workbench({
           prompt={scheduleFor}
           onClose={() => setScheduleFor(null)}
           onConfirm={async (sec, retry) => {
-            await api.scheduleTask(scheduleFor, sec, scheduleFor.slice(0, 24), activeID, retry).catch(() => {});
+            try {
+              await api.scheduleTask(scheduleFor, sec, scheduleFor.slice(0, 24), activeID, retry);
+            } catch {
+              toast("定时任务创建失败,请重试", "error");
+              return; // keep the dialog open so the user can retry
+            }
             setScheduleFor(null);
             refreshTasks();
             toast("已设为定时任务", "success");

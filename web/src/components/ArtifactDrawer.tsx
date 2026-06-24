@@ -815,12 +815,24 @@ function WorkflowsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: 
         on_error: s.on_error !== "stop" ? s.on_error : undefined,
       }));
     if (!name.trim() || clean.length === 0) return;
-    await api.createWorkflow(name.trim(), clean).catch(() => {});
+    try {
+      await api.createWorkflow(name.trim(), clean);
+    } catch {
+      toast("流程创建失败,请重试", "error");
+      return; // keep the form so the user doesn't lose their steps
+    }
     reset(); refresh();
   };
   const run = async (id: string) => {
-    const r = await api.runWorkflow(id).catch(() => null);
+    let r;
+    try {
+      r = await api.runWorkflow(id);
+    } catch {
+      toast("流程启动失败,请重试", "error");
+      return;
+    }
     if (r?.conversation_id) { toast("流程已启动", "success"); onJumpToConversation(r.conversation_id); }
+    else toast("流程已启动,但未返回会话", "info");
   };
 
   return (
@@ -1065,7 +1077,7 @@ function RunsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: strin
                   <button onClick={() => onJumpToConversation(r.conversation_id)} className="text-accent hover:underline">↗ 对话</button>
                 )}
                 <button
-                  onClick={() => api.rerunRun(r.run_id).then(() => { toast("已重新触发", "success"); setTimeout(() => refreshResource("runs:all"), 800); }).catch(() => {})}
+                  onClick={() => api.rerunRun(r.run_id).then(() => { toast("已重新触发", "success"); setTimeout(() => refreshResource("runs:all"), 800); }).catch(() => toast("重跑失败,请重试", "error"))}
                   className="hover:text-accent"
                 >
                   ↻ 重跑
@@ -1173,17 +1185,17 @@ function TasksPanel({ onJumpToConversation }: { onJumpToConversation: (cid: stri
                 )}
                 {scheduled && (
                   <button
-                    onClick={() => api.unscheduleTask(t.task_id).then(refresh)}
+                    onClick={() => api.unscheduleTask(t.task_id).then(refresh).catch(() => toast("停用定时失败,请重试", "error"))}
                     className="text-[11px] text-faint hover:text-accent"
                   >
                     停用定时
                   </button>
                 )}
                 {t.webhook_token ? (
-                  <button onClick={() => api.disableWebhook(t.task_id).then(refresh)} className="text-[11px] text-faint hover:text-accent">关闭 webhook</button>
+                  <button onClick={() => api.disableWebhook(t.task_id).then(refresh).catch(() => toast("关闭 webhook 失败,请重试", "error"))} className="text-[11px] text-faint hover:text-accent">关闭 webhook</button>
                 ) : (
                   <button
-                    onClick={() => api.enableWebhook(t.task_id).then((r) => { setHookUrl((m) => ({ ...m, [t.task_id]: location.origin + r.path })); refresh(); }).catch(() => {})}
+                    onClick={() => api.enableWebhook(t.task_id).then((r) => { setHookUrl((m) => ({ ...m, [t.task_id]: location.origin + r.path })); refresh(); }).catch(() => toast("开启 webhook 失败,请重试", "error"))}
                     className="text-[11px] text-faint hover:text-accent"
                   >
                     🪝 webhook
