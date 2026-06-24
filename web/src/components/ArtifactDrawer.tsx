@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, artifacts as artifactApi, files as fileApi } from "../api";
 import type { BrowserPayload, Connector, Message, MetricsSnapshot, RunRecord, TaskMeta, ToolPayload, Workflow } from "../types";
 import { toast } from "../lib/toast";
+import { lineDiff, diffStats } from "../lib/diff";
 import { useResource, refreshResource } from "../lib/useResource";
 import { FilePreview } from "./FilePreview";
 import { ArtifactGallery, ArtifactPane } from "./Artifacts";
@@ -1033,12 +1034,31 @@ function fmtDur(ms: number): string {
 // tokens, tool count; click to open its conversation, or re-run it.
 function RunsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: string) => void }) {
   const [onlyFailed, setOnlyFailed] = useState(false);
+  const [diffOpen, setDiffOpen] = useState<string | null>(null); // run_id whose diff is expanded
   const runs =
     useResource<RunRecord[]>(
       "runs:" + (onlyFailed ? "failed" : "all"),
       () => api.listRuns(onlyFailed ? { status: "failed" } : {}).then((r) => r.runs || []),
       { interval: 5000 },
     ) ?? [];
+
+  // For each run, find the previous run of the SAME task (the recurring scheduled
+  // job), so a scheduled run can be diffed against "what it produced last time".
+  // The list is newest-first, so the previous run is the next same-task entry.
+  const prevOf = useMemo(() => {
+    const m = new Map<string, RunRecord>();
+    for (let i = 0; i < runs.length; i++) {
+      const r = runs[i];
+      if (!r.task_id) continue;
+      for (let j = i + 1; j < runs.length; j++) {
+        if (runs[j].task_id === r.task_id && runs[j].run_id !== r.run_id) {
+          m.set(r.run_id, runs[j]);
+          break;
+        }
+      }
+    }
+    return m;
+  }, [runs]);
 
   return (
     <div className="p-3">
@@ -1076,6 +1096,15 @@ function RunsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: strin
                 {r.conversation_id && (
                   <button onClick={() => onJumpToConversation(r.conversation_id)} className="text-accent hover:underline">↗ 对话</button>
                 )}
+                {prevOf.has(r.run_id) && (
+                  <button
+                    onClick={() => setDiffOpen((id) => (id === r.run_id ? null : r.run_id))}
+                    className={"hover:text-accent " + (diffOpen === r.run_id ? "text-accent" : "")}
+                    title="与上一次同任务的运行对比"
+                  >
+                    ⇄ 对比上次
+                  </button>
+                )}
                 <button
                   onClick={() => api.rerunRun(r.run_id).then(() => { toast("已重新触发", "success"); setTimeout(() => refreshResource("runs:all"), 800); }).catch(() => toast("重跑失败,请重试", "error"))}
                   className="hover:text-accent"
@@ -1083,9 +1112,48 @@ function RunsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: strin
                   ↻ 重跑
                 </button>
               </div>
+              {diffOpen === r.run_id && prevOf.get(r.run_id) && <RunDiff prev={prevOf.get(r.run_id)!} cur={r} />}
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// RunDiff shows what changed between a scheduled run and the previous run of the
+// same task — the core "what's different since last time" view for unattended
+// automation. Diffs the answer text (falling back to the error when a run had
+// no output), reusing the line-diff used by the file-version history.
+function RunDiff({ prev, cur }: { prev: RunRecord; cur: RunRecord }) {
+  const prevText = prev.output || prev.error || "";
+  const curText = cur.output || cur.error || "";
+  const rows = useMemo(() => lineDiff(prevText, curText), [prevText, curText]);
+  const stats = diffStats(rows);
+  return (
+    <div className="mt-2 overflow-hidden rounded-lg border border-border bg-surface">
+      <div className="flex items-center gap-2 border-b border-border px-2.5 py-1.5 text-[11px]">
+        <span className="text-muted">{fmtWhen(prev.created_at)} → 本次</span>
+        <span className="text-ok">+{stats.add}</span>
+        <span className="text-accent">−{stats.del}</span>
+      </div>
+      <div className="max-h-56 overflow-auto px-1 py-1 font-mono text-[11.5px]">
+        {prevText === curText ? (
+          <div className="px-2 py-3 text-center text-[12px] text-muted">两次运行结果一致,没有变化。</div>
+        ) : (
+          rows.map((r, i) => (
+            <div
+              key={i}
+              className={
+                "whitespace-pre-wrap break-words px-2 " +
+                (r.type === "add" ? "bg-ok/10 text-ok" : r.type === "del" ? "bg-accent/10 text-accent" : "text-muted")
+              }
+            >
+              <span className="mr-2 select-none text-faint">{r.type === "add" ? "+" : r.type === "del" ? "−" : " "}</span>
+              {r.text || " "}
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
@@ -1102,7 +1170,12 @@ function TasksPanel({ onJumpToConversation }: { onJumpToConversation: (cid: stri
 
   const create = async () => {
     if (!prompt.trim()) return;
-    await api.scheduleTask(prompt.trim(), sec, prompt.trim().slice(0, 24));
+    try {
+      await api.scheduleTask(prompt.trim(), sec, prompt.trim().slice(0, 24));
+    } catch {
+      toast("定时任务创建失败,请重试", "error");
+      return;
+    }
     setPrompt("");
     setCreating(false);
     refresh();
