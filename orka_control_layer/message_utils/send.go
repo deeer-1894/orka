@@ -102,7 +102,7 @@ func (mu *Messenger) shouldPersist(t messages.EventType, persist bool) bool {
 	switch t {
 	case messages.EventHeartbeat, messages.EventStream:
 		return false
-	case messages.EventChat, messages.EventClarify, messages.EventTask, messages.EventFile:
+	case messages.EventChat, messages.EventClarify, messages.EventTask, messages.EventFile, messages.EventPlan:
 		return true
 	case messages.EventTool, messages.EventBrowser, messages.EventAgent, messages.EventSkill:
 		return persist && rand.Float64() < mu.Sampling

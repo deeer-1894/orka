@@ -24,6 +24,7 @@ const (
 	EventHeartbeat EventType = "heartbeat" // keep-alive
 	EventStream    EventType = "stream"    // streaming token delta (not persisted)
 	EventConfirm   EventType = "confirm"   // approval gate before a risky tool runs
+	EventPlan      EventType = "plan"      // the agent's task checklist + live progress
 )
 
 // Roles.
@@ -131,6 +132,28 @@ type ConfirmRequest struct {
 func Confirm(c ConfirmRequest, meta Meta) Message {
 	m := New(EventConfirm, RoleAssistant, meta)
 	m.Payload = c
+	return m
+}
+
+// PlanStep is one item in the agent's declared task checklist. Status is one of
+// "pending" | "active" | "done" so the UI can show real per-step progress
+// instead of an all-or-nothing list.
+type PlanStep struct {
+	Title  string `json:"title"`
+	Status string `json:"status"`
+}
+
+// PlanUpdate is the payload of an EventPlan message: the agent's current plan and
+// the progress of each step. The agent re-emits the whole plan on every update
+// (idempotent snapshot), and the UI renders the latest one.
+type PlanUpdate struct {
+	Steps []PlanStep `json:"steps"`
+}
+
+// Plan builds a plan/checklist message.
+func Plan(p PlanUpdate, meta Meta) Message {
+	m := New(EventPlan, RoleAssistant, meta)
+	m.Payload = p
 	return m
 }
 

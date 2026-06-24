@@ -11,6 +11,7 @@ export type EventType =
   | "tool"
   | "browser"
   | "heartbeat"
+  | "plan"
   | "stream";
 
 export interface Meta {
@@ -45,6 +46,17 @@ export interface ConfirmPayload {
   id: string;
   tool: string;
   summary: string;
+}
+
+export type PlanStepStatus = "pending" | "active" | "done";
+
+export interface PlanStep {
+  title: string;
+  status: PlanStepStatus;
+}
+
+export interface PlanPayload {
+  steps: PlanStep[];
 }
 
 export interface ToolPayload {

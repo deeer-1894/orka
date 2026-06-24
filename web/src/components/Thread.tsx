@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
 import type { BrowserPayload, ClarifyPayload, Message, ToolPayload, WeatherCardData } from "../types";
 import { api, chat as chatApi, files as fileApi } from "../api";
-import type { ConfirmPayload } from "../types";
+import type { ConfirmPayload, PlanPayload } from "../types";
 import { Markdown } from "./Markdown";
 import { FilePreview } from "./FilePreview";
 import { WeatherCard, parseWeatherCard } from "./WeatherCard";
@@ -76,12 +76,14 @@ type Block =
   | { kind: "reasoning"; m: Message }
   | { kind: "clarify"; m: Message }
   | { kind: "confirm"; m: Message }
+  | { kind: "plan"; m: Message }
   | { kind: "weather"; data: WeatherCardData }
   | { kind: "steps"; items: Message[] };
 
 function group(messages: Message[]): Block[] {
   const blocks: Block[] = [];
   let buf: Message[] = [];
+  let planBlock: Extract<Block, { kind: "plan" }> | null = null;
   const flush = () => {
     if (buf.length) {
       blocks.push({ kind: "steps", items: buf });
@@ -104,6 +106,17 @@ function group(messages: Message[]): Block[] {
     } else if (m.type === "confirm") {
       flush();
       blocks.push({ kind: "confirm", m });
+    } else if (m.type === "plan") {
+      // The agent re-emits the WHOLE plan on every update (idempotent snapshot).
+      // Render a single live checklist that updates in place: keep the block at
+      // the first plan's position and point it at the latest snapshot.
+      if (planBlock) {
+        planBlock.m = m;
+      } else {
+        flush();
+        planBlock = { kind: "plan", m };
+        blocks.push(planBlock);
+      }
     } else {
       // A weather tool result carries a structured card → surface it as its own
       // rich block (and still keep the tool step in the collapsible list).
@@ -186,6 +199,7 @@ export function Thread({
     if (b.kind === "steps") lastSteps = i;
   });
   const lastUserPrompt = [...blocks].reverse().find((b) => b.kind === "user")?.m.content || "";
+  const hasPlan = blocks.some((b) => b.kind === "plan");
   const canAct = status !== "streaming";
 
   return (
@@ -200,6 +214,7 @@ export function Thread({
               <Assistant
                 m={b.m}
                 live={status === "streaming" && i > lastUser}
+                suppressPlan={hasPlan}
                 onRegenerate={canAct && i === lastAssistant ? onRetry : undefined}
                 onSchedule={canAct && i === lastAssistant && lastUserPrompt ? () => onSchedule(lastUserPrompt) : undefined}
               />
@@ -207,6 +222,7 @@ export function Thread({
             {b.kind === "reasoning" && <Reasoning m={b.m} />}
             {b.kind === "clarify" && <Clarify m={b.m} onResume={onResume} />}
             {b.kind === "confirm" && <ConfirmCard m={b.m} />}
+            {b.kind === "plan" && <StructuredPlan plan={(b.m.payload as PlanPayload) ?? { steps: [] }} live={status === "streaming" && i >= lastUser} />}
             {b.kind === "weather" && <WeatherCard data={b.data} />}
             {b.kind === "steps" && <Steps items={b.items} onOpenViewport={onOpenViewport} live={status === "streaming" && i === lastSteps} />}
           </div>
@@ -428,8 +444,57 @@ function PlanChecklist({ steps, live }: { steps: string[]; live: boolean }) {
   );
 }
 
-function Assistant({ m, live, onRegenerate, onSchedule }: { m: Message; live?: boolean; onRegenerate?: () => void; onSchedule?: () => void }) {
-  const plan = parsePlan(m.content ?? "");
+// StructuredPlan renders a first-class plan event (the agent's `update_plan`
+// tool calls) as a live checklist with real per-step status — pending / active
+// (currently working) / done — instead of inferring progress from prose.
+function StructuredPlan({ plan, live }: { plan: PlanPayload; live: boolean }) {
+  const steps = plan.steps || [];
+  if (steps.length === 0) return null;
+  const done = steps.filter((s) => s.status === "done").length;
+  const allDone = done === steps.length;
+  return (
+    <div className="my-2 ml-[42px] rounded-xl border border-border bg-surface2/40 p-3">
+      <div className="mb-2 flex items-center gap-2 text-[12.5px] font-medium text-ink">
+        <Icon name="sparkle" size={14} className="text-accent" />
+        <span>执行计划</span>
+        <span className="text-faint">· {done}/{steps.length}</span>
+        {live && !allDone ? (
+          <span className="inline-flex items-center gap-1 text-accent">
+            <span className="dot h-1.5 w-1.5 rounded-full bg-accent" /> 进行中
+          </span>
+        ) : allDone ? (
+          <span className="text-ok">已完成</span>
+        ) : null}
+      </div>
+      <ol className="space-y-1.5">
+        {steps.map((s, i) => (
+          <li key={i} className="flex items-start gap-2 text-[13px]">
+            <span
+              className={
+                "mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full text-[9px] font-medium " +
+                (s.status === "done"
+                  ? "bg-ok text-white"
+                  : s.status === "active"
+                  ? "bg-accent text-white"
+                  : "border border-faint text-faint")
+              }
+            >
+              {s.status === "done" ? "✓" : s.status === "active" ? <span className="dot h-1.5 w-1.5 rounded-full bg-white" /> : i + 1}
+            </span>
+            <span className={s.status === "done" ? "text-faint line-through" : s.status === "active" ? "text-ink font-medium" : "text-muted"}>
+              {s.title}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function Assistant({ m, live, onRegenerate, onSchedule, suppressPlan }: { m: Message; live?: boolean; onRegenerate?: () => void; onSchedule?: () => void; suppressPlan?: boolean }) {
+  // When the agent emitted a structured plan event, don't also regex a prose
+  // plan out of the answer — the StructuredPlan block already shows it.
+  const plan = suppressPlan ? null : parsePlan(m.content ?? "");
   return (
     <div className="group mb-7 flex gap-3.5">
       <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent text-white font-serif text-[13px] leading-none">

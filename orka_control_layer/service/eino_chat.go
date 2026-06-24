@@ -89,7 +89,7 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 		Instruction: instruction,
 		Model:       llm.NewEinoModel(client, model),
 		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(withClarify(tools))},
+			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(withPlan(withClarify(tools)))},
 			ReturnDirectly:  clarifyReturnDirectly(),
 		},
 		MaxIterations: maxIters,
@@ -167,7 +167,7 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 	if maxIters <= 0 {
 		maxIters = 16
 	}
-	allTools := append(EinoTools(withClarify(atomic)), subTools...)
+	allTools := append(EinoTools(withPlan(withClarify(atomic))), subTools...)
 	handlers := []adk.ChatModelAgentMiddleware{newBudgetGuard(maxIters)}
 	if summarize {
 		// Summarize history compression on the FAST mini model — it's an auxiliary

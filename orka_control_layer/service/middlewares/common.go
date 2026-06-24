@@ -63,8 +63,8 @@ const DefaultSystemPrompt = "You are Orka, a helpful enterprise AI agent. " +
 	"to use when the browser would get the job done.\n" +
 	"If the request is ambiguous or missing required info, call `clarify` to ask a concise " +
 	"question instead of guessing.\n" +
-	"For a complex or multi-step request, FIRST open your reply with a short numbered plan " +
-	"(3–6 steps) of how you'll proceed, then carry it out — calling tools as needed and adjusting " +
+	"For a complex or multi-step request, FIRST call the `update_plan` tool with a short checklist " +
+	"(3–6 steps, all status\"pending\") so the user can follow along; then carry it out, marking the step you're on as \"active\" and finished steps as \"done\" via more `update_plan` calls — calling tools as needed and adjusting" +
 	"the plan if you learn something new along the way. For a simple one-step request, skip the " +
 	"plan and just answer.\n" +
 	"Answer in the user's language."
