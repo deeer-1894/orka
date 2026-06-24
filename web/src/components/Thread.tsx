@@ -7,10 +7,12 @@ import { Markdown } from "./Markdown";
 import { FilePreview } from "./FilePreview";
 import { WeatherCard, parseWeatherCard } from "./WeatherCard";
 import { Icon, type IconName } from "./Icon";
+import { confirmDialog } from "../lib/confirm";
+import { toast, toastError } from "../lib/toast";
 
 // Opening a workspace file is shared down the step tree (Steps → Step, AgentLane)
 // via context so a filename is clickable wherever it appears without prop drilling.
-const OpenFileCtx = createContext<(name: string) => void>(() => {});
+const OpenFileCtx = createContext<(name: string, opts?: { history?: boolean }) => void>(() => {});
 
 // File-producing tools and how to find the file they touched: prefer the explicit
 // out/path arg, else scrape a filename out of the result text (e.g. "… → a.pdf").
@@ -155,7 +157,8 @@ export function Thread({
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [previewFile, setPreviewFile] = useState<string | null>(null);
+  const [previewFile, setPreviewFile] = useState<{ name: string; history?: boolean } | null>(null);
+  const openFile = (name: string, opts?: { history?: boolean }) => setPreviewFile({ name, history: opts?.history });
   const [wsFiles, setWsFiles] = useState<Set<string>>(new Set());
   // Smart auto-scroll: only follow new content when the user is already near the
   // bottom, so scrolling up to read history isn't yanked back down.
@@ -203,7 +206,7 @@ export function Thread({
   const canAct = status !== "streaming";
 
   return (
-    <OpenFileCtx.Provider value={setPreviewFile}>
+    <OpenFileCtx.Provider value={openFile}>
     <div ref={scrollRef} className="relative flex-1 overflow-y-auto">
       <ThreadOutline turns={turns} />
       <div className="mx-auto max-w-3xl px-5 py-8">
@@ -249,10 +252,10 @@ export function Thread({
             <span className="text-[12px] text-faint">出错了 — 可重试,或检查工具/沙箱服务是否在运行</span>
           </div>
         )}
-        {files.length > 0 && <SessionFiles files={files} onOpen={setPreviewFile} />}
+        {files.length > 0 && <SessionFiles files={files} onOpen={(n) => openFile(n)} />}
         <div ref={endRef} className="h-2" />
       </div>
-      {previewFile && <FilePreview name={previewFile} conv={fileConv} onClose={() => setPreviewFile(null)} />}
+      {previewFile && <FilePreview name={previewFile.name} conv={fileConv} initialHistory={previewFile.history} onClose={() => setPreviewFile(null)} />}
     </div>
     </OpenFileCtx.Provider>
   );
@@ -692,6 +695,58 @@ function toolReceipt(p: ToolPayload): { icon: IconName; label: string; detail: s
   return { ...r, file };
 }
 
+// FileWriteActions gives every agent file write a trust affordance: "查看改动"
+// jumps straight to the file's diff/history view, and "撤销" rolls the file back
+// to the version saved right before this write (one-click undo). The undo button
+// only appears once we confirm a prior version exists (i.e. the write actually
+// OVERWROTE something) — a brand-new file has nothing to undo.
+function FileWriteActions({ file, onOpenDiff }: { file: string; onOpenDiff: () => void }) {
+  const [hadPrior, setHadPrior] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [undone, setUndone] = useState(false);
+  // Lazily check whether a backup exists for this file (cheap, one call).
+  useEffect(() => {
+    let on = true;
+    fileApi.versions(file).then((vs) => on && setHadPrior((vs?.length ?? 0) > 0)).catch(() => on && setHadPrior(false));
+    return () => { on = false; };
+  }, [file]);
+
+  const undo = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (busy || undone) return;
+    const ok = await confirmDialog({
+      title: `撤销对 ${file} 的改动?`,
+      body: "会把文件恢复到这次写入之前的内容。此操作本身也可在版本历史里再次撤销。",
+      confirmText: "撤销改动",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const vs = await fileApi.versions(file);
+      if (!vs?.length) { toastError("没有可恢复的历史版本"); return; }
+      await fileApi.restore(file, vs[0].ts); // newest backup = the pre-write state
+      setUndone(true);
+      toast(`已撤销 ${file} 的改动`);
+    } catch {
+      toastError("撤销失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <span className="ml-1.5 inline-flex items-center gap-1.5 align-middle">
+      <button onClick={(e) => { e.stopPropagation(); onOpenDiff(); }} className="text-[12px] text-faint hover:text-accent" title="查看这次写入的改动">查看改动</button>
+      {hadPrior && (
+        <button onClick={undo} disabled={busy || undone} className="text-[12px] text-faint hover:text-accent disabled:opacity-50" title="恢复到写入前的内容">
+          {undone ? "已撤销" : busy ? "撤销中…" : "撤销"}
+        </button>
+      )}
+    </span>
+  );
+}
+
 function Step({ m }: { m: Message }) {
   const openFile = useContext(OpenFileCtx);
   if (m.type === "tool") {
@@ -717,6 +772,7 @@ function Step({ m }: { m: Message }) {
         ) : r.detail ? (
           <span className="text-muted"> · {r.detail}</span>
         ) : null}
+        {!p.error && p.tool === "file_write" && r.file && <FileWriteActions file={r.file} onOpenDiff={() => openFile(r.file!, { history: true })} />}
       </div>
     );
   }

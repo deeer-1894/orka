@@ -35,10 +35,10 @@ export function resolveWorkspaceImage(mdPath: string, conv?: string) {
 // any other binary (docx, xlsx, zip…) as a download card — never dumped as raw
 // bytes, which is what produced the "乱码" for PDFs. Shared by the Files panel
 // and the chat thread so a filename is clickable anywhere it appears.
-export function FilePreview({ name, onClose, conv }: { name: string; onClose: () => void; conv?: string }) {
+export function FilePreview({ name, onClose, conv, initialHistory }: { name: string; onClose: () => void; conv?: string; initialHistory?: boolean }) {
   const [content, setContent] = useState<string | null>(null);
   const [err, setErr] = useState("");
-  const [showHistory, setShowHistory] = useState(false);
+  const [showHistory, setShowHistory] = useState(!!initialHistory && !conv);
   const [versions, setVersions] = useState<FileVersion[] | null>(null);
   const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
   const isPdf = /\.pdf$/i.test(name);
