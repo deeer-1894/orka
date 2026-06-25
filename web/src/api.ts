@@ -3,6 +3,7 @@ import type {
   ArtifactVersion,
   Connector,
   Conversation,
+  MessageSearchHit,
   MetricsSnapshot,
   Message,
   Notification,
@@ -189,6 +190,10 @@ export const api = {
   sharedWithMe: () => post<Conversation[]>("/conversation/shared-with-me", {}),
   getMessages: (conversation_id: string) =>
     post<Message[]>("/conversation/get-messages", { conversation_id, size: 200 }),
+  searchMessages: (query: string, limit = 30) =>
+    post<{ hits: MessageSearchHit[] }>("/conversation/search", { query, limit }),
+  forkConversation: (conversation_id: string, message_id: string) =>
+    post<Conversation>("/conversation/fork", { conversation_id, message_id }),
   getTasks: (filter: { conversation_id?: string } = {}) =>
     post<{ tasks: TaskMeta[]; owners: Record<string, OwnerInfo> }>("/task/get-tasks", { ...filter, size: 100 }),
   scheduleTask: (prompt: string, interval_sec: number, title: string, conversation_id = "", retry_count = 0) =>

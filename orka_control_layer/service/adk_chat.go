@@ -56,6 +56,10 @@ type ChatService struct {
 	// InvalidateTools busts a user's cached tool connections (e.g. after they
 	// add/remove an MCP connector). Set by main when the pooled provider is wired.
 	InvalidateTools func(email string)
+	// OnEvent, when set, pushes a per-user UI-invalidation signal (e.g. "run",
+	// "notification") to the event bus so a user's open tabs refresh immediately
+	// after background work finishes. Wired by main to the API event hub.
+	OnEvent func(email, kind string)
 	// DisableSummary turns off the eino summarization middleware. Production keeps
 	// it on (folds long context into a running summary); deterministic tests set
 	// it so a scripted mock isn't consumed by the summarizer's extra model call.
@@ -333,6 +337,14 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 			ConversationID: req.ConversationID,
 			CreatedAt:      now,
 		})
+		if s.OnEvent != nil {
+			s.OnEvent(req.UserEmail, "notification")
+		}
+	}
+	// Signal the run finished so open tabs refresh runs/metrics without waiting
+	// for the next poll tick.
+	if s.OnEvent != nil && req.UserEmail != "" {
+		s.OnEvent(req.UserEmail, "run")
 	}
 	return status
 }

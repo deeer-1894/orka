@@ -150,6 +150,9 @@ func main() {
 	)
 
 	a := api.New(store, logger, metrics, chat)
+	// Push per-user UI-invalidation events (run finished / unattended failure) to
+	// open tabs via the API event bus, so the bell/runs refresh without polling.
+	chat.OnEvent = a.PublishEvent
 	a.BaseStorage = cfg.Storage.BaseStoragePath
 	// User session tokens are signed with a key DISTINCT from the control<->tools
 	// context-token key, so the two token types are not interchangeable.

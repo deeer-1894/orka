@@ -32,6 +32,8 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/conversation/create-conversation", a.CreateConversation)
 	g.POST("/conversation/get-conversation", a.GetConversation)
 	g.POST("/conversation/get-messages", a.GetMessages)
+	g.POST("/conversation/search", a.SearchConversations) // cross-conversation full-text search
+	g.POST("/conversation/fork", a.ForkConversation)      // branch a conversation at a turn
 	g.POST("/conversation/list", a.ListConversations)
 	g.POST("/conversation/rename", a.RenameConversation)
 	g.POST("/conversation/delete", a.DeleteConversation)
@@ -71,6 +73,7 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/file/versions", a.FileVersions) // overwrite history of a file
 	g.POST("/file/restore", a.FileRestore)   // roll a file back to a version
 
+	g.GET("/events", a.Events) // per-user SSE bus: push UI-invalidation signals
 	g.GET("/metrics", a.MetricsSnapshot)
 	g.GET("/models", a.ListModels)
 	g.GET("/tools/catalog", a.ToolsCatalog) // available tools + descriptions for the picker

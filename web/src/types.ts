@@ -107,6 +107,7 @@ export interface Conversation {
   created_at: number;
   owner_email?: string;
   shares?: ConversationShare[];
+  parent_conversation_id?: string; // set when this conversation is a branch fork
 }
 
 export interface TaskMeta {
@@ -178,6 +179,14 @@ export interface Workflow {
   workflow_id: string;
   name: string;
   steps: WorkflowStep[];
+  created_at: number;
+}
+
+export interface MessageSearchHit {
+  conversation_id: string;
+  title: string;
+  snippet: string;
+  role: string;
   created_at: number;
 }
 

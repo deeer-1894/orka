@@ -4,6 +4,7 @@ import type { BrowserPayload, Connector, Message, MetricsSnapshot, RunRecord, Ta
 import { toast } from "../lib/toast";
 import { lineDiff, diffStats } from "../lib/diff";
 import { useResource, refreshResource } from "../lib/useResource";
+import { Icon } from "./Icon";
 import { FilePreview } from "./FilePreview";
 import { ArtifactGallery, ArtifactPane } from "./Artifacts";
 
@@ -203,7 +204,7 @@ export function ArtifactDrawer({
             title="Close"
             aria-label="关闭工件面板"
           >
-            ✕
+            <Icon name="close" size={16} />
           </button>
         </div>
         {/* Sub-nav for multi-tab faces (舞台 / 运营台). */}
@@ -343,18 +344,18 @@ function ComputerPanel({
     <div className="flex h-full flex-col">
       <div className="flex gap-1 px-3 pt-2.5">
         {([
-          ["terminal", "⌨️ 终端"],
-          ["browser", `🌐 浏览器${shotCount ? ` (${shotCount})` : ""}`],
-        ] as const).map(([id, label]) => (
+          ["terminal", "keyboard", "终端"],
+          ["browser", "globe", `浏览器${shotCount ? ` (${shotCount})` : ""}`],
+        ] as const).map(([id, icon, label]) => (
           <button
             key={id}
             onClick={() => setView(id)}
             className={
-              "rounded-lg px-2.5 py-1 text-[12.5px] transition " +
+              "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12.5px] transition " +
               (view === id ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")
             }
           >
-            {label}
+            <Icon name={icon} size={14} /> {label}
           </button>
         ))}
       </div>
@@ -438,9 +439,9 @@ function TerminalView({ messages }: { messages: Message[] }) {
                 rel="noreferrer"
                 className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] text-ink hover:bg-surface2"
               >
-                <span>📄</span>
+                <Icon name="file" size={14} className="text-faint" />
                 <span className="truncate">{f}</span>
-                <span className="ml-auto text-[11px] text-faint">↓</span>
+                <Icon name="download" size={13} className="ml-auto text-faint" />
               </a>
             ))}
           </div>
@@ -491,7 +492,7 @@ function BrowserPanel({ messages }: { messages: Message[] }) {
             <span className="h-2.5 w-2.5 rounded-full bg-[#5aa469]" />
             <span className="ml-2 text-[12px] text-muted">远程浏览器 · 实时</span>
             <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-faint" title="你可以直接在下方画面里点击 / 输入,临时接管浏览器;松手后 Orka 会接着干">
-              🖐 可点击接管
+              <Icon name="hand" size={12} /> 可点击接管
             </span>
           </div>
           <iframe
@@ -670,12 +671,12 @@ function FilesPanel({ email }: { email: string }) {
       )}
       <span className="text-[11px] text-faint">{fmtBytes(it.size)}</span>
       {!it.dir && (
-        <a href={fileApi.downloadURL(it.name)} className="text-[12px] text-accent opacity-0 group-hover:opacity-100" aria-label={"下载 " + it.name}>
-          ↓
+        <a href={fileApi.downloadURL(it.name)} className="text-accent opacity-0 group-hover:opacity-100" aria-label={"下载 " + it.name}>
+          <Icon name="download" size={13} />
         </a>
       )}
-      <button onClick={() => del(it.name)} className="text-[12px] text-faint opacity-0 hover:text-accent group-hover:opacity-100" aria-label={"删除 " + it.name}>
-        ✕
+      <button onClick={() => del(it.name)} className="text-faint opacity-0 hover:text-accent group-hover:opacity-100" aria-label={"删除 " + it.name}>
+        <Icon name="trash" size={13} />
       </button>
     </div>
     );
@@ -684,7 +685,7 @@ function FilesPanel({ email }: { email: string }) {
   return (
     <div className="p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="truncate text-[12px] text-faint" title={email}>📂 我的文件</span>
+        <span className="inline-flex items-center gap-1.5 truncate text-[12px] text-faint" title={email}><Icon name="folder" size={13} /> 我的文件</span>
         <button
           onClick={() => inputRef.current?.click()}
           className="shrink-0 rounded-lg border border-border px-2.5 py-1 text-[12px] text-muted hover:border-accent/40"
@@ -854,7 +855,7 @@ function WorkflowsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: 
                 <div className="flex items-center gap-1.5">
                   <span className="text-[11px] text-faint">#{i + 1}</span>
                   <input value={s.name} onChange={(e) => setStep(i, { name: e.target.value.replace(/\s+/g, "_") })} placeholder="步骤名" className="w-24 rounded border border-border bg-surface2 px-1.5 py-0.5 text-[12px] outline-none" />
-                  {steps.length > 1 && <button onClick={() => setSteps((ss) => ss.filter((_, j) => j !== i))} className="ml-auto text-[12px] text-faint hover:text-accent">✕</button>}
+                  {steps.length > 1 && <button onClick={() => setSteps((ss) => ss.filter((_, j) => j !== i))} className="ml-auto text-faint hover:text-accent" aria-label="移除步骤"><Icon name="close" size={13} /></button>}
                 </div>
                 <textarea value={s.prompt} onChange={(e) => setStep(i, { prompt: e.target.value })} rows={2} placeholder={'该步要做什么(可用 {{前一步名}} 引用其输出)'} className="w-full resize-none rounded border border-border bg-surface2 px-2 py-1 text-[12.5px] outline-none focus:border-accent/50" />
                 {priors.length > 0 && (
@@ -908,7 +909,7 @@ function WorkflowsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: 
               ))}
             </ol>
             <div className="mt-1.5 flex items-center gap-3 text-[11px]">
-              <button onClick={() => run(wf.workflow_id)} className="text-accent hover:underline">▶ 运行</button>
+              <button onClick={() => run(wf.workflow_id)} className="inline-flex items-center gap-1 text-accent hover:underline"><Icon name="play" size={11} /> 运行</button>
               <button onClick={() => api.deleteWorkflow(wf.workflow_id).then(refresh)} className="text-faint hover:text-accent">删除</button>
             </div>
           </div>
@@ -999,12 +1000,12 @@ function ConnectorsPanel() {
       <div className="space-y-1.5">
         {conns.map((cn) => (
           <div key={cn.connector_id} className="flex items-center gap-2 rounded-xl border border-border bg-surface2/40 px-3 py-2.5">
-            <span className="text-[15px]">🔌</span>
+            <Icon name="plug" size={15} className="text-muted" />
             <div className="min-w-0 flex-1">
               <div className="truncate text-[13px] text-ink">{cn.name}</div>
               <div className="truncate text-[11px] text-faint">{cn.transport} · {cn.url}</div>
             </div>
-            <button onClick={() => api.deleteConnector(cn.connector_id).then(refresh)} aria-label="移除集成" className="text-[12px] text-faint hover:text-accent">✕</button>
+            <button onClick={() => api.deleteConnector(cn.connector_id).then(refresh)} aria-label="移除集成" className="text-faint hover:text-accent"><Icon name="close" size={13} /></button>
           </div>
         ))}
       </div>
@@ -1269,9 +1270,9 @@ function TasksPanel({ onJumpToConversation }: { onJumpToConversation: (cid: stri
                 ) : (
                   <button
                     onClick={() => api.enableWebhook(t.task_id).then((r) => { setHookUrl((m) => ({ ...m, [t.task_id]: location.origin + r.path })); refresh(); }).catch(() => toast("开启 webhook 失败,请重试", "error"))}
-                    className="text-[11px] text-faint hover:text-accent"
+                    className="inline-flex items-center gap-1 text-[11px] text-faint hover:text-accent"
                   >
-                    🪝 webhook
+                    <Icon name="link" size={11} /> webhook
                   </button>
                 )}
               </div>

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
@@ -23,6 +24,61 @@ type getMessagesReq struct {
 	ConversationID string `json:"conversation_id"`
 	Page           int64  `json:"page"`
 	Size           int64  `json:"size"`
+}
+
+type searchReq struct {
+	Query string `json:"query"`
+	Limit int64  `json:"limit"`
+}
+
+// SearchConversations runs cross-conversation full-text search over the user's
+// readable messages (owned + shared), returning matches with a snippet and the
+// owning conversation title.
+func (a *API) SearchConversations(ctx context.Context, c *app.RequestContext) {
+	var req searchReq
+	if err := bind(c, &req); err != nil {
+		fail(c, consts.StatusBadRequest, "bad request")
+		return
+	}
+	q := strings.TrimSpace(req.Query)
+	if len(q) < 2 {
+		ok(c, map[string]any{"hits": []db.MessageSearchHit{}})
+		return
+	}
+	hits, err := a.Store.SearchMessages(ctx, authEmail(c), q, req.Limit)
+	if err != nil {
+		a.Log.Error("search messages", "err", err)
+		fail(c, consts.StatusInternalServerError, "search failed")
+		return
+	}
+	ok(c, map[string]any{"hits": hits})
+}
+
+type forkReq struct {
+	ConversationID string `json:"conversation_id"`
+	MessageID      string `json:"message_id"`
+}
+
+// ForkConversation branches a conversation at a given message: a new copy the
+// user owns, seeded with history up to that turn, nested under its parent.
+func (a *API) ForkConversation(ctx context.Context, c *app.RequestContext) {
+	var req forkReq
+	if err := bind(c, &req); err != nil || req.ConversationID == "" {
+		fail(c, consts.StatusBadRequest, "conversation_id required")
+		return
+	}
+	email := authEmail(c)
+	if conv, err := a.Store.GetConversation(ctx, req.ConversationID); err != nil || !conv.CanRead(email) {
+		fail(c, consts.StatusNotFound, "not found")
+		return
+	}
+	branch, err := a.Store.ForkConversation(ctx, req.ConversationID, req.MessageID, email)
+	if err != nil {
+		a.Log.Error("fork conversation", "err", err)
+		fail(c, consts.StatusInternalServerError, "fork failed")
+		return
+	}
+	ok(c, branch)
 }
 
 // CreateConversation creates a new conversation shell.

@@ -29,6 +29,10 @@ type ConversationTable struct {
 	// default). Empty = private to the owner. The owner stays the single source
 	// of identity for file/workspace effects, even when an editor sends.
 	Shares []ConversationShare `bson:"shares,omitempty" json:"shares,omitempty"`
+	// ParentConversationID, when set, marks this conversation as a branch forked
+	// from another at a given turn — so the sidebar can nest it under its parent
+	// and the user can explore an alternative direction without losing the original.
+	ParentConversationID string `bson:"parent_conversation_id,omitempty" json:"parent_conversation_id,omitempty"`
 }
 
 // ConversationShare grants one user access to a conversation.
@@ -87,6 +91,16 @@ type MessagesTable struct {
 	Payload        any    `bson:"payload" json:"payload"`
 	Type           string `bson:"type" json:"type"`
 	CreatedAt      int64  `bson:"created_at" json:"created_at"`
+}
+
+// MessageSearchHit is one cross-conversation full-text search result: a matching
+// message plus the title of the conversation it belongs to, for the result list.
+type MessageSearchHit struct {
+	ConversationID string `json:"conversation_id"`
+	Title          string `json:"title"`
+	Snippet        string `json:"snippet"`
+	Role           string `json:"role"`
+	CreatedAt      int64  `json:"created_at"`
 }
 
 // Workflow is a user-defined ordered pipeline of steps. Each step runs as a turn

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
 import type { BrowserPayload, ClarifyPayload, Message, ToolPayload, WeatherCardData } from "../types";
 import { api, chat as chatApi, files as fileApi } from "../api";
@@ -144,6 +144,7 @@ export function Thread({
   onPick,
   onRetry,
   onSchedule,
+  onFork,
   fileConv,
 }: {
   messages: Message[];
@@ -153,6 +154,7 @@ export function Thread({
   onPick: (text: string) => void;
   onRetry: () => void;
   onSchedule: (prompt: string) => void;
+  onFork?: (messageID: string) => void;
   fileConv?: string; // when viewing a shared conversation, read files from its owner via this id
 }) {
   const endRef = useRef<HTMLDivElement>(null);
@@ -178,8 +180,11 @@ export function Thread({
       .catch(() => {});
   }, [status]);
 
-  const files = sessionFiles(messages, wsFiles);
-  const blocks = group(messages);
+  // Grouping + filename-scan walk every message; memoize so a re-render that
+  // doesn't change the message list (hover, find typing, status flips) doesn't
+  // re-walk the whole conversation.
+  const files = useMemo(() => sessionFiles(messages, wsFiles), [messages, wsFiles]);
+  const blocks = useMemo(() => group(messages), [messages]);
   const thinking =
     status === "streaming" &&
     (blocks.length === 0 || blocks[blocks.length - 1].kind !== "assistant");
@@ -205,14 +210,79 @@ export function Thread({
   const hasPlan = blocks.some((b) => b.kind === "plan");
   const canAct = status !== "streaming";
 
+  // In-thread find: scan the loaded conversation for a query and jump between
+  // hits. Frontend-only — searches the user/assistant/reasoning text already in
+  // memory (cross-conversation search would need a backend index).
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findIdx, setFindIdx] = useState(0);
+  const matches = (() => {
+    const q = findQuery.trim().toLowerCase();
+    if (!q) return [] as number[];
+    const out: number[] = [];
+    blocks.forEach((b, i) => {
+      const t = "m" in b ? b.m.content || "" : "";
+      if (t.toLowerCase().includes(q)) out.push(i);
+    });
+    return out;
+  })();
+  const curMatch = matches.length ? matches[Math.min(findIdx, matches.length - 1)] : -1;
+  useEffect(() => {
+    if (curMatch >= 0) document.getElementById("block-" + curMatch)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [curMatch]);
+  // ⌘/Ctrl+F opens the in-thread find (overrides the browser find — this is a
+  // full workbench, so an app-level find over the conversation is more useful).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setFindOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Render cap: a very long conversation only mounts its most recent slice;
+  // older turns fold behind a button. Full virtualization would fight the find
+  // bar / outline anchors, so this keeps every rendered node real while bounding
+  // DOM size. Finding forces the full list so any match can be scrolled to.
+  const RENDER_CAP = 40;
+  const [showAll, setShowAll] = useState(false);
+  const finding = findQuery.trim().length > 0;
+  const startIdx = blocks.length > RENDER_CAP && !showAll && !finding ? blocks.length - RENDER_CAP : 0;
+
   return (
     <OpenFileCtx.Provider value={openFile}>
     <div ref={scrollRef} className="relative flex-1 overflow-y-auto">
       <ThreadOutline turns={turns} />
+      <ThreadFind
+        open={findOpen}
+        query={findQuery}
+        count={matches.length}
+        idx={matches.length ? Math.min(findIdx, matches.length - 1) : 0}
+        onQuery={(q) => { setFindQuery(q); setFindIdx(0); }}
+        onStep={(d) => setFindIdx((n) => { const len = matches.length; if (!len) return 0; return (n + d + len) % len; })}
+        onOpen={() => setFindOpen(true)}
+        onClose={() => { setFindOpen(false); setFindQuery(""); }}
+      />
       <div className="mx-auto max-w-3xl px-5 py-8">
-        {blocks.map((b, i) => (
-          <div key={i} id={b.kind === "user" ? "turn-" + b.m.id : undefined} className="rise scroll-mt-4">
-            {b.kind === "user" && <UserBubble m={b.m} onEdit={canAct ? onPick : undefined} />}
+        {startIdx > 0 && (
+          <div className="mb-6 text-center">
+            <button
+              onClick={() => setShowAll(true)}
+              className="rounded-full border border-border bg-surface px-3 py-1.5 text-[12.5px] text-muted transition hover:border-accent/40 hover:text-accent"
+            >
+              显示更早的 {startIdx} 条
+            </button>
+          </div>
+        )}
+        {blocks.slice(startIdx).map((b, k) => {
+          const i = startIdx + k;
+          return (
+          <div key={i} id={"block-" + i} className={"rise scroll-mt-4 " + (i === curMatch ? "rounded-2xl ring-2 ring-accent/60 ring-offset-4 ring-offset-bg" : "")}>
+            {b.kind === "user" && <span id={"turn-" + b.m.id} className="block h-0 scroll-mt-4" aria-hidden />}
+            {b.kind === "user" && <UserBubble m={b.m} onEdit={canAct ? onPick : undefined} onFork={canAct && onFork ? () => onFork(b.m.id) : undefined} />}
             {b.kind === "assistant" && (
               <Assistant
                 m={b.m}
@@ -229,7 +299,8 @@ export function Thread({
             {b.kind === "weather" && <WeatherCard data={b.data} />}
             {b.kind === "steps" && <Steps items={b.items} onOpenViewport={onOpenViewport} live={status === "streaming" && i === lastSteps} />}
           </div>
-        ))}
+          );
+        })}
         {thinking && <Thinking />}
         {canAct && status !== "error" && lastAssistant >= 0 && lastUserPrompt && blocks[lastAssistant].kind === "assistant" && (
           <FollowUps
@@ -337,7 +408,56 @@ function ThreadOutline({ turns }: { turns: { id: string; text: string }[] }) {
   );
 }
 
-function UserBubble({ m, onEdit }: { m: Message; onEdit?: (text: string) => void }) {
+// ThreadFind is the in-conversation find bar (⌘F): type a query to jump between
+// matching turns with prev/next, like a browser find scoped to this thread.
+function ThreadFind({
+  open, query, count, idx, onQuery, onStep, onOpen, onClose,
+}: {
+  open: boolean;
+  query: string;
+  count: number;
+  idx: number;
+  onQuery: (q: string) => void;
+  onStep: (d: number) => void;
+  onOpen: () => void;
+  onClose: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
+  if (!open) {
+    return (
+      <div className="sticky top-0 z-10 float-left ml-2 mt-2">
+        <button onClick={onOpen} title="在对话中查找 (⌘F)" aria-label="在对话中查找" className="grid h-8 w-8 place-items-center rounded-lg border border-border bg-surface text-muted transition hover:bg-surface2">
+          <Icon name="search" size={16} />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="sticky top-0 z-20 float-left ml-2 mt-2">
+      <div className="flex items-center gap-1 rounded-lg border border-border bg-surface px-1.5 py-1 shadow-lg">
+        <Icon name="search" size={14} className="text-faint" />
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={(e) => onQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { e.preventDefault(); onStep(e.shiftKey ? -1 : 1); }
+            if (e.key === "Escape") { e.preventDefault(); onClose(); }
+          }}
+          placeholder="在对话中查找…"
+          className="w-40 bg-transparent text-[13px] outline-none placeholder:text-faint"
+        />
+        <span className="min-w-[36px] text-center text-[11px] text-faint">{query ? (count ? `${idx + 1}/${count}` : "0") : ""}</span>
+        <button onClick={() => onStep(-1)} disabled={!count} aria-label="上一个匹配" className="grid h-6 w-6 place-items-center rounded text-faint hover:bg-surface2 disabled:opacity-30"><Icon name="chevron" size={13} className="rotate-180" /></button>
+        <button onClick={() => onStep(1)} disabled={!count} aria-label="下一个匹配" className="grid h-6 w-6 place-items-center rounded text-faint hover:bg-surface2 disabled:opacity-30"><Icon name="chevron" size={13} /></button>
+        <button onClick={onClose} aria-label="关闭查找" className="grid h-6 w-6 place-items-center rounded text-faint hover:bg-surface2"><Icon name="close" size={13} /></button>
+      </div>
+    </div>
+  );
+}
+
+function UserBubble({ m, onEdit, onFork }: { m: Message; onEdit?: (text: string) => void; onFork?: () => void }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(m.content || "");
   if (editing) {
@@ -376,10 +496,11 @@ function UserBubble({ m, onEdit }: { m: Message; onEdit?: (text: string) => void
       <div className="max-w-[85%] rounded-2xl rounded-br-md bg-userbubble px-4 py-2.5 text-[15px] leading-relaxed text-ink whitespace-pre-wrap">
         {m.content}
       </div>
-      {onEdit && (
+      {(onEdit || onFork) && (
         <div className="flex gap-1 opacity-0 transition group-hover:opacity-100">
           <CopyButton text={m.content || ""} />
-          <ActionButton label="编辑并重发" onClick={() => { setDraft(m.content || ""); setEditing(true); }}>✎</ActionButton>
+          {onEdit && <ActionButton label="编辑并重发" onClick={() => { setDraft(m.content || ""); setEditing(true); }}><Icon name="rename" size={13} /></ActionButton>}
+          {onFork && <ActionButton label="从这里分支(复制到此为止的对话,另开一条探索)" onClick={onFork}><Icon name="share" size={13} className="rotate-90" /></ActionButton>}
         </div>
       )}
     </div>
@@ -494,6 +615,57 @@ function StructuredPlan({ plan, live }: { plan: PlanPayload; live: boolean }) {
   );
 }
 
+// extractCitations pulls unique external URLs out of an answer (both bare URLs
+// and markdown-link targets), in first-appearance order — the basis for the
+// "来源" footer that gives a research answer visible, checkable provenance.
+function extractCitations(text: string): { url: string; host: string }[] {
+  const urls = text.match(/https?:\/\/[^\s<>()\[\]"']+/gi) || [];
+  const seen = new Set<string>();
+  const out: { url: string; host: string }[] = [];
+  for (let raw of urls) {
+    raw = raw.replace(/[.,;:]+$/, ""); // trailing punctuation
+    if (seen.has(raw)) continue;
+    seen.add(raw);
+    let host = raw;
+    try { host = new URL(raw).hostname.replace(/^www\./, ""); } catch { /* keep raw */ }
+    out.push({ url: raw, host });
+  }
+  return out;
+}
+
+// Citations is the collapsible 来源 footer under a research-style answer: it
+// lists the unique cited domains as numbered chips, so the user can verify
+// where a claim came from without scanning the prose for links.
+function Citations({ text }: { text: string }) {
+  const cites = extractCitations(text);
+  const [open, setOpen] = useState(false);
+  if (cites.length < 2) return null; // a single link reads fine inline
+  return (
+    <div className="mt-2.5">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-[12px] text-muted transition hover:border-accent/40 hover:text-accent"
+      >
+        <Icon name="book" size={13} /> 来源 · {cites.length}
+        <Icon name="chevron" size={12} className={"text-faint transition-transform " + (open ? "" : "-rotate-90")} />
+      </button>
+      {open && (
+        <ol className="mt-2 space-y-1">
+          {cites.map((c, i) => (
+            <li key={c.url} className="flex items-start gap-2 text-[12.5px]">
+              <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-surface2 text-[10px] text-faint">{i + 1}</span>
+              <a href={c.url} target="_blank" rel="noreferrer" className="min-w-0 truncate text-accent hover:underline" title={c.url}>
+                <span className="text-ink">{c.host}</span>
+                <span className="text-faint"> · {c.url.replace(/^https?:\/\//, "")}</span>
+              </a>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 function Assistant({ m, live, onRegenerate, onSchedule, suppressPlan }: { m: Message; live?: boolean; onRegenerate?: () => void; onSchedule?: () => void; suppressPlan?: boolean }) {
   // When the agent emitted a structured plan event, don't also regex a prose
   // plan out of the answer — the StructuredPlan block already shows it.
@@ -513,10 +685,11 @@ function Assistant({ m, live, onRegenerate, onSchedule, suppressPlan }: { m: Mes
         ) : (
           <Markdown>{m.content ?? ""}</Markdown>
         )}
+        {!live && <Citations text={m.content ?? ""} />}
         <div className="mt-1 flex gap-1 opacity-0 transition group-hover:opacity-100">
           <CopyButton text={m.content || ""} />
-          {onRegenerate && <ActionButton label="重新生成" onClick={onRegenerate}>↻</ActionButton>}
-          {onSchedule && <ActionButton label="把这轮设为定时任务" onClick={onSchedule}>⏰</ActionButton>}
+          {onRegenerate && <ActionButton label="重新生成" onClick={onRegenerate}><Icon name="refresh" size={13} /></ActionButton>}
+          {onSchedule && <ActionButton label="把这轮设为定时任务" onClick={onSchedule}><Icon name="clock" size={13} /></ActionButton>}
         </div>
       </div>
     </div>
@@ -548,7 +721,7 @@ function CopyButton({ text }: { text: string }) {
         });
       }}
     >
-      {done ? "✓" : "⧉"}
+      {done ? <Icon name="check" size={13} /> : <Icon name="copy" size={13} />}
     </ActionButton>
   );
 }
@@ -581,7 +754,7 @@ function Steps({ items, onOpenViewport, live }: { items: Message[]; onOpenViewpo
         onClick={() => setPinned(!open)}
         className="flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-[13px] text-muted hover:border-accent/40 transition"
       >
-        {live ? <Spinner /> : <span className="text-faint">⚙</span>}
+        {live ? <Spinner /> : <Icon name="gear" size={13} className="text-faint" />}
         <span>
           {live ? "执行中" : open ? "收起" : "查看"} · {items.length} 步{lanes.size > 0 && ` · ${lanes.size} 个子 Agent`}
         </span>
@@ -638,7 +811,7 @@ function AgentLane({ agent, items }: { agent: string; items: Message[] }) {
         <Icon name={AGENT_ICON[agent] || "users"} size={15} className="text-muted" />
         <span className="font-medium text-ink">{agent}</span>
         <span className="text-faint">· {items.length} 步</span>
-        <span className="ml-auto text-faint">{open ? "▾" : "▸"}</span>
+        <Icon name="chevron" size={13} className={"ml-auto text-faint transition-transform " + (open ? "" : "-rotate-90")} />
       </button>
       {open && (
         <div className="space-y-1 border-t border-border px-2.5 py-1.5 pl-4">
@@ -895,10 +1068,11 @@ function Thinking() {
       <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent text-white font-serif text-[13px]">
         O
       </div>
-      <div className="flex gap-1">
+      <div className="flex gap-1" role="status">
         <span className="dot h-1.5 w-1.5 rounded-full bg-faint" />
         <span className="dot h-1.5 w-1.5 rounded-full bg-faint" />
         <span className="dot h-1.5 w-1.5 rounded-full bg-faint" />
+        <span className="sr-only">正在思考…</span>
       </div>
     </div>
   );
@@ -922,7 +1096,7 @@ function Reasoning({ m }: { m: Message }) {
       <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-[12px] text-faint hover:text-muted">
         <span className="dot h-1.5 w-1.5 rounded-full bg-accent" />
         <span>💭 思考中{open ? "" : "…"}</span>
-        <span className="text-[10px]">{open ? "▾" : "▸"}</span>
+        <Icon name="chevron" size={11} className={"transition-transform " + (open ? "" : "-rotate-90")} />
       </button>
       {open && text && (
         <div className="mt-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-surface2/40 px-2.5 py-2 text-[11.5px] leading-relaxed text-faint">

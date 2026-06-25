@@ -28,6 +28,7 @@ type API struct {
 	chunks      *chunkManager            // resumable upload state
 	authLimiter *rateLimiter             // throttles login/register attempts
 	hub         *streamHub               // SSE replay buffer for reconnects
+	events      *eventHub                // per-user UI-invalidation event bus
 }
 
 // authEmail returns the authenticated user's email set by AuthMiddleware.
@@ -47,6 +48,7 @@ func New(store *db.Storage, log *slog.Logger, m *obs.Metrics, chat *service.Chat
 		// 10 auth attempts per key per 5 minutes (per-IP and per-email).
 		authLimiter: newRateLimiter(10, 5*time.Minute),
 		hub:         newStreamHub(),
+		events:      newEventHub(),
 	}
 }
 

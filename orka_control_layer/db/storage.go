@@ -2,12 +2,17 @@ package db
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -323,6 +328,169 @@ func (s *Storage) GetMessages(ctx context.Context, convID string, page, size int
 		return nil, fmt.Errorf("get messages: %w", err)
 	}
 	return out, nil
+}
+
+// readableConvIDs returns the conversation ids a user may read (owned + shared).
+func (s *Storage) readableConvIDs(ctx context.Context, owner string) ([]string, map[string]string, error) {
+	cur, err := s.Conversations.Find(ctx, bson.M{"$or": bson.A{
+		bson.M{"owner_email": owner},
+		bson.M{"shares.email": owner},
+	}})
+	if err != nil {
+		return nil, nil, err
+	}
+	defer cur.Close(ctx)
+	var convs []ConversationTable
+	if err := cur.All(ctx, &convs); err != nil {
+		return nil, nil, err
+	}
+	ids := make([]string, 0, len(convs))
+	titles := make(map[string]string, len(convs))
+	for _, c := range convs {
+		ids = append(ids, c.ConversationID)
+		titles[c.ConversationID] = c.Title
+	}
+	return ids, titles, nil
+}
+
+// SearchMessages finds chat/stream messages whose text contains query across all
+// conversations the user can read — the backend half of cross-conversation
+// full-text search. Returns matches newest-first with the owning title attached.
+func (s *Storage) SearchMessages(ctx context.Context, owner, query string, limit int64) ([]MessageSearchHit, error) {
+	q := query
+	if len(q) > 200 {
+		q = q[:200]
+	}
+	ids, titles, err := s.readableConvIDs(ctx, owner)
+	if err != nil {
+		return nil, fmt.Errorf("search: readable convs: %w", err)
+	}
+	if len(ids) == 0 {
+		return []MessageSearchHit{}, nil
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 30
+	}
+	rx := primitive.Regex{Pattern: regexp.QuoteMeta(q), Options: "i"}
+	filter := bson.M{
+		"conversation_id": bson.M{"$in": ids},
+		"type":            bson.M{"$in": bson.A{"chat", "stream"}},
+		"role":            bson.M{"$in": bson.A{"user", "assistant"}},
+		"content":         bson.M{"$regex": rx},
+	}
+	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(limit)
+	cur, err := s.Messages.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, fmt.Errorf("search messages: %w", err)
+	}
+	defer cur.Close(ctx)
+	var msgs []MessagesTable
+	if err := cur.All(ctx, &msgs); err != nil {
+		return nil, fmt.Errorf("search decode: %w", err)
+	}
+	hits := make([]MessageSearchHit, 0, len(msgs))
+	for _, m := range msgs {
+		hits = append(hits, MessageSearchHit{
+			ConversationID: m.ConversationID,
+			Title:          titles[m.ConversationID],
+			Snippet:        snippetAround(m.Content, q),
+			Role:           m.Role,
+			CreatedAt:      m.CreatedAt,
+		})
+	}
+	return hits, nil
+}
+
+// snippetAround returns a short window of text centered on the first occurrence
+// of q (case-insensitive), with ellipses — enough to recognize the hit in a list.
+func snippetAround(text, q string) string {
+	const pad = 48
+	runes := []rune(text)
+	byteIdx := strings.Index(strings.ToLower(text), strings.ToLower(q))
+	if byteIdx < 0 {
+		if len(runes) > 2*pad {
+			return string(runes[:2*pad]) + "…"
+		}
+		return text
+	}
+	idx := len([]rune(text[:byteIdx])) // byte offset → rune offset
+	start := idx - pad
+	if start < 0 {
+		start = 0
+	}
+	end := idx + len([]rune(q)) + pad
+	if end > len(runes) {
+		end = len(runes)
+	}
+	out := string(runes[start:end])
+	if start > 0 {
+		out = "…" + out
+	}
+	if end < len(runes) {
+		out = out + "…"
+	}
+	return out
+}
+
+// randID returns a short random hex id (mirrors orka_core/messages.NewID without
+// importing it into the storage layer).
+func randID() string {
+	var b [12]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+// ForkConversation creates a branch of src: a new conversation owned by `owner`
+// seeded with a copy of src's messages up to and including the cutoff message
+// (by timestamp). The branch records its parent so the sidebar can nest it. The
+// original is untouched, so the user can explore an alternative from that turn.
+func (s *Storage) ForkConversation(ctx context.Context, srcID, uptoMessageID, owner string) (*ConversationTable, error) {
+	src, err := s.GetConversation(ctx, srcID)
+	if err != nil {
+		return nil, err
+	}
+	// Find the cutoff timestamp from the named message (default: copy everything).
+	cutoff := int64(1<<63 - 1)
+	if uptoMessageID != "" {
+		var cut MessagesTable
+		if err := s.Messages.FindOne(ctx, bson.M{"_id": uptoMessageID}).Decode(&cut); err == nil {
+			cutoff = cut.CreatedAt
+		}
+	}
+	branch := &ConversationTable{
+		ConversationID:       randID(),
+		OwnerEmail:           owner,
+		Title:                strings.TrimSpace(src.Title) + " · 分支",
+		TaskIds:              []string{},
+		CreatedAt:            time.Now().UnixMilli(),
+		ParentConversationID: srcID,
+	}
+	if err := s.CreateConversation(ctx, branch); err != nil {
+		return nil, err
+	}
+	// Copy messages up to the cutoff, in chronological order, with fresh ids.
+	cur, err := s.Messages.Find(ctx,
+		bson.M{"conversation_id": srcID, "created_at": bson.M{"$lte": cutoff}},
+		options.Find().SetSort(bson.D{{Key: "created_at", Value: 1}}),
+	)
+	if err != nil {
+		return branch, nil // branch exists; copy failed — return what we have
+	}
+	defer cur.Close(ctx)
+	var msgs []MessagesTable
+	if err := cur.All(ctx, &msgs); err != nil {
+		return branch, nil
+	}
+	docs := make([]any, 0, len(msgs))
+	for _, m := range msgs {
+		m.ID = randID()
+		m.ConversationID = branch.ConversationID
+		docs = append(docs, m)
+	}
+	if len(docs) > 0 {
+		_, _ = s.Messages.InsertMany(ctx, docs)
+	}
+	return branch, nil
 }
 
 // ---- tasks ----

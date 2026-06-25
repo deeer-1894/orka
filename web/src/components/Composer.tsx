@@ -277,7 +277,7 @@ export function Composer({
                           (previewName === s.name ? "text-accent opacity-100" : "text-faint opacity-0 hover:bg-surface hover:text-ink")
                         }
                       >
-                        {previewName === s.name ? "▴" : "👁"}
+                        {previewName === s.name ? <Icon name="chevron" size={14} className="rotate-180" /> : <Icon name="eye" size={14} />}
                       </button>
                       {!builtin && (
                         <button
@@ -287,7 +287,7 @@ export function Composer({
                           aria-label={"删除技能 " + s.name}
                           className="mr-1 shrink-0 rounded-md px-1.5 py-1 text-[13px] text-faint opacity-0 hover:bg-surface hover:text-red-500 group-hover:opacity-100 disabled:opacity-40"
                         >
-                          {deleting === s.name ? "…" : "🗑"}
+                          {deleting === s.name ? "…" : <Icon name="trash" size={14} />}
                         </button>
                       )}
                     </div>
@@ -350,10 +350,10 @@ export function Composer({
             <button
               onClick={() => setToolsOpen(true)}
               title="默认按任务自动选择工具，点击可限定工具范围"
-              className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-[12px] text-muted hover:bg-surface2"
+              className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[12px] text-muted hover:bg-surface2"
             >
-              🧰 {enabledTools.size === 0 ? "工具：自动选择" : `工具：已选 ${enabledTools.size} 项`}
-              <span className="text-faint">⌄</span>
+              <Icon name="wrench" size={13} /> {enabledTools.size === 0 ? "工具：自动选择" : `工具：已选 ${enabledTools.size} 项`}
+              <Icon name="chevron" size={12} className="text-faint" />
             </button>
           ) : (
             <ToolPicker
@@ -370,7 +370,7 @@ export function Composer({
           {skill && (
             <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-accentsoft px-2 py-1 text-[12px] text-accent">
               {skill.icon} {skill.label} 模式
-              <button onClick={() => onPickSkill(null)} aria-label="退出技能模式" className="hover:text-ink">✕</button>
+              <button onClick={() => onPickSkill(null)} aria-label="退出技能模式" className="hover:text-ink"><Icon name="close" size={12} /></button>
             </span>
           )}
         </div>
@@ -381,7 +381,7 @@ export function Composer({
               <span key={a.path} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface2/60 px-2 py-1 text-[12px] text-ink">
                 <span>{a.image ? "🖼️" : "📄"}</span>
                 <span className="max-w-[160px] truncate">{a.name}</span>
-                <button onClick={() => setAttachments((xs) => xs.filter((_, j) => j !== i))} aria-label={"移除 " + a.name} className="text-faint hover:text-accent">✕</button>
+                <button onClick={() => setAttachments((xs) => xs.filter((_, j) => j !== i))} aria-label={"移除 " + a.name} className="text-faint hover:text-accent"><Icon name="close" size={12} /></button>
               </span>
             ))}
             {uploading > 0 && <span className="rounded-lg bg-surface2/60 px-2 py-1 text-[12px] text-faint">上传中 {uploading}…</span>}
@@ -438,7 +438,7 @@ export function Composer({
             title="引用工作区文件(也可输入 @)"
             aria-label="引用文件"
           >
-            <span className="text-[15px] font-semibold">@</span>
+            <Icon name="at" size={17} />
           </button>
           <textarea
             ref={taRef}
@@ -494,7 +494,7 @@ export function Composer({
               (confirmRisky ? "border-accent/40 bg-accentsoft text-accent" : "border-border text-faint hover:bg-surface2")
             }
           >
-            <span>{confirmRisky ? "🛡" : "○"}</span> 高危操作{confirmRisky ? "需确认" : "免确认"}
+            <Icon name="shield" size={12} className={confirmRisky ? "" : "opacity-50"} /> 高危操作{confirmRisky ? "需确认" : "免确认"}
           </button>
         </div>
       </div>

@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
-import type { Conversation } from "../types";
+import { useEffect, useMemo, useState } from "react";
+import type { Conversation, MessageSearchHit } from "../types";
+import { api } from "../api";
 import { Icon } from "./Icon";
 import { confirmDialog } from "../lib/confirm";
 
@@ -19,6 +20,25 @@ function groupByTime(cs: Conversation[]): { label: string; items: Conversation[]
     else buckets["更早"].push(c);
   }
   return order.filter((l) => buckets[l].length).map((label) => ({ label, items: buckets[label] }));
+}
+
+// highlight wraps occurrences of q in the snippet with an accent <mark>, so the
+// matched term stands out in the search-result preview.
+function highlight(text: string, q: string): React.ReactNode {
+  if (!q) return text;
+  const parts: React.ReactNode[] = [];
+  const lower = text.toLowerCase();
+  const ql = q.toLowerCase();
+  let i = 0;
+  let k = 0;
+  for (;;) {
+    const at = lower.indexOf(ql, i);
+    if (at < 0) { parts.push(text.slice(i)); break; }
+    if (at > i) parts.push(text.slice(i, at));
+    parts.push(<mark key={k++} className="rounded bg-accentsoft text-accent">{text.slice(at, at + q.length)}</mark>);
+    i = at + q.length;
+  }
+  return parts;
 }
 
 // relTime is a compact "2小时前 / 3天前 / 6/21" used to disambiguate same-titled
@@ -79,6 +99,31 @@ export function Sidebar({
     [conversations, q],
   );
   const groups = useMemo(() => groupByTime(filtered), [filtered]);
+
+  // Cross-conversation full-text search: debounce the query and ask the backend
+  // for message-body matches (titles are filtered locally above). Hits in
+  // conversations whose title already matched are dropped to avoid duplication.
+  const [hits, setHits] = useState<MessageSearchHit[]>([]);
+  const [searching, setSearching] = useState(false);
+  useEffect(() => {
+    const term = query.trim();
+    if (term.length < 2) { setHits([]); setSearching(false); return; }
+    setSearching(true);
+    const id = setTimeout(() => {
+      api.searchMessages(term).then((r) => setHits(r.hits || [])).catch(() => setHits([])).finally(() => setSearching(false));
+    }, 280);
+    return () => clearTimeout(id);
+  }, [query]);
+  const titleIds = useMemo(() => new Set(filtered.map((c) => c.conversation_id)), [filtered]);
+  const msgHits = useMemo(() => {
+    const seen = new Set<string>();
+    return hits.filter((h) => {
+      if (titleIds.has(h.conversation_id) || seen.has(h.conversation_id)) return false;
+      seen.add(h.conversation_id); // one row per conversation
+      return true;
+    });
+  }, [hits, titleIds]);
+
   // Titles that appear more than once → show a timestamp to tell them apart.
   const dupTitles = useMemo(() => {
     const seen = new Map<string, number>();
@@ -90,6 +135,7 @@ export function Sidebar({
     const active = c.conversation_id === activeID;
     const running = runningIds.includes(c.conversation_id);
     const scheduled = scheduledIds.has(c.conversation_id);
+    const isBranch = !!c.parent_conversation_id;
     if (editing === c.conversation_id) {
       return (
         <input
@@ -114,21 +160,24 @@ export function Sidebar({
       <div
         key={c.conversation_id}
         onClick={() => { onSelect(c.conversation_id); onSelectClose?.(); }}
+        aria-current={active ? "true" : undefined}
         className={
           "group flex items-center gap-1 rounded-lg px-3 py-2 cursor-pointer transition " +
+          (isBranch ? "ml-3 border-l border-border pl-2.5 " : "") +
           (active ? "bg-accentsoft text-ink" : "text-muted hover:bg-surface")
         }
-        title={`${c.title}${c.created_at ? " · " + relTime(c.created_at) : ""}`}
+        title={`${isBranch ? "分支 · " : ""}${c.title}${c.created_at ? " · " + relTime(c.created_at) : ""}`}
       >
-        {running && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ok" title="运行中" />}
+        {isBranch && <Icon name="share" size={12} className="shrink-0 rotate-90 text-faint" />}
+        {running && <span className="inline-flex shrink-0 items-center" role="status"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ok" title="运行中" /><span className="sr-only">运行中</span></span>}
         {scheduled && <span className="shrink-0 text-[12px]" title="由定时任务驱动">🔁</span>}
         <span className="flex-1 truncate text-[14px]">{c.title}</span>
         {/* disambiguate same-titled conversations with a timestamp */}
         {dup && <span className="shrink-0 text-[10px] text-faint group-hover:hidden">{relTime(c.created_at)}</span>}
         {(c.shares?.length ?? 0) > 0 && <span className="shrink-0 text-[11px] group-hover:hidden" title={`已分享给 ${c.shares!.length} 人`}>🔗</span>}
         <button onClick={(e) => { e.stopPropagation(); onShare(c.conversation_id); }} className="hidden px-1 text-faint hover:text-accent group-hover:block" title="分享" aria-label="分享会话"><Icon name="share" size={14} /></button>
-        <button onClick={(e) => { e.stopPropagation(); setDraft(c.title); setEditing(c.conversation_id); }} className="hidden px-1 text-faint hover:text-ink group-hover:block" title="重命名" aria-label="重命名会话">✎</button>
-        <button onClick={async (e) => { e.stopPropagation(); if (await confirmDialog({ title: "删除这个会话?", body: "删除后无法恢复。", confirmText: "删除", danger: true })) onDelete(c.conversation_id); }} className="hidden px-1 text-faint hover:text-accent group-hover:block" title="删除" aria-label="删除会话">✕</button>
+        <button onClick={(e) => { e.stopPropagation(); setDraft(c.title); setEditing(c.conversation_id); }} className="hidden px-1 text-faint hover:text-ink group-hover:block" title="重命名" aria-label="重命名会话"><Icon name="rename" size={14} /></button>
+        <button onClick={async (e) => { e.stopPropagation(); if (await confirmDialog({ title: "删除这个会话?", body: "删除后无法恢复。", confirmText: "删除", danger: true })) onDelete(c.conversation_id); }} className="hidden px-1 text-faint hover:text-accent group-hover:block" title="删除" aria-label="删除会话"><Icon name="trash" size={14} /></button>
       </div>
     );
   };
@@ -186,6 +235,26 @@ export function Sidebar({
               {g.items.map(ConvRow)}
             </div>
           ))}
+
+          {/* Cross-conversation message matches (body text), below title matches. */}
+          {q && (msgHits.length > 0 || searching) && (
+            <div>
+              <div className="px-3 pb-0.5 pt-3 text-[10.5px] uppercase tracking-wider text-faint/80">
+                消息匹配{searching && msgHits.length === 0 ? " · 搜索中…" : msgHits.length ? ` · ${msgHits.length}` : ""}
+              </div>
+              {msgHits.map((h) => (
+                <div
+                  key={h.conversation_id}
+                  onClick={() => { onSelect(h.conversation_id); onSelectClose?.(); }}
+                  className="group cursor-pointer rounded-lg px-3 py-1.5 text-muted transition hover:bg-surface"
+                  title={h.title}
+                >
+                  <div className="truncate text-[13px] text-ink">{h.title || "未命名会话"}</div>
+                  <div className="line-clamp-2 text-[11.5px] text-faint">{highlight(h.snippet, q)}</div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {!q && shared.length > 0 && (
             <>

@@ -8,7 +8,9 @@ export type IconName =
   | "bell" | "sun" | "moon" | "paperclip" | "sparkle" | "at" | "search"
   | "share" | "clock" | "shield" | "coin" | "send" | "rename" | "close" | "plus"
   | "file" | "folder" | "link" | "globe" | "calc" | "ruler" | "book" | "chart"
-  | "table" | "qr" | "code" | "deck" | "users" | "wrench" | "image";
+  | "table" | "qr" | "code" | "deck" | "users" | "wrench" | "image"
+  | "copy" | "refresh" | "gear" | "chevron" | "trash" | "eye" | "check"
+  | "download" | "play" | "plug" | "keyboard" | "hand";
 
 const PATHS: Record<IconName, React.ReactNode> = {
   bell: <path d="M6 8a6 6 0 0 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9M10 21a2 2 0 0 0 4 0" />,
@@ -41,6 +43,18 @@ const PATHS: Record<IconName, React.ReactNode> = {
   users: <path d="M16 19v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM22 19v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8" />,
   wrench: <path d="M14.5 6.5a4 4 0 0 0 5 5l-1.5 1.5L9 22a2.1 2.1 0 0 1-3-3l8.9-9 1.6-3.5Z" />,
   image: <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9.5" r="1.5" /><path d="m4 18 5-5 4 4 3-3 4 4" /></>,
+  copy: <><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h8" /></>,
+  refresh: <path d="M21 12a9 9 0 1 1-3-6.7M21 3v5h-5" />,
+  gear: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 0 1-4 0v-.2a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 0 1 0-4h.2a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 2.7-1.1V3a2 2 0 0 1 4 0v.2a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 0 1 0 4h-.2a1.6 1.6 0 0 0-1.4 1Z" /></>,
+  chevron: <path d="m6 9 6 6 6-6" />,
+  trash: <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" />,
+  eye: <><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></>,
+  check: <path d="M5 13l4 4L19 7" />,
+  download: <path d="M12 3v12M7 11l5 5 5-5M5 21h14" />,
+  play: <path d="M7 4l13 8-13 8Z" />,
+  plug: <path d="M9 2v6M15 2v6M7 8h10v2a5 5 0 0 1-10 0V8ZM12 15v7" />,
+  keyboard: <><rect x="2" y="6" width="20" height="12" rx="2" /><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h12" /></>,
+  hand: <path d="M7 11V6a1.5 1.5 0 0 1 3 0v4M10 10V4.5a1.5 1.5 0 0 1 3 0V10M13 10.5V6.5a1.5 1.5 0 0 1 3 0V13a6 6 0 0 1-6 6 6 6 0 0 1-5.2-3l-1.8-3a1.5 1.5 0 0 1 2.6-1.5L7 13" />,
 };
 
 export function Icon({ name, size = 18, className = "", strokeWidth = 1.7 }: { name: IconName; size?: number; className?: string; strokeWidth?: number }) {

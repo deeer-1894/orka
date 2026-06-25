@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, auth, setOnUnauthorized } from "./api";
 import { useChatStreams } from "./hooks/useChatStream";
+import { useEventStream } from "./hooks/useEventStream";
 import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
 import { Thread } from "./components/Thread";
@@ -16,7 +18,7 @@ import { ConfirmHost } from "./lib/confirm";
 import { useTheme } from "./lib/theme";
 import { useResource, refreshResource } from "./lib/useResource";
 import { loadTools, saveTools } from "./lib/toolGroups";
-import type { Conversation, Message, Notification } from "./types";
+import type { BrowserPayload, Conversation, Message, Notification } from "./types";
 
 type Tab = "overview" | "artifacts" | "computer" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
 
@@ -195,6 +197,22 @@ function Workbench({
     refreshTasks();
   }, [refreshConversations, refreshTasks]);
 
+  // Live event bus: push-refresh the affected resources the instant background
+  // work signals a change, instead of waiting for the next poll tick. Polling
+  // stays on as the fallback when the stream can't connect.
+  useEventStream(
+    useCallback((kind: string) => {
+      if (kind === "notification") refreshResource("notifications");
+      if (kind === "run") {
+        refreshResource("runs:all");
+        refreshResource("runs:failed");
+        refreshResource("metrics");
+        refreshResource("notifications");
+        refreshTasks();
+      }
+    }, [refreshTasks]),
+  );
+
   // The active conversation may be one I own or one shared with me; resolve it
   // and my role so the composer can go read-only for viewers.
   const activeConv = conversations.find((c) => c.conversation_id === activeID) || shared.find((c) => c.conversation_id === activeID);
@@ -307,6 +325,24 @@ function Workbench({
     [run, activeID, user.email, refreshTasks, version],
   );
 
+  // Branch the active conversation at a turn: the backend copies history up to
+  // that message into a new conversation; we add it to the list and switch to it.
+  const onFork = useCallback(
+    async (messageID: string) => {
+      if (!activeID) return;
+      try {
+        const branch = await api.forkConversation(activeID, messageID);
+        setConversations((cs) => [branch, ...cs]);
+        seen.current.delete(branch.conversation_id); // force a fresh message load
+        await selectConversation(branch.conversation_id);
+        toast("已创建分支", "success");
+      } catch {
+        toast("创建分支失败,请重试", "error");
+      }
+    },
+    [activeID, selectConversation],
+  );
+
   // Jump from a task (Tasks panel) to its originating conversation.
   const onJumpToConversation = useCallback(
     (cid: string) => {
@@ -342,6 +378,12 @@ function Workbench({
   return (
     <div className="relative flex h-screen">
       {cmdOpen && <CommandPalette commands={commands} onClose={() => setCmdOpen(false)} />}
+      <FloatingBrowser
+        messages={messages}
+        streaming={status === "streaming"}
+        hidden={drawerOpen && drawerTab === "computer"}
+        onExpand={openViewport}
+      />
       {/* mobile backdrop: tapping it closes whichever overlay is open */}
       {(sidebarOpen || drawerOpen) && (
         <div
@@ -387,7 +429,7 @@ function Workbench({
           {/* Show the active conversation (with live status) instead of a
               redundant brand — "Orka" already lives in the sidebar. */}
           <div className="flex min-w-0 items-center gap-1.5">
-            {status === "streaming" && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ok" title="运行中" />}
+            {status === "streaming" && <span className="inline-flex shrink-0 items-center" role="status"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ok" title="运行中" /><span className="sr-only">运行中</span></span>}
             <span className="max-w-[40vw] truncate text-[15px] text-ink md:max-w-[260px]" title={activeConv?.title || "新会话"}>
               {activeConv?.title || "新会话"}
             </span>
@@ -421,7 +463,7 @@ function Workbench({
           </button>
         </header>
 
-        <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} fileConv={isShared ? activeID : undefined} />
+        <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} onFork={onFork} fileConv={isShared ? activeID : undefined} />
         {activeID && <div className="px-5"><ArtifactBanner conversationId={activeID} onOpen={openArtifactInDrawer} /></div>}
         {readOnly ? (
           <div className="mx-auto mb-4 w-full max-w-3xl px-5">
@@ -587,19 +629,38 @@ function NotificationBell({ onJump }: { onJump: (cid: string) => void }) {
             </div>
             {items.length === 0 && <div className="px-2 py-4 text-center text-[13px] text-faint">暂无通知</div>}
             <div className="max-h-[60vh] overflow-y-auto">
-              {items.map((n) => (
-                <button
-                  key={n.notification_id}
-                  onClick={() => { api.readNotifications(n.notification_id).then(() => { load(); refreshResource("notifications"); }); if (n.conversation_id) { onJump(n.conversation_id); setOpen(false); } }}
-                  className={"flex w-full flex-col items-start gap-0.5 rounded-lg px-2 py-1.5 text-left hover:bg-surface2 " + (n.read ? "opacity-60" : "")}
-                >
-                  <span className="text-[13px] text-ink">
-                    {!n.read && <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-accent align-middle" />}
-                    {n.title}
-                  </span>
-                  <span className="line-clamp-2 text-[12px] text-muted">{n.body}</span>
-                </button>
-              ))}
+              {items.map((n) => {
+                const markRead = () => { if (!n.read) api.readNotifications(n.notification_id).then(() => { load(); refreshResource("notifications"); }); };
+                const jump = () => { markRead(); if (n.conversation_id) { onJump(n.conversation_id); setOpen(false); } };
+                return (
+                  <div key={n.notification_id} className={"rounded-lg px-2 py-1.5 hover:bg-surface2 " + (n.read ? "opacity-60" : "")}>
+                    <button onClick={jump} className="flex w-full flex-col items-start gap-0.5 text-left">
+                      <span className="text-[13px] text-ink">
+                        {!n.read && <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-accent align-middle" />}
+                        {n.title}
+                      </span>
+                      <span className="line-clamp-2 text-[12px] text-muted">{n.body}</span>
+                    </button>
+                    {/* Actionable: a failed unattended run can be re-fired or opened
+                        without digging through the 运行 panel. */}
+                    <div className="mt-1 flex items-center gap-3 text-[11px]">
+                      {n.run_id && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); markRead(); api.rerunRun(n.run_id).then(() => toast("已重新触发", "success")).catch(() => toast("重跑失败,请重试", "error")); }}
+                          className="inline-flex items-center gap-1 text-faint hover:text-accent"
+                        >
+                          <Icon name="refresh" size={11} /> 重跑
+                        </button>
+                      )}
+                      {n.conversation_id && (
+                        <button onClick={(e) => { e.stopPropagation(); jump(); }} className="inline-flex items-center gap-1 text-faint hover:text-accent">
+                          <Icon name="share" size={11} /> 查看对话
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </>
@@ -649,5 +710,70 @@ function ModelSelect({ value, onChange, models }: { value: string; onChange: (v:
         </>
       )}
     </div>
+  );
+}
+
+// FloatingBrowser is a draggable picture-in-picture: while a run streams and the
+// agent is driving a browser, the latest captured frame floats over the thread so
+// you can watch it work without opening the 电脑 panel. Click to expand into the
+// full Computer view; drag the header to reposition; ✕ to dismiss for this run.
+function FloatingBrowser({
+  messages,
+  streaming,
+  hidden,
+  onExpand,
+}: {
+  messages: Message[];
+  streaming: boolean;
+  hidden: boolean;
+  onExpand: () => void;
+}) {
+  const frames = messages.filter((m) => m.type === "browser" && (m.payload as BrowserPayload)?.data);
+  const count = frames.length;
+  const latest = count ? (frames[count - 1].payload as BrowserPayload) : undefined;
+  const [dismissed, setDismissed] = useState(false);
+  const [pos, setPos] = useState<{ x: number; y: number }>(() => ({ x: -1, y: -1 }));
+  // Re-arm when a fresh run starts producing frames (so dismiss is per-run).
+  useEffect(() => { if (count === 0) setDismissed(false); }, [count === 0]);
+
+  const onDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const base = pos.x < 0 ? { x: window.innerWidth - 332, y: window.innerHeight - 280 } : pos;
+    const move = (ev: MouseEvent) => {
+      const x = Math.min(window.innerWidth - 60, Math.max(8, base.x + (ev.clientX - startX)));
+      const y = Math.min(window.innerHeight - 60, Math.max(8, base.y + (ev.clientY - startY)));
+      setPos({ x, y });
+    };
+    const up = () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+
+  if (!latest?.data || !streaming || hidden || dismissed) return null;
+  const x = pos.x < 0 ? window.innerWidth - 332 : pos.x;
+  const y = pos.y < 0 ? window.innerHeight - 280 : pos.y;
+
+  return createPortal(
+    <div
+      style={{ left: x, top: y, width: 320 }}
+      className="pop-in fixed z-50 overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
+    >
+      <div onMouseDown={onDown} className="flex cursor-grab items-center gap-1.5 border-b border-border bg-surface2 px-2.5 py-1.5 active:cursor-grabbing">
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ok" />
+        <span className="text-[11px] text-muted">实时浏览器 · {count} 帧</span>
+        <button onClick={onExpand} title="展开到电脑面板" aria-label="展开浏览器" className="ml-auto grid h-5 w-5 place-items-center rounded text-faint hover:bg-surface hover:text-accent">
+          <Icon name="share" size={12} />
+        </button>
+        <button onClick={() => setDismissed(true)} title="收起" aria-label="收起浮窗" className="grid h-5 w-5 place-items-center rounded text-faint hover:bg-surface hover:text-accent">
+          <Icon name="close" size={12} />
+        </button>
+      </div>
+      <button onClick={onExpand} className="block w-full" title="点击展开">
+        <img src={"data:image/png;base64," + latest.data} alt="实时浏览器画面" className="block w-full" />
+      </button>
+    </div>,
+    document.body,
   );
 }
