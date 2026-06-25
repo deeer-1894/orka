@@ -189,8 +189,6 @@ export function Thread({
     status === "streaming" &&
     (blocks.length === 0 || blocks[blocks.length - 1].kind !== "assistant");
 
-  if (messages.length === 0) return <Empty onPick={onPick} />;
-
   // Each user turn is a navigable anchor for the floating outline (TOC).
   const turns = blocks
     .filter((b): b is Extract<Block, { kind: "user" }> => b.kind === "user")
@@ -251,6 +249,10 @@ export function Thread({
   const [showAll, setShowAll] = useState(false);
   const finding = findQuery.trim().length > 0;
   const startIdx = blocks.length > RENDER_CAP && !showAll && !finding ? blocks.length - RENDER_CAP : 0;
+
+  // Early return AFTER every hook above — otherwise the empty state and a loaded
+  // conversation would run a different number of hooks (Rules of Hooks).
+  if (messages.length === 0) return <Empty onPick={onPick} />;
 
   return (
     <OpenFileCtx.Provider value={openFile}>
