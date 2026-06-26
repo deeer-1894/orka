@@ -19,7 +19,7 @@ import { useResource, refreshResource } from "./lib/useResource";
 import { loadTools, saveTools } from "./lib/toolGroups";
 import type { Conversation, Message, Notification } from "./types";
 
-type Tab = "overview" | "artifacts" | "computer" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
+type Tab = "overview" | "artifacts" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
 
 // Tools whose output the user watches in the 文件 face.
 const FILE_TOOLS = new Set([
@@ -28,15 +28,14 @@ const FILE_TOOLS = new Set([
 ]);
 
 // liveTab derives where the agent is working RIGHT NOW from the latest event, so
-// the drawer can follow it (Live Focus). Null when idle.
+// the drawer can follow it (Live Focus). Null when idle. The live browser now
+// renders inline in the thread, so browser activity no longer steers the drawer.
 function liveTabFromMessages(messages: Message[], streaming: boolean): Tab | null {
   if (!streaming) return null;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    if (m.type === "browser") return "computer";
     if (m.type === "tool") {
       const tool = (m.payload as { tool?: string })?.tool || "";
-      if (tool === "run_agent") return "computer";
       if (tool === "artifact_publish" || tool === "artifact_get") return "artifacts";
       if (FILE_TOOLS.has(tool)) return "files";
       return null; // some other tool → no specific focus
@@ -121,7 +120,6 @@ function Workbench({
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<Tab>("overview");
-  const [computerView, setComputerView] = useState<"terminal" | "browser">("terminal");
   // Shared metrics resource (also feeds the 指标 panel) — one poll, paused when hidden.
   const metricsRes = useResource("metrics", api.metrics, { interval: 4000 });
   const totalTokens = metricsRes?.total_tokens ?? 0;
@@ -352,12 +350,6 @@ function Workbench({
     [selectConversation],
   );
 
-  const openViewport = useCallback(() => {
-    setComputerView("browser");
-    setDrawerTab("computer");
-    setDrawerOpen(true);
-  }, []);
-
   // ⌘K command palette: collapse the app's scattered actions into one entry.
   const openPanel = (t: Tab) => { setDrawerTab(t); setDrawerOpen(true); };
   const commands: Command[] = [
@@ -368,7 +360,7 @@ function Workbench({
     { id: "confirm", group: "设置", icon: "🛡", label: confirmRisky ? "关闭高危操作确认" : "开启高危操作确认", run: toggleConfirm },
     ...models.map((m): Command => ({ id: "model:" + m.version, group: "切换模型", icon: "◆", label: m.label, hint: m.hint, keywords: m.version, run: () => setVersion(m.version) })),
     ...([
-      ["overview", "概览"], ["artifacts", "页面 Artifacts"], ["computer", "电脑"], ["files", "文件"],
+      ["overview", "概览"], ["artifacts", "页面 Artifacts"], ["files", "文件"],
       ["runs", "运行历史"], ["flows", "流程 / 工作流"], ["tasks", "定时任务"], ["integrations", "集成"], ["metrics", "指标"],
     ] as [Tab, string][]).map(([t, label]): Command => ({ id: "panel:" + t, group: "打开面板", icon: "▸", label, run: () => openPanel(t) })),
     ...conversations.slice(0, 60).map((c): Command => ({ id: "conv:" + c.conversation_id, group: "跳转会话", icon: "💬", label: c.title || "未命名会话", keywords: c.title, run: () => selectConversation(c.conversation_id) })),
@@ -456,7 +448,7 @@ function Workbench({
           </button>
         </header>
 
-        <Thread messages={messages} status={status} onResume={onResume} onOpenViewport={openViewport} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} onFork={onFork} fileConv={isShared ? activeID : undefined} />
+        <Thread messages={messages} status={status} onResume={onResume} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} onFork={onFork} fileConv={isShared ? activeID : undefined} />
         {activeID && <div className="px-5"><ArtifactBanner conversationId={activeID} onOpen={openArtifactInDrawer} /></div>}
         {readOnly ? (
           <div className="mx-auto mb-4 w-full max-w-3xl px-5">
@@ -475,9 +467,6 @@ function Workbench({
         tab={drawerTab}
         setTab={setDrawerTab}
         liveTab={liveTab}
-        computerView={computerView}
-        setComputerView={setComputerView}
-        messages={messages}
         email={user.email}
         onJumpToConversation={onJumpToConversation}
         focusArtifact={drawerArtifact}

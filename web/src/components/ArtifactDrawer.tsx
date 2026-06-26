@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, artifacts as artifactApi, files as fileApi } from "../api";
-import type { BrowserPayload, Connector, Message, MetricsSnapshot, RunRecord, TaskMeta, ToolPayload, Workflow } from "../types";
+import type { Connector, MetricsSnapshot, RunRecord, TaskMeta, Workflow } from "../types";
 import { toast } from "../lib/toast";
 import { lineDiff, diffStats } from "../lib/diff";
 import { useResource, refreshResource } from "../lib/useResource";
@@ -8,7 +8,7 @@ import { Icon } from "./Icon";
 import { FilePreview } from "./FilePreview";
 import { ArtifactGallery, ArtifactPane } from "./Artifacts";
 
-type Tab = "overview" | "artifacts" | "computer" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
+type Tab = "overview" | "artifacts" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
 
 // Each tab carries a one-line tip — the words 运行/流程/任务 are ambiguous on
 // their own (execution log? workflow definition? schedule?), so the tooltip
@@ -17,7 +17,6 @@ const TAB_META: Record<Tab, { label: string; tip: string }> = {
   overview: { label: "概览", tip: "工作区概览与近期活动" },
   artifacts: { label: "页面", tip: "实时、可分享的可视化页面(Artifacts)" },
   files: { label: "文件", tip: "工作区里的文件" },
-  computer: { label: "电脑", tip: "实时浏览器 / 终端画面" },
   runs: { label: "运行", tip: "执行历史:每次任务运行的记录" },
   flows: { label: "流程", tip: "工作流定义:可复用的多步 DAG 管线" },
   tasks: { label: "任务", tip: "定时 / 触发的任务(调度与待办)" },
@@ -30,7 +29,7 @@ const TAB_META: Record<Tab, { label: string; tip: string }> = {
 type Face = "overview" | "stage" | "files" | "ops";
 const FACES: { id: Face; label: string; tip: string; subs: Tab[] }[] = [
   { id: "overview", label: "概览", tip: "工作区概览与近期活动", subs: ["overview"] },
-  { id: "stage", label: "舞台", tip: "看 Orka 产出与干活:页面 + 电脑", subs: ["artifacts", "computer"] },
+  { id: "stage", label: "页面", tip: "看 Orka 产出的可视化页面(Artifacts)", subs: ["artifacts"] },
   { id: "files", label: "文件", tip: "工作区里的文件", subs: ["files"] },
   { id: "ops", label: "运营台", tip: "执行与可观测:运行 / 流程 / 任务 / 集成 / 指标", subs: ["runs", "flows", "tasks", "integrations", "metrics"] },
 ];
@@ -44,9 +43,6 @@ export function ArtifactDrawer({
   tab,
   setTab,
   liveTab,
-  computerView,
-  setComputerView,
-  messages,
   email,
   onJumpToConversation,
   focusArtifact,
@@ -57,9 +53,6 @@ export function ArtifactDrawer({
   tab: Tab;
   setTab: (t: Tab) => void;
   liveTab: Tab | null; // where the agent is working now (Live Focus)
-  computerView: "terminal" | "browser";
-  setComputerView: (v: "terminal" | "browser") => void;
-  messages: Message[];
   email: string;
   onJumpToConversation: (cid: string) => void;
   focusArtifact: string | null; // artifact to open inline (from the in-chat card)
@@ -216,9 +209,6 @@ export function ArtifactDrawer({
         <div className="flex-1 overflow-y-auto">
           {tab === "overview" && <DashboardPanel onJumpToConversation={onJumpToConversation} />}
           {tab === "artifacts" && (focusArt ? <ArtifactPane artifactId={focusArt} onBack={() => setFocusArt(null)} /> : <ArtifactGallery onOpen={setFocusArt} />)}
-          {tab === "computer" && (
-            <ComputerPanel messages={messages} view={computerView} setView={setComputerView} />
-          )}
           {tab === "files" && <FilesPanel email={email} />}
           {tab === "runs" && <RunsPanel onJumpToConversation={onJumpToConversation} />}
           {tab === "flows" && <WorkflowsPanel onJumpToConversation={onJumpToConversation} />}
@@ -321,239 +311,6 @@ function DashboardPanel({ onJumpToConversation }: { onJumpToConversation: (cid: 
         </div>
       )}
     </div>
-  );
-}
-
-// ComputerPanel is the Manus-style "watch it work" surface: one place for the
-// agent's whole computer — a terminal (shell + files it wrote) and the browser
-// (live view + captured frames) — switchable via sub-tabs. The browser is just
-// another part of the computer, so it lives here rather than as a sibling tab.
-function ComputerPanel({
-  messages,
-  view,
-  setView,
-}: {
-  messages: Message[];
-  view: "terminal" | "browser";
-  setView: (v: "terminal" | "browser") => void;
-}) {
-  const shotCount = messages.filter(
-    (m) => m.type === "browser" && (m.payload as BrowserPayload)?.data,
-  ).length;
-  return (
-    <div className="flex h-full flex-col">
-      <div className="flex gap-1 px-3 pt-2.5">
-        {([
-          ["terminal", "keyboard", "终端"],
-          ["browser", "globe", `浏览器${shotCount ? ` (${shotCount})` : ""}`],
-        ] as const).map(([id, icon, label]) => (
-          <button
-            key={id}
-            onClick={() => setView(id)}
-            className={
-              "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12.5px] transition " +
-              (view === id ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")
-            }
-          >
-            <Icon name={icon} size={14} /> {label}
-          </button>
-        ))}
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {view === "terminal" ? <TerminalView messages={messages} /> : <BrowserPanel messages={messages} />}
-      </div>
-    </div>
-  );
-}
-
-// TerminalView shows the agent's shell commands + output and the files it wrote.
-function TerminalView({ messages }: { messages: Message[] }) {
-  const endRef = useRef<HTMLDivElement>(null);
-  const tools = messages
-    .filter((m) => m.type === "tool")
-    .map((m) => m.payload as ToolPayload)
-    .filter(Boolean);
-  const shellRuns = tools.filter((p) => p.tool === "shell");
-  const files = [
-    ...new Set(
-      tools
-        .filter((p) => p.tool === "file_write")
-        .map((p) => String(p.args?.path ?? ""))
-        .filter(Boolean),
-    ),
-  ];
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [shellRuns.length]);
-
-  if (shellRuns.length === 0 && files.length === 0) {
-    return <Blank>还没有终端活动。让 Orka 运行脚本或命令后,这里会实时显示终端输出与生成的文件。</Blank>;
-  }
-
-  return (
-    <div className="space-y-3 p-3">
-      <div className="overflow-hidden rounded-xl border border-border">
-        <div className="flex items-center gap-1.5 border-b border-border bg-surface2 px-3 py-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#e0695f]" />
-          <span className="h-2.5 w-2.5 rounded-full bg-[#e3b341]" />
-          <span className="h-2.5 w-2.5 rounded-full bg-[#5aa469]" />
-          <span className="ml-2 text-[12px] text-faint">workspace · terminal</span>
-        </div>
-        <div className="max-h-[460px] overflow-y-auto bg-[#161513] px-3 py-2.5 font-mono text-[12px] leading-relaxed">
-          {shellRuns.length === 0 ? (
-            <div className="text-[#837d72]">尚无命令执行(仅写入了文件)</div>
-          ) : (
-            shellRuns.map((r, i) => {
-              const cmd = String(r.args?.command ?? "");
-              const out = (r.result ?? "").trim();
-              return (
-                <div key={i} className="mb-3">
-                  <div className="flex gap-1.5">
-                    <span className="shrink-0 text-[#6fa57d]">$</span>
-                    <span className="whitespace-pre-wrap break-all text-[#ece9e2]">{cmd}</span>
-                  </div>
-                  {out && (
-                    <pre className="mt-1 whitespace-pre-wrap break-all text-[#a8a399]">
-                      {out.length > 1500 ? out.slice(0, 1500) + "\n…" : out}
-                    </pre>
-                  )}
-                </div>
-              );
-            })
-          )}
-          <div ref={endRef} />
-        </div>
-      </div>
-
-      {files.length > 0 && (
-        <div className="rounded-xl border border-border p-2.5">
-          <div className="mb-1.5 px-1 text-[11px] font-medium uppercase tracking-wide text-faint">
-            工作区文件 · {files.length}
-          </div>
-          <div className="space-y-0.5">
-            {files.map((f) => (
-              <a
-                key={f}
-                href={fileApi.downloadURL(f)}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] text-ink hover:bg-surface2"
-              >
-                <Icon name="file" size={14} className="text-faint" />
-                <span className="truncate">{f}</span>
-                <Icon name="download" size={13} className="ml-auto text-faint" />
-              </a>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function BrowserPanel({ messages }: { messages: Message[] }) {
-  const novnc =
-    (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_NOVNC_URL ||
-    "http://localhost:6080/vnc.html?autoconnect=1&resize=scale&reconnect=1";
-  const shots = messages
-    .filter((m) => m.type === "browser" && (m.payload as BrowserPayload)?.data)
-    .map((m) => m.payload as BrowserPayload);
-  const [i, setI] = useState(0);
-  const [mode, setMode] = useState<"live" | "frames">("live");
-  const [debug, setDebug] = useState(false);
-  useEffect(() => setI(Math.max(0, shots.length - 1)), [shots.length]);
-
-  return (
-    <div className="p-3">
-      <div className="mb-2 flex items-center gap-1">
-        <button
-          onClick={() => setMode("live")}
-          className={"rounded-lg px-2.5 py-1 text-[12px] transition " + (mode === "live" ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")}
-        >
-          实时画面
-        </button>
-        {/* Only offer the回放 tab once there are actually captured frames, so a
-            confusing "frames (0)" never shows. */}
-        {shots.length > 0 && (
-          <button
-            onClick={() => setMode("frames")}
-            className={"rounded-lg px-2.5 py-1 text-[12px] transition " + (mode === "frames" ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")}
-          >
-            回放 · {shots.length}
-          </button>
-        )}
-      </div>
-
-      {mode === "live" ? (
-        <div className="overflow-hidden rounded-xl border border-border">
-          <div className="flex items-center gap-1.5 border-b border-border bg-surface2 px-3 py-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-[#e0695f]" />
-            <span className="h-2.5 w-2.5 rounded-full bg-[#e3b341]" />
-            <span className="h-2.5 w-2.5 rounded-full bg-[#5aa469]" />
-            <span className="ml-2 text-[12px] text-muted">远程浏览器 · 实时</span>
-            <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-faint" title="你可以直接在下方画面里点击 / 输入,临时接管浏览器;松手后 Orka 会接着干">
-              <Icon name="hand" size={12} /> 可点击接管
-            </span>
-          </div>
-          <iframe
-            src={novnc}
-            title="live browser"
-            className="block w-full bg-white"
-            style={{ height: 520, border: 0 }}
-          />
-          <div className="flex items-center gap-2 border-t border-border px-3 py-1.5 text-[11px] text-faint">
-            <span>画面空白?远程环境可能还在连接 / 未启动。</span>
-            <button onClick={() => setDebug((v) => !v)} className="ml-auto hover:text-accent">{debug ? "隐藏调试信息" : "调试信息"}</button>
-          </div>
-          {debug && (
-            <div className="border-t border-border bg-surface2/40 px-3 py-1.5 font-mono text-[10.5px] text-faint">
-              noVNC: {novnc}<br />未启动时运行 <code>make browser</code> 启动沙箱浏览器。
-            </div>
-          )}
-        </div>
-      ) : shots.length === 0 ? (
-        <Blank>还没有画面。开启浏览器工具并打开一个页面后,这里会显示回放。</Blank>
-      ) : (
-        <FramesView shots={shots} i={i} setI={setI} />
-      )}
-    </div>
-  );
-}
-
-function FramesView({
-  shots,
-  i,
-  setI,
-}: {
-  shots: BrowserPayload[];
-  i: number;
-  setI: (n: number) => void;
-}) {
-  const cur = shots[Math.min(i, shots.length - 1)];
-  return (
-    <>
-      <div className="overflow-hidden rounded-xl border border-border">
-        <div className="flex items-center gap-1.5 border-b border-border bg-surface2 px-3 py-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#e0695f]" />
-          <span className="h-2.5 w-2.5 rounded-full bg-[#e3b341]" />
-          <span className="h-2.5 w-2.5 rounded-full bg-[#5aa469]" />
-          <span className="ml-2 text-[12px] text-faint">
-            frame {i + 1}/{shots.length}
-          </span>
-        </div>
-        <img src={"data:image/png;base64," + cur.data} alt="viewport" className="block w-full" />
-      </div>
-      {shots.length > 1 && (
-        <input
-          type="range"
-          min={0}
-          max={shots.length - 1}
-          value={i}
-          onChange={(e) => setI(Number(e.target.value))}
-          className="mt-3 w-full accent-[var(--color-accent)]"
-        />
-      )}
-    </>
   );
 }
 
