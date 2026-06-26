@@ -730,13 +730,64 @@ function CopyButton({ text }: { text: string }) {
 
 const AGENT_ICON: Record<string, IconName> = { researcher: "search", writer: "rename", browser: "globe" };
 
+// Live remote-browser (noVNC) URL — the orka-gui sandbox's animated screen, same
+// source the 电脑 panel uses.
+const NOVNC_URL =
+  (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_NOVNC_URL ||
+  "http://localhost:6080/vnc.html?autoconnect=1&resize=scale&reconnect=1";
+
+// InlineComputer embeds the "电脑" right inside the step timeline: while the run
+// is live it shows the animated remote browser (you watch it click/scroll/type in
+// place); once settled it shows the last captured frame (replay). 放大 opens the
+// full 电脑 panel. This is the "watch it work" surface, inline where it happens.
+function InlineComputer({ live, frames, onExpand }: { live: boolean; frames: BrowserPayload[]; onExpand: () => void }) {
+  const [open, setOpen] = useState(true);
+  const latest = frames.length ? frames[frames.length - 1] : undefined;
+  return (
+    <div className="mb-2 overflow-hidden rounded-xl border border-border bg-surface">
+      <div className="flex items-center gap-1.5 border-b border-border bg-surface2 px-2.5 py-1.5">
+        <span className={"h-1.5 w-1.5 rounded-full " + (live ? "animate-pulse bg-ok" : "bg-faint")} />
+        <span className="text-[12px] text-muted">
+          {live ? "实时浏览器 · 正在操作" : "浏览器画面"}{frames.length ? ` · ${frames.length} 帧` : ""}
+        </span>
+        <button onClick={onExpand} title="在电脑面板中放大" className="ml-auto inline-flex items-center gap-1 text-[11px] text-faint hover:text-accent">
+          <Icon name="share" size={12} /> 放大
+        </button>
+        <button onClick={() => setOpen((o) => !o)} aria-label={open ? "收起画面" : "展开画面"} className="text-faint hover:text-accent">
+          <Icon name="chevron" size={13} className={"transition-transform " + (open ? "" : "-rotate-90")} />
+        </button>
+      </div>
+      {open && (
+        live ? (
+          <iframe src={NOVNC_URL} title="实时浏览器" className="block w-full bg-white" style={{ height: 300, border: 0 }} />
+        ) : latest?.data ? (
+          <button onClick={onExpand} className="block w-full" title="点击在电脑面板放大">
+            <img src={"data:image/png;base64," + latest.data} alt="浏览器画面" className="block w-full" />
+          </button>
+        ) : (
+          <div className="px-3 py-6 text-center text-[12px] text-faint">
+            本次运行未捕获画面 · <button onClick={onExpand} className="text-accent hover:underline">在电脑面板查看</button>
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
 function Steps({ items, onOpenViewport, live }: { items: Message[]; onOpenViewport: () => void; live?: boolean }) {
   // Default-expanded while the run is live (the execution timeline IS the
   // product's differentiator); the user can still collapse, and it auto-folds
   // once the run settles — unless they pinned it open.
   const [pinned, setPinned] = useState<boolean | null>(null);
   const open = pinned ?? !!live;
-  const hasShot = items.some((m) => m.type === "browser" && (m.payload as BrowserPayload)?.data);
+  const browserShots = items
+    .filter((m) => m.type === "browser")
+    .map((m) => m.payload as BrowserPayload)
+    .filter((p): p is BrowserPayload => !!p && !!p.data);
+  // Show the inline 电脑 when the agent used the browser this turn (live → animated
+  // remote screen; settled → frame replay).
+  const hasBrowser = items.some((m) => m.type === "browser");
+  const hasShot = browserShots.length > 0;
 
   // Partition: the orchestrator's own steps render flat; each sub-agent's steps
   // (tagged with meta.agent_id) collapse into their own labeled lane (a swimlane).
@@ -764,6 +815,11 @@ function Steps({ items, onOpenViewport, live }: { items: Message[]; onOpenViewpo
           <span onClick={(e) => { e.stopPropagation(); onOpenViewport(); }} className="ml-1 text-accent hover:underline">· 看浏览器</span>
         )}
       </button>
+      {open && hasBrowser && (
+        <div className="mt-2">
+          <InlineComputer live={!!live} frames={browserShots} onExpand={onOpenViewport} />
+        </div>
+      )}
       {open && (
         <div className="mt-2 border-l-2 border-border pl-4">
           {own.map((m, i) => (
@@ -924,6 +980,7 @@ function FileWriteActions({ file, onOpenDiff }: { file: string; onOpenDiff: () =
 
 function Step({ m }: { m: Message }) {
   const openFile = useContext(OpenFileCtx);
+  const [shotBroken, setShotBroken] = useState(false);
   if (m.type === "tool") {
     const p = (m.payload as ToolPayload) || ({} as ToolPayload);
     const r = toolReceipt(p);
@@ -960,10 +1017,11 @@ function Step({ m }: { m: Message }) {
     };
     return (
       <div className="flex items-start gap-2 text-[13px] text-muted">
-        {p?.data ? (
+        {p?.data && !shotBroken ? (
           <img
             src={"data:image/png;base64," + p.data}
-            alt="frame"
+            alt="浏览器截图"
+            onError={() => setShotBroken(true)}
             className="mt-0.5 h-10 w-16 shrink-0 rounded border border-border object-cover"
           />
         ) : (

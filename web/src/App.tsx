@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { api, auth, setOnUnauthorized } from "./api";
 import { useChatStreams } from "./hooks/useChatStream";
 import { useEventStream } from "./hooks/useEventStream";
@@ -18,7 +17,7 @@ import { ConfirmHost } from "./lib/confirm";
 import { useTheme } from "./lib/theme";
 import { useResource, refreshResource } from "./lib/useResource";
 import { loadTools, saveTools } from "./lib/toolGroups";
-import type { BrowserPayload, Conversation, Message, Notification } from "./types";
+import type { Conversation, Message, Notification } from "./types";
 
 type Tab = "overview" | "artifacts" | "computer" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
 
@@ -378,12 +377,6 @@ function Workbench({
   return (
     <div className="relative flex h-screen">
       {cmdOpen && <CommandPalette commands={commands} onClose={() => setCmdOpen(false)} />}
-      <FloatingBrowser
-        messages={messages}
-        streaming={status === "streaming"}
-        hidden={drawerOpen && drawerTab === "computer"}
-        onExpand={openViewport}
-      />
       {/* mobile backdrop: tapping it closes whichever overlay is open */}
       {(sidebarOpen || drawerOpen) && (
         <div
@@ -713,67 +706,3 @@ function ModelSelect({ value, onChange, models }: { value: string; onChange: (v:
   );
 }
 
-// FloatingBrowser is a draggable picture-in-picture: while a run streams and the
-// agent is driving a browser, the latest captured frame floats over the thread so
-// you can watch it work without opening the 电脑 panel. Click to expand into the
-// full Computer view; drag the header to reposition; ✕ to dismiss for this run.
-function FloatingBrowser({
-  messages,
-  streaming,
-  hidden,
-  onExpand,
-}: {
-  messages: Message[];
-  streaming: boolean;
-  hidden: boolean;
-  onExpand: () => void;
-}) {
-  const frames = messages.filter((m) => m.type === "browser" && (m.payload as BrowserPayload)?.data);
-  const count = frames.length;
-  const latest = count ? (frames[count - 1].payload as BrowserPayload) : undefined;
-  const [dismissed, setDismissed] = useState(false);
-  const [pos, setPos] = useState<{ x: number; y: number }>(() => ({ x: -1, y: -1 }));
-  // Re-arm when a fresh run starts producing frames (so dismiss is per-run).
-  useEffect(() => { if (count === 0) setDismissed(false); }, [count === 0]);
-
-  const onDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const base = pos.x < 0 ? { x: window.innerWidth - 332, y: window.innerHeight - 280 } : pos;
-    const move = (ev: MouseEvent) => {
-      const x = Math.min(window.innerWidth - 60, Math.max(8, base.x + (ev.clientX - startX)));
-      const y = Math.min(window.innerHeight - 60, Math.max(8, base.y + (ev.clientY - startY)));
-      setPos({ x, y });
-    };
-    const up = () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
-  };
-
-  if (!latest?.data || !streaming || hidden || dismissed) return null;
-  const x = pos.x < 0 ? window.innerWidth - 332 : pos.x;
-  const y = pos.y < 0 ? window.innerHeight - 280 : pos.y;
-
-  return createPortal(
-    <div
-      style={{ left: x, top: y, width: 320 }}
-      className="pop-in fixed z-50 overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
-    >
-      <div onMouseDown={onDown} className="flex cursor-grab items-center gap-1.5 border-b border-border bg-surface2 px-2.5 py-1.5 active:cursor-grabbing">
-        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ok" />
-        <span className="text-[11px] text-muted">实时浏览器 · {count} 帧</span>
-        <button onClick={onExpand} title="展开到电脑面板" aria-label="展开浏览器" className="ml-auto grid h-5 w-5 place-items-center rounded text-faint hover:bg-surface hover:text-accent">
-          <Icon name="share" size={12} />
-        </button>
-        <button onClick={() => setDismissed(true)} title="收起" aria-label="收起浮窗" className="grid h-5 w-5 place-items-center rounded text-faint hover:bg-surface hover:text-accent">
-          <Icon name="close" size={12} />
-        </button>
-      </div>
-      <button onClick={onExpand} className="block w-full" title="点击展开">
-        <img src={"data:image/png;base64," + latest.data} alt="实时浏览器画面" className="block w-full" />
-      </button>
-    </div>,
-    document.body,
-  );
-}
