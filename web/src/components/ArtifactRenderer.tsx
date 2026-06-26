@@ -6,11 +6,35 @@ import { MermaidBlock } from "./MermaidBlock";
 // components — no arbitrary HTML/JS, so it's safe to render on a public link.
 // Unknown block types degrade to a labelled JSON dump rather than breaking.
 export function ArtifactRenderer({ blocks }: { blocks: ArtifactBlock[] }) {
+  // Collapse runs of consecutive `metric` blocks into one KPI grid, so a
+  // dashboard reads as a row of stat cards instead of a tall vertical stack.
+  const groups: (ArtifactBlock | { metrics: ArtifactBlock[] })[] = [];
+  for (const b of blocks) {
+    const last = groups[groups.length - 1];
+    if (b.type === "metric" && last && "metrics" in last) last.metrics.push(b);
+    else if (b.type === "metric") groups.push({ metrics: [b] });
+    else groups.push(b);
+  }
   return (
     <div className="space-y-5">
-      {blocks.map((b, i) => (
-        <Block key={i} block={b} />
-      ))}
+      {groups.map((g, i) =>
+        "metrics" in g ? <MetricGrid key={i} items={g.metrics} /> : <Block key={i} block={g} />,
+      )}
+    </div>
+  );
+}
+
+function MetricGrid({ items }: { items: ArtifactBlock[] }) {
+  if (items.length === 1) {
+    const d = items[0].data || {};
+    return <MetricBlock label={s(d.label)} value={s(d.value)} delta={s(d.delta)} />;
+  }
+  return (
+    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+      {items.map((b, i) => {
+        const d = b.data || {};
+        return <MetricBlock key={i} label={s(d.label)} value={s(d.value)} delta={s(d.delta)} full />;
+      })}
     </div>
   );
 }
@@ -57,14 +81,18 @@ function Block({ block }: { block: ArtifactBlock }) {
   }
 }
 
-function MetricBlock({ label, value, delta }: { label: string; value: string; delta: string }) {
+function MetricBlock({ label, value, delta, full }: { label: string; value: string; delta: string; full?: boolean }) {
   const up = delta.startsWith("+");
   const down = delta.startsWith("-");
   return (
-    <div className="inline-flex min-w-[140px] flex-col rounded-xl border border-border bg-surface2/40 px-4 py-3">
-      <span className="text-[11px] uppercase tracking-wide text-faint">{label}</span>
+    <div className={(full ? "flex w-full" : "inline-flex min-w-[140px]") + " flex-col rounded-xl border border-border bg-surface2/40 px-4 py-3"}>
+      <span className="truncate text-[11px] uppercase tracking-wide text-faint">{label}</span>
       <span className="mt-1 text-[26px] font-semibold leading-none text-ink">{value}</span>
-      {delta && <span className={"mt-1 text-[12px] " + (up ? "text-ok" : down ? "text-accent" : "text-muted")}>{delta}</span>}
+      {delta && (
+        <span className={"mt-1 inline-flex items-center gap-0.5 text-[12px] " + (up ? "text-ok" : down ? "text-accent" : "text-muted")}>
+          {up ? "▲" : down ? "▼" : ""}{delta.replace(/^[+-]/, "")}
+        </span>
+      )}
     </div>
   );
 }
@@ -87,31 +115,53 @@ function BadgeRow({ items }: { items: Record<string, unknown>[] }) {
 type ChecklistItem = { label: string; status?: string };
 const STATUS_ICON: Record<string, string> = { done: "✅", doing: "🔵", todo: "⚪️", blocked: "🔴" };
 function Checklist({ items }: { items: ChecklistItem[] }) {
+  const done = items.filter((it) => s(it.status) === "done").length;
+  const pct = items.length ? Math.round((done / items.length) * 100) : 0;
   return (
-    <div className="flex flex-col gap-1">
-      {items.map((it, i) => (
-        <div key={i} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface2/50">
-          <span className="text-[13px]">{STATUS_ICON[s(it.status) || "todo"] || "⚪️"}</span>
-          <span className={"text-[13.5px] " + (s(it.status) === "done" ? "text-muted line-through" : "text-ink")}>{it.label}</span>
+    <div>
+      {items.length > 0 && (
+        <div className="mb-2 flex items-center gap-2">
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface2">
+            <div className="h-full rounded-full bg-ok transition-all" style={{ width: pct + "%" }} />
+          </div>
+          <span className="shrink-0 text-[11px] text-faint">{done}/{items.length} 完成</span>
         </div>
-      ))}
+      )}
+      <div className="flex flex-col gap-1">
+        {items.map((it, i) => (
+          <div key={i} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface2/50">
+            <span className="text-[13px]">{STATUS_ICON[s(it.status) || "todo"] || "⚪️"}</span>
+            <span className={"text-[13.5px] " + (s(it.status) === "done" ? "text-muted line-through" : "text-ink")}>{it.label}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
 function Table({ columns, rows }: { columns: string[]; rows: unknown[][] }) {
+  // A column is numeric when every non-empty cell parses as a number → right-align
+  // it (and the header) so figures line up like a spreadsheet.
+  const numericCol = columns.map((_, j) => {
+    const vals = rows.map((r) => s(r[j]).trim()).filter(Boolean);
+    return vals.length > 0 && vals.every((v) => /^[-+]?[\d,]*\.?\d+%?$/.test(v));
+  });
   return (
-    <div className="overflow-x-auto rounded-xl border border-border">
+    <div className="max-h-[60vh] overflow-auto rounded-xl border border-border">
       <table className="w-full text-[13px]">
-        <thead>
-          <tr className="border-b border-border bg-surface2/50">
-            {columns.map((c, i) => <th key={i} className="px-3 py-2 text-left font-medium text-ink">{c}</th>)}
+        <thead className="sticky top-0 z-10">
+          <tr className="border-b border-border bg-surface2">
+            {columns.map((c, i) => (
+              <th key={i} className={"px-3 py-2 font-medium text-ink " + (numericCol[i] ? "text-right tabular-nums" : "text-left")}>{c}</th>
+            ))}
           </tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className="border-b border-border/60 last:border-0">
-              {r.map((cell, j) => <td key={j} className="px-3 py-1.5 text-muted">{s(cell)}</td>)}
+            <tr key={i} className={"border-b border-border/60 last:border-0 " + (i % 2 ? "bg-surface2/30" : "")}>
+              {r.map((cell, j) => (
+                <td key={j} className={"px-3 py-1.5 text-muted " + (numericCol[j] ? "text-right tabular-nums" : "")}>{s(cell)}</td>
+              ))}
             </tr>
           ))}
         </tbody>
