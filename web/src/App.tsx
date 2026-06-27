@@ -10,6 +10,7 @@ import { ArtifactDrawer } from "./components/ArtifactDrawer";
 import { ShareDialog } from "./components/ShareDialog";
 import { CommandPalette, type Command } from "./components/CommandPalette";
 import { Icon } from "./components/Icon";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { PublicArtifactPage, ArtifactBanner } from "./components/Artifacts";
 import { useOverlay } from "./lib/useOverlay";
 import { Toaster, toast } from "./lib/toast";
@@ -652,47 +653,33 @@ function NotificationBell({ onJump }: { onJump: (cid: string) => void }) {
   );
 }
 
+// ModelSelect — a Radix DropdownMenu (shadcn/ui). Keyboard nav, focus return,
+// typeahead and outside-click/Esc come from the primitive (replacing the old
+// hand-rolled fixed-overlay menu), themed with the project's warm-paper tokens.
 function ModelSelect({ value, onChange, models }: { value: string; onChange: (v: string) => void; models: ModelOption[] }) {
-  const [open, setOpen] = useState(false);
   const cur = models.find((m) => m.version === value) || models[0];
   return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen((o) => !o)}
+    <DropdownMenu>
+      <DropdownMenuTrigger
         aria-label="选择模型"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        className="flex items-center gap-1 rounded-full bg-surface2 px-2 py-0.5 text-[11px] text-muted hover:text-ink"
+        className="flex items-center gap-1 rounded-full bg-surface2 px-2 py-0.5 text-[11px] text-muted outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-accent/50"
       >
         {cur.label}
         <span className="text-faint">▾</span>
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 z-20 mt-1 w-56 rounded-xl border border-border bg-surface p-1 shadow-lg" role="listbox">
-            {models.map((m) => (
-              <button
-                key={m.version}
-                role="option"
-                aria-selected={m.version === value}
-                onClick={() => {
-                  onChange(m.version);
-                  setOpen(false);
-                }}
-                className={
-                  "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] " +
-                  (m.version === value ? "bg-accentsoft text-accent" : "text-ink hover:bg-surface2")
-                }
-              >
-                <span className="truncate">{m.label}</span>
-                <span className="shrink-0 text-[11px] text-faint">{m.hint}</span>
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-56">
+        {models.map((m) => (
+          <DropdownMenuItem
+            key={m.version}
+            onSelect={() => onChange(m.version)}
+            className={"justify-between " + (m.version === value ? "bg-accentsoft text-accent data-[highlighted]:bg-accentsoft" : "")}
+          >
+            <span className="truncate">{m.label}</span>
+            <span className="shrink-0 text-[11px] text-faint">{m.hint}</span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
