@@ -1191,47 +1191,66 @@ const EXAMPLES = [
   {
     icon: "🔭",
     cat: "深度调研",
-    title: "调研并产出对比报告",
-    desc: "多源交叉验证,写一份带引用的对比报告并存档",
-    steps: ["联网搜索", "读取网页", "写文件"],
-    prompt: "用 researcher 技能调研 2025 年主流 AI Agent 框架(LangGraph、Eino、AutoGen)的设计差异,交叉验证至少两个来源,写一份带引用的对比报告并存为 agent-frameworks.md",
+    title: "调研 + 引用报告",
+    desc: "多源交叉验证,产出带引用的对比报告",
+    steps: ["联网搜索", "读网页", "写报告"],
+    prompt: "用 researcher 技能调研主流 AI Agent 框架(LangGraph、Eino、AutoGen)的设计差异,交叉验证至少两个来源,写一份带引用的对比报告并存为 report.md",
     tint: ["#b48ee6", "#8b5cf6"],
+  },
+  {
+    icon: "📊",
+    cat: "数据分析",
+    title: "数据分析 + 图表",
+    desc: "跑 Python 处理数据,产出图表与结论",
+    steps: ["写脚本", "运行", "出图表"],
+    prompt: "用 Python 生成 12 个月的模拟销售数据,分析月度趋势和环比增长,画一张折线图保存为 png,再把发现写成 sales-report.md",
+    tint: ["#4a9d8e", "#2f8f7a"],
+  },
+  {
+    icon: "🕸️",
+    cat: "浏览器",
+    title: "浏览器实时抓取",
+    desc: "打开真实站点,抓取榜单并归纳要点",
+    steps: ["开浏览器", "抓取", "归纳"],
+    prompt: "用浏览器打开 https://news.ycombinator.com 抓取首页前 10 条标题,挑出与 AI 相关的,逐条总结要点",
+    tint: ["#7db4f0", "#3f7fd8"],
+  },
+  {
+    icon: "📑",
+    cat: "办公文档",
+    title: "一键生成 PPT",
+    desc: "把主题整理成可下载的演示文稿",
+    steps: ["拟提纲", "生成", "导出 pptx"],
+    prompt: "帮我做一份 6 页 PPT 介绍「什么是 AI Agent」,包含定义、核心架构、典型应用三部分,导出为 pptx",
+    tint: ["#e0976a", "#c45c3e"],
   },
   {
     icon: "🔗",
     cat: "自动化管线",
     title: "多步管线一条龙",
-    desc: "多城市抓取 → 单位换算 → 整理成表格存档",
+    desc: "多城市抓取 → 单位换算 → 整理成表",
     steps: ["天气 ×3", "单位换算", "写文件"],
     prompt: "查北京、上海、西安今天的天气,把温度换算成华氏度,整理成一张 Markdown 表格存到工作区 weather.md",
     tint: ["#3f9d5a", "#7bc88f"],
-  },
-  {
-    icon: "🕸️",
-    cat: "浏览器",
-    title: "抓取实时网页并归纳",
-    desc: "打开真实站点,抓取榜单并按主题总结要点",
-    steps: ["启动浏览器", "抓取内容", "归纳总结"],
-    prompt: "用浏览器打开 https://news.ycombinator.com 抓取首页前 10 条标题,挑出与 AI 相关的,逐条总结要点",
-    tint: ["#7db4f0", "#3f7fd8"],
+    more: true,
   },
   {
     icon: "🔮",
     cat: "创意分析",
-    title: "玄学 × 大数据预测",
-    desc: "传统五行生肖结合真实数据的趣味推演报告",
+    title: "玄学 × 大数据",
+    desc: "传统五行生肖结合真实数据的趣味推演",
     steps: ["联网检索", "数据分析", "生成报告"],
     prompt: "结合中国传统算命理论(五行、生肖)和近几届世界杯的真实数据,分析本届夺冠热门球队,给出一份有理有据又有趣的预测报告",
     tint: ["#e8943f", "#d4674a"],
-    playful: true,
+    more: true,
   },
 ];
 
 function Empty({ onPick }: { onPick: (text: string) => void }) {
   const [showMore, setShowMore] = useState(false);
-  // Lead with work-oriented scenarios; keep the playful one behind 探索更多.
-  const shown = EXAMPLES.filter((e) => showMore || !(e as { playful?: boolean }).playful);
-  const hiddenCount = EXAMPLES.length - EXAMPLES.filter((e) => !(e as { playful?: boolean }).playful).length;
+  // Lead with the four headline scenarios; keep the rest behind 探索更多.
+  const shown = EXAMPLES.filter((e) => showMore || !(e as { more?: boolean }).more);
+  const hiddenCount = EXAMPLES.filter((e) => (e as { more?: boolean }).more).length;
   return (
     <div className="relative flex h-full items-center justify-center overflow-hidden px-6 py-10">
       {/* animated aurora backdrop */}
@@ -1276,15 +1295,11 @@ function Empty({ onPick }: { onPick: (text: string) => void }) {
                 <span className="drop-shadow-sm">{e.icon}</span>
               </span>
               <span className="relative min-w-0 flex-1">
-                <span className="flex items-center gap-1.5">
-                  <span className="block text-[14px] font-semibold text-ink">{e.title}</span>
-                  <span
-                    className="rounded-full px-1.5 py-px text-[10px] font-medium"
-                    style={{ color: e.tint[1], background: `${e.tint[1]}1a` }}
-                  >
-                    {e.cat}
-                  </span>
+                {/* category kicker above the title — keeps the title on one line */}
+                <span className="block text-[10px] font-medium uppercase tracking-wide" style={{ color: e.tint[1] }}>
+                  {e.cat}
                 </span>
+                <span className="mt-0.5 block truncate text-[14.5px] font-semibold text-ink">{e.title}</span>
                 <span className="mt-1 block text-[12.5px] leading-snug text-muted">{e.desc}</span>
                 <span className="mt-2 flex flex-wrap items-center gap-1">
                   {e.steps.map((s, j) => (
