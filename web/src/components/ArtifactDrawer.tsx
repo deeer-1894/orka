@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, artifacts as artifactApi, files as fileApi } from "../api";
-import type { Connector, MetricsSnapshot, RunRecord, TaskMeta, Workflow } from "../types";
+import type { Artifact, Connector, MetricsSnapshot, RunRecord, TaskMeta, Workflow } from "../types";
 import { toast } from "../lib/toast";
 import { lineDiff, diffStats } from "../lib/diff";
 import { useResource, refreshResource } from "../lib/useResource";
-import { Icon } from "./Icon";
+import { Icon, type IconName } from "./Icon";
 import { FilePreview } from "./FilePreview";
 import { ArtifactGallery, ArtifactPane } from "./Artifacts";
 
@@ -27,12 +27,16 @@ const TAB_META: Record<Tab, { label: string; tip: string }> = {
 // semantic FACES; multi-tab faces (舞台/运营台) get an inline sub-nav. runs/flows/
 // tasks/integrations/metrics are all "execution & observability" → one 运营台.
 type Face = "overview" | "stage" | "files" | "ops";
-const FACES: { id: Face; label: string; tip: string; subs: Tab[] }[] = [
-  { id: "overview", label: "概览", tip: "工作区概览与近期活动", subs: ["overview"] },
-  { id: "stage", label: "页面", tip: "看 Orka 产出的可视化页面(Artifacts)", subs: ["artifacts"] },
-  { id: "files", label: "文件", tip: "工作区里的文件", subs: ["files"] },
-  { id: "ops", label: "运营台", tip: "执行与可观测:运行 / 流程 / 任务 / 集成 / 指标", subs: ["runs", "flows", "tasks", "integrations", "metrics"] },
+const FACES: { id: Face; label: string; tip: string; icon: IconName; subs: Tab[] }[] = [
+  { id: "overview", label: "概览", tip: "工作区概览与近期活动", icon: "chart", subs: ["overview"] },
+  { id: "stage", label: "页面", tip: "看 Orka 产出的可视化页面(Artifacts)", icon: "image", subs: ["artifacts"] },
+  { id: "files", label: "文件", tip: "工作区里的文件", icon: "folder", subs: ["files"] },
+  { id: "ops", label: "运营台", tip: "执行与可观测:运行 / 流程 / 任务 / 集成 / 指标", icon: "gear", subs: ["runs", "flows", "tasks", "integrations", "metrics"] },
 ];
+// Icons for the 运营台 sub-tabs, so the dense sub-nav scans at a glance.
+const SUB_ICON: Partial<Record<Tab, IconName>> = {
+  runs: "play", flows: "share", tasks: "clock", integrations: "plug", metrics: "chart",
+};
 function faceOf(tab: Tab): Face {
   return (FACES.find((f) => f.subs.includes(tab)) || FACES[0]).id;
 }
@@ -134,12 +138,16 @@ export function ArtifactDrawer({
         role="tab"
         aria-selected={on}
         className={
-          "relative shrink-0 rounded-lg px-3 py-1.5 text-[13px] transition " +
+          "relative inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] transition " +
           (on ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2") +
           (live && !on ? " ring-1 ring-accent/50" : "")
         }
       >
-        {live && <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-ok align-middle" />}
+        {live ? (
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ok" />
+        ) : (
+          <Icon name={f.icon} size={14} className={on ? "" : "text-faint"} />
+        )}
         {f.label}
         {dot && !on && !live && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-accent" />}
       </button>
@@ -151,10 +159,11 @@ export function ArtifactDrawer({
       onClick={() => setTab(t)}
       title={TAB_META[t].tip}
       className={
-        "relative shrink-0 rounded-md px-2 py-1 text-[12px] transition " +
+        "relative inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[12px] transition " +
         (tab === t ? "bg-surface2 text-ink" : "text-faint hover:text-muted")
       }
     >
+      {SUB_ICON[t] && <Icon name={SUB_ICON[t]!} size={12} />}
       {TAB_META[t].label}
       {newTabs.has(t) && tab !== t && <span className="absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-accent" />}
     </button>
@@ -207,7 +216,7 @@ export function ArtifactDrawer({
           </div>
         )}
         <div className="flex-1 overflow-y-auto">
-          {tab === "overview" && <DashboardPanel onJumpToConversation={onJumpToConversation} />}
+          {tab === "overview" && <DashboardPanel onJumpToConversation={onJumpToConversation} goTab={setTab} onOpenArtifact={(id) => { setFocusArt(id); setTab("artifacts"); }} />}
           {tab === "artifacts" && (focusArt ? <ArtifactPane artifactId={focusArt} onBack={() => setFocusArt(null)} /> : <ArtifactGallery onOpen={setFocusArt} />)}
           {tab === "files" && <FilesPanel email={email} />}
           {tab === "runs" && <RunsPanel onJumpToConversation={onJumpToConversation} />}
@@ -224,18 +233,74 @@ export function ArtifactDrawer({
 // DashboardPanel is the at-a-glance overview: it aggregates the run history and
 // live metrics into headline stats, a recent-activity strip, and trigger mix —
 // so the platform's activity is visible without digging through the run list.
-function DashboardPanel({ onJumpToConversation }: { onJumpToConversation: (cid: string) => void }) {
+const ARTKIND_ICON: Record<string, string> = {
+  pr_review: "🔀", architecture: "🗺️", incident: "🚨", checklist: "✅", audit: "🔍", custom: "📊",
+};
+
+function DashboardPanel({ onJumpToConversation, goTab, onOpenArtifact }: { onJumpToConversation: (cid: string) => void; goTab: (t: Tab) => void; onOpenArtifact: (id: string) => void }) {
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [metrics, setMetrics] = useState<MetricsSnapshot | null>(null);
+  const [arts, setArts] = useState<Artifact[]>([]);
+  const [fileCount, setFileCount] = useState(0);
+  const [taskCount, setTaskCount] = useState(0);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
-    Promise.all([api.listRuns({}).catch(() => ({ runs: [] })), api.metrics().catch(() => null)])
-      .then(([r, m]) => { setRuns(r.runs || []); setMetrics(m); })
+    Promise.all([
+      api.listRuns({}).catch(() => ({ runs: [] })),
+      api.metrics().catch(() => null),
+      artifactApi.list().then((r) => r.artifacts || []).catch(() => []),
+      fileApi.list(".").then((items) => items.filter((i) => !i.dir && !i.name.startsWith(".")).length).catch(() => 0),
+      api.getTasks().then((r) => (r.tasks || []).filter((t) => t.cron_status === "on").length).catch(() => 0),
+    ])
+      .then(([r, m, a, fc, tc]) => { setRuns(r.runs || []); setMetrics(m); setArts(a); setFileCount(fc); setTaskCount(tc); })
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <Blank>加载中…</Blank>;
-  if (runs.length === 0) return <Blank>还没有运行记录。跑一个任务后这里会出现统计。</Blank>;
+
+  // Workspace summary + recent pages render even before the first run, so the
+  // panel reveals what's inside (pages / files / tasks) at a glance.
+  const NavTile = ({ icon, label, value, onClick }: { icon: IconName; label: string; value: number; onClick: () => void }) => (
+    <button onClick={onClick} className="group flex flex-col items-start rounded-xl border border-border bg-surface px-3 py-2.5 text-left transition hover:border-accent/40">
+      <span className="inline-flex items-center gap-1.5 text-[11px] text-faint"><Icon name={icon} size={12} /> {label}</span>
+      <span className="mt-0.5 text-[20px] font-semibold leading-tight text-ink group-hover:text-accent">{value}</span>
+    </button>
+  );
+
+  const workspace = (
+    <>
+      <div className="grid grid-cols-3 gap-2">
+        <NavTile icon="image" label="页面" value={arts.length} onClick={() => goTab("artifacts")} />
+        <NavTile icon="folder" label="文件" value={fileCount} onClick={() => goTab("files")} />
+        <NavTile icon="clock" label="定时任务" value={taskCount} onClick={() => goTab("tasks")} />
+      </div>
+      {arts.length > 0 && (
+        <div className="rounded-xl border border-border bg-surface p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-faint">最近页面</span>
+            <button onClick={() => goTab("artifacts")} className="text-[11px] text-faint hover:text-accent">全部 →</button>
+          </div>
+          <div className="space-y-1">
+            {arts.slice(0, 3).map((a) => (
+              <button key={a.artifact_id} onClick={() => onOpenArtifact(a.artifact_id)} className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-left hover:bg-surface2">
+                <span className="text-[14px]">{ARTKIND_ICON[a.kind] || "📄"}</span>
+                <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{a.title}</span>
+                <span className="shrink-0 text-[11px] text-faint">v{a.current_version}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+
+  if (runs.length === 0)
+    return (
+      <div className="space-y-3 p-3">
+        {workspace}
+        <div className="rounded-xl border border-dashed border-border p-5 text-center text-[12.5px] text-muted">还没有运行记录。跑一个任务后这里会出现执行统计。</div>
+      </div>
+    );
 
   const done = runs.filter((r) => r.status === "done").length;
   const failed = runs.filter((r) => r.status === "failed").length;
@@ -261,6 +326,8 @@ function DashboardPanel({ onJumpToConversation }: { onJumpToConversation: (cid: 
 
   return (
     <div className="space-y-3 p-3">
+      {workspace}
+      <div className="text-[11px] font-medium uppercase tracking-wide text-faint">运行概况</div>
       <div className="grid grid-cols-2 gap-2">
         <Stat label="总运行" value={String(runs.length)} sub={`${done} 成功 · ${failed} 失败`} />
         <Stat label="成功率" value={successRate + "%"} sub={`${finished} 个已完成`} />

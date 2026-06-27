@@ -437,14 +437,15 @@ function Workbench({
           </button>
           <button
             onClick={() => setDrawerOpen((o) => !o)}
-            aria-label="切换工件面板"
+            aria-label="切换工作台面板"
             aria-pressed={drawerOpen}
+            title="工作台:概览 · 页面 · 文件 · 运营台"
             className={
-              "rounded-lg border px-3 py-1.5 text-[13px] transition " +
+              "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[13px] transition " +
               (drawerOpen ? "border-accent/40 bg-accentsoft text-accent" : "border-border text-muted hover:bg-surface2")
             }
           >
-            Artifacts
+            <Icon name="table" size={14} /> 工作台
           </button>
         </header>
 
