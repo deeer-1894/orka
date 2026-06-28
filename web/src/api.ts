@@ -3,6 +3,7 @@ import type {
   ArtifactVersion,
   Connector,
   Conversation,
+  Factor,
   MessageSearchHit,
   MetricsSnapshot,
   Message,
@@ -10,6 +11,7 @@ import type {
   OwnerInfo,
   RunRecord,
   TaskMeta,
+  WeightedPortfolio,
   Workflow,
   WorkflowStep,
 } from "./types";
@@ -204,6 +206,9 @@ export const api = {
   listRuns: (filter: { conversation_id?: string; status?: string } = {}) =>
     post<{ runs: RunRecord[] }>("/run/list", { ...filter, size: 50 }),
   rerunRun: (run_id: string) => post<{ status: string }>("/run/rerun", { run_id }),
+  listFactors: (status = "") => post<{ factors: Factor[] }>("/quant/factors", { status }),
+  listPortfolios: () => post<{ portfolios: WeightedPortfolio[] }>("/quant/portfolios", {}),
+  runFactorPipeline: () => post<{ started: number; reports: string[] }>("/quant/pipeline/run", {}),
   listConnectors: () => post<{ connectors: Connector[] }>("/connector/list", {}),
   testConnector: (c: Partial<Connector>) => post<{ ok: boolean; tools?: string[]; error?: string }>("/connector/test", c),
   createConnector: (c: Partial<Connector>) => post<Connector>("/connector/create", c),

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, artifacts as artifactApi, files as fileApi } from "../api";
-import type { Artifact, Connector, MetricsSnapshot, RunRecord, TaskMeta, Workflow } from "../types";
+import type { Artifact, Connector, Factor, MetricsSnapshot, RunRecord, TaskMeta, WeightedPortfolio, Workflow } from "../types";
 import { toast } from "../lib/toast";
 import { lineDiff, diffStats } from "../lib/diff";
 import { useResource, refreshResource } from "../lib/useResource";
@@ -8,7 +8,7 @@ import { Icon, type IconName } from "./Icon";
 import { FilePreview } from "./FilePreview";
 import { ArtifactGallery, ArtifactPane } from "./Artifacts";
 
-type Tab = "overview" | "artifacts" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
+type Tab = "overview" | "artifacts" | "files" | "runs" | "tasks" | "flows" | "factors" | "integrations" | "metrics";
 
 // Each tab carries a one-line tip — the words 运行/流程/任务 are ambiguous on
 // their own (execution log? workflow definition? schedule?), so the tooltip
@@ -20,6 +20,7 @@ const TAB_META: Record<Tab, { label: string; tip: string }> = {
   runs: { label: "运行", tip: "执行历史:每次任务运行的记录" },
   flows: { label: "流程", tip: "工作流定义:可复用的多步 DAG 管线" },
   tasks: { label: "任务", tip: "定时 / 触发的任务(调度与待办)" },
+  factors: { label: "因子", tip: "量化因子库:研报 → 因子流水线的产出" },
   integrations: { label: "集成", tip: "外部工具 / MCP 连接器" },
   metrics: { label: "指标", tip: "用量与性能指标" },
 };
@@ -31,11 +32,11 @@ const FACES: { id: Face; label: string; tip: string; icon: IconName; subs: Tab[]
   { id: "overview", label: "概览", tip: "工作区概览与近期活动", icon: "chart", subs: ["overview"] },
   { id: "stage", label: "页面", tip: "看 Orka 产出的可视化页面(Artifacts)", icon: "image", subs: ["artifacts"] },
   { id: "files", label: "文件", tip: "工作区里的文件", icon: "folder", subs: ["files"] },
-  { id: "ops", label: "运营台", tip: "执行与可观测:运行 / 流程 / 任务 / 集成 / 指标", icon: "gear", subs: ["runs", "flows", "tasks", "integrations", "metrics"] },
+  { id: "ops", label: "运营台", tip: "执行与可观测:运行 / 流程 / 任务 / 因子 / 集成 / 指标", icon: "gear", subs: ["runs", "flows", "tasks", "factors", "integrations", "metrics"] },
 ];
 // Icons for the 运营台 sub-tabs, so the dense sub-nav scans at a glance.
 const SUB_ICON: Partial<Record<Tab, IconName>> = {
-  runs: "play", flows: "share", tasks: "clock", integrations: "plug", metrics: "chart",
+  runs: "play", flows: "share", tasks: "clock", factors: "table", integrations: "plug", metrics: "chart",
 };
 function faceOf(tab: Tab): Face {
   return (FACES.find((f) => f.subs.includes(tab)) || FACES[0]).id;
@@ -224,6 +225,7 @@ export function ArtifactDrawer({
           {tab === "integrations" && <ConnectorsPanel />}
           {tab === "metrics" && <MetricsPanel />}
           {tab === "tasks" && <TasksPanel onJumpToConversation={onJumpToConversation} />}
+          {tab === "factors" && <FactorsPanel />}
         </div>
       </div>
     </aside>
@@ -942,6 +944,99 @@ function RunsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: strin
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// FactorsPanel is the quant factor library — the output of the research-report
+// → factor pipeline. Shows each ingested factor with its backtest scorecard,
+// plus any weighted portfolios, and a button to run the pipeline over reports/.
+const DIR_LABEL: Record<string, string> = { long: "多", short: "空", long_short: "多空" };
+const FACTOR_STATUS: Record<string, { label: string; cls: string }> = {
+  approved: { label: "已入库", cls: "text-ok" },
+  backtested: { label: "待审", cls: "text-muted" },
+  proposed: { label: "提议", cls: "text-faint" },
+  rejected: { label: "已拒", cls: "text-accent" },
+  live: { label: "实盘", cls: "text-accent" },
+};
+
+function FactorsPanel() {
+  const factors = useResource<Factor[]>("factors", () => api.listFactors().then((r) => r.factors || []), { interval: 6000 }) ?? [];
+  const portfolios = useResource<WeightedPortfolio[]>("portfolios", () => api.listPortfolios().then((r) => r.portfolios || []), { interval: 12000 }) ?? [];
+  const [running, setRunning] = useState(false);
+
+  const run = async () => {
+    setRunning(true);
+    try {
+      const r = await api.runFactorPipeline();
+      if (r.started > 0) toast(`已启动流水线,处理 ${r.started} 篇研报`, "success");
+      else toast("工作区 reports/ 目录没有研报文件", "info");
+      setTimeout(() => refreshResource("factors"), 1500);
+    } catch {
+      toast("启动流水线失败", "error");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const num = (v: number, d = 2) => (v >= 0 ? "+" : "") + v.toFixed(d);
+  return (
+    <div className="p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[12px] text-faint">因子库 · {factors.length}</span>
+        <button onClick={run} disabled={running} className="rounded-lg border border-border px-2.5 py-1 text-[12px] text-muted hover:border-accent/40 disabled:opacity-50">
+          {running ? "启动中…" : "⛁ 跑研报流水线"}
+        </button>
+      </div>
+
+      {factors.length === 0 && (
+        <div className="rounded-xl bg-surface2/50 px-3 py-6 text-center text-[12.5px] text-faint">
+          还没有因子。把研报(PDF/HTML/MD)放进工作区 <span className="font-mono">reports/</span> 目录,点上面的按钮自动抽取因子。
+        </div>
+      )}
+
+      <div className="space-y-1.5">
+        {factors.map((f) => {
+          const st = FACTOR_STATUS[f.status] || { label: f.status, cls: "text-muted" };
+          return (
+            <div key={f.factor_id} className="rounded-xl border border-border bg-surface2/40 px-3 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="text-[13px] font-medium text-ink">{f.name}</span>
+                <span className="rounded-full bg-surface2 px-1.5 py-0.5 text-[10px] text-muted">{DIR_LABEL[f.direction] || f.direction}</span>
+                <span className={"ml-auto text-[11px] " + st.cls}>● {st.label}</span>
+              </div>
+              {f.rationale && <div className="mt-1 line-clamp-1 text-[11.5px] text-faint" title={f.rationale}>{f.rationale}</div>}
+              <div className="mt-1 break-all rounded-md bg-surface/70 px-2 py-1 font-mono text-[11px] text-muted">{f.expression}</div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-faint">
+                <span title="信息系数">IC {num(f.metrics.ic, 3)}</span>
+                <span title="信息比率">IR {num(f.metrics.ir)}</span>
+                <span title="夏普">Sharpe {num(f.metrics.sharpe)}</span>
+                <span title="换手率">换手 {(f.metrics.turnover * 100).toFixed(0)}%</span>
+                <span title="最大回撤">回撤 {(f.metrics.max_dd * 100).toFixed(1)}%</span>
+                {f.agreement_score != null && f.agreement_score > 0 && <span title="双盲一致性">一致性 {(f.agreement_score * 100).toFixed(0)}%</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {portfolios.length > 0 && (
+        <>
+          <div className="mb-2 mt-4 text-[12px] text-faint">加权组合 · {portfolios.length}</div>
+          <div className="space-y-1.5">
+            {portfolios.map((p) => (
+              <div key={p.portfolio_id} className="rounded-xl border border-border bg-surface2/40 px-3 py-2.5">
+                <div className="flex items-center gap-2 text-[12.5px]">
+                  <span className="font-medium text-ink">{p.method}</span>
+                  <span className="text-faint">· {p.factor_ids.length} 因子</span>
+                  <span className="ml-auto text-[11px] text-muted">IC {num(p.metrics.ic, 3)} · Sharpe {num(p.metrics.sharpe)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      <p className="mt-3 text-[11px] text-faint">因子由「研报 → 因子」流水线产出:解析投资逻辑 → 双盲提取 → GP 进化 + 回测 → 校验 → 人审 → 入库。</p>
     </div>
   );
 }

@@ -20,7 +20,7 @@ import { useResource, refreshResource } from "./lib/useResource";
 import { loadTools, saveTools } from "./lib/toolGroups";
 import type { Conversation, Message, Notification } from "./types";
 
-type Tab = "overview" | "artifacts" | "files" | "runs" | "tasks" | "flows" | "integrations" | "metrics";
+type Tab = "overview" | "artifacts" | "files" | "runs" | "tasks" | "flows" | "factors" | "integrations" | "metrics";
 
 // Tools whose output the user watches in the 文件 face.
 const FILE_TOOLS = new Set([
@@ -362,7 +362,7 @@ function Workbench({
     ...models.map((m): Command => ({ id: "model:" + m.version, group: "切换模型", icon: "◆", label: m.label, hint: m.hint, keywords: m.version, run: () => setVersion(m.version) })),
     ...([
       ["overview", "概览"], ["artifacts", "页面 Artifacts"], ["files", "文件"],
-      ["runs", "运行历史"], ["flows", "流程 / 工作流"], ["tasks", "定时任务"], ["integrations", "集成"], ["metrics", "指标"],
+      ["runs", "运行历史"], ["flows", "流程 / 工作流"], ["tasks", "定时任务"], ["factors", "因子库"], ["integrations", "集成"], ["metrics", "指标"],
     ] as [Tab, string][]).map(([t, label]): Command => ({ id: "panel:" + t, group: "打开面板", icon: "▸", label, run: () => openPanel(t) })),
     ...conversations.slice(0, 60).map((c): Command => ({ id: "conv:" + c.conversation_id, group: "跳转会话", icon: "💬", label: c.title || "未命名会话", keywords: c.title, run: () => selectConversation(c.conversation_id) })),
   ];

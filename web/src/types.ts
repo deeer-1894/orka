@@ -126,6 +126,39 @@ export interface TaskMeta {
   retry_count?: number;
 }
 
+export interface FactorMetrics {
+  ic: number;
+  ir: number;
+  sharpe: number;
+  turnover: number;
+  max_dd: number;
+  periods: number;
+}
+
+export interface Factor {
+  factor_id: string;
+  name: string;
+  source_report_id?: string;
+  rationale: string;
+  expression: string;
+  direction: string; // long | short | long_short
+  universe?: string;
+  horizon?: string;
+  status: string; // proposed | backtested | approved | rejected | live
+  agreement_score?: number;
+  metrics: FactorMetrics;
+  created_at: number;
+}
+
+export interface WeightedPortfolio {
+  portfolio_id: string;
+  method: string;
+  factor_ids: string[];
+  weights: number[];
+  metrics: FactorMetrics;
+  created_at: number;
+}
+
 export interface RunRecord {
   run_id: string;
   task_id: string;
