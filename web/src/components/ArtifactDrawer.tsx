@@ -952,6 +952,45 @@ function RunsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: strin
 // → factor pipeline. Shows each ingested factor with its backtest scorecard,
 // plus any weighted portfolios, and a button to run the pipeline over reports/.
 const DIR_LABEL: Record<string, string> = { long: "多", short: "空", long_short: "多空" };
+
+// AgreementTrend plots the double-blind consistency score of factors over time
+// (chronological), so you can see whether extraction agreement is holding up
+// across days/runs — a quality signal for the unattended pipeline.
+function AgreementTrend({ factors }: { factors: Factor[] }) {
+  const series = useMemo(
+    () =>
+      factors
+        .filter((f) => (f.agreement_score ?? 0) > 0)
+        .sort((a, b) => a.created_at - b.created_at)
+        .map((f) => f.agreement_score as number),
+    [factors],
+  );
+  if (series.length < 2) return null;
+  const avg = series.reduce((a, b) => a + b, 0) / series.length;
+  const W = 220, H = 34, n = series.length;
+  // y maps [0,1] agreement → chart; clamp domain to [0.5,1] for visible spread.
+  const lo = 0.5, hi = 1;
+  const x = (i: number) => (i / (n - 1)) * (W - 4) + 2;
+  const y = (v: number) => H - 3 - ((Math.min(Math.max(v, lo), hi) - lo) / (hi - lo)) * (H - 6);
+  const pts = series.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const threshold = y(0.7);
+  return (
+    <div className="mb-2 rounded-xl border border-border bg-surface2/40 px-3 py-2">
+      <div className="mb-1 flex items-center justify-between text-[11.5px]">
+        <span className="text-faint">双盲一致性趋势 · {n} 个因子</span>
+        <span className={avg >= 0.7 ? "text-ok" : "text-accent"}>均值 {(avg * 100).toFixed(0)}%</span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="none" style={{ height: H }}>
+        {/* 0.7 gate line */}
+        <line x1={2} y1={threshold} x2={W - 2} y2={threshold} stroke="currentColor" className="text-border" strokeWidth={0.6} strokeDasharray="3 3" />
+        <polyline points={pts} fill="none" stroke="currentColor" className="text-accent" strokeWidth={1.4} strokeLinejoin="round" strokeLinecap="round" />
+        {series.map((v, i) => (
+          <circle key={i} cx={x(i)} cy={y(v)} r={1.6} className={v >= 0.7 ? "text-ok" : "text-accent"} fill="currentColor" />
+        ))}
+      </svg>
+    </div>
+  );
+}
 const FACTOR_STATUS: Record<string, { label: string; cls: string }> = {
   approved: { label: "已入库", cls: "text-ok" },
   backtested: { label: "待审", cls: "text-muted" },
@@ -1019,6 +1058,8 @@ function FactorsPanel() {
           ))}
         </div>
       )}
+
+      <AgreementTrend factors={all} />
 
       {factors.length === 0 && (
         <div className="rounded-xl bg-surface2/50 px-3 py-6 text-center text-[12.5px] text-faint">
