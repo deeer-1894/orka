@@ -31,3 +31,4 @@ gui_agent/.venv/
 
 # local tooling state (superpowers/brainstorm)
 .superpowers/
+.venv-quant/

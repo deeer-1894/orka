@@ -168,12 +168,21 @@ func fileExists(p string) bool {
 	return err == nil && !st.IsDir()
 }
 
-// runPyJSON runs `python3 <script> <args...>` in root and parses the last JSON
+// quantPython is the interpreter used for the harness — a dedicated venv (with
+// akshare etc.) when ORKA_QUANT_PYTHON points at one, else the system python3.
+func quantPython() string {
+	if p := os.Getenv("ORKA_QUANT_PYTHON"); p != "" {
+		return p
+	}
+	return "python3"
+}
+
+// runPyJSON runs `<python> <script> <args...>` in root and parses the last JSON
 // object printed on stdout.
 func runPyJSON(ctx context.Context, root, script string, args ...string) (map[string]any, bool) {
 	cctx, cancel := context.WithTimeout(ctx, quantExecTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "python3", append([]string{script}, args...)...)
+	cmd := exec.CommandContext(cctx, quantPython(), append([]string{script}, args...)...)
 	cmd.Dir = root
 	outBytes, err := cmd.Output()
 	if err != nil {
