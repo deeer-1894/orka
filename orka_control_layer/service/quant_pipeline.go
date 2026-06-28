@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -104,6 +105,16 @@ func (s *ChatService) ListFactors(owner, status string) ([]Factor, error) {
 // ListPortfolios returns the owner's saved weighted portfolios.
 func (s *ChatService) ListPortfolios(owner string) ([]WeightedPortfolio, error) {
 	return listPortfolios(s.Cfg.Storage.BaseStoragePath, owner)
+}
+
+// SetFactorStatus is the human-review action: approve or reject a pending factor.
+func (s *ChatService) SetFactorStatus(owner, factorID, status string) error {
+	switch status {
+	case FactorApproved, FactorRejected, FactorBacktested, FactorLive:
+	default:
+		return fmt.Errorf("invalid status %q", status)
+	}
+	return updateFactorStatus(s.Cfg.Storage.BaseStoragePath, owner, factorID, status)
 }
 
 // pipelineConcurrency bounds how many reports process at once. Each report is a

@@ -207,6 +207,7 @@ export const api = {
     post<{ runs: RunRecord[] }>("/run/list", { ...filter, size: 50 }),
   rerunRun: (run_id: string) => post<{ status: string }>("/run/rerun", { run_id }),
   listFactors: (status = "") => post<{ factors: Factor[] }>("/quant/factors", { status }),
+  setFactorStatus: (factor_id: string, status: string) => post<{ status: string }>("/quant/factor/status", { factor_id, status }),
   listPortfolios: () => post<{ portfolios: WeightedPortfolio[] }>("/quant/portfolios", {}),
   runFactorPipeline: () => post<{ started: number; reports: string[] }>("/quant/pipeline/run", {}),
   listConnectors: () => post<{ connectors: Connector[] }>("/connector/list", {}),

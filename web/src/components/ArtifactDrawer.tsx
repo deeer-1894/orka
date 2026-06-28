@@ -961,9 +961,27 @@ const FACTOR_STATUS: Record<string, { label: string; cls: string }> = {
 };
 
 function FactorsPanel() {
-  const factors = useResource<Factor[]>("factors", () => api.listFactors().then((r) => r.factors || []), { interval: 6000 }) ?? [];
+  const all = useResource<Factor[]>("factors", () => api.listFactors().then((r) => r.factors || []), { interval: 6000 }) ?? [];
   const portfolios = useResource<WeightedPortfolio[]>("portfolios", () => api.listPortfolios().then((r) => r.portfolios || []), { interval: 12000 }) ?? [];
   const [running, setRunning] = useState(false);
+  const [filter, setFilter] = useState<"all" | "backtested" | "approved">("all");
+  const [busy, setBusy] = useState<string>(""); // factor_id being reviewed
+
+  const pending = all.filter((f) => f.status === "backtested").length;
+  const factors = filter === "all" ? all : all.filter((f) => f.status === filter);
+
+  const review = async (id: string, status: "approved" | "rejected") => {
+    setBusy(id);
+    try {
+      await api.setFactorStatus(id, status);
+      toast(status === "approved" ? "已通过,入库" : "已拒绝", status === "approved" ? "success" : "info");
+      refreshResource("factors");
+    } catch {
+      toast("操作失败,请重试", "error");
+    } finally {
+      setBusy("");
+    }
+  };
 
   const run = async () => {
     setRunning(true);
@@ -983,11 +1001,24 @@ function FactorsPanel() {
   return (
     <div className="p-3">
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-[12px] text-faint">因子库 · {factors.length}</span>
+        <span className="text-[12px] text-faint">因子库 · {all.length}{pending > 0 && <span className="ml-1.5 text-accent">· {pending} 待审</span>}</span>
         <button onClick={run} disabled={running} className="rounded-lg border border-border px-2.5 py-1 text-[12px] text-muted hover:border-accent/40 disabled:opacity-50">
           {running ? "启动中…" : "⛁ 跑研报流水线"}
         </button>
       </div>
+      {all.length > 0 && (
+        <div className="mb-2 flex gap-1">
+          {([["all", "全部"], ["backtested", "待审"], ["approved", "已入库"]] as const).map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => setFilter(k)}
+              className={"rounded-full px-2.5 py-0.5 text-[11.5px] transition " + (filter === k ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2")}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {factors.length === 0 && (
         <div className="rounded-xl bg-surface2/50 px-3 py-6 text-center text-[12.5px] text-faint">
@@ -1015,6 +1046,12 @@ function FactorsPanel() {
                 <span title="最大回撤">回撤 {(f.metrics.max_dd * 100).toFixed(1)}%</span>
                 {f.agreement_score != null && f.agreement_score > 0 && <span title="双盲一致性">一致性 {(f.agreement_score * 100).toFixed(0)}%</span>}
               </div>
+              {f.status === "backtested" && (
+                <div className="mt-2 flex gap-2">
+                  <button onClick={() => review(f.factor_id, "approved")} disabled={busy === f.factor_id} className="rounded-lg bg-accent px-3 py-1 text-[12px] text-white hover:opacity-90 disabled:opacity-50">通过入库</button>
+                  <button onClick={() => review(f.factor_id, "rejected")} disabled={busy === f.factor_id} className="rounded-lg border border-border bg-surface px-3 py-1 text-[12px] text-muted hover:border-accent/40 disabled:opacity-50">拒绝</button>
+                </div>
+              )}
             </div>
           );
         })}

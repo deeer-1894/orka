@@ -59,3 +59,26 @@ func (a *API) ListPortfolios(ctx context.Context, c *app.RequestContext) {
 	}
 	ok(c, map[string]any{"portfolios": ports})
 }
+
+// SetFactorStatus is the human-review action — approve or reject a pending factor
+// from the factor panel.
+func (a *API) SetFactorStatus(ctx context.Context, c *app.RequestContext) {
+	me := authEmail(c)
+	if me == "" {
+		fail(c, consts.StatusUnauthorized, "auth required")
+		return
+	}
+	var req struct {
+		FactorID string `json:"factor_id"`
+		Status   string `json:"status"`
+	}
+	if err := bind(c, &req); err != nil || req.FactorID == "" || req.Status == "" {
+		fail(c, consts.StatusBadRequest, "factor_id and status required")
+		return
+	}
+	if err := a.Chat.SetFactorStatus(me, req.FactorID, req.Status); err != nil {
+		fail(c, consts.StatusBadRequest, err.Error())
+		return
+	}
+	ok(c, map[string]any{"factor_id": req.FactorID, "status": req.Status})
+}

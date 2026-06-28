@@ -85,6 +85,26 @@ func listFactors(baseStorage, email, status string) ([]Factor, error) {
 	return out, nil
 }
 
+// updateFactorStatus flips one factor's lifecycle status (approve / reject) and
+// refreshes the index. Returns an error if the factor doesn't exist.
+func updateFactorStatus(baseStorage, email, id, status string) error {
+	path := filepath.Join(factorsDir(baseStorage, email), filepath.Base(id)+".json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var f Factor
+	if err := json.Unmarshal(b, &f); err != nil {
+		return err
+	}
+	f.Status = status
+	out, _ := json.MarshalIndent(f, "", "  ")
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		return err
+	}
+	return rewriteFactorIndex(baseStorage, email)
+}
+
 // rewriteFactorIndex regenerates quant/factors/index.jsonl from the per-factor
 // files so the agent (and sql_query) has one compact, queryable table.
 func rewriteFactorIndex(baseStorage, email string) error {
@@ -174,7 +194,10 @@ func (t ingestFactorTool) Invoke(ctx context.Context, args map[string]any) (stri
 	}
 	f.OwnerEmail = email
 	if f.Status == "" {
-		f.Status = FactorApproved
+		// Land as pending-review by default; a human approves it via the factor
+		// panel (or the interactive confirm gate). Only approved factors are
+		// eligible for weighted portfolios.
+		f.Status = FactorBacktested
 	}
 	if f.CreatedAt == 0 {
 		f.CreatedAt = time.Now().UnixMilli()
