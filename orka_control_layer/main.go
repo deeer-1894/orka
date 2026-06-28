@@ -105,6 +105,9 @@ func main() {
 	// Artifact tools (publish/get a live shareable page) are local tools with DB
 	// access; the providers append them to every run's tool set.
 	service.ArtifactTools = service.BuildArtifactTools(store)
+	// Quant factor-pipeline tools (validate/backtest/agreement/ingest/portfolio),
+	// bound to the workspace storage root.
+	service.QuantTools = service.BuildQuantTools(cfg.Storage.BaseStoragePath)
 
 	// Load Claude-Code-style SKILL.md packages from the global skills dir, merged
 	// over the built-in catalog; skill_create writes new ones here.

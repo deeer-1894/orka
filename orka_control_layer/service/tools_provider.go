@@ -31,8 +31,10 @@ func LocalToolsProvider(baseStorage string) ToolsProvider {
 		root := pathsafe.UserRoot(baseStorage, req.UserEmail)
 		tools := append(filesystem.New(root), GUITool)
 		tools = filterEnabled(tools, req.EnabledTools)
-		// skill mgmt + artifact publishing are always available (local tools).
-		return append(append(tools, SkillTools()...), ArtifactTools...), nil, nil
+		// skill mgmt + artifact publishing + quant pipeline are always available
+		// (local tools).
+		local := append(append(SkillTools(), ArtifactTools...), QuantTools...)
+		return append(tools, local...), nil, nil
 	}
 }
 
@@ -222,11 +224,11 @@ func MCPToolsProviderPooled(baseStorage, mcpURL, secret string, tokenTTL time.Du
 		if err != nil {
 			root := pathsafe.UserRoot(baseStorage, req.UserEmail)
 			fallback := append(filesystem.New(root), GUITool)
-			local := append(SkillTools(), ArtifactTools...)
+			local := append(append(SkillTools(), ArtifactTools...), QuantTools...)
 			return append(filterEnabled(fallback, req.EnabledTools), local...), nil, err
 		}
 		// no cleanup: the pool owns the connection lifecycle.
-		local := append(SkillTools(), ArtifactTools...)
+		local := append(append(SkillTools(), ArtifactTools...), QuantTools...)
 		return append(filterEnabled(tools, req.EnabledTools), local...), nil, nil
 	}
 	return provider, pool.invalidate
@@ -257,9 +259,11 @@ type ToolInfo struct {
 	Danger      bool   `json:"danger"` // runs code or makes network egress — flag it
 }
 
-// dangerTools run arbitrary code or reach the network; the UI marks them so a
-// user enabling them does so deliberately.
-var dangerTools = map[string]bool{"shell": true, "python": true, "run_agent": true, "http_request": true}
+// dangerTools run arbitrary code, reach the network, or commit a consequential
+// change; the UI marks them and (when confirm is on) gates them behind human
+// approval. ingest_factor is the pipeline's human-review checkpoint: in an
+// interactive run it asks before a factor enters the library.
+var dangerTools = map[string]bool{"shell": true, "python": true, "run_agent": true, "http_request": true, "ingest_factor": true}
 
 // ToolCatalog returns the tools actually available to a user (gateway + their
 // connectors), with descriptions and groups — the single source of truth for

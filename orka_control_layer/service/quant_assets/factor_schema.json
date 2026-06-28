@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "QuantFactor",
+  "description": "A backtestable quant factor extracted from a research report.",
+  "type": "object",
+  "required": ["name", "rationale", "expression", "direction"],
+  "properties": {
+    "name": { "type": "string", "description": "short factor title / slug" },
+    "rationale": { "type": "string", "description": "the natural-language investment logic, verbatim from the report" },
+    "expression": {
+      "type": "string",
+      "description": "machine-evaluable factor formula over fields like close, volume, pe, pb, roe, mom_20, mom_60, vol_20, rev_revision; supports rank(), zscore(), +-*/ and parentheses"
+    },
+    "direction": { "type": "string", "enum": ["long", "short", "long_short"] },
+    "universe": { "type": "string", "description": "intended stock universe, e.g. CSI300" },
+    "horizon": { "type": "string", "description": "holding horizon, e.g. 1d, 5d, 1m" },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "ic": { "type": "number" },
+        "ir": { "type": "number" },
+        "sharpe": { "type": "number" },
+        "turnover": { "type": "number" },
+        "max_dd": { "type": "number" },
+        "periods": { "type": "integer" }
+      }
+    }
+  }
+}

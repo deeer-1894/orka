@@ -173,6 +173,16 @@ func summarizeAction(tool string, args map[string]any) string {
 			return "运行 Python 脚本: " + p
 		}
 		return "运行 Python 代码: " + trunc(s("code"), 160)
+	case "ingest_factor":
+		name := s("name")
+		if name == "" {
+			if f, ok := args["factor"].(map[string]any); ok {
+				if v, ok := f["name"]; ok {
+					name = fmt.Sprint(v)
+				}
+			}
+		}
+		return "把因子录入因子库: " + trunc(name, 120)
 	default:
 		return tool
 	}

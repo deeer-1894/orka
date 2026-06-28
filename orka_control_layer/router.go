@@ -96,6 +96,7 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/workflow/create", a.CreateWorkflow)
 	g.POST("/workflow/delete", a.DeleteWorkflow)
 	g.POST("/workflow/run", a.RunWorkflow)
+	g.POST("/quant/pipeline/run", a.RunFactorPipeline) // research-report → quant-factor pipeline (batch over reports/)
 
 	g.POST("/skill/list", a.ListSkills)       // catalog (builtin + installed)
 	g.POST("/skill/get", a.GetSkill)          // one skill's full content (for preview)
