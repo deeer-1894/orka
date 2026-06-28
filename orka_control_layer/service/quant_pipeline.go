@@ -56,7 +56,7 @@ func FactorPipelineWorkflow(owner, reportPath string) db.Workflow {
 				Name:      "agree",
 				DependsOn: []string{"propose_a", "propose_b"},
 				Prompt: "调用 factor_agreement 工具,把 propose_a 的 JSON 数组作为 set_a、propose_b 的作为 set_b 传入(只传 JSON 数组本身,不要把推理文字传进参数)。\nset_a 来自:{{propose_a}}\nset_b 来自:{{propose_b}}\n根据返回的 agreement,保留达标(>=" +
-					factorAgreementThreshold + ")的稳定因子;低一致性的在结尾用一行 `LOW_AGREEMENT: <名称>` 标出。最终只输出保留的因子 JSON 数组。",
+					factorAgreementThreshold + ")的稳定因子,并给每个保留的因子加一个 `agreement_score` 字段(0-1,用本工具返回的整体 agreement 值)。低一致性的在结尾用一行 `LOW_AGREEMENT: <名称>` 标出。最终只输出保留的因子 JSON 数组。",
 				OnError: "retry:2",
 			},
 			{
@@ -68,7 +68,7 @@ func FactorPipelineWorkflow(owner, reportPath string) db.Workflow {
 			{
 				Name:      "validate",
 				DependsOn: []string{"evolve"},
-				Prompt:    "对 {{evolve}} 中每个因子调用 validate_factor 确保 schema 合规;不合规的就修正字段。输出全部合规的因子 JSON 数组。",
+				Prompt:    "对 {{evolve}} 中每个因子调用 validate_factor 确保 schema 合规;不合规的就修正字段。保留每个因子已有的全部字段(rationale / direction / metrics / agreement_score 等),不要丢。输出全部合规的因子 JSON 数组。",
 				OnError:   "retry:2",
 			},
 			{
