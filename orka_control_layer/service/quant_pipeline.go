@@ -96,6 +96,16 @@ func (s *ChatService) DiscoverReports(owner string) []string {
 	return discoverReports(s.Cfg.Storage.BaseStoragePath, owner)
 }
 
+// ListFactors returns the owner's factor library (optionally filtered by status).
+func (s *ChatService) ListFactors(owner, status string) ([]Factor, error) {
+	return listFactors(s.Cfg.Storage.BaseStoragePath, owner, status)
+}
+
+// ListPortfolios returns the owner's saved weighted portfolios.
+func (s *ChatService) ListPortfolios(owner string) ([]WeightedPortfolio, error) {
+	return listPortfolios(s.Cfg.Storage.BaseStoragePath, owner)
+}
+
 // pipelineConcurrency bounds how many reports process at once. Each report is a
 // long, many-step flow, so we want throughput (10+/day) without hammering the
 // model endpoint or the box; a small pool is the right trade-off.

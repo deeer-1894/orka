@@ -24,3 +24,38 @@ func (a *API) RunFactorPipeline(ctx context.Context, c *app.RequestContext) {
 	go a.Chat.RunFactorPipeline(context.Background(), me)
 	ok(c, map[string]any{"started": len(reports), "reports": reports})
 }
+
+// ListFactors returns the caller's factor library (optional ?status filter via
+// body). The pipeline's output, queryable for a UI panel or downstream use.
+func (a *API) ListFactors(ctx context.Context, c *app.RequestContext) {
+	me := authEmail(c)
+	if me == "" {
+		fail(c, consts.StatusUnauthorized, "auth required")
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+	}
+	_ = bind(c, &req)
+	factors, err := a.Chat.ListFactors(me, req.Status)
+	if err != nil {
+		fail(c, consts.StatusInternalServerError, "cannot read factor library")
+		return
+	}
+	ok(c, map[string]any{"factors": factors})
+}
+
+// ListPortfolios returns the caller's saved weighted portfolios.
+func (a *API) ListPortfolios(ctx context.Context, c *app.RequestContext) {
+	me := authEmail(c)
+	if me == "" {
+		fail(c, consts.StatusUnauthorized, "auth required")
+		return
+	}
+	ports, err := a.Chat.ListPortfolios(me)
+	if err != nil {
+		fail(c, consts.StatusInternalServerError, "cannot read portfolios")
+		return
+	}
+	ok(c, map[string]any{"portfolios": ports})
+}

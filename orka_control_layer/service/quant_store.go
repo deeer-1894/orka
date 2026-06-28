@@ -101,6 +101,33 @@ func rewriteFactorIndex(baseStorage, email string) error {
 	return os.WriteFile(filepath.Join(factorsDir(baseStorage, email), "index.jsonl"), []byte(sb.String()), 0o644)
 }
 
+// listPortfolios returns saved portfolios, newest first.
+func listPortfolios(baseStorage, email string) ([]WeightedPortfolio, error) {
+	ents, err := os.ReadDir(portfoliosDir(baseStorage, email))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []WeightedPortfolio
+	for _, e := range ents {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(portfoliosDir(baseStorage, email), e.Name()))
+		if err != nil {
+			continue
+		}
+		var p WeightedPortfolio
+		if json.Unmarshal(b, &p) == nil {
+			out = append(out, p)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt > out[j].CreatedAt })
+	return out, nil
+}
+
 func savePortfolio(baseStorage, email string, p WeightedPortfolio) error {
 	if p.PortfolioID == "" {
 		return fmt.Errorf("portfolio_id required")
