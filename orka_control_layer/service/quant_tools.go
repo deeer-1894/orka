@@ -22,7 +22,10 @@ import (
 // is filled in. The result always reports `source` ("python" | "stub") so the
 // run record never lies about which path produced the numbers.
 
-const quantExecTimeout = 90 * time.Second
+// Real-data backtests fetch from akshare on the first (uncached) call of the
+// day, so give the harness generous headroom; subsequent calls hit the on-disk
+// panel cache and are fast.
+const quantExecTimeout = 200 * time.Second
 
 // QuantTools is the factor-pipeline tool set, wired by main with the storage
 // base path; the providers append it to every run's tool set (like ArtifactTools).

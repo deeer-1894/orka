@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"embed"
 	"os"
 	"path/filepath"
@@ -26,12 +27,16 @@ func seedQuantAssets(baseStorage, email string) {
 		return
 	}
 	for _, name := range quantAssetFiles {
-		dst := filepath.Join(dir, name)
-		if _, err := os.Stat(dst); err == nil {
-			continue // present already → leave it
-		}
 		data, err := quantAssets.ReadFile("quant_assets/" + name)
 		if err != nil {
+			continue
+		}
+		dst := filepath.Join(dir, name)
+		// These are OUR harness files (not user data), so overwrite when the
+		// embedded version changes — otherwise a workspace seeded once would be
+		// stuck on an old harness. Skip the rewrite only when identical (avoids
+		// touching mtimes / invalidating the panel cache needlessly).
+		if cur, err := os.ReadFile(dst); err == nil && bytes.Equal(cur, data) {
 			continue
 		}
 		_ = os.WriteFile(dst, data, 0o644)

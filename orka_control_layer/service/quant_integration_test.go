@@ -13,6 +13,7 @@ import (
 // LLM: seed → backtest → ingest (the human-review gate target) → list → combine.
 // This proves the factor lifecycle independent of any model availability.
 func TestQuantToolChain(t *testing.T) {
+	t.Setenv("ORKA_BACKTEST_OFFLINE", "1") // deterministic, no akshare/network in tests
 	base := t.TempDir()
 	email := "chain@test.com"
 	ctx := agent.WithMeta(context.Background(), messages.Meta{UserEmail: email})
@@ -32,7 +33,7 @@ func TestQuantToolChain(t *testing.T) {
 		if err := json.Unmarshal([]byte(raw), &btOut); err != nil {
 			t.Fatalf("backtest json: %v (%s)", err, raw)
 		}
-		if btOut.Source != "python" && btOut.Source != "stub" {
+		if btOut.Source != "synthetic" && btOut.Source != "python" && btOut.Source != "stub" {
 			t.Fatalf("unexpected backtest source %q", btOut.Source)
 		}
 		return map[string]any{
@@ -56,10 +57,19 @@ func TestQuantToolChain(t *testing.T) {
 		}
 	}
 
-	// 3) the library now lists two approved factors.
-	got, err := listFactors(base, email, FactorApproved)
+	// 3) factors land as PENDING (backtested) for human review.
+	got, err := listFactors(base, email, FactorBacktested)
 	if err != nil || len(got) != 2 {
-		t.Fatalf("listFactors: %v len=%d", err, len(got))
+		t.Fatalf("listFactors pending: %v len=%d", err, len(got))
+	}
+	// approve both (the human-review action) → now eligible for portfolios.
+	for _, f := range got {
+		if err := updateFactorStatus(base, email, f.FactorID, FactorApproved); err != nil {
+			t.Fatalf("approve: %v", err)
+		}
+	}
+	if appr, _ := listFactors(base, email, FactorApproved); len(appr) != 2 {
+		t.Fatalf("after approve, approved count = %d, want 2", len(appr))
 	}
 
 	// 4) combine them into a weighted portfolio (ic-weighted) → weights sum to 1.

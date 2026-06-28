@@ -10,7 +10,7 @@ best factor as a JSON object on the last stdout line:
 Phase-2 upgrade: a real GP over a proper operator/operand tree against live data.
 """
 import argparse, json, random, hashlib
-from backtest_runner import backtest, SIGNAL_WEIGHTS
+from backtest_runner import backtest, get_panel, SIGNAL_WEIGHTS
 
 BASE = list(SIGNAL_WEIGHTS.keys())  # mom_20, roe, value, vol_20
 
@@ -53,13 +53,14 @@ def mutate(genes: list, rng: random.Random) -> list:
 
 def evolve(seed_expr: str, generations: int, pop_size: int):
     rng = random.Random(7)
+    panel, _ = get_panel()  # fetch real data ONCE; every candidate reuses it
     base = seed_genes(seed_expr)
     pop = [base] + [mutate(base, rng) for _ in range(pop_size - 1)]
     best, best_fit, best_m = base, -1e9, None
     for _ in range(generations):
         scored = []
         for genes in pop:
-            m = backtest(render(genes))
+            m = backtest(render(genes), panel)
             f = fitness(m)
             scored.append((f, genes, m))
             if f > best_fit:
