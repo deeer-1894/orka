@@ -149,9 +149,16 @@ func (fr factorRefs) names() []string {
 }
 
 func factorTexts(raw any) factorRefs {
-	list, _ := raw.([]any)
 	var out factorRefs
-	for _, it := range list {
+	for _, it := range coerceFactorList(raw) {
+		// items are usually objects, but tolerate a bare string (a factor name).
+		if s, ok := it.(string); ok {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				out = append(out, factorRef{name: trunc(s, 60), tokens: tokenize(s)})
+			}
+			continue
+		}
 		m, ok := it.(map[string]any)
 		if !ok {
 			continue
@@ -169,6 +176,30 @@ func factorTexts(raw any) factorRefs {
 		out = append(out, factorRef{name: name, tokens: tokenize(get("name") + " " + get("rationale") + " " + get("expression"))})
 	}
 	return out
+}
+
+var jsonArrayRe = regexp.MustCompile(`(?s)\[.*\]`)
+
+// coerceFactorList normalizes the loosely-typed agreement input. The model often
+// passes a JSON string (sometimes wrapped in reasoning/markdown) instead of a
+// real array; we recover the embedded JSON array rather than failing the gate.
+func coerceFactorList(raw any) []any {
+	switch v := raw.(type) {
+	case []any:
+		return v
+	case string:
+		// pull the outermost [...] out of whatever prose/markdown surrounds it
+		if m := jsonArrayRe.FindString(v); m != "" {
+			var arr []any
+			if json.Unmarshal([]byte(m), &arr) == nil {
+				return arr
+			}
+		}
+	case map[string]any:
+		// a single factor object → treat as a one-element list
+		return []any{v}
+	}
+	return nil
 }
 
 var wordRe = regexp.MustCompile(`[\p{L}\p{N}_]+`)

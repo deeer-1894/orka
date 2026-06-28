@@ -44,6 +44,23 @@ func TestFactorAgreement(t *testing.T) {
 	}
 }
 
+func TestFactorAgreementTolerantInput(t *testing.T) {
+	// the model often passes a JSON string wrapped in reasoning/markdown instead
+	// of a real array — the gate must still recover the factors, not fail.
+	setA := "<analysis> I need to think... </analysis>\n```json\n[{\"name\":\"momentum\",\"expression\":\"rank(mom_20)\",\"rationale\":\"rising prices keep rising\"}]\n```"
+	setB := `here are my factors: [{"name":"mom","expression":"rank(mom_20)","rationale":"rising prices keep rising trend"}]`
+	out, _ := factorAgreementTool{}.Invoke(context.Background(), map[string]any{"set_a": setA, "set_b": setB})
+	var res struct {
+		Agreement float64 `json:"agreement"`
+	}
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("bad json: %v (%s)", err, out)
+	}
+	if res.Agreement < 0.99 { // 1 vs 1, both match → agreement 1.0
+		t.Fatalf("tolerant parse failed, agreement=%v (%s)", res.Agreement, out)
+	}
+}
+
 func TestComputeWeights(t *testing.T) {
 	fs := []Factor{
 		{Metrics: FactorMetrics{IC: 0.10, MaxDD: -0.10}},
