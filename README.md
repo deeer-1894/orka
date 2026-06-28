@@ -27,6 +27,36 @@ make run-tools
 
 Config lives in `config.yaml`; every key is overridable via env (`.env.example`).
 
+### One command (recommended)
+
+```bash
+cp .env.example .env      # then set OPENAI_API_KEY
+scripts/dev.sh            # deps (docker) + build + run control, with health checks
+#   scripts/dev.sh deps      # only the docker dependencies
+#   scripts/dev.sh control   # only (re)build + restart the control plane
+#   scripts/dev.sh stop      # stop the control plane
+make run-web              # the Vite dev server (separate terminal)
+```
+
+`scripts/dev.sh` sources the **persistent repo `.env`** and starts the control
+plane from it — never a `/tmp` copy of the env or binary.
+
+### Environment must be persistent (don't use `/tmp`)
+
+> ⚠️ **Never point `BASE_STORAGE_PATH` (or the `.env` / launch artifacts) at `/tmp`.**
+> macOS purges `/tmp` (files untouched for ~3 days are deleted), which silently
+> destroys user workspace files. `scripts/dev.sh` refuses to start if
+> `BASE_STORAGE_PATH` is under `/tmp`, `/private/tmp`, or `/var/folders`.
+
+Persistence conventions:
+
+| What | Persistent location | Notes |
+| --- | --- | --- |
+| Workspace files | `BASE_STORAGE_PATH` → `./data/storage` or `$HOME/.orka/storage` | the per-user file root; **must not be `/tmp`** |
+| Mongo data | docker volume `orka_mongo_data` (via `docker compose`) | survives container restarts; don't run a second native `mongod` on 27017 (it shadows the container) |
+| Config / secrets | the repo `.env` (gitignored) | the single source of truth the launcher reads |
+| Quant harness deps | `ORKA_QUANT_PYTHON` → a venv with `akshare` (`.venv-quant`) | keeps akshare out of system Python; falls back to synthetic data if unset |
+
 ## Running the full stack
 
 The LLM is any OpenAI-compatible endpoint (defaults to DeepSeek in `config.yaml`).
