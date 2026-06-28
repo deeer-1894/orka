@@ -133,7 +133,10 @@ func (a *API) FileDelete(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, err.Error())
 		return
 	}
-	if err := os.Remove(p); err != nil {
+	// RemoveAll deletes a file or a (non-empty) directory, and is idempotent if
+	// the path is already gone — both are the right semantics for a file-manager
+	// delete. resolve() has confined p to the caller's workspace root.
+	if err := os.RemoveAll(p); err != nil {
 		fail(c, consts.StatusInternalServerError, err.Error())
 		return
 	}
