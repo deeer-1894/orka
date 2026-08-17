@@ -1,19 +1,42 @@
 # Orka (OSS replica)
 
 A runnable open-source replica of the Orka enterprise AI Agent platform:
-control plane + tool plane + execution plane, with an ADK-style middleware
-runtime, MCP tools, SSE streaming, Clarify interrupt + checkpoint resume, and
-a Playwright/CDP GUI agent.
+control plane + tool plane + execution plane, driven by a single Eino (ADK)
+agent runtime, with MCP tools, SSE streaming, Clarify interrupt + checkpoint
+resume, a Playwright/CDP GUI agent, a React workspace UI, and an end-to-end
+research-report → quant-factor pipeline on top.
 
-## Layout (go.work multi-module)
+## Layout
 
-| Module | Role |
+| Component | Role |
 |--------|------|
 | `orka_core` | protocol + SDK: messages, state, checkpoint, agent runtime, ws, trace, security |
 | `orka_middleware` | tool-abstraction layer: ToolsManager + multi-transport MCP client |
 | `tools_server` | MCP gateway service: multi-source tool aggregation + routing |
-| `orka_control_layer` | control plane: API, SSE chat, middleware pipeline, persistence |
-| `gui_agent` | Python LangGraph/CDP GUI executor (independent); plans with UI-TARS (`GUI_PLANNER=uitars`) or a DOM-first rule/SoM-VLM fallback |
+| `orka_control_layer` | control plane: API, SSE chat, Eino runtime, persistence, quant pipeline |
+| `web` | React + Vite workspace UI: chat thread, execution timeline, artifacts, factor library |
+| `gui_agent` | Python CDP GUI executor (independent); plans with UI-TARS (`GUI_PLANNER=uitars`) or a DOM-first rule/SoM-VLM fallback |
+
+(`orka_core / orka_middleware / tools_server / orka_control_layer` are the four
+`go.work` modules; `web` is a Vite app; `gui_agent` is a Python service.)
+
+## What's inside
+
+- **Agent runtime** — one Eino/ADK ChatModelAgent orchestrates sub-agents
+  (researcher / writer / browser / engineer + the quant workers) as tools;
+  streaming tokens + reasoning, structured `plan` events, and a live execution
+  timeline in the UI.
+- **Tools** — filesystem, web search/fetch, HTTP, code (`python`/`shell`), office
+  & data (docx/pdf/csv/sql/chart), a GUI browser tool, plus artifact publishing.
+- **Human-in-the-loop** — `clarify` (pause & ask) and a danger-tool confirm gate
+  with allow-once / always-this-session / deny.
+- **Automation** — reusable Workflow DAGs, cron-scheduled tasks + webhooks, and a
+  Runs/Mission-Control view with run-to-run diff.
+- **Artifacts** — live, shareable pages (chart / mermaid / sandboxed HTML).
+- **Quant factor pipeline** — turns the natural-language investment logic in
+  research reports (PDF/HTML/MD) into backtestable factors: parse → double-blind
+  extract → GP-evolve + backtest → schema-validate → human review → factor
+  library. Real A-share data via akshare (synthetic fallback). See below.
 
 ## Quick start
 
@@ -97,7 +120,6 @@ curl -s $B/metrics
 
 | Env | Effect |
 |-----|--------|
-| `RUN_MODE=graph` | deterministic Graph runner (reproducible) instead of model-driven ADK |
 | `TOOLS_MCP_URL=` | source tools from a remote tools_server over MCP (else local fs tools) |
 | `GUI_AGENT_WS_URL=` | wire the real `run_agent` GUI tool (else a mock) |
 | `SCHEDULER_ENABLE=1` | run the cron scheduler (renders task templates → triggers chat) |
@@ -112,6 +134,32 @@ curl -s $B/metrics
 ```bash
 make eval   # replays recorded samples, asserts tool-sequence + final, checks adk==graph
 ```
+
+## Quant factor pipeline
+
+Turns research reports into backtestable, human-reviewed quant factors.
+
+```bash
+# 1) drop reports (PDF/HTML/MD) into the caller's workspace under reports/
+#    (BASE_STORAGE_PATH/<user>/reports/…)
+# 2) run the pipeline over every report (detached; one isolated Workflow run each)
+curl -s -X POST $B/quant/pipeline/run  -H "Authorization: Bearer $TOK"
+# 3) inspect / review the factor library
+curl -s -X POST $B/quant/factors       -H "Authorization: Bearer $TOK"
+curl -s -X POST $B/quant/factor/status -H "Authorization: Bearer $TOK" \
+     -d '{"factor_id":"…","status":"approved"}'   # or rejected
+```
+
+Stages (a Workflow DAG, each step retried): `parse → propose_a / propose_b
+(double-blind) → agreement gate → gp_evolve + backtest → validate → review →
+ingest`. Factors land as `backtested` (pending) and are approved in the UI's
+**因子 (factors)** panel; only approved factors feed weighted portfolios.
+
+Backtest data comes from **akshare** (real A-share bars + valuation), cached on
+disk per day; it falls back to a deterministic synthetic panel if akshare/network
+is unavailable. Point `ORKA_QUANT_PYTHON` at a venv that has `akshare` installed
+(see the persistence table above). Set `ORKA_BACKTEST_OFFLINE=1` to force the
+synthetic panel (used by tests).
 
 ## Security model
 

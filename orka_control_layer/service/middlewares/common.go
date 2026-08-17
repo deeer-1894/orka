@@ -4,22 +4,14 @@
 package middlewares
 
 import (
-	"encoding/json"
-
 	"github.com/orka-oss/orka_core/agent"
-	"github.com/orka-oss/orka_core/messages"
-	"github.com/orka-oss/orka_control_layer/llm"
 )
 
 // Var keys shared across middlewares.
 const (
-	VarLLMHistory     = "llm_history"     // []llm.ChatMessage
-	VarFinal          = "final"           // string: final assistant content
-	VarPlan           = "plan"            // string: generated plan
-	VarPendingClarify = "pending_clarify" // messages.ClarifyMessage
-	VarResumeKey      = "resume_key"      // string: set by runner on resume
-	VarRunTokens      = "run_tokens"      // int: total tokens this run
-	VarRunTools       = "run_tools"       // int: total tool calls this run
+	VarFinal     = "final"      // string: final assistant content
+	VarRunTokens = "run_tokens" // int: total tokens this run
+	VarRunTools  = "run_tools"  // int: total tool calls this run
 )
 
 // Typed, named accessors for the shared vars. Prefer these over raw
@@ -68,60 +60,3 @@ const DefaultSystemPrompt = "You are Orka, a helpful enterprise AI agent. " +
 	"the plan if you learn something new along the way. For a simple one-step request, skip the " +
 	"plan and just answer.\n" +
 	"Answer in the user's language."
-
-// getHistory reads the LLM history from Vars, tolerating a JSON-restored value
-// (e.g. after a checkpoint round-trip where the concrete type is lost).
-func getHistory(rc *agent.RunContext) []llm.ChatMessage {
-	v, ok := rc.Vars[VarLLMHistory]
-	if !ok {
-		return nil
-	}
-	if h, ok := v.([]llm.ChatMessage); ok {
-		return h
-	}
-	return redecode[[]llm.ChatMessage](v)
-}
-
-func setHistory(rc *agent.RunContext, h []llm.ChatMessage) {
-	rc.Vars[VarLLMHistory] = h
-}
-
-// getPendingClarify reads a pending clarify, tolerating JSON-restored values.
-func getPendingClarify(rc *agent.RunContext) (messages.ClarifyMessage, bool) {
-	v, ok := rc.Vars[VarPendingClarify]
-	if !ok {
-		return messages.ClarifyMessage{}, false
-	}
-	if c, ok := v.(messages.ClarifyMessage); ok {
-		return c, true
-	}
-	return redecode[messages.ClarifyMessage](v), true
-}
-
-// isResumed reports whether the runner injected a resume.
-func isResumed(rc *agent.RunContext) bool {
-	_, ok := rc.Vars[VarResumeKey]
-	return ok
-}
-
-// lastUserMessage returns the content of the most recent user chat message.
-func lastUserMessage(msgs []messages.Message) string {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Type == messages.EventChat && msgs[i].Role == messages.RoleUser {
-			return msgs[i].Content
-		}
-	}
-	return ""
-}
-
-// redecode marshals v to JSON and back into type T (used to recover concrete
-// types from interface{} values restored from a checkpoint).
-func redecode[T any](v any) T {
-	var out T
-	b, err := json.Marshal(v)
-	if err != nil {
-		return out
-	}
-	_ = json.Unmarshal(b, &out)
-	return out
-}
