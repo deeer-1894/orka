@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"io"
 	"strconv"
 	"time"
@@ -46,8 +47,8 @@ func (a *API) GetArtifact(ctx context.Context, c *app.RequestContext) {
 	a.respondArtifact(ctx, c, art, req.Version)
 }
 
-// ArtifactByConversation returns the artifact attached to a conversation (if
-// any), so the chat thread can show a live card. 404 when there's none.
+// ArtifactByConversation returns the artifact attached to a conversation so
+// the chat thread can show a live card. An absent artifact is a normal null.
 func (a *API) ArtifactByConversation(ctx context.Context, c *app.RequestContext) {
 	var req struct {
 		ConversationID string `json:"conversation_id"`
@@ -57,8 +58,16 @@ func (a *API) ArtifactByConversation(ctx context.Context, c *app.RequestContext)
 		return
 	}
 	art, err := a.Store.GetArtifactByConversation(ctx, req.ConversationID)
-	if err != nil || !art.CanRead(authEmail(c)) {
-		fail(c, consts.StatusNotFound, "none")
+	if errors.Is(err, db.ErrNotFound) {
+		ok(c, nil)
+		return
+	}
+	if err != nil {
+		fail(c, consts.StatusInternalServerError, "artifact lookup failed")
+		return
+	}
+	if !art.CanRead(authEmail(c)) {
+		fail(c, consts.StatusNotFound, "not found")
 		return
 	}
 	ok(c, art)

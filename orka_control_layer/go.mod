@@ -3,7 +3,7 @@ module github.com/orka-oss/orka_control_layer
 go 1.25.5
 
 require (
-	github.com/cloudwego/eino v0.9.6
+	github.com/cloudwego/eino v0.9.15
 	github.com/cloudwego/hertz v0.10.4
 	github.com/eino-contrib/jsonschema v1.0.3
 	github.com/orka-oss/orka_core v0.0.0

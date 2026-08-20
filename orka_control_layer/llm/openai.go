@@ -81,13 +81,19 @@ type wireTool struct {
 }
 
 type wireRequest struct {
-	Model       string           `json:"model"`
-	Messages    []wireReqMessage `json:"messages"`
-	Tools       []wireTool       `json:"tools,omitempty"`
-	Temperature float32          `json:"temperature,omitempty"`
-	MaxTokens   int              `json:"max_tokens,omitempty"`
-	Stream      bool             `json:"stream,omitempty"`
-	StreamOpts  *streamOpts      `json:"stream_options,omitempty"`
+	Model              string                  `json:"model"`
+	Messages           []wireReqMessage        `json:"messages"`
+	Tools              []wireTool              `json:"tools,omitempty"`
+	ToolChoice         string                  `json:"tool_choice,omitempty"`
+	ChatTemplateKwargs *wireChatTemplateKwargs `json:"chat_template_kwargs,omitempty"`
+	Temperature        float32                 `json:"temperature,omitempty"`
+	MaxTokens          int                     `json:"max_tokens,omitempty"`
+	Stream             bool                    `json:"stream,omitempty"`
+	StreamOpts         *streamOpts             `json:"stream_options,omitempty"`
+}
+
+type wireChatTemplateKwargs struct {
+	EnableThinking bool `json:"enable_thinking"`
 }
 
 // wireReqMessage is the OUTGOING message; Content is `any` so it can be a plain
@@ -125,14 +131,22 @@ type wireResponse struct {
 		FinishReason string      `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *wireUsage `json:"usage"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error"`
+	Error *wireError `json:"error"`
+}
+
+type wireError struct {
+	Message string `json:"message"`
 }
 
 // toWireRequest maps the public Request to the OpenAI wire format.
 func toWireRequest(req Request) wireRequest {
-	wr := wireRequest{Model: req.Model, Temperature: req.Temperature, MaxTokens: req.MaxTokens}
+	wr := wireRequest{
+		Model: req.Model, ToolChoice: req.ToolChoice,
+		Temperature: req.Temperature, MaxTokens: req.MaxTokens,
+	}
+	if req.DisableThinking {
+		wr.ChatTemplateKwargs = &wireChatTemplateKwargs{EnableThinking: false}
+	}
 	for _, m := range req.Messages {
 		wm := wireReqMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID, Name: m.Name}
 		if len(m.Images) > 0 {
@@ -159,10 +173,74 @@ func toWireRequest(req Request) wireRequest {
 		wt.Type = "function"
 		wt.Function.Name = t.Name
 		wt.Function.Description = t.Description
-		wt.Function.Parameters = t.Parameters
+		wt.Function.Parameters = normalizeToolParameters(t.Parameters)
 		wr.Tools = append(wr.Tools, wt)
 	}
 	return wr
+}
+
+// normalizeToolParameters rewrites JSON Schema boolean schemas into their
+// object-schema equivalent. Some OpenAI-compatible tool parsers reject valid
+// constructs such as items:true and additionalProperties:true, while accepting
+// the equivalent empty schema object. Boolean data values (for example
+// default:true) are deliberately left untouched.
+func normalizeToolParameters(params map[string]any) map[string]any {
+	normalized, ok := normalizeSchema(params).(map[string]any)
+	if !ok {
+		return params
+	}
+	return normalized
+}
+
+func normalizeSchema(value any) any {
+	switch v := value.(type) {
+	case bool:
+		if v {
+			return map[string]any{}
+		}
+		return v
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, child := range v {
+			switch key {
+			case "properties", "patternProperties", "dependentSchemas", "$defs", "definitions":
+				out[key] = normalizeSchemaMap(child)
+			case "allOf", "anyOf", "oneOf", "prefixItems":
+				out[key] = normalizeSchemaList(child)
+			case "additionalProperties", "unevaluatedProperties", "items", "additionalItems", "unevaluatedItems", "contains", "not", "if", "then", "else", "propertyNames":
+				out[key] = normalizeSchema(child)
+			default:
+				out[key] = child
+			}
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func normalizeSchemaMap(value any) any {
+	m, ok := value.(map[string]any)
+	if !ok {
+		return value
+	}
+	out := make(map[string]any, len(m))
+	for key, child := range m {
+		out[key] = normalizeSchema(child)
+	}
+	return out
+}
+
+func normalizeSchemaList(value any) any {
+	items, ok := value.([]any)
+	if !ok {
+		return value
+	}
+	out := make([]any, len(items))
+	for i, child := range items {
+		out[i] = normalizeSchema(child)
+	}
+	return out
 }
 
 // Chat implements Client.
@@ -239,9 +317,7 @@ type wireStreamChunk struct {
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *wireUsage `json:"usage"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error"`
+	Error *wireError `json:"error"`
 }
 
 // ChatStream implements StreamingClient: it streams content deltas via onDelta
@@ -273,7 +349,6 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 		return Response{}, &APIError{Status: resp.StatusCode, Body: string(raw)}
 	}
-
 	var content, reasoning strings.Builder
 	onReasoning := ReasoningSinkFrom(ctx)
 	type tcAcc struct {
@@ -290,6 +365,15 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if !strings.HasPrefix(line, "data:") {
+			// Some compatible servers return a JSON error body while claiming
+			// text/event-stream and HTTP 200. Do not silently discard it and
+			// misreport the result as an empty model response.
+			var envelope struct {
+				Error *wireError `json:"error"`
+			}
+			if json.Unmarshal([]byte(line), &envelope) == nil && envelope.Error != nil {
+				return Response{}, fmt.Errorf("llm error: %s", envelope.Error.Message)
+			}
 			continue
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
@@ -344,7 +428,6 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 	if err := sc.Err(); err != nil {
 		return Response{}, fmt.Errorf("stream read: %w", err)
 	}
-
 	out := Response{Content: content.String(), Reasoning: reasoning.String(), FinishReason: finish, Usage: usage}
 	for _, idx := range order {
 		acc := toolAcc[idx]

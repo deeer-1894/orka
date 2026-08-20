@@ -16,4 +16,11 @@ export default defineConfig({
       "/api": { target: CONTROL, changeOrigin: true },
     },
   },
+  preview: {
+    host: "0.0.0.0",
+    port: 5174,
+    proxy: {
+      "/api": { target: CONTROL, changeOrigin: true },
+    },
+  },
 });

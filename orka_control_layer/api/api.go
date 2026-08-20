@@ -18,17 +18,18 @@ import (
 
 // API bundles dependencies shared by all controllers.
 type API struct {
-	Store       *db.Storage
-	Log         *slog.Logger
-	Metrics     *obs.Metrics
-	Chat        *service.ChatService
-	BaseStorage string                   // file storage root
-	Directory   connectors.UserDirectory // owner enrichment (cached)
-	Secret      string                   // HMAC secret for session tokens
-	chunks      *chunkManager            // resumable upload state
-	authLimiter *rateLimiter             // throttles login/register attempts
-	hub         *streamHub               // SSE replay buffer for reconnects
-	events      *eventHub                // per-user UI-invalidation event bus
+	Store             *db.Storage
+	Log               *slog.Logger
+	Metrics           *obs.Metrics
+	Chat              *service.ChatService
+	BaseStorage       string                   // file storage root
+	SalesBIReportRoot string                   // generated Sales BI reports and query charts
+	Directory         connectors.UserDirectory // owner enrichment (cached)
+	Secret            string                   // HMAC secret for session tokens
+	chunks            *chunkManager            // resumable upload state
+	authLimiter       *rateLimiter             // throttles login/register attempts
+	hub               *streamHub               // SSE replay buffer for reconnects
+	events            *eventHub                // per-user UI-invalidation event bus
 }
 
 // authEmail returns the authenticated user's email set by AuthMiddleware.

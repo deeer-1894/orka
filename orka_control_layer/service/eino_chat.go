@@ -13,11 +13,11 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/orka-oss/orka_control_layer/llm"
+	"github.com/orka-oss/orka_control_layer/service/middlewares"
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/config"
 	"github.com/orka-oss/orka_core/messages"
-	"github.com/orka-oss/orka_control_layer/llm"
-	"github.com/orka-oss/orka_control_layer/service/middlewares"
 )
 
 // einoOrchestratorName is the orchestrator agent's name; sub-agent events carry
@@ -60,6 +60,104 @@ func (g *budgetGuard) BeforeModelRewriteState(ctx context.Context, state *adk.Ch
 	return ctx, state, nil
 }
 
+const emptyModelRetryPrompt = "The previous model response contained only internal reasoning or no usable output. Respond now with either a valid tool call or a concise final answer. Do not output <think> tags or reasoning alone."
+
+const einoRejectedOutputPrefix = "model output rejected by ShouldRetry at attempt "
+
+// modelResponseRetryConfig recovers from a response shape seen with local
+// reasoning models: HTTP 200 followed by reasoning_content, but no final text
+// or tool call. Retrying with an explicit correction gives the model a new turn
+// boundary instead of failing later with an opaque empty-result error.
+func modelResponseRetryConfig() *adk.ModelRetryConfig {
+	return &adk.ModelRetryConfig{
+		MaxRetries: 2,
+		ShouldRetry: func(_ context.Context, retryCtx *adk.RetryContext) *adk.RetryDecision {
+			if retryCtx.Err != nil || usableAssistantOutput(retryCtx.OutputMessage) || governedSalesBIContinuation(retryCtx.InputMessages) {
+				return &adk.RetryDecision{Retry: false}
+			}
+			modified := append([]*schema.Message(nil), retryCtx.InputMessages...)
+			modified = append(modified, schema.UserMessage(emptyModelRetryPrompt))
+			return &adk.RetryDecision{
+				Retry:                 true,
+				ModifiedInputMessages: modified,
+				RejectReason:          "empty_or_reasoning_only_model_response",
+			}
+		},
+	}
+}
+
+func governedSalesBIContinuation(input []*schema.Message) bool {
+	for i := len(input) - 1; i >= 0; i-- {
+		m := input[i]
+		if m == nil {
+			continue
+		}
+		if m.Role == schema.Tool {
+			if m.Name == "sales_query_answer" || m.Name == "sales_report_generate" {
+				return true
+			}
+			continue
+		}
+		if m.Role == schema.Assistant {
+			for _, tc := range m.ToolCalls {
+				if tc.Function.Name == "sales_query_answer" || tc.Function.Name == "sales_report_generate" {
+					return true
+				}
+			}
+		}
+		if m.Role == schema.User {
+			return false
+		}
+	}
+	return false
+}
+
+func usableAssistantOutput(m *schema.Message) bool {
+	if m == nil {
+		return false
+	}
+	if len(m.ToolCalls) > 0 {
+		return true
+	}
+	content := strings.TrimSpace(m.Content)
+	if content == "" {
+		return false
+	}
+	// OpenAIClient falls reasoning_content back into Content for non-agent
+	// consumers. Reject that synthetic shape here so agents do not expose CoT.
+	if reasoning := strings.TrimSpace(m.ReasoningContent); reasoning != "" && content == reasoning {
+		return false
+	}
+	return stripThinkSections(content) != ""
+}
+
+func stripThinkSections(content string) string {
+	for {
+		lower := strings.ToLower(content)
+		start := strings.Index(lower, "<think>")
+		if start < 0 {
+			break
+		}
+		bodyStart := start + len("<think>")
+		endRel := strings.Index(lower[bodyStart:], "</think>")
+		if endRel < 0 {
+			content = content[:start]
+			break
+		}
+		end := bodyStart + endRel + len("</think>")
+		content = content[:start] + content[end:]
+	}
+	return strings.TrimSpace(strings.ReplaceAll(content, "</think>", ""))
+}
+
+func isEinoRetryNotice(err error) bool {
+	if err == nil {
+		return false
+	}
+	var retrying *adk.WillRetryError
+	return errors.As(err, &retrying) || strings.HasPrefix(err.Error(), einoRejectedOutputPrefix)
+}
+
 // summarizationHandlers returns the eino summarization middleware so long runs
 // fold older context into a running summary instead of overflowing — the native
 // replacement for the hand-rolled Memory truncation (which dropped old turns).
@@ -84,10 +182,11 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 		maxIters = 16
 	}
 	return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-		Name:        "orka",
-		Description: "Orka assistant",
-		Instruction: instruction,
-		Model:       llm.NewEinoModel(client, model),
+		Name:             "orka",
+		Description:      "Orka assistant",
+		Instruction:      instruction,
+		ModelRetryConfig: modelResponseRetryConfig(),
+		Model:            llm.NewEinoModel(client, model),
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(withPlan(withClarify(tools)))},
 			ReturnDirectly:  clarifyReturnDirectly(),
@@ -104,6 +203,9 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 func BuildEinoSubAgentTools(ctx context.Context, mainClient llm.Client, mainModel string, miniClient llm.Client, miniModel string, atomic []agent.BaseTool, specs []config.SubAgentConfig) ([]tool.BaseTool, error) {
 	if len(specs) == 0 {
 		specs = DefaultSubAgents()
+	}
+	if err := validateSubAgentTools(specs); err != nil {
+		return nil, err
 	}
 	byName := map[string]agent.BaseTool{}
 	for _, t := range atomic {
@@ -138,10 +240,11 @@ func BuildEinoSubAgentTools(ctx context.Context, mainClient llm.Client, mainMode
 			iters = 12
 		}
 		sub, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-			Name:        sp.Name,
-			Description: sp.Description,
-			Instruction: prompt,
-			Model:       llm.NewEinoModel(client, model),
+			Name:             sp.Name,
+			Description:      sp.Description,
+			Instruction:      prompt,
+			ModelRetryConfig: modelResponseRetryConfig(),
+			Model:            llm.NewEinoModel(client, model),
 			ToolsConfig: adk.ToolsConfig{
 				ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(scoped)},
 			},
@@ -175,10 +278,11 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 		handlers = append(handlers, summarizationHandlers(ctx, miniClient, miniModel)...)
 	}
 	return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-		Name:        einoOrchestratorName,
-		Description: "Orka orchestrator",
-		Instruction: instruction,
-		Model:       llm.NewEinoModel(mainClient, mainModel),
+		Name:             einoOrchestratorName,
+		Description:      "Orka orchestrator",
+		Instruction:      instruction,
+		ModelRetryConfig: modelResponseRetryConfig(),
+		Model:            llm.NewEinoModel(mainClient, mainModel),
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: allTools},
 			ReturnDirectly:     clarifyReturnDirectly(),
@@ -206,6 +310,9 @@ func RunEinoOnce(ctx context.Context, ag adk.Agent, userMessage string) (string,
 			break
 		}
 		if ev.Err != nil {
+			if isEinoRetryNotice(ev.Err) {
+				continue
+			}
 			return "", ev.Err
 		}
 		out := ev.Output
@@ -249,16 +356,20 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 	ctx = llm.WithReasoningSink(ctx, func(delta string) {
 		emit(messages.ReasoningDelta(delta, rc.Meta))
 	})
-	runner := adk.NewRunner(ctx, adk.RunnerConfig{Agent: ag, EnableStreaming: true})
-	iter := runner.Run(ctx, toEinoMessages(rc.Messages))
+	runnerCtx, cancelRunner := context.WithCancel(ctx)
+	defer cancelRunner()
+	assistCapture := &salesBIAssistCapture{cancel: cancelRunner}
+	runnerCtx = withSalesBIAssistCapture(runnerCtx, assistCapture)
+	runner := adk.NewRunner(runnerCtx, adk.RunnerConfig{Agent: ag, EnableStreaming: true})
+	iter := runner.Run(runnerCtx, toEinoMessages(rc.Messages))
 
 	type pendingCall struct {
 		name string
 		args map[string]any
 	}
 	calls := map[string]pendingCall{} // tool_call_id → call info (for args)
-	tokens, toolCalls := 0, 0          // per-run audit counters (incl. sub-agents)
-	lastFinal := ""                    // orchestrator's final answer → run output
+	tokens, toolCalls := 0, 0         // per-run audit counters (incl. sub-agents)
+	lastFinal := ""                   // orchestrator's final answer → run output
 	defer func() {
 		rc.Put(middlewares.VarRunTokens, tokens)
 		rc.Put(middlewares.VarRunTools, toolCalls)
@@ -272,6 +383,17 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 		if !ok {
 			break
 		}
+		if captured, ok := assistCapture.take(); ok {
+			toolCalls++
+			emit(messages.Tool("call", map[string]any{
+				"tool":   captured.toolName,
+				"args":   salesBIAuditArgs(captured.toolName, captured.args),
+				"result": salesBIAuditResult(captured.toolName, captured.raw),
+			}, rc.Meta))
+			if pauseForSalesBIAssist(rc, captured.raw, rc.Meta) {
+				return nil
+			}
+		}
 		if ev.Err != nil {
 			// Graceful degradation: hitting the iteration cap shouldn't hard-fail
 			// a long, expensive run — surface a note and return what we have so the
@@ -283,6 +405,9 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 					lastFinal = note
 				}
 				return nil
+			}
+			if isEinoRetryNotice(ev.Err) {
+				continue
 			}
 			return ev.Err
 		}
@@ -303,6 +428,9 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 		if mv.IsStreaming {
 			full, err := drainEinoStream(mv.MessageStream, mv.Role, eventMeta, emit)
 			if err != nil {
+				if isEinoRetryNotice(err) {
+					continue
+				}
 				return err
 			}
 			m = full
@@ -345,9 +473,73 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 				return nil
 			}
 			toolCalls++
-			payload := map[string]any{"tool": name, "args": pc.args, "result": m.Content}
+			payload := map[string]any{
+				"tool":   name,
+				"args":   salesBIAuditArgs(name, pc.args),
+				"result": salesBIAuditResult(name, m.Content),
+			}
 			emit(messages.Tool("call", payload, eventMeta))
+			if eventMeta.AgentID != "" {
+				continue
+			}
+
+			// Publish returns only analysis_text. Combine it with the locked
+			// sealed prefix and stop before a third model generation can rewrite it.
+			if name == "sales_query_publish" {
+				prefix := rc.Str(salesBILockedPrefixKey)
+				analysisText := publishedAnalysisText(m.Content)
+				if prefix != "" && analysisText != "" {
+					part := messages.Chat(messages.RoleAssistant, analysisText, eventMeta)
+					rc.Messages = append(rc.Messages, part)
+					emit(part)
+					lastFinal = prefix + "\n\n" + analysisText
+					delete(rc.Vars, salesBIAnalysisPendingKey)
+					return nil
+				}
+			}
+
+			if name == "sales_report_generate" && pendingReportID(m.Content) != "" {
+				rc.Put(salesBIReportPendingKey, m.Content)
+			}
+
+			v := governedToolResult(name, m.Content)
+			switch {
+			case v.Terminal:
+				if name == "sales_report_generate" {
+					delete(rc.Vars, salesBIReportPendingKey)
+				}
+				answer := messages.Chat(messages.RoleAssistant, v.SealedAnswer, eventMeta)
+				rc.Messages = append(rc.Messages, answer)
+				lastFinal = v.SealedAnswer
+				emit(answer)
+				return nil
+			case v.Continuation == "analysis_publish":
+				// The complete tool result remains in Eino's context, including the
+				// fact ledger needed to construct the publish narrative.
+				prefix := messages.Chat(messages.RoleAssistant, v.SealedAnswer, eventMeta)
+				rc.Messages = append(rc.Messages, prefix)
+				rc.Put(salesBILockedPrefixKey, v.SealedAnswer)
+				rc.Put(salesBIAnalysisPendingKey, m.Content)
+				lastFinal = v.SealedAnswer
+				emit(prefix)
+			case v.Continuation == "assist":
+				raw := m.Content
+				if captured, ok := assistCapture.take(); ok {
+					raw = captured.raw
+				}
+				if pauseForSalesBIAssist(rc, raw, eventMeta) {
+					return nil
+				}
+				answer := messages.Chat(messages.RoleAssistant, v.SealedAnswer, eventMeta)
+				rc.Messages = append(rc.Messages, answer)
+				lastFinal = v.SealedAnswer
+				emit(answer)
+				return nil
+			}
 		}
+	}
+	if lastFinal == "" {
+		return errors.New("model completed without assistant content or tool call")
 	}
 	return nil
 }
@@ -429,7 +621,20 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	if rc.Ctx != nil {
 		runCtx = rc.Ctx
 	}
-	return StreamEinoRun(runCtx, rc, ag, rc.Emit)
+	streamErr := StreamEinoRun(runCtx, rc, ag, rc.Emit)
+	if rc.Str(salesBIReportPendingKey) != "" {
+		if errors.Is(streamErr, context.Canceled) {
+			return streamErr
+		}
+		return publishPendingSalesBIReport(runCtx, rc, tools)
+	}
+	if streamErr != nil {
+		return streamErr
+	}
+	if rc.Str(salesBIAnalysisPendingKey) != "" {
+		return publishPendingSalesBIAnalysis(runCtx, rc, client, model, instruction, tools)
+	}
+	return nil
 }
 
 func parseJSONArgs(s string) map[string]any {

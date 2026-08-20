@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
@@ -157,6 +158,12 @@ func main() {
 	// open tabs via the API event bus, so the bell/runs refresh without polling.
 	chat.OnEvent = a.PublishEvent
 	a.BaseStorage = cfg.Storage.BaseStoragePath
+	a.SalesBIReportRoot = os.Getenv("SALES_REPORT_ROOT")
+	if a.SalesBIReportRoot == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			a.SalesBIReportRoot = filepath.Join(home, ".qwenpaw", "workspaces", "default", "reports", "sales")
+		}
+	}
 	// User session tokens are signed with a key DISTINCT from the control<->tools
 	// context-token key, so the two token types are not interchangeable.
 	a.Secret = cfg.SessionSecret()

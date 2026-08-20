@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/orka-oss/orka_core/pathsafe"
 	"github.com/orka-oss/orka_control_layer/llm"
+	"github.com/orka-oss/orka_core/pathsafe"
 )
 
 // Attachments are processed into TEXT that augments the user's message, so they
@@ -74,8 +74,9 @@ func (s *ChatService) describeImages(ctx context.Context, userText string, urls 
 	prompt := "Describe the attached image(s) in detail and extract ALL text, data, and elements relevant to the user's request. " +
 		"Be thorough and literal — this description is the only way a downstream text-only agent can 'see' the image.\n\nUser's request: " + userText
 	resp, err := s.Main.Chat(ctx, llm.Request{
-		Model:    vlm,
-		Messages: []llm.ChatMessage{{Role: llm.RoleUser, Content: prompt, Images: urls}},
+		Model:           vlm,
+		DisableThinking: true,
+		Messages:        []llm.ChatMessage{{Role: llm.RoleUser, Content: prompt, Images: urls}},
 	})
 	if err != nil {
 		if s.Log != nil {

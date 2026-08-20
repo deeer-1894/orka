@@ -31,10 +31,9 @@ func (s *ChatService) SuggestFollowups(ctx context.Context, prompt, answer strin
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	resp, err := s.Mini.Chat(ctx, llm.Request{
-		Model: model,
-		// Headroom: the reasoning mini model spends ~450 tokens thinking before the
-		// tiny JSON answer, so a low cap would truncate the answer entirely.
-		MaxTokens: 800,
+		Model:           model,
+		DisableThinking: true,
+		MaxTokens:       800,
 		Messages: []llm.ChatMessage{
 			{Role: llm.RoleSystem, Content: sys},
 			{Role: llm.RoleUser, Content: user},

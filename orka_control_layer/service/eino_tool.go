@@ -111,6 +111,9 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 		}
 		return "tool error (recoverable — try a different approach, another tool, or proceed without this result): " + err.Error(), nil
 	}
+	if captureSalesBIAssist(ctx, name, args, out) {
+		out = salesBIAuditResult(name, out)
+	}
 	if cacheable && out != "" {
 		toolCachePut(cacheKey, out)
 	}

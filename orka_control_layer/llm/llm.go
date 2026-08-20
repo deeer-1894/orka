@@ -36,7 +36,7 @@ type ToolCall struct {
 type ChatMessage struct {
 	Role       string     `json:"role"`
 	Content    string     `json:"content"`
-	Images     []string   `json:"-"`                      // data URLs sent alongside Content (vision models)
+	Images     []string   `json:"-"` // data URLs sent alongside Content (vision models)
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"` // set when Role == tool
 	Name       string     `json:"name,omitempty"`         // tool name for tool results
@@ -51,11 +51,13 @@ type ToolSpec struct {
 
 // Request is a chat-completions request.
 type Request struct {
-	Model       string
-	Messages    []ChatMessage
-	Tools       []ToolSpec
-	Temperature float32
-	MaxTokens   int // 0 = provider default; caps output (also bounds reasoning latency)
+	Model           string
+	Messages        []ChatMessage
+	Tools           []ToolSpec
+	ToolChoice      string // "required" forces a tool call; empty lets the provider decide
+	DisableThinking bool   // request direct final text/tool calls from reasoning-capable local models
+	Temperature     float32
+	MaxTokens       int // 0 = provider default; caps output (also bounds reasoning latency)
 }
 
 // Usage reports token consumption for a call (when the provider returns it).

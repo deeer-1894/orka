@@ -16,6 +16,7 @@ import type {
   WorkflowStep,
 } from "./types";
 import { toastError } from "./lib/toast";
+import type { SalesBIAsset } from "./lib/salesBIAssets";
 
 const BASE = "/api/v1/controller";
 const TOKEN_KEY = "orka.token";
@@ -68,7 +69,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     toastError("服务暂时不可用，请稍后再试");
     throw new Error("server " + res.status);
   }
-  return (j.data ?? j) as T;
+  return (Object.prototype.hasOwnProperty.call(j, "data") ? j.data : j) as T;
 }
 
 async function get<T>(path: string): Promise<T> {
@@ -102,7 +103,7 @@ export const chat = {
 
 export const artifacts = {
   list: () => post<{ artifacts: Artifact[] }>("/artifact/list", {}),
-  byConversation: (conversation_id: string) => post<Artifact>("/artifact/by-conversation", { conversation_id }),
+  byConversation: (conversation_id: string) => post<Artifact | null>("/artifact/by-conversation", { conversation_id }),
   get: (artifact_id: string, version = 0) =>
     post<{ artifact: Artifact; version: ArtifactVersion }>("/artifact/get", { artifact_id, version }),
   getBySlug: (slug: string, version = 0) =>
@@ -265,6 +266,15 @@ export const files = {
     }
     return filename;
   },
+};
+
+function salesBIAssetURL(asset: SalesBIAsset, download = false): string {
+  return `${BASE}/sales-bi/asset?path=${encodeURIComponent(asset.path)}&token=${encodeURIComponent(auth.token())}${download ? "&download=1" : ""}`;
+}
+
+export const salesBIAssets = {
+  previewURL: (asset: SalesBIAsset) => salesBIAssetURL(asset),
+  downloadURL: (asset: SalesBIAsset) => salesBIAssetURL(asset, true),
 };
 
 function blobToB64(b: Blob): Promise<string> {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -34,8 +35,8 @@ type ChatRunRequest struct {
 	SelectedVersion string   `json:"selected_version"`
 	ResumeKey       string   `json:"resume_key"`
 	UserEmail       string   `json:"user_email"`
-	ActiveSkill     string   `json:"active_skill"` // user-locked skill mode (deterministic prompt injection)
-	Trigger         string   `json:"trigger"`      // manual | schedule (audit: how the run was started)
+	ActiveSkill     string   `json:"active_skill"`  // user-locked skill mode (deterministic prompt injection)
+	Trigger         string   `json:"trigger"`       // manual | schedule (audit: how the run was started)
 	ConfirmRisky    bool     `json:"confirm_risky"` // gate side-effecting tools behind user approval
 }
 
@@ -45,13 +46,13 @@ type ToolsProvider func(ctx context.Context, req ChatRunRequest) (tools []agent.
 
 // ChatService runs the end-to-end chat path.
 type ChatService struct {
-	Cfg     *config.Config
-	Main    llm.Client
-	Mini    llm.Client
-	CP      checkpoint.Store
-	Msg     *message_utils.Messenger
-	Metrics *obs.Metrics
-	Log     *slog.Logger
+	Cfg      *config.Config
+	Main     llm.Client
+	Mini     llm.Client
+	CP       checkpoint.Store
+	Msg      *message_utils.Messenger
+	Metrics  *obs.Metrics
+	Log      *slog.Logger
 	ToolsFor ToolsProvider
 	// InvalidateTools busts a user's cached tool connections (e.g. after they
 	// add/remove an MCP connector). Set by main when the pooled provider is wired.
@@ -118,6 +119,10 @@ func (s *ChatService) Kill(id string) bool {
 // Run executes one chat request, streaming events through raw. It blocks until
 // the run completes, interrupts (clarify) or is cancelled. raw writes SSE frames.
 func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(messages.Message)) string {
+	req = routeSalesBIRequest(req)
+	if req.ResumeKey != "" && s.resumeCheckpointHasSalesBIAssist(parent, req.ResumeKey) {
+		req.ActiveSkill = salesBISkillName
+	}
 	traceID := trace.NewTraceID()
 	meta := messages.Meta{
 		ConversationID: req.ConversationID,
@@ -144,6 +149,9 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	go s.heartbeat(hbCtx, meta, raw)
 
 	model, modelName := s.modelFor(req.SelectedVersion)
+	if strings.EqualFold(strings.TrimSpace(req.ActiveSkill), salesBISkillName) {
+		model = forceFirstSalesBITool(model)
+	}
 
 	// Root trace span for the whole run; tool spans (in tools-mid) nest under it.
 	spanCtx, endSpan := trace.StartSpan(trace.WithTraceID(ctx, traceID), "chat.run", map[string]string{
@@ -219,7 +227,8 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	if req.ResumeKey != "" {
 		err = s.resume(ctx, rc, req, raw, deps, tools, model, modelName)
 		if err != nil {
-			return s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err()) // resume() already emitted the failure event
+			s.finish(ctx, rc, meta, raw, err)
+			return s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err())
 		}
 	} else {
 		// Seed with prior turns (memory) + persist the new user message
@@ -418,8 +427,7 @@ func (s *ChatService) resume(ctx context.Context, rc *agent.RunContext, req Chat
 	c, err := s.CP.Claim(ctx, req.ResumeKey)
 	if err != nil {
 		// not found / already consumed -> reject duplicate or expired resume
-		s.Msg.Deliver(rc, raw, taskFailed(rc.Meta, "resume rejected: checkpoint not found or already used"), true)
-		return err
+		return fmt.Errorf("resume rejected: checkpoint not found or already used: %w", err)
 	}
 	if s.Metrics != nil {
 		s.Metrics.Checkpoints.Add(-1)
@@ -439,6 +447,13 @@ func (s *ChatService) resume(ctx context.Context, rc *agent.RunContext, req Chat
 		s.Msg.Deliver(rc, nil, um, true)
 	}
 	rc.Interrupt = nil
+	resumeTools, resumeModel, handled, err := prepareSalesBIAssistResume(ctx, rc, tools, model, modelName, req.Message)
+	if err != nil {
+		return err
+	}
+	if handled {
+		tools, model = resumeTools, resumeModel
+	}
 	return s.runEino(ctx, rc, deps, tools, model, modelName, raw)
 }
 
@@ -551,7 +566,7 @@ func (s *ChatService) titleAsync(convID, message string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		resp, err := model.Chat(ctx, llm.Request{Model: modelName, Messages: []llm.ChatMessage{
+		resp, err := model.Chat(ctx, llm.Request{Model: modelName, DisableThinking: true, Messages: []llm.ChatMessage{
 			{Role: llm.RoleSystem, Content: "You generate a very short chat title (max 6 words) summarizing the user's first message. Reply with ONLY the title — same language as the message, no quotes, no punctuation at the end, no prefixes."},
 			{Role: llm.RoleUser, Content: message},
 		}})
@@ -568,7 +583,7 @@ func (s *ChatService) titleAsync(convID, message string) {
 
 // cleanTitle trims the model's title output to a safe single-line label.
 func cleanTitle(s string) string {
-	t := strings.TrimSpace(s)
+	t := stripThinkSections(strings.TrimSpace(s))
 	t = strings.Trim(t, "\"'“”「」 \t\n")
 	if i := strings.IndexAny(t, "\n\r"); i >= 0 {
 		t = t[:i]

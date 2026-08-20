@@ -59,16 +59,34 @@ deps() {
 control() {
   say "building control plane…"
   go build -o "$RUN_DIR/orka_control" ./orka_control_layer
-  pkill -f "$RUN_DIR/orka_control" 2>/dev/null || true
-  sleep 1
+  pkill -TERM -x orka_control 2>/dev/null || true
+  local old_gone=false
+  for _ in {1..100}; do
+    if ! pgrep -x orka_control >/dev/null 2>&1; then
+      old_gone=true
+      break
+    fi
+    sleep 0.1
+  done
+  if [ "$old_gone" != true ]; then
+    warn "old control plane did not stop after 10s; forcing it down"
+    pkill -KILL -x orka_control 2>/dev/null || true
+  fi
   say "starting control plane (logs → $LOG)…"
   nohup "$RUN_DIR/orka_control" >"$LOG" 2>&1 &
-  echo $! >"$RUN_DIR/control.pid"
-  sleep 3
+  local new_pid=$!
+  echo "$new_pid" >"$RUN_DIR/control.pid"
   local addr="${CONTROL_ADDR:-:8088}"; local port="${addr##*:}"
-  if ! lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-    tail -n 20 "$LOG" >&2; die "control plane did not come up on :$port"
-  fi
+  for _ in {1..100}; do
+    kill -0 "$new_pid" 2>/dev/null || { tail -n 20 "$LOG" >&2; die "control plane exited before listening on :$port"; }
+    if lsof -nP -a -p "$new_pid" -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+  lsof -nP -a -p "$new_pid" -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 || {
+    tail -n 20 "$LOG" >&2; die "control plane PID $new_pid did not listen on :$port"
+  }
   say "control listening on :$port"
   health_check
 }
@@ -84,7 +102,7 @@ health_check() {
 }
 
 stop() {
-  pkill -f "$RUN_DIR/orka_control" 2>/dev/null && say "control stopped" || warn "control not running"
+  pkill -TERM -x orka_control 2>/dev/null && say "control stopping" || warn "control not running"
 }
 
 case "${1:-all}" in

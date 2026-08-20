@@ -1,8 +1,10 @@
 package service
 
 import (
-	"github.com/orka-oss/orka_core/config"
+	"fmt"
+
 	"github.com/orka-oss/orka_control_layer/service/middlewares"
+	"github.com/orka-oss/orka_core/config"
 )
 
 // This file defines the registry of sub-agents the eino orchestrator can delegate
@@ -90,6 +92,19 @@ func DefaultSubAgents() []config.SubAgentConfig {
 			Model:       "mini",
 		},
 	}
+}
+
+// validateSubAgentTools keeps governed tools on the orchestrator path, where
+// their sealed-answer and continuation contracts are enforced.
+func validateSubAgentTools(specs []config.SubAgentConfig) error {
+	for _, sp := range specs {
+		for _, name := range sp.Tools {
+			if salesBIToolNames[name] {
+				return fmt.Errorf("sub-agent %q cannot bind governed tool %q: the sealed-answer contract is enforced only on the orchestrator path", sp.Name, name)
+			}
+		}
+	}
+	return nil
 }
 
 // OrchestratorPrompt augments the base prompt with delegation guidance so the

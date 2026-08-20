@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/pathsafe"
 	"github.com/orka-oss/orka_core/security"
-	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_middleware/local/filesystem"
 	mcpclient "github.com/orka-oss/orka_middleware/mcp"
 	"github.com/orka-oss/orka_middleware/toolsmanager"
@@ -77,7 +77,18 @@ func (p *mcpPool) get(ctx context.Context, email string) ([]agent.BaseTool, erro
 		closeClients(e.clients)
 		delete(p.entries, email)
 	}
+	e, err := p.connect(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	p.entries[email] = e
+	return e.tools, nil
+}
 
+// connect creates one independent MCP connection set. Sales BI runs use this
+// directly because the connector maintains per-turn flow guards in process;
+// sharing that process across chat runs leaks one question's state into the next.
+func (p *mcpPool) connect(ctx context.Context, email string) (*mcpEntry, error) {
 	tok, err := security.Sign(security.NewToken(email, p.scopes, p.tokenTTL), []byte(p.secret))
 	if err != nil {
 		return nil, err
@@ -115,8 +126,15 @@ func (p *mcpPool) get(ctx context.Context, email string) ([]agent.BaseTool, erro
 		return nil, err
 	}
 	now := time.Now()
-	p.entries[email] = &mcpEntry{clients: clients, tools: tools, created: now, lastUsed: now}
-	return tools, nil
+	return &mcpEntry{clients: clients, tools: tools, created: now, lastUsed: now}, nil
+}
+
+func (p *mcpPool) dedicated(ctx context.Context, email string) ([]agent.BaseTool, func(), error) {
+	e, err := p.connect(ctx, email)
+	if err != nil {
+		return nil, nil, err
+	}
+	return e.tools, func() { closeClients(e.clients) }, nil
 }
 
 // invalidate drops a user's cached connection set so the next run rebuilds it
@@ -220,16 +238,24 @@ func MCPToolsProviderPooled(baseStorage, mcpURL, secret string, tokenTTL time.Du
 	}
 	go pool.janitor(context.Background()) // evict idle connections for process lifetime
 	provider := func(ctx context.Context, req ChatRunRequest) ([]agent.BaseTool, func(), error) {
-		tools, err := pool.get(ctx, req.UserEmail)
+		var tools []agent.BaseTool
+		var cleanup func()
+		var err error
+		if strings.EqualFold(strings.TrimSpace(req.ActiveSkill), salesBISkillName) {
+			tools, cleanup, err = pool.dedicated(ctx, req.UserEmail)
+		} else {
+			tools, err = pool.get(ctx, req.UserEmail)
+		}
 		if err != nil {
 			root := pathsafe.UserRoot(baseStorage, req.UserEmail)
 			fallback := append(filesystem.New(root), GUITool)
 			local := append(append(SkillTools(), ArtifactTools...), QuantTools...)
 			return append(filterEnabled(fallback, req.EnabledTools), local...), nil, err
 		}
-		// no cleanup: the pool owns the connection lifecycle.
+		// Pooled runs return no cleanup; Sales BI's dedicated MCP process is closed
+		// after this run so its flow state cannot poison a later conversation.
 		local := append(append(SkillTools(), ArtifactTools...), QuantTools...)
-		return append(filterEnabled(tools, req.EnabledTools), local...), nil, nil
+		return append(filterEnabled(tools, req.EnabledTools), local...), cleanup, nil
 	}
 	return provider, pool.invalidate
 }

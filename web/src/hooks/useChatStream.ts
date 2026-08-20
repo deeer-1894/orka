@@ -75,6 +75,49 @@ export function useChatStreams() {
 
       const state = { terminal: "streaming" as RunStatus, lastSeq: 0 };
 
+      // Reasoning models can emit hundreds of tiny SSE deltas per second. Fold
+      // them into a bounded render cadence so React does not relayout the whole
+      // thread for every token.
+      let pending: { bucket: string; content: string; template: Message } | null = null;
+      let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const flushDeltas = () => {
+        if (flushTimer !== null) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+        const batch = pending;
+        pending = null;
+        if (!batch || ctrl.signal.aborted) return;
+        setConvMessages(cid, (m) => {
+          // The first answer batch ends reasoning. Tool events intentionally do
+          // not remove it, so multi-tool reasoning keeps one stable block.
+          let copy = batch.bucket === STREAM_ID ? m.filter((x) => x.id !== REASON_ID) : m;
+          copy = [...copy];
+          const i = copy.findIndex((x) => x.id === batch.bucket);
+          if (i >= 0) {
+            copy[i] = { ...copy[i], content: (copy[i].content || "") + batch.content };
+          } else {
+            copy.push({ ...batch.template, id: batch.bucket, content: batch.content });
+          }
+          return copy;
+        });
+      };
+
+      const queueDelta = (bucket: string, msg: Message) => {
+        const content = msg.content || "";
+        if (!content) return;
+        // Preserve event ordering when the model switches from reasoning to its
+        // answer inside the same batching window.
+        if (pending && pending.bucket !== bucket) flushDeltas();
+        if (pending) {
+          pending.content += content;
+        } else {
+          pending = { bucket, content, template: msg };
+        }
+        if (flushTimer === null) flushTimer = setTimeout(flushDeltas, 80);
+      };
+
       const handleFrame = (frame: string) => {
         let data = "";
         for (const ln of frame.split("\n")) {
@@ -93,23 +136,14 @@ export function useChatStreams() {
             // Reasoning ("thinking") deltas accumulate in their own transient
             // bubble so they render as a collapsible indicator, not the answer.
             const bucket = msg.action === "reasoning" ? REASON_ID : STREAM_ID;
-            setConvMessages(cid, (m) => {
-              // The first answer token ends the current thinking round → drop it.
-              let copy = bucket === STREAM_ID ? m.filter((x) => x.id !== REASON_ID) : m;
-              copy = [...copy];
-              const i = copy.findIndex((x) => x.id === bucket);
-              if (i >= 0) {
-                copy[i] = { ...copy[i], content: (copy[i].content || "") + (msg.content || "") };
-              } else {
-                copy.push({ ...msg, id: bucket });
-              }
-              return copy;
-            });
+            queueDelta(bucket, msg);
             return;
           }
+          flushDeltas();
           setConvMessages(cid, (m) => {
-            // A real assistant message or a tool step ends the thinking round.
-            const dropReason = msg.type === "tool" || (msg.type === "chat" && msg.role === "assistant");
+            // A final assistant message ends reasoning. Tool steps keep the same
+            // reasoning block alive for the next model/tool round.
+            const dropReason = msg.type === "chat" && msg.role === "assistant";
             let base = dropReason ? m.filter((x) => x.id !== REASON_ID) : m;
             base = msg.type === "chat" && msg.role === "assistant" ? base.filter((x) => x.id !== STREAM_ID) : base;
             return [...base, msg];
@@ -161,7 +195,12 @@ export function useChatStreams() {
           }),
           signal: ctrl.signal,
         });
+        if (!res.ok) throw new Error(`chat run failed (${res.status})`);
+        if (!res.headers.get("content-type")?.includes("text/event-stream")) {
+          throw new Error("chat run returned a non-stream response");
+        }
         await consume(res);
+        flushDeltas();
 
         // reconnect + replay missed events if the stream dropped mid-run
         let attempts = 0;
@@ -177,7 +216,9 @@ export function useChatStreams() {
               signal: ctrl.signal,
             });
             if (ar.status === 404) break;
+            if (!ar.ok) throw new Error(`chat attach failed (${ar.status})`);
             await consume(ar);
+            flushDeltas();
             attempts = 0;
           } catch {
             /* retry */
@@ -185,7 +226,13 @@ export function useChatStreams() {
         }
         patch(cid, (c) => ({ ...c, status: state.terminal }));
       } catch (e) {
-        if ((e as Error).name !== "AbortError") patch(cid, (c) => ({ ...c, status: "error" }));
+        if ((e as Error).name !== "AbortError") {
+          flushDeltas();
+          patch(cid, (c) => ({ ...c, status: "error" }));
+        }
+      } finally {
+        if (flushTimer !== null) clearTimeout(flushTimer);
+        pending = null;
       }
     },
     [patch, setConvMessages],

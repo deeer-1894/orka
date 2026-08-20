@@ -183,9 +183,6 @@ export function Thread({
   // re-walk the whole conversation.
   const files = useMemo(() => sessionFiles(messages, wsFiles), [messages, wsFiles]);
   const blocks = useMemo(() => group(messages), [messages]);
-  const thinking =
-    status === "streaming" &&
-    (blocks.length === 0 || blocks[blocks.length - 1].kind !== "assistant");
 
   // Each user turn is a navigable anchor for the floating outline (TOC).
   const turns = blocks
@@ -205,6 +202,11 @@ export function Thread({
   const lastUserPrompt = [...blocks].reverse().find((b) => b.kind === "user")?.m.content || "";
   const hasPlan = blocks.some((b) => b.kind === "plan");
   const canAct = status !== "streaming";
+  const hasLiveReasoning = blocks.slice(lastUser + 1).some((b) => b.kind === "reasoning");
+  const thinking =
+    status === "streaming" &&
+    !hasLiveReasoning &&
+    (blocks.length === 0 || blocks[blocks.length - 1].kind !== "assistant");
 
   // In-thread find: scan the loaded conversation for a query and jump between
   // hits. Frontend-only — searches the user/assistant/reasoning text already in
@@ -1115,11 +1117,9 @@ function Thinking() {
       <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent text-white font-serif text-[13px]">
         O
       </div>
-      <div className="flex gap-1" role="status">
-        <span className="dot h-1.5 w-1.5 rounded-full bg-faint" />
-        <span className="dot h-1.5 w-1.5 rounded-full bg-faint" />
-        <span className="dot h-1.5 w-1.5 rounded-full bg-faint" />
-        <span className="sr-only">正在思考…</span>
+      <div className="flex items-center gap-1.5 text-[12px] text-faint" role="status">
+        <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+        <span>正在思考</span>
       </div>
     </div>
   );
@@ -1132,23 +1132,23 @@ function Spinner() {
 // Reasoning renders a reasoning model's live "thinking" tokens as a compact,
 // collapsible indicator — so a long reasoning call shows visible progress.
 function Reasoning({ m }: { m: Message }) {
-  const [open, setOpen] = useState(true);
-  const endRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
   const text = m.content || "";
   useEffect(() => {
-    if (open) endRef.current?.scrollIntoView({ block: "nearest" });
+    const panel = panelRef.current;
+    if (open && panel) panel.scrollTop = panel.scrollHeight;
   }, [text, open]);
   return (
     <div className="mb-4 ml-[42px]">
       <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-[12px] text-faint hover:text-muted">
-        <span className="dot h-1.5 w-1.5 rounded-full bg-accent" />
-        <span>💭 思考中{open ? "" : "…"}</span>
+        <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+        <span>思考中{open ? "" : "…"}</span>
         <Icon name="chevron" size={11} className={"transition-transform " + (open ? "" : "-rotate-90")} />
       </button>
       {open && text && (
-        <div className="mt-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-surface2/40 px-2.5 py-2 text-[11.5px] leading-relaxed text-faint">
+        <div ref={panelRef} className="mt-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-surface2/40 px-2.5 py-2 text-[11.5px] leading-relaxed text-faint">
           {text}
-          <div ref={endRef} />
         </div>
       )}
     </div>
@@ -1253,13 +1253,6 @@ function Empty({ onPick }: { onPick: (text: string) => void }) {
   const hiddenCount = EXAMPLES.filter((e) => (e as { more?: boolean }).more).length;
   return (
     <div className="relative flex h-full items-center justify-center overflow-hidden px-6 py-10">
-      {/* animated aurora backdrop */}
-      <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="aurora absolute left-[12%] top-[8%] h-72 w-72 rounded-full bg-accent/25 blur-[90px]" />
-        <div className="aurora-2 absolute right-[10%] top-[22%] h-80 w-80 rounded-full bg-[#e8943f]/20 blur-[100px]" />
-        <div className="aurora-3 absolute bottom-[6%] left-[34%] h-72 w-72 rounded-full bg-[#8b5cf6]/12 blur-[100px]" />
-      </div>
-
       <div className="relative w-full max-w-2xl text-center">
         <div className="rise mx-auto mb-4 inline-flex items-center gap-1.5 rounded-full border border-border bg-surface/70 px-3 py-1 text-[11px] font-medium text-muted backdrop-blur">
           <span className="text-accent">⚡</span> AI 自动化执行平台

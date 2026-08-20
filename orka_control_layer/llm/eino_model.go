@@ -94,7 +94,7 @@ func (m *EinoModel) request(input []*schema.Message, opts []model.Option) Reques
 	if co := model.GetCommonOptions(&model.Options{}, opts...); len(co.Tools) > 0 {
 		tools = co.Tools
 	}
-	req := Request{Model: m.model, Messages: toChatMessages(input)}
+	req := Request{Model: m.model, Messages: toChatMessages(input), DisableThinking: true}
 	for _, ti := range tools {
 		req.Tools = append(req.Tools, toToolSpec(ti))
 	}

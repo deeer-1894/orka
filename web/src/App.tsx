@@ -52,6 +52,19 @@ const MODELS_FALLBACK: ModelOption[] = [
   { version: "mini", label: "mini", hint: "更快 · 更省" },
 ];
 
+// Keep the metrics subscription below this component boundary. Its four-second
+// refresh should update only this chip, not the entire workbench and thread.
+function TokenUsage() {
+  const metrics = useResource("metrics", api.metrics, { interval: 4000 });
+  const total = metrics?.total_tokens ?? 0;
+  if (total <= 0) return null;
+  return (
+    <span className="inline-flex items-center gap-1 text-[11px] text-faint" title="本进程累计 token 用量">
+      <Icon name="coin" size={13} /> {total >= 1000 ? (total / 1000).toFixed(1) + "k" : total} tokens
+    </span>
+  );
+}
+
 export default function App() {
   // Public artifact page: /a/<slug>?t=<token> renders standalone, no login.
   const pubMatch = typeof window !== "undefined" && window.location.pathname.match(/^\/a\/([^/]+)$/);
@@ -121,9 +134,6 @@ function Workbench({
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<Tab>("overview");
-  // Shared metrics resource (also feeds the 指标 panel) — one poll, paused when hidden.
-  const metricsRes = useResource("metrics", api.metrics, { interval: 4000 });
-  const totalTokens = metricsRes?.total_tokens ?? 0;
   const [version, setVersion] = useState(""); // selected model version ("" main, "mini")
   const [theme, toggleTheme] = useTheme();
   // Per-conversation enabled tool groups (empty = all tools, the default).
@@ -422,11 +432,7 @@ function Workbench({
             {isShared && <span className="shrink-0 text-[11px] text-faint" title={`由 ${activeConv?.owner_email} 分享`}>· 共享</span>}
           </div>
           <ModelSelect value={version} onChange={setVersion} models={models} />
-          {totalTokens > 0 && (
-            <span className="inline-flex items-center gap-1 text-[11px] text-faint" title="本进程累计 token 用量">
-              <Icon name="coin" size={13} /> {totalTokens >= 1000 ? (totalTokens / 1000).toFixed(1) + "k" : totalTokens} tokens
-            </span>
-          )}
+          <TokenUsage />
           <NotificationBell onJump={onJumpToConversation} />
           <button
             onClick={toggleTheme}
