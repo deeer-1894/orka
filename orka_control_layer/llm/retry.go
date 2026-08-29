@@ -119,6 +119,11 @@ func (r *Retry) backoff(attempt int) time.Duration {
 	return time.Duration(float64(d) * jitter)
 }
 
+// IsTransient reports whether err is a transient failure worth retrying. It is
+// the single classifier shared by this transport-level wrapper and the ADK-level
+// ModelRetryConfig, so both layers agree on what "worth retrying" means.
+func IsTransient(ctx context.Context, err error) bool { return retryable(ctx, err) }
+
 // retryable reports whether err is a transient failure worth retrying. A
 // cancelled/expired context is never retried (the run is going away).
 func retryable(ctx context.Context, err error) bool {

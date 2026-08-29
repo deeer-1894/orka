@@ -47,7 +47,7 @@ func TestEinoAgentDrivesAdaptersEndToEnd(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	ag, err := BuildEinoAgent(ctx, mock, "m", "You are a helpful assistant.", []agent.BaseTool{echo}, 8)
+	ag, err := BuildEinoAgent(ctx, mock, "m", "You are a helpful assistant.", []agent.BaseTool{echo}, 8, nil)
 	if err != nil {
 		t.Fatalf("build eino agent: %v", err)
 	}

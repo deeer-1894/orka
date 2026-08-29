@@ -89,6 +89,12 @@ export function useChatStreams() {
         try {
           const msg = JSON.parse(data) as Message;
           if (msg.type === "heartbeat") return;
+          if (msg.type === "stream" && msg.action === "reset") {
+            // The model call was retried/failed over mid-stream: drop the partial
+            // text from the failed attempt so it isn't concatenated with the new one.
+            setConvMessages(cid, (m) => m.filter((x) => x.id !== STREAM_ID && x.id !== REASON_ID));
+            return;
+          }
           if (msg.type === "stream") {
             // Reasoning ("thinking") deltas accumulate in their own transient
             // bubble so they render as a collapsible indicator, not the answer.

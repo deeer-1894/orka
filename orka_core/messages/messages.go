@@ -94,6 +94,16 @@ func StreamDelta(content string, meta Meta) Message {
 	return m
 }
 
+// StreamReset tells the UI to discard the transient streaming bubble built so
+// far. Emitted when a model call is retried or failed over mid-stream: the
+// partial text from the failed attempt must not be concatenated with the new
+// attempt's output. Not persisted (same as other stream frames).
+func StreamReset(meta Meta) Message {
+	m := New(EventStream, RoleAssistant, meta)
+	m.Action = "reset"
+	return m
+}
+
 // ReasoningDelta is a live "thinking" token delta from a reasoning model, shown
 // in a collapsible indicator (not the answer, not persisted). Distinguished from
 // answer deltas by Action == "reasoning".

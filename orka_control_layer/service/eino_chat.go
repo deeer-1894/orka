@@ -9,6 +9,7 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/middlewares/summarization"
+	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -77,9 +78,11 @@ func summarizationHandlers(ctx context.Context, client llm.Client, model string)
 }
 
 // BuildEinoAgent constructs an eino ReAct ChatModelAgent over our model + tools.
-// handlers are optional middlewares (e.g. summarization) the production path
-// supplies; the minimal/test path passes none for deterministic behavior.
-func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction string, tools []agent.BaseTool, maxIters int, handlers ...adk.ChatModelAgentMiddleware) (adk.Agent, error) {
+// backup is an optional other-tier model to fail over to when retries are
+// exhausted (nil = no failover). handlers are optional middlewares (e.g.
+// summarization) the production path supplies; the minimal/test path passes none
+// for deterministic behavior.
+func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction string, tools []agent.BaseTool, maxIters int, backup einomodel.BaseChatModel, handlers ...adk.ChatModelAgentMiddleware) (adk.Agent, error) {
 	if maxIters <= 0 {
 		maxIters = 16
 	}
@@ -93,7 +96,10 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 			ReturnDirectly:  clarifyReturnDirectly(),
 		},
 		MaxIterations: maxIters,
-		Handlers:      append([]adk.ChatModelAgentMiddleware{newBudgetGuard(maxIters)}, handlers...),
+		// Survive transient/mid-stream model failures instead of failing the run.
+		ModelRetryConfig:    modelRetryConfig(),
+		ModelFailoverConfig: modelFailoverConfig(backup),
+		Handlers:            append([]adk.ChatModelAgentMiddleware{newBudgetGuard(maxIters)}, handlers...),
 	})
 }
 
@@ -146,7 +152,11 @@ func BuildEinoSubAgentTools(ctx context.Context, mainClient llm.Client, mainMode
 				ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(scoped)},
 			},
 			MaxIterations: iters,
-			Handlers:      []adk.ChatModelAgentMiddleware{newBudgetGuard(iters)},
+			// Same resilience as the orchestrator: a delegated worker that dies on a
+			// transient blip still fails the parent step.
+			ModelRetryConfig:    modelRetryConfig(),
+			ModelFailoverConfig: modelFailoverConfig(backupModel(mainClient, mainModel, model)),
+			Handlers:            []adk.ChatModelAgentMiddleware{newBudgetGuard(iters)},
 		})
 		if err != nil {
 			return nil, err
@@ -185,7 +195,11 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 			EmitInternalEvents: true, // stream sub-agent events up for lane rendering
 		},
 		MaxIterations: maxIters,
-		Handlers:      handlers,
+		// A long orchestrated run makes many model calls; one transient blip must
+		// not end it. Retry mid-stream failures, then fail over to the mini tier.
+		ModelRetryConfig:    modelRetryConfig(),
+		ModelFailoverConfig: modelFailoverConfig(backupModel(miniClient, miniModel, mainModel)),
+		Handlers:            handlers,
 	})
 }
 
@@ -418,7 +432,9 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 			}
 			sum = summarizationHandlers(ctx, sumClient, sumModel)
 		}
-		ag, err = BuildEinoAgent(ctx, client, model, instruction, tools, einoMaxIters, sum...)
+		// Fail over to the other model tier when the primary exhausts its retries.
+		ag, err = BuildEinoAgent(ctx, client, model, instruction, tools, einoMaxIters,
+			backupModel(s.Mini, s.Cfg.LLM.MiniModel, model), sum...)
 	}
 	if err != nil {
 		return err
