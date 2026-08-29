@@ -8,7 +8,7 @@ import (
 )
 
 func TestValidateFactorMap(t *testing.T) {
-	ok := map[string]any{"name": "val", "rationale": "low pe outperforms", "expression": "rank(-pe)", "direction": "long"}
+	ok := map[string]any{"name": "val", "rationale": "low pe outperforms", "expression": "rank(value)", "direction": "long"}
 	if errs := validateFactorMap(ok); len(errs) != 0 {
 		t.Fatalf("valid factor flagged: %v", errs)
 	}
@@ -112,5 +112,26 @@ func TestStubMetricsDeterministic(t *testing.T) {
 	}
 	if stubMetrics("rank(roe)") == a {
 		t.Fatalf("different expressions produced identical metrics")
+	}
+}
+
+// TestUnknownSignalsRejected is the controlled-vocabulary gate: a proposal that
+// invents field names the backtest cannot evaluate must FAIL loudly. Before this,
+// the harness silently fell back to a random signal and unrelated theses
+// collapsed onto the same factor.
+func TestUnknownSignalsRejected(t *testing.T) {
+	for _, expr := range []string{"rank(-pe_ttm)", "rank(-vol_20d) + rank(std_20)", "rank(rev_revision)"} {
+		f := map[string]any{"name": "x", "rationale": "r", "direction": "long", "expression": expr}
+		errs := validateFactorMap(f)
+		if len(errs) == 0 {
+			t.Fatalf("expression %q uses unsupported fields but passed validation", expr)
+		}
+	}
+	// Every supported field, with operators and a leading minus, must pass.
+	for _, expr := range []string{"rank(value)", "rank(mom_20) + 0.3*rank(roe)", "zscore(-vol_20)"} {
+		f := map[string]any{"name": "x", "rationale": "r", "direction": "long", "expression": expr}
+		if errs := validateFactorMap(f); len(errs) != 0 {
+			t.Fatalf("expression %q should be valid, got %v", expr, errs)
+		}
 	}
 }

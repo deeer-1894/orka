@@ -53,6 +53,39 @@ func (validateFactorTool) Invoke(_ context.Context, args map[string]any) (string
 
 var directionSet = map[string]bool{"long": true, "short": true, "long_short": true}
 
+// KnownSignals is the CONTROLLED VOCABULARY the backtest harness can actually
+// evaluate. Proposals used to invent field names (pe_ttm, vol_20d, std_20d);
+// the harness could not map them, silently fell back to a random signal, and
+// unrelated theses collapsed onto the same factor. Rejecting unknown fields at
+// the schema gate turns that silent corruption into a fixable error message.
+var KnownSignals = []string{"mom_20", "roe", "value", "vol_20"}
+
+// knownOps are the operators/wrappers the expression grammar allows.
+var knownOps = map[string]bool{"rank": true, "zscore": true}
+
+// identRe pulls bare identifiers out of an expression (function names included).
+var identRe = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
+
+// unknownSignals returns the identifiers in expr that are neither a known signal
+// nor a known operator — i.e. the fields the backtest cannot evaluate.
+func unknownSignals(expr string) []string {
+	known := map[string]bool{}
+	for _, s := range KnownSignals {
+		known[s] = true
+	}
+	var bad []string
+	seen := map[string]bool{}
+	for _, id := range identRe.FindAllString(expr, -1) {
+		low := strings.ToLower(id)
+		if known[low] || knownOps[low] || seen[low] {
+			continue
+		}
+		seen[low] = true
+		bad = append(bad, id)
+	}
+	return bad
+}
+
 // validateFactorMap returns a list of human-readable schema problems ([] = ok).
 func validateFactorMap(f map[string]any) []string {
 	var errs []string
@@ -73,6 +106,9 @@ func validateFactorMap(f map[string]any) []string {
 		errs = append(errs, "expression: required (a machine-evaluable factor expression, not prose)")
 	} else if len(strings.Fields(expr)) == 1 && !exprLooksReal(expr) {
 		errs = append(errs, "expression: looks like a bare word, not a factor formula")
+	} else if bad := unknownSignals(expr); len(bad) > 0 {
+		errs = append(errs, fmt.Sprintf("expression: unknown field(s) %s — the backtest only supports %s (wrap in rank()/zscore(); use a leading minus for \"lower is better\", e.g. rank(-value))",
+			strings.Join(bad, ", "), strings.Join(KnownSignals, ", ")))
 	}
 	dir := strings.ToLower(str("direction"))
 	if dir == "" {

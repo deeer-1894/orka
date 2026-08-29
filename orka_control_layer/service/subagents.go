@@ -1,8 +1,8 @@
 package service
 
 import (
-	"github.com/orka-oss/orka_core/config"
 	"github.com/orka-oss/orka_control_layer/service/middlewares"
+	"github.com/orka-oss/orka_core/config"
 )
 
 // This file defines the registry of sub-agents the eino orchestrator can delegate
@@ -30,7 +30,13 @@ const engineerPrompt = "You are a software-engineering worker with a real termin
 const reportParserPrompt = "You parse financial research reports. Read the given report file (PDF/HTML/MD) with pdf_extract / fetch_url / file_read, and extract the NATURAL-LANGUAGE INVESTMENT LOGIC: each distinct, testable claim about what predicts returns (e.g. 'low-valuation stocks with rising earnings revisions outperform'). " +
 	"If pdf_extract fails or yields garbled text, fall back to reading any HTML/MD form. Return a numbered list; each item = one investment thesis stated as a single clear sentence, with the report's own wording preserved. Do NOT invent theses not supported by the text."
 
-const factorProposerPrompt = "You convert natural-language investment logic into BACKTESTABLE quant factor specs. FIRST call `recall_similar_factors` on each thesis: reuse the expression family of any high-IC match, and flag (rather than duplicate) a factor the library already holds. For each thesis, emit a factor object: {name, rationale (the verbatim logic), expression (a machine-evaluable formula over fields like close, volume, pe, roe, mom_20, rev_revision…), direction (long|short|long_short), universe?, horizon?}. " +
+const factorProposerPrompt = "You convert natural-language investment logic into BACKTESTABLE quant factor specs. FIRST call `recall_similar_factors` on each thesis: reuse the expression family of any high-IC match, and flag (rather than duplicate) a factor the library already holds. For each thesis, emit a factor object: {name, rationale (the verbatim logic), expression, direction (long|short|long_short), universe?, horizon?}. " +
+	"THE EXPRESSION MAY ONLY USE THESE FOUR FIELDS — anything else is rejected by validate_factor and cannot be backtested:\n" +
+	"  mom_20  20-day price momentum (higher = stronger momentum)\n" +
+	"  roe     profitability / earnings quality (higher = better)\n" +
+	"  value   cheapness, ALREADY inverted (higher = cheaper, so a low-PE thesis uses +value, NOT -pe)\n" +
+	"  vol_20  20-day realised volatility (higher = more volatile, so a low-volatility thesis uses -vol_20)\n" +
+	"Wrap each field in rank() or zscore() and combine with + - * / . Example: a cheap-and-rising thesis is `rank(value) + 0.3*rank(mom_20)`; a low-volatility thesis is `rank(-vol_20)`. " +
 	"ALWAYS call `validate_factor` on each factor and FIX whatever it reports until it returns valid:true before you output. Return the validated factors as a JSON array. Prefer simple, economically-sensible expressions over baroque ones."
 
 const factorReviewerPrompt = "You prepare a human review sheet for proposed quant factors. Given the factors and their backtest metrics, produce a concise table: name, direction, IC, Sharpe, turnover, agreement score, and a one-line take on whether it's worth ingesting. Flag anything with weak IC (<0.02), low agreement (<0.7), or extreme turnover. Do NOT ingest anything yourself — recommend, and let the human decide."

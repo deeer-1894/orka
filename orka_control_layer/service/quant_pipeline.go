@@ -119,9 +119,10 @@ func (s *ChatService) SetFactorStatus(owner, factorID, status string) error {
 }
 
 // pipelineConcurrency bounds how many reports process at once. Each report is a
-// long, many-step flow, so we want throughput (10+/day) without hammering the
-// model endpoint or the box; a small pool is the right trade-off.
-const pipelineConcurrency = 3
+// long, many-step flow: we want throughput (10+/day) without tripping the
+// provider's per-account rate limit. The llm.Limiter shapes calls globally, so
+// this only needs to keep the queue from growing unboundedly.
+const pipelineConcurrency = 2
 
 func (s *ChatService) RunFactorPipeline(ctx context.Context, owner string) []string {
 	seedQuantAssets(s.Cfg.Storage.BaseStoragePath, owner) // ensure the harness is in the workspace

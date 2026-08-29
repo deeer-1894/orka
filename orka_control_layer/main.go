@@ -88,7 +88,11 @@ func main() {
 	var mainLLM, miniLLM llm.Client
 	// Wrap the provider client in bounded exponential-backoff retry so a transient
 	// 429/5xx/network blip doesn't fail a whole agentic run (or a sub-agent).
-	mainLLM = llm.NewRetry(
+	// Shape traffic BEFORE retry: the pipeline runs calls in parallel, which is
+	// what a per-account rate limit punishes — retrying a limit you keep
+	// exceeding just burns latency and quota. Tunable via ORKA_LLM_MAX_CONCURRENCY
+	// / ORKA_LLM_MIN_INTERVAL_MS.
+	mainLLM = llm.NewLimiterFromEnv(llm.NewRetry(
 		llm.NewOpenAIClient(cfg.LLM.OpenAIBaseURL, cfg.LLM.OpenAIAPIKey),
 		llm.RetryConfig{
 			MaxAttempts: cfg.LLM.MaxRetries,
@@ -96,7 +100,7 @@ func main() {
 				logger.Warn("llm transient error; retrying", "attempt", attempt, "delay", delay.String(), "err", err.Error())
 			},
 		},
-	)
+	))
 	miniLLM = mainLLM
 
 	msg := message_utils.New(store, cfg.Obs.PersistSampling, logger)
