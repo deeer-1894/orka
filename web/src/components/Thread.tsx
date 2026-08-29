@@ -141,6 +141,7 @@ export function Thread({
   status,
   onResume,
   onResumed,
+  bottomInset = 0,
   onPick,
   onRetry,
   onSchedule,
@@ -152,6 +153,9 @@ export function Thread({
   onResume: (key: string, answer: string) => void;
   // Re-attach to a conversation whose paused run the server just resumed.
   onResumed?: (cid: string) => void;
+  // Height of the floating composer, reserved as bottom padding so the last
+  // message can always be scrolled clear of it.
+  bottomInset?: number;
   onPick: (text: string) => void;
   onRetry: () => void;
   onSchedule: (prompt: string) => void;
@@ -272,7 +276,7 @@ export function Thread({
         onOpen={() => setFindOpen(true)}
         onClose={() => { setFindOpen(false); setFindQuery(""); }}
       />
-      <div className="mx-auto max-w-3xl px-5 pb-24 pt-8">
+      <div className="mx-auto max-w-3xl px-5 pt-8" style={{ paddingBottom: Math.max(bottomInset + 24, 96) }}>
         {startIdx > 0 && (
           <div className="mb-6 text-center">
             <button

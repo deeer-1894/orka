@@ -152,6 +152,20 @@ function Workbench({
 
   const [cmdOpen, setCmdOpen] = useState(false);
 
+  // The floating composer's height becomes the thread's bottom padding, so every
+  // message can be scrolled fully above it no matter how tall the input grows.
+  const composerRef = useRef<HTMLDivElement>(null);
+  const [composerH, setComposerH] = useState(0);
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    const measure = () => setComposerH(el.offsetHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [activeID]);
+
   // Global keyboard shortcuts (mirrors what ChatGPT/Claude/Cursor offer):
   //   ⌘/Ctrl+K  → open the command palette
   //   Esc       → stop the running task (when one is streaming)
@@ -410,7 +424,7 @@ function Workbench({
         onSignOut={onSignOut}
       />
 
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="relative flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 items-center gap-3 px-4">
           <button
             onClick={() => setSidebarOpen((o) => !o)}
@@ -460,17 +474,25 @@ function Workbench({
           </button>
         </header>
 
-        <Thread messages={messages} status={status} onResume={onResume} onResumed={onResumed} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} onFork={onFork} fileConv={isShared ? activeID : undefined} />
-        {activeID && <div className="px-5"><ArtifactBanner conversationId={activeID} onOpen={openArtifactInDrawer} /></div>}
-        {readOnly ? (
-          <div className="mx-auto mb-4 w-full max-w-3xl px-5">
-            <div className="rounded-xl border border-border bg-surface2/50 px-4 py-3 text-center text-[13px] text-muted">
-              👁 只读会话 · 由 {activeConv?.owner_email} 分享 · 你无法发送消息
-            </div>
+        <Thread messages={messages} status={status} onResume={onResume} onResumed={onResumed} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} onFork={onFork} fileConv={isShared ? activeID : undefined} bottomInset={composerH} />
+        {/* The composer floats OVER the thread (its height is fed back as the
+            thread's bottom padding), so the conversation scrolls clear of it
+            instead of the last lines being clipped behind the tool row. */}
+        <div ref={composerRef} className="absolute inset-x-0 bottom-0 z-20">
+          <div aria-hidden className="pointer-events-none h-8 bg-gradient-to-b from-transparent to-bg" />
+          <div className="bg-bg">
+            {activeID && <div className="px-5"><ArtifactBanner conversationId={activeID} onOpen={openArtifactInDrawer} /></div>}
+            {readOnly ? (
+              <div className="mx-auto mb-4 w-full max-w-3xl px-5">
+                <div className="rounded-xl border border-border bg-surface2/50 px-4 py-3 text-center text-[13px] text-muted">
+                  👁 只读会话 · 由 {activeConv?.owner_email} 分享 · 你无法发送消息
+                </div>
+              </div>
+            ) : (
+              <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} confirmRisky={confirmRisky} onToggleConfirm={toggleConfirm} />
+            )}
           </div>
-        ) : (
-          <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} confirmRisky={confirmRisky} onToggleConfirm={toggleConfirm} />
-        )}
+        </div>
       </main>
 
       <ArtifactDrawer
