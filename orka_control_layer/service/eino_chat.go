@@ -69,7 +69,10 @@ func (g *budgetGuard) BeforeModelRewriteState(ctx context.Context, state *adk.Ch
 func summarizationHandlers(ctx context.Context, client llm.Client, model string) []adk.ChatModelAgentMiddleware {
 	mw, err := summarization.New(ctx, &summarization.Config{
 		Model:   llm.NewEinoModel(client, model),
-		Trigger: &summarization.TriggerCondition{ContextMessages: 80},
+		// Reduction now trims oversized/stale tool output first, so summarization
+		// is the backstop for genuinely long dialogue — trigger it earlier than the
+		// old 80-message mark, which a long pipeline blew past on cost alone.
+		Trigger: &summarization.TriggerCondition{ContextMessages: 48},
 	})
 	if err != nil {
 		return nil // summarization is best-effort; never block agent construction
@@ -169,7 +172,9 @@ func BuildEinoSubAgentTools(ctx context.Context, mainClient llm.Client, mainMode
 // BuildEinoOrchestrator builds the orchestrator agent: atomic tools PLUS native
 // sub-agent tools, with EmitInternalEvents so sub-agent events stream up to the
 // user (tagged by AgentName → meta.agent_id for lane grouping).
-func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel string, miniClient llm.Client, miniModel, instruction string, atomic []agent.BaseTool, specs []config.SubAgentConfig, maxIters int, summarize bool) (adk.Agent, error) {
+// extra middlewares (e.g. the context-management chain) run before the built-in
+// summarization backstop.
+func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel string, miniClient llm.Client, miniModel, instruction string, atomic []agent.BaseTool, specs []config.SubAgentConfig, maxIters int, summarize bool, extra ...adk.ChatModelAgentMiddleware) (adk.Agent, error) {
 	subTools, err := BuildEinoSubAgentTools(ctx, mainClient, mainModel, miniClient, miniModel, atomic, specs)
 	if err != nil {
 		return nil, err
@@ -178,7 +183,7 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 		maxIters = 16
 	}
 	allTools := append(EinoTools(withPlan(withClarify(atomic))), subTools...)
-	handlers := []adk.ChatModelAgentMiddleware{newBudgetGuard(maxIters)}
+	handlers := append([]adk.ChatModelAgentMiddleware{newBudgetGuard(maxIters)}, extra...)
 	if summarize {
 		// Summarize history compression on the FAST mini model — it's an auxiliary
 		// step, not user-facing synthesis, so it doesn't need the strong model.
@@ -407,6 +412,10 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	instruction := deps.SystemPrompt
 	var ag adk.Agent
 	var err error
+	// Context-window management (truncate oversized tool output to a workspace
+	// file, clear stale tool results, repair dangling tool calls). Runs ahead of
+	// the summarization backstop.
+	ctxMW := contextHandlers(ctx, s.Cfg.Storage.BaseStoragePath, runUserEmail(rc))
 	if s.Cfg.Agent.MultiAgent {
 		if instruction == "" {
 			instruction = OrchestratorPrompt
@@ -415,7 +424,7 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 		if miniModel == "" {
 			miniModel = model
 		}
-		ag, err = BuildEinoOrchestrator(ctx, client, model, s.Mini, miniModel, instruction, tools, s.Cfg.Agent.SubAgents, 16, !s.DisableSummary)
+		ag, err = BuildEinoOrchestrator(ctx, client, model, s.Mini, miniModel, instruction, tools, s.Cfg.Agent.SubAgents, 16, !s.DisableSummary, ctxMW...)
 	} else {
 		if instruction == "" {
 			instruction = middlewares.DefaultSystemPrompt
@@ -431,6 +440,9 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 				sumModel = model
 			}
 			sum = summarizationHandlers(ctx, sumClient, sumModel)
+		}
+		if len(ctxMW) > 0 {
+			sum = append(append([]adk.ChatModelAgentMiddleware{}, ctxMW...), sum...)
 		}
 		// Fail over to the other model tier when the primary exhausts its retries.
 		ag, err = BuildEinoAgent(ctx, client, model, instruction, tools, einoMaxIters,
