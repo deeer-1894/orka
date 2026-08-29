@@ -486,11 +486,7 @@ export function Composer({
             </button>
           )}
         </div>
-        {/* The danger-op switch now lives in the header next to the model
-            picker (same class of run-mode state); only the disclaimer remains. */}
-        <div className="mt-2 text-center text-[11px] text-faint">
-          Orka 会自动选择工具并作用于你的工作区,可能出错。
-        </div>
+
       </div>
     </div>
   );

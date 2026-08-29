@@ -1288,6 +1288,11 @@ function Empty({ onPick }: { onPick: (text: string) => void }) {
           描述一个目标,它会<span className="text-ink">自己拆解步骤、联网调研、调用工具</span>,
           跑完整条链路再把结果交给你。挑一个复杂任务试试:
         </p>
+        {/* The caveat used to sit under the input on every screen; it belongs
+            here, where a new conversation actually reads it once. */}
+        <p className="rise mx-auto mt-2 max-w-lg text-[12px] text-faint">
+          它会直接读写你的工作区,也可能出错 —— 高危操作默认会先征求你确认。
+        </p>
 
         <div className="mt-8 grid grid-cols-1 gap-3.5 sm:grid-cols-2">
           {shown.map((e, i) => (
