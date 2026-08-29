@@ -43,8 +43,6 @@ export function Composer({
   onSetTools,
   activeSkill,
   onPickSkill,
-  confirmRisky,
-  onToggleConfirm,
 }: {
   status: RunStatus;
   onSend: (msg: string, fileIDs?: string[]) => void;
@@ -53,8 +51,6 @@ export function Composer({
   onSetTools: (next: Set<string>) => void;
   activeSkill: string | null;
   onPickSkill: (name: string | null) => void;
-  confirmRisky: boolean;
-  onToggleConfirm: () => void;
 }) {
   const [text, setText] = useState("");
   const [menu, setMenu] = useState(false);
@@ -490,18 +486,10 @@ export function Composer({
             </button>
           )}
         </div>
-        <div className="mt-2 flex items-center justify-center gap-2 text-[11px] text-faint">
-          <span>Orka 会自动选择工具并作用于你的工作区,可能出错。</span>
-          <button
-            onClick={onToggleConfirm}
-            title="开启后,执行终端命令 / 浏览器操作 / 网络请求 / 运行代码前会先征求你确认"
-            className={
-              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 transition " +
-              (confirmRisky ? "border-accent/40 bg-accentsoft text-accent" : "border-border text-faint hover:bg-surface2")
-            }
-          >
-            <Icon name="shield" size={12} className={confirmRisky ? "" : "opacity-50"} /> 高危操作{confirmRisky ? "需确认" : "免确认"}
-          </button>
+        {/* The danger-op switch now lives in the header next to the model
+            picker (same class of run-mode state); only the disclaimer remains. */}
+        <div className="mt-2 text-center text-[11px] text-faint">
+          Orka 会自动选择工具并作用于你的工作区,可能出错。
         </div>
       </div>
     </div>

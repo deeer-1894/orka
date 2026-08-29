@@ -446,6 +446,26 @@ function Workbench({
             {isShared && <span className="shrink-0 text-[11px] text-faint" title={`由 ${activeConv?.owner_email} 分享`}>· 共享</span>}
           </div>
           <ModelSelect value={version} onChange={setVersion} models={models} />
+          {/* Run-mode safety switch. It belongs beside the model picker rather
+              than under the input: both answer "how will this behave when I
+              send", both are persistent session state, and keeping it in the
+              header leaves the composer to be just the message box. */}
+          <button
+            onClick={toggleConfirm}
+            aria-pressed={confirmRisky}
+            title={confirmRisky
+              ? "高危操作需确认:执行终端命令 / 浏览器操作 / 网络请求 / 运行代码前会先征求你确认"
+              : "已关闭确认:Orka 会直接执行终端命令、浏览器操作等高危工具"}
+            className={
+              "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] transition " +
+              (confirmRisky
+                ? "border-accent/40 bg-accentsoft text-accent"
+                : "border-border text-faint hover:bg-surface2")
+            }
+          >
+            <Icon name="shield" size={13} />
+            <span className="hidden sm:inline">{confirmRisky ? "需确认" : "不确认"}</span>
+          </button>
           {totalTokens > 0 && (
             <span className="inline-flex items-center gap-1 text-[11px] text-faint" title="本进程累计 token 用量">
               <Icon name="coin" size={13} /> {totalTokens >= 1000 ? (totalTokens / 1000).toFixed(1) + "k" : totalTokens} tokens
@@ -489,7 +509,7 @@ function Workbench({
                 </div>
               </div>
             ) : (
-              <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} confirmRisky={confirmRisky} onToggleConfirm={toggleConfirm} />
+              <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
             )}
           </div>
         </div>
