@@ -9,9 +9,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orka-oss/orka_control_layer/db"
+	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/messages"
 	"github.com/orka-oss/orka_core/pathsafe"
-	"github.com/orka-oss/orka_control_layer/db"
 )
 
 // quant_pipeline.go — the production pipeline: a Workflow DAG that turns ONE
@@ -153,14 +154,27 @@ func (s *ChatService) RunFactorPipeline(ctx context.Context, owner string) []str
 
 // runOneReport runs the pipeline for a single report with panic isolation, into
 // the pre-assigned conversation id.
+//
+// Uses the typed graph (quant_graph.go): stages exchange []Factor rather than
+// prose, the mechanical stages run in-process without a model, and each agent
+// stage sees only the tools it needs. The old text-DAG remains available via
+// FactorPipelineWorkflow for users who want to edit the pipeline as a workflow.
 func (s *ChatService) runOneReport(ctx context.Context, owner, reportPath, convID string) {
 	defer func() {
 		if r := recover(); r != nil && s.Log != nil {
 			s.Log.Error("factor pipeline panicked for report", "report", reportPath, "panic", r)
 		}
 	}()
-	wf := FactorPipelineWorkflow(owner, reportPath)
-	s.RunWorkflow(ctx, wf, convID)
+	runCtx := agent.WithMeta(ctx, messages.Meta{ConversationID: convID, UserEmail: owner})
+	st, err := s.RunFactorGraph(runCtx, owner, reportPath)
+	if err != nil && s.Log != nil {
+		s.Log.Error("factor pipeline failed", "report", reportPath, "err", err)
+		return
+	}
+	if s.Log != nil && st != nil {
+		s.Log.Info("factor pipeline done", "report", reportPath,
+			"theses", len(st.Theses), "agreement", st.Agreement, "ingested", len(st.Ingested))
+	}
 }
 
 // discoverReports lists candidate report files under <workspace>/reports/
