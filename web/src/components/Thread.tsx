@@ -1044,7 +1044,9 @@ function ConfirmCard({ m }: { m: Message }) {
     if (done) return;
     setDone(approve ? (always ? "always" : "once") : "reject");
     try {
-      await chatApi.confirm(p.id, approve, always);
+      // meta carries the conversation this pause belongs to, which the server
+      // needs to resume the checkpointed run.
+      await chatApi.confirm(p.id, approve, always, m.meta?.conversation_id || "");
     } catch {
       setDone(""); // let them retry on failure
     }

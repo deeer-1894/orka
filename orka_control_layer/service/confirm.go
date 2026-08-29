@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cloudwego/eino/compose"
+
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/messages"
 )
@@ -47,6 +49,20 @@ func (h *confirmHub) drop(id string) {
 	h.mu.Lock()
 	delete(h.pending, id)
 	h.mu.Unlock()
+}
+
+// grant records an "always allow" decision for conv+tool and persists it.
+func (h *confirmHub) grant(conv, tool string) {
+	if conv == "" {
+		return
+	}
+	h.mu.Lock()
+	if h.allowed[conv] == nil {
+		h.allowed[conv] = map[string]bool{}
+	}
+	h.allowed[conv][tool] = true
+	h.mu.Unlock()
+	h.persist()
 }
 
 func (h *confirmHub) isAllowed(conv, tool string) bool {
@@ -153,6 +169,23 @@ const confirmTimeout = 5 * time.Minute
 type confirmGate struct {
 	inner agent.BaseTool
 	hub   *confirmHub
+	// interruptible: when the run has a checkpoint store, pause via a real ADK
+	// interrupt (the run is persisted and released) instead of parking a
+	// goroutine on a channel for up to five minutes.
+	interruptible bool
+}
+
+// confirmDecision is what the user's answer carries back into the resumed tool.
+type confirmDecision struct {
+	Approve bool `json:"approve"`
+	Always  bool `json:"always"`
+}
+
+// ConfirmInterrupt is the payload surfaced when a danger tool pauses a run. It
+// is what the UI renders and what /chat/confirm resolves.
+type ConfirmInterrupt struct {
+	Tool    string `json:"tool"`
+	Summary string `json:"summary"`
 }
 
 func (g confirmGate) Name() string           { return g.inner.Name() }
@@ -168,6 +201,32 @@ func (g confirmGate) Invoke(ctx context.Context, args map[string]any) (string, e
 	if g.hub.isAllowed(conv, g.inner.Name()) { // already approved for this session
 		return g.inner.Invoke(ctx, args)
 	}
+
+	// --- native interrupt/resume path -------------------------------------
+	// On the way back in, the user's decision arrives as resume data addressed
+	// to THIS tool call; act on it and finish. On the way out, pause the run
+	// (persisted by the Runner) instead of blocking a goroutine.
+	if g.interruptible {
+		isResume, hasData, dec := compose.GetResumeContext[confirmDecision](ctx)
+		if isResume && hasData {
+			if dec.Always && conv != "" {
+				g.hub.grant(conv, g.inner.Name())
+			}
+			if !dec.Approve {
+				return "用户拒绝了该操作,已跳过。", nil
+			}
+			return g.inner.Invoke(ctx, args)
+		}
+		if isResume { // targeted at us but with no decision → treat as declined
+			return "未收到确认结果,已跳过该操作。", nil
+		}
+		return "", compose.Interrupt(ctx, ConfirmInterrupt{
+			Tool:    g.inner.Name(),
+			Summary: summarizeAction(g.inner.Name(), args),
+		})
+	}
+
+	// --- fallback: block until answered (headless / no checkpoint store) ----
 	id := messages.NewID()
 	ch := g.hub.register(id, conv, g.inner.Name())
 	defer g.hub.drop(id)
@@ -193,12 +252,12 @@ func (g confirmGate) Invoke(ctx context.Context, args map[string]any) (string, e
 
 // wrapConfirm gates the side-effecting tools (shell / browser / network /
 // code-exec) behind a confirmation, leaving read-only tools untouched.
-func (s *ChatService) wrapConfirm(tools []agent.BaseTool) []agent.BaseTool {
+func (s *ChatService) wrapConfirm(tools []agent.BaseTool, interruptible bool) []agent.BaseTool {
 	hub := s.confirmReady()
 	out := make([]agent.BaseTool, len(tools))
 	for i, t := range tools {
 		if dangerTools[t.Name()] {
-			out[i] = confirmGate{inner: t, hub: hub}
+			out[i] = confirmGate{inner: t, hub: hub, interruptible: interruptible}
 		} else {
 			out[i] = t
 		}

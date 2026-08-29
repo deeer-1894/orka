@@ -188,17 +188,41 @@ func (a *API) ToolsCatalog(ctx context.Context, c *app.RequestContext) {
 // ConfirmAction approves or rejects a paused side-effecting tool call.
 func (a *API) ConfirmAction(ctx context.Context, c *app.RequestContext) {
 	var req struct {
-		ID      string `json:"id"`
-		Approve bool   `json:"approve"`
-		Always  bool   `json:"always"` // approve for the rest of this conversation
+		ID             string `json:"id"`
+		ConversationID string `json:"conversation_id"`
+		Approve        bool   `json:"approve"`
+		Always         bool   `json:"always"` // approve for the rest of this conversation
 	}
 	if err := bind(c, &req); err != nil || req.ID == "" {
 		fail(c, consts.StatusBadRequest, "id required")
 		return
 	}
-	if !a.Chat.ResolveConfirm(req.ID, req.Approve, req.Always) {
+	// Blocking gate (no checkpoint store): the parked tool call is still waiting.
+	if a.Chat.ResolveConfirm(req.ID, req.Approve, req.Always) {
+		ok(c, map[string]bool{"resolved": true})
+		return
+	}
+
+	// Interrupt/resume gate: nothing is parked — the run was checkpointed and must
+	// be resumed. Detached like ChatRun, republishing into the same SSE stream so
+	// a connected client sees the continuation.
+	// The interrupt address identifies the tool call, not the conversation, so
+	// the client sends conversation_id alongside it.
+	conv := req.ConversationID
+	if conv == "" {
+		fail(c, consts.StatusBadRequest, "conversation_id required to resume a paused run")
+		return
+	}
+	if _, _, _, pending := a.Chat.PendingConfirm(conv); !pending {
 		fail(c, consts.StatusNotFound, "no pending confirmation (expired?)")
 		return
 	}
-	ok(c, map[string]bool{"resolved": true})
+	a.hub.start(conv)
+	go func() {
+		a.Chat.ResumeConfirm(context.Background(), conv, req.Approve, req.Always, func(m messages.Message) {
+			a.hub.publish(conv, m)
+		})
+		a.hub.finish(conv)
+	}()
+	ok(c, map[string]bool{"resolved": true, "resumed": true})
 }

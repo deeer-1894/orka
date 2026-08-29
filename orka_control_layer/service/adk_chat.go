@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/cloudwego/eino/adk"
 	"log/slog"
 	"strings"
 	"sync"
@@ -34,9 +35,13 @@ type ChatRunRequest struct {
 	SelectedVersion string   `json:"selected_version"`
 	ResumeKey       string   `json:"resume_key"`
 	UserEmail       string   `json:"user_email"`
-	ActiveSkill     string   `json:"active_skill"` // user-locked skill mode (deterministic prompt injection)
-	Trigger         string   `json:"trigger"`      // manual | schedule (audit: how the run was started)
+	ActiveSkill     string   `json:"active_skill"`  // user-locked skill mode (deterministic prompt injection)
+	Trigger         string   `json:"trigger"`       // manual | schedule (audit: how the run was started)
 	ConfirmRisky    bool     `json:"confirm_risky"` // gate side-effecting tools behind user approval
+
+	// Internal (never bound from JSON): set when resuming an interrupted run.
+	resumeTarget string // InterruptCtx.ID of the paused tool call
+	resumeData   any    // the user's decision, handed to that tool
 }
 
 // ToolsProvider supplies the tool set for a request and an optional cleanup
@@ -45,13 +50,13 @@ type ToolsProvider func(ctx context.Context, req ChatRunRequest) (tools []agent.
 
 // ChatService runs the end-to-end chat path.
 type ChatService struct {
-	Cfg     *config.Config
-	Main    llm.Client
-	Mini    llm.Client
-	CP      checkpoint.Store
-	Msg     *message_utils.Messenger
-	Metrics *obs.Metrics
-	Log     *slog.Logger
+	Cfg      *config.Config
+	Main     llm.Client
+	Mini     llm.Client
+	CP       checkpoint.Store
+	Msg      *message_utils.Messenger
+	Metrics  *obs.Metrics
+	Log      *slog.Logger
 	ToolsFor ToolsProvider
 	// InvalidateTools busts a user's cached tool connections (e.g. after they
 	// add/remove an MCP connector). Set by main when the pooled provider is wired.
@@ -67,6 +72,9 @@ type ChatService struct {
 
 	confirms    *confirmHub // pending approval gates for risky tools
 	confirmInit sync.Once
+
+	ckpt     adk.CheckPointStore // interrupt/resume checkpoints (nil = blocking gate)
+	ckptInit sync.Once
 
 	mu   sync.Mutex
 	runs map[string]context.CancelFunc
@@ -168,8 +176,11 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	}
 	// Gate side-effecting tools behind a user approval when requested (only for
 	// interactive runs — a scheduled/headless run has no one to approve).
+	// A checkpoint store lets an approval PAUSE the run (persisted, resumable)
+	// rather than park a goroutine; without one the gate blocks as before.
+	ckptStore := s.checkpointStore()
 	if req.ConfirmRisky && req.Trigger != "schedule" && req.Trigger != "workflow" {
-		tools = s.wrapConfirm(tools)
+		tools = s.wrapConfirm(tools, ckptStore != nil && req.ConversationID != "")
 	}
 
 	// Multi-agent: the orchestrator (main model) gets the atomic tools PLUS native
@@ -204,6 +215,10 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// sub-agents (AgentTool) — can stream events into the same SSE stream and
 	// inherit conversation/trace identity.
 	rc.Ctx = agent.WithEmit(agent.WithMeta(ctx, meta), rc.Send)
+	rc.Ctx = withCheckpointStore(rc.Ctx, ckptStore)
+	if req.resumeTarget != "" {
+		rc.Ctx = withResume(rc.Ctx, req.resumeTarget, req.resumeData)
+	}
 
 	// Record this execution as an auditable run (the automation platform's unit).
 	startedAt := time.Now().UnixMilli()
@@ -246,7 +261,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		err = s.runEino(ctx, rc, deps, tools, model, modelName, raw)
 	}
 
-	s.finish(ctx, rc, meta, raw, err)
+	s.finish(ctx, rc, meta, req, raw, err)
 	return s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err())
 }
 
@@ -443,7 +458,7 @@ func (s *ChatService) resume(ctx context.Context, rc *agent.RunContext, req Chat
 }
 
 // finish handles the terminal state: error, clarify interrupt, or done.
-func (s *ChatService) finish(ctx context.Context, rc *agent.RunContext, meta messages.Meta, raw func(messages.Message), err error) {
+func (s *ChatService) finish(ctx context.Context, rc *agent.RunContext, meta messages.Meta, req ChatRunRequest, raw func(messages.Message), err error) {
 	switch {
 	case err == context.Canceled || ctx.Err() == context.Canceled:
 		s.Msg.Deliver(rc, raw, taskFailed(meta, "cancelled"), true)
@@ -456,9 +471,67 @@ func (s *ChatService) finish(ctx context.Context, rc *agent.RunContext, meta mes
 		s.Msg.Deliver(rc, raw, taskFailed(meta, err.Error()), true)
 	case rc.Interrupt != nil && rc.Interrupt.Clarify != nil:
 		s.persistClarify(ctx, rc, meta, raw)
+	case rc.Interrupt != nil && rc.Interrupt.Reason == "confirm":
+		// Paused on a danger-tool approval. The Runner already checkpointed the
+		// run; remember what it takes to rebuild it so /chat/confirm can resume —
+		// including after a control-plane restart. No "done" task: the run is
+		// pending, not finished.
+		s.persistPendingConfirm(rc, req)
 	default:
 		s.Msg.Deliver(rc, raw, messages.Task("done", meta), true)
 	}
+}
+
+// persistPendingConfirm records the interrupted run so it can be resumed later.
+func (s *ChatService) persistPendingConfirm(rc *agent.RunContext, req ChatRunRequest) {
+	v, ok := rc.Vars[varPendingConfirm]
+	if !ok {
+		return
+	}
+	p, ok := v.(pausedRun)
+	if !ok {
+		return
+	}
+	req.resumeTarget, req.resumeData = "", nil // never persist a stale decision
+	p.Request = req
+	savePausedRun(s.Cfg.Storage.BaseStoragePath, p)
+}
+
+// PendingConfirm reports the approval a conversation is waiting on, if any.
+func (s *ChatService) PendingConfirm(convID string) (tool, summary, target string, ok bool) {
+	p, found := loadPausedRun(s.Cfg.Storage.BaseStoragePath, convID)
+	if !found {
+		return "", "", "", false
+	}
+	return p.Tool, p.Summary, p.Target, true
+}
+
+// ResumeConfirm continues a run that paused on a danger-tool approval. It
+// rebuilds the run from the persisted request and resumes the checkpoint with
+// the user's decision, streaming events into raw exactly like the original run.
+// Returns false when there is nothing pending for this conversation.
+func (s *ChatService) ResumeConfirm(ctx context.Context, convID string, approve, always bool, raw func(messages.Message)) bool {
+	p, found := loadPausedRun(s.Cfg.Storage.BaseStoragePath, convID)
+	if !found {
+		return false
+	}
+	dropPausedRun(s.Cfg.Storage.BaseStoragePath, convID) // one decision per pause
+
+	req := p.Request
+	req.ConversationID = convID
+	req.resumeTarget = p.Target
+	req.resumeData = confirmDecision{Approve: approve, Always: always}
+	// Message is empty: the run continues from its checkpoint, it is not a new turn.
+	req.Message = ""
+	s.Run(ctx, req, raw)
+	// If the resumed run finished (rather than pausing again on another approval),
+	// its checkpoint is spent — drop it so the directory doesn't accumulate.
+	if _, stillPending := loadPausedRun(s.Cfg.Storage.BaseStoragePath, convID); !stillPending {
+		if fs, ok := s.checkpointStore().(*fileCheckpointStore); ok {
+			fs.drop(convID)
+		}
+	}
+	return true
 }
 
 // persistClarify saves the checkpoint and emits the clarify question.

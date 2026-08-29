@@ -268,8 +268,26 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 	ctx = llm.WithReasoningSink(ctx, func(delta string) {
 		emit(messages.ReasoningDelta(delta, rc.Meta))
 	})
-	runner := adk.NewRunner(ctx, adk.RunnerConfig{Agent: ag, EnableStreaming: true})
-	iter := runner.Run(ctx, toEinoMessages(rc.Messages))
+	// With a checkpoint store the Runner can persist an interrupted run and
+	// resume it later — that is what lets a danger-tool confirmation pause the
+	// run instead of parking a goroutine (and survive a restart).
+	store := checkpointStoreFrom(ctx)
+	ckptID := rc.Meta.ConversationID
+	runner := adk.NewRunner(ctx, adk.RunnerConfig{Agent: ag, EnableStreaming: true, CheckPointStore: store})
+
+	var iter *adk.AsyncIterator[*adk.AgentEvent]
+	if rs := resumeFrom(ctx); rs != nil && store != nil && ckptID != "" {
+		var err error
+		iter, err = runner.ResumeWithParams(ctx, ckptID,
+			&adk.ResumeParams{Targets: map[string]any{rs.Target: rs.Data}})
+		if err != nil {
+			return err
+		}
+	} else if store != nil && ckptID != "" {
+		iter = runner.Run(ctx, toEinoMessages(rc.Messages), adk.WithCheckPointID(ckptID))
+	} else {
+		iter = runner.Run(ctx, toEinoMessages(rc.Messages))
+	}
 
 	type pendingCall struct {
 		name string
@@ -290,6 +308,19 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 		ev, ok := iter.Next()
 		if !ok {
 			break
+		}
+		// A danger tool asked for approval: the Runner has checkpointed the run,
+		// so surface the request and RETURN. Nothing is blocked — /chat/confirm
+		// resumes from the checkpoint, even after a control-plane restart.
+		if ev.Action != nil && ev.Action.Interrupted != nil {
+			if ci, target, okc := confirmFromInterrupt(ev.Action.Interrupted); okc {
+				rc.Interrupt = &agent.Interrupt{Reason: "confirm"}
+				rc.Put(varPendingConfirm, pausedRun{Target: target, Tool: ci.Tool, Summary: ci.Summary})
+				emit(messages.Confirm(messages.ConfirmRequest{
+					ID: target, Tool: ci.Tool, Summary: ci.Summary,
+				}, rc.Meta))
+				return nil
+			}
 		}
 		if ev.Err != nil {
 			// Graceful degradation: hitting the iteration cap shouldn't hard-fail

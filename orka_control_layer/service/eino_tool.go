@@ -109,6 +109,16 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
+		// An interrupt is CONTROL FLOW, not a tool failure: the confirm gate uses
+		// it to pause the run for human approval. Swallowing it into a "recoverable
+		// error" string let the model retry a danger tool that was never approved,
+		// so it must propagate to the engine (which checkpoints and stops).
+		//
+		// compose.Interrupt returns an *adk.InterruptSignal — NOT the interruptError
+		// that compose.ExtractInterruptInfo looks for — so match the signal itself.
+		if isInterruptErr(err) {
+			return "", err
+		}
 		return "tool error (recoverable — try a different approach, another tool, or proceed without this result): " + err.Error(), nil
 	}
 	if cacheable && out != "" {
