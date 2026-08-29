@@ -58,7 +58,7 @@ func (a *API) ArtifactByConversation(ctx context.Context, c *app.RequestContext)
 	}
 	art, err := a.Store.GetArtifactByConversation(ctx, req.ConversationID)
 	if err != nil || !art.CanRead(authEmail(c)) {
-		fail(c, consts.StatusNotFound, "none")
+		fail(c, consts.StatusNotFound, "no artifact for this conversation")
 		return
 	}
 	ok(c, art)

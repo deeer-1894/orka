@@ -140,6 +140,7 @@ export function Thread({
   messages,
   status,
   onResume,
+  onResumed,
   onPick,
   onRetry,
   onSchedule,
@@ -149,6 +150,8 @@ export function Thread({
   messages: Message[];
   status: RunStatus;
   onResume: (key: string, answer: string) => void;
+  // Re-attach to a conversation whose paused run the server just resumed.
+  onResumed?: (cid: string) => void;
   onPick: (text: string) => void;
   onRetry: () => void;
   onSchedule: (prompt: string) => void;
@@ -294,7 +297,7 @@ export function Thread({
             )}
             {b.kind === "reasoning" && <Reasoning m={b.m} />}
             {b.kind === "clarify" && <Clarify m={b.m} onResume={onResume} />}
-            {b.kind === "confirm" && <ConfirmCard m={b.m} />}
+            {b.kind === "confirm" && <ConfirmCard m={b.m} onResumed={onResumed} />}
             {b.kind === "plan" && <StructuredPlan plan={(b.m.payload as PlanPayload) ?? { steps: [] }} live={status === "streaming" && i >= lastUser} />}
             {b.kind === "weather" && <WeatherCard data={b.data} />}
             {b.kind === "steps" && <Steps items={b.items} live={status === "streaming" && i === lastSteps} />}
@@ -1037,7 +1040,7 @@ const TOOL_LABEL: Record<string, string> = { shell: "终端命令", run_agent: "
 
 // ConfirmCard is the human-in-the-loop gate: a side-effecting tool call is
 // paused until the user approves or rejects it.
-function ConfirmCard({ m }: { m: Message }) {
+function ConfirmCard({ m, onResumed }: { m: Message; onResumed?: (cid: string) => void }) {
   const p = m.payload as ConfirmPayload;
   const [done, setDone] = useState<"" | "once" | "always" | "reject">("");
   const decide = async (approve: boolean, always: boolean) => {
@@ -1046,7 +1049,11 @@ function ConfirmCard({ m }: { m: Message }) {
     try {
       // meta carries the conversation this pause belongs to, which the server
       // needs to resume the checkpointed run.
-      await chatApi.confirm(p.id, approve, always, m.meta?.conversation_id || "");
+      const cid = m.meta?.conversation_id || "";
+      const res = await chatApi.confirm(p.id, approve, always, cid);
+      // The backend resumed a checkpointed run, so its SSE is a NEW stream this
+      // client is not listening to — re-attach or the answer never arrives.
+      if (res?.resumed && cid) onResumed?.(cid);
     } catch {
       setDone(""); // let them retry on failure
     }

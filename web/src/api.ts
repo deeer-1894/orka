@@ -39,7 +39,9 @@ function headers(json = true): Record<string, string> {
   return h;
 }
 
-async function post<T>(path: string, body: unknown): Promise<T> {
+// silent = a PROBE: absence is a normal answer, not something to interrupt the
+// user with. ("does this conversation have an artifact?" runs on every message.)
+async function post<T>(path: string, body: unknown, silent = false): Promise<T> {
   let res: Response;
   try {
     res = await fetch(BASE + path, {
@@ -61,11 +63,11 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   }
   const j = await res.json().catch(() => ({}));
   if (j && typeof j.code === "number" && j.code !== 0) {
-    toastError(j.msg || `请求失败 (${res.status})`);
+    if (!silent) toastError(j.msg || `请求失败 (${res.status})`);
     throw new Error(j.msg || "request failed");
   }
   if (res.status >= 500) {
-    toastError("服务暂时不可用，请稍后再试");
+    if (!silent) toastError("服务暂时不可用，请稍后再试");
     throw new Error("server " + res.status);
   }
   return (j.data ?? j) as T;
@@ -103,7 +105,7 @@ export const chat = {
 
 export const artifacts = {
   list: () => post<{ artifacts: Artifact[] }>("/artifact/list", {}),
-  byConversation: (conversation_id: string) => post<Artifact>("/artifact/by-conversation", { conversation_id }),
+  byConversation: (conversation_id: string) => post<Artifact>("/artifact/by-conversation", { conversation_id }, true),
   get: (artifact_id: string, version = 0) =>
     post<{ artifact: Artifact; version: ArtifactVersion }>("/artifact/get", { artifact_id, version }),
   getBySlug: (slug: string, version = 0) =>

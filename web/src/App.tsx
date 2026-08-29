@@ -323,6 +323,16 @@ function Workbench({
     [run, activeID, user.email, refreshTasks, version],
   );
 
+  // After approving a paused danger tool the backend resumes the checkpointed
+  // run, which streams on a NEW SSE this client isn't reading — re-attach so the
+  // continuation (and the final answer) actually lands in the thread.
+  const onResumed = useCallback(
+    (cid: string) => {
+      run({ message: "", conversationID: cid, userEmail: user.email, enabledTools: [], attachOnly: true });
+    },
+    [run, user.email],
+  );
+
   // Branch the active conversation at a turn: the backend copies history up to
   // that message into a new conversation; we add it to the list and switch to it.
   const onFork = useCallback(
@@ -450,7 +460,7 @@ function Workbench({
           </button>
         </header>
 
-        <Thread messages={messages} status={status} onResume={onResume} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} onFork={onFork} fileConv={isShared ? activeID : undefined} />
+        <Thread messages={messages} status={status} onResume={onResume} onResumed={onResumed} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} onFork={onFork} fileConv={isShared ? activeID : undefined} />
         {activeID && <div className="px-5"><ArtifactBanner conversationId={activeID} onOpen={openArtifactInDrawer} /></div>}
         {readOnly ? (
           <div className="mx-auto mb-4 w-full max-w-3xl px-5">

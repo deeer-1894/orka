@@ -19,6 +19,10 @@ export interface RunParams {
   activeSkill?: string; // user-locked skill mode (researcher / writer / …)
   fileIDs?: string[]; // uploaded attachment paths (text injected; images → VLM)
   confirmRisky?: boolean; // gate side-effecting tools behind user approval
+  // attachOnly listens to an ALREADY-running conversation instead of starting a
+  // new turn. Used after approving a paused danger tool: the backend resumes the
+  // checkpointed run, so there is a live stream to join but no message to send.
+  attachOnly?: boolean;
 }
 
 interface ConvStream {
@@ -147,7 +151,42 @@ export function useChatStreams() {
         }
       };
 
+      // attachLoop (re)joins the conversation's SSE, replaying anything missed.
+      // maxAttempts is higher when attaching to a resuming run, because the
+      // backend needs a moment to rebuild the agent from its checkpoint.
+      const attachLoop = async (maxAttempts: number) => {
+        let attempts = 0;
+        while (state.terminal === "streaming" && !ctrl.signal.aborted && attempts < maxAttempts) {
+          attempts++;
+          await new Promise((r) => setTimeout(r, 500 * attempts));
+          try {
+            const url =
+              `/api/v1/controller/chat/attach?conversation_id=${encodeURIComponent(cid)}` +
+              `&last_event_id=${state.lastSeq}`;
+            const ar = await fetch(url, {
+              headers: { ...(auth.token() ? { Authorization: "Bearer " + auth.token() } : {}) },
+              signal: ctrl.signal,
+            });
+            if (ar.status === 404) {
+              if (p.attachOnly) continue; // the resumed run may not be registered yet
+              break;
+            }
+            await consume(ar);
+            attempts = 0;
+          } catch {
+            /* retry */
+          }
+        }
+      };
+
       try {
+        if (p.attachOnly) {
+          // Join the resumed run's stream from the beginning; the reconnect loop
+          // below keeps retrying while the backend spins the run back up.
+          await attachLoop(8);
+          patch(cid, (c) => ({ ...c, status: state.terminal }));
+          return;
+        }
         const res = await fetch("/api/v1/controller/chat/run", {
           method: "POST",
           headers: {
@@ -170,25 +209,7 @@ export function useChatStreams() {
         await consume(res);
 
         // reconnect + replay missed events if the stream dropped mid-run
-        let attempts = 0;
-        while (state.terminal === "streaming" && !ctrl.signal.aborted && attempts < 5) {
-          attempts++;
-          await new Promise((r) => setTimeout(r, 500 * attempts));
-          try {
-            const url =
-              `/api/v1/controller/chat/attach?conversation_id=${encodeURIComponent(cid)}` +
-              `&last_event_id=${state.lastSeq}`;
-            const ar = await fetch(url, {
-              headers: { ...(auth.token() ? { Authorization: "Bearer " + auth.token() } : {}) },
-              signal: ctrl.signal,
-            });
-            if (ar.status === 404) break;
-            await consume(ar);
-            attempts = 0;
-          } catch {
-            /* retry */
-          }
-        }
+        await attachLoop(5);
         patch(cid, (c) => ({ ...c, status: state.terminal }));
       } catch (e) {
         if ((e as Error).name !== "AbortError") patch(cid, (c) => ({ ...c, status: "error" }));
