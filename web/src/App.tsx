@@ -498,7 +498,7 @@ function Workbench({
         {/* The composer floats OVER the thread (its height is fed back as the
             thread's bottom padding), so the conversation scrolls clear of it
             instead of the last lines being clipped behind the tool row. */}
-        <div ref={composerRef} className="absolute inset-x-0 bottom-0 z-20">
+        <div ref={composerRef} className="absolute bottom-0 left-0 right-[var(--sbw)] z-20">
           <div aria-hidden className="pointer-events-none h-8 bg-gradient-to-b from-transparent to-bg" />
           <div className="bg-bg">
             {activeID && <div className="px-5"><ArtifactBanner conversationId={activeID} onOpen={openArtifactInDrawer} /></div>}

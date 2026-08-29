@@ -84,9 +84,12 @@ body {
   transition: background-color 0.25s ease, color 0.25s ease; /* smooth theme flip */
 }
 
+/* Scrollbars are always visible (not overlay), so anything floating over the
+   scroll area must inset by this width or it covers the track. */
+:root { --sbw: 10px; }
 *::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: var(--sbw);
+  height: var(--sbw);
 }
 *::-webkit-scrollbar-thumb {
   background: #dcd8cf;
