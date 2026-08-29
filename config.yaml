@@ -9,13 +9,15 @@ server:
     - "127.0.0.1"
 
 llm:
-  # OpenAI-compatible endpoint. Defaults to DeepSeek; override via env.
+  # OpenAI-compatible endpoint. Defaults to Zhipu GLM; override via env.
   # API key is NOT stored here — set OPENAI_API_KEY in the environment.
-  openai_base_url: "https://api.deepseek.com/v1"
+  openai_base_url: "https://open.bigmodel.cn/api/paas/v4"
   openai_api_key: ""
-  model: "deepseek-v4-flash"
-  mini_model: "deepseek-v4-flash"
-  vlm_model: "deepseek-v4-pro"
+  # main drives the orchestrator loop (many calls → prefer the fast tier);
+  # mini backs summarization/sub-agents and is the failover target for main.
+  model: "GLM-5.3-Flash"
+  mini_model: "GLM-5.3"
+  vlm_model: "GLM-5.3"
 
 storage:
   mongo_uri: "mongodb://localhost:27017"

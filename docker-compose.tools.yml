@@ -2,7 +2,7 @@
 # so shell commands are confined to the container + the mounted workspace and
 # cannot touch the host filesystem (~/.ssh, host files, etc.).
 #
-#   CTX_TOKEN_SECRET=... BASE_STORAGE_PATH=/tmp/orka-storage \
+#   CTX_TOKEN_SECRET=... BASE_STORAGE_PATH=$HOME/.orka/storage \
 #     docker compose -f docker-compose.tools.yml up --build -d
 #
 # The control layer stays on the host and reaches the gateway at 127.0.0.1:8090
@@ -19,7 +19,7 @@ services:
       - "127.0.0.1:8090:8090"
     volumes:
       # host workspace  ->  container /workspace (BASE_STORAGE_PATH in the image)
-      - "${BASE_STORAGE_PATH:-/tmp/orka-storage}:/workspace"
+      - "${BASE_STORAGE_PATH:-./data/storage}:/workspace"
     environment:
       # Must match the control layer so the HMAC context token validates.
       - CTX_TOKEN_SECRET=${CTX_TOKEN_SECRET:?set CTX_TOKEN_SECRET}

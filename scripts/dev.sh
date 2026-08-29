@@ -59,17 +59,30 @@ deps() {
 control() {
   say "building control plane…"
   go build -o "$RUN_DIR/orka_control" ./orka_control_layer
-  pkill -f "$RUN_DIR/orka_control" 2>/dev/null || true
-  sleep 1
+  # Kill EVERY orka_control, not just the one under .run — a stale binary started
+  # from another path (e.g. /tmp) keeps the port and its own stale env, and the
+  # port check below would then happily "succeed" against the old process.
+  pkill -f 'orka_control' 2>/dev/null || true
+  local addr="${CONTROL_ADDR:-:8088}"; local port="${addr##*:}"
+  for _ in 1 2 3 4 5; do
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 || break
+    sleep 1
+  done
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    die "port $port is still held by another process; stop it and re-run"
+  fi
+
   say "starting control plane (logs → $LOG)…"
   nohup "$RUN_DIR/orka_control" >"$LOG" 2>&1 &
-  echo $! >"$RUN_DIR/control.pid"
+  local pid=$!
+  echo "$pid" >"$RUN_DIR/control.pid"
   sleep 3
-  local addr="${CONTROL_ADDR:-:8088}"; local port="${addr##*:}"
-  if ! lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-    tail -n 20 "$LOG" >&2; die "control plane did not come up on :$port"
+  # Verify OUR pid is alive and owns the port — not merely that something listens.
+  kill -0 "$pid" 2>/dev/null || { tail -n 20 "$LOG" >&2; die "control plane exited on startup"; }
+  if ! lsof -nP -iTCP:"$port" -sTCP:LISTEN -a -p "$pid" >/dev/null 2>&1; then
+    tail -n 20 "$LOG" >&2; die "control plane (pid $pid) did not take :$port"
   fi
-  say "control listening on :$port"
+  say "control listening on :$port (pid $pid)"
   health_check
 }
 
