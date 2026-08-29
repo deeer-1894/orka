@@ -343,19 +343,10 @@ export function Composer({
           </div>
         )}
 
-        <div className="mb-2">
-          {!toolsOpen ? (
-            // Collapsed: the default is automatic tool selection — make that
-            // obvious instead of showing chips that look "off".
-            <button
-              onClick={() => setToolsOpen(true)}
-              title="默认按任务自动选择工具，点击可限定工具范围"
-              className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[12px] text-muted hover:bg-surface2"
-            >
-              <Icon name="wrench" size={13} /> {enabledTools.size === 0 ? "工具：自动选择" : `工具：已选 ${enabledTools.size} 项`}
-              <Icon name="chevron" size={12} className="text-faint" />
-            </button>
-          ) : (
+        {/* Scope picker: opens ABOVE the input instead of occupying a permanent
+            row, so the floating bar is just the input box. */}
+        {toolsOpen && (
+          <div className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-20">
             <ToolPicker
               catalog={catalog}
               selected={enabledTools}
@@ -364,8 +355,8 @@ export function Composer({
               onSet={onSetTools}
               onClose={() => setToolsOpen(false)}
             />
-          )}
-        </div>
+          </div>
+        )}
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
           {skill && (
             <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-accentsoft px-2 py-1 text-[12px] text-accent">
@@ -439,6 +430,21 @@ export function Composer({
             aria-label="引用文件"
           >
             <Icon name="at" size={17} />
+          </button>
+          <button
+            onClick={() => setToolsOpen((o) => !o)}
+            className={
+              "grid h-10 shrink-0 place-items-center rounded-full transition " +
+              (enabledTools.size > 0
+                ? "w-auto gap-1 px-2.5 text-[12px] text-accent bg-accentsoft"
+                : "w-10 text-muted hover:bg-surface2") +
+              (toolsOpen ? " bg-surface2" : "")
+            }
+            title={enabledTools.size === 0 ? "默认按任务自动选择工具，点击可限定范围" : `已限定 ${enabledTools.size} 类工具，点击调整`}
+            aria-label="工具范围"
+          >
+            <Icon name="wrench" size={17} />
+            {enabledTools.size > 0 && <span>{enabledTools.size}</span>}
           </button>
           <textarea
             ref={taRef}
