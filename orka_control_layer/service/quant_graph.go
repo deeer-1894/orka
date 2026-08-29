@@ -174,7 +174,7 @@ func (s *ChatService) stagePropose(ctx context.Context, st *PipelineState) error
 	theses := "投资逻辑:\n" + strings.Join(st.Theses, "\n")
 	run := func(nudge string) ([]Factor, error) {
 		out, err := s.scopedAgentRun(ctx, owner, factorProposerPrompt, nudge+"\n"+theses,
-			[]string{"file_read", "validate_factor"}, false)
+			[]string{"file_read", "validate_factor", "recall_similar_factors"}, false)
 		if err != nil {
 			return nil, err
 		}

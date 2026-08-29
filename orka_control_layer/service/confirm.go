@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +28,7 @@ type confirmHub struct {
 	mu      sync.Mutex
 	pending map[string]*pending
 	allowed map[string]map[string]bool // conv -> tool -> approved for the session
+	store   string                     // storage root; "" disables persistence
 }
 
 func newConfirmHub() *confirmHub {
@@ -69,14 +73,68 @@ func (h *confirmHub) resolve(id string, approve, always bool) bool {
 	if !ok {
 		return false
 	}
+	if approve && always {
+		h.persist() // survive a control-plane restart
+	}
 	p.ch <- approve
 	return true
 }
 
-// confirmReady lazily initializes the hub (safe under concurrent runs).
+// confirmReady lazily initializes the hub (safe under concurrent runs) and
+// restores any "always allow" grants from disk, so a control-plane restart does
+// not silently revoke a decision the user already made.
 func (s *ChatService) confirmReady() *confirmHub {
-	s.confirmInit.Do(func() { s.confirms = newConfirmHub() })
+	s.confirmInit.Do(func() {
+		s.confirms = newConfirmHub()
+		s.confirms.store = s.Cfg.Storage.BaseStoragePath
+		s.confirms.load()
+	})
 	return s.confirms
+}
+
+// grantsPath is where per-conversation "always allow" decisions are persisted.
+// One file for the whole install (grants are keyed by conversation, which is
+// already user-scoped) kept beside the other control-plane state.
+func grantsPath(baseStorage string) string {
+	if baseStorage == "" {
+		return ""
+	}
+	return filepath.Join(baseStorage, ".orka_confirm_grants.json")
+}
+
+// load restores persisted grants; a missing/corrupt file just means no grants.
+func (h *confirmHub) load() {
+	p := grantsPath(h.store)
+	if p == "" {
+		return
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return
+	}
+	var saved map[string]map[string]bool
+	if json.Unmarshal(b, &saved) != nil || saved == nil {
+		return
+	}
+	h.mu.Lock()
+	h.allowed = saved
+	h.mu.Unlock()
+}
+
+// persist writes the grants out (best-effort; caller holds no lock).
+func (h *confirmHub) persist() {
+	p := grantsPath(h.store)
+	if p == "" {
+		return
+	}
+	h.mu.Lock()
+	b, err := json.Marshal(h.allowed)
+	h.mu.Unlock()
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(p), 0o755)
+	_ = os.WriteFile(p, b, 0o600)
 }
 
 // ResolveConfirm is the API entry point to approve/reject a pending action.
@@ -97,9 +155,9 @@ type confirmGate struct {
 	hub   *confirmHub
 }
 
-func (g confirmGate) Name() string                   { return g.inner.Name() }
-func (g confirmGate) Description() string             { return g.inner.Description() }
-func (g confirmGate) Schema() map[string]any          { return g.inner.Schema() }
+func (g confirmGate) Name() string           { return g.inner.Name() }
+func (g confirmGate) Description() string    { return g.inner.Description() }
+func (g confirmGate) Schema() map[string]any { return g.inner.Schema() }
 
 func (g confirmGate) Invoke(ctx context.Context, args map[string]any) (string, error) {
 	emit := agent.EmitFrom(ctx)

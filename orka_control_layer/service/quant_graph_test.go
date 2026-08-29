@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -125,5 +126,42 @@ func TestParseNumberedList(t *testing.T) {
 	}
 	if !strings.Contains(got[0], "低估值") {
 		t.Fatalf("first thesis wrong: %q", got[0])
+	}
+}
+
+// TestRecallSimilarFactors: the library must actually surface a prior factor for
+// a related thesis (long-term memory), and stay quiet for an unrelated one.
+func TestRecallSimilarFactors(t *testing.T) {
+	base := t.TempDir()
+	owner := "recall@test.com"
+	ctx := agent.WithMeta(context.Background(), messages.Meta{UserEmail: owner})
+	if err := saveFactor(base, owner, Factor{
+		FactorID: "f1", Name: "momentum_20d", Direction: "long",
+		Rationale:  "stocks with strong twenty day momentum keep outperforming",
+		Expression: "rank(mom_20)", Status: FactorApproved,
+		Metrics: FactorMetrics{IC: 0.09}, CreatedAt: 1,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	tool := recallFactorsTool{baseStorage: base}
+
+	out, _ := tool.Invoke(ctx, map[string]any{"thesis": "strong twenty day momentum stocks keep outperforming the market"})
+	var hit struct {
+		Matches []map[string]any `json:"matches"`
+	}
+	if err := json.Unmarshal([]byte(out), &hit); err != nil {
+		t.Fatalf("bad json: %v (%s)", err, out)
+	}
+	if len(hit.Matches) != 1 || hit.Matches[0]["name"] != "momentum_20d" {
+		t.Fatalf("expected the prior momentum factor, got %s", out)
+	}
+
+	out2, _ := tool.Invoke(ctx, map[string]any{"thesis": "盈利质量与股息支付率的关系"})
+	var miss struct {
+		Matches []map[string]any `json:"matches"`
+	}
+	_ = json.Unmarshal([]byte(out2), &miss)
+	if len(miss.Matches) != 0 {
+		t.Fatalf("unrelated thesis should not match: %s", out2)
 	}
 }

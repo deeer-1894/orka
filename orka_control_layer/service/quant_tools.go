@@ -42,6 +42,7 @@ func BuildQuantTools(baseStorage string) []agent.BaseTool {
 		gpEvolveTool{baseStorage: baseStorage},
 		ingestFactorTool{baseStorage: baseStorage},
 		weightPortfolioTool{baseStorage: baseStorage},
+		recallFactorsTool{baseStorage: baseStorage},
 	}
 }
 

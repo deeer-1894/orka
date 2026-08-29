@@ -26,9 +26,34 @@ def render(genes: list) -> str:
     return " ".join(parts).lstrip("+ ")
 
 
+# Analysts write "pe_ttm", "vol_20d", "roe_ttm" — none of which are substrings of
+# the base signal names, so a literal match silently fell through to a RANDOM
+# signal and collapsed unrelated theses onto the same factor. Map the vocabulary
+# explicitly, and honour a leading minus (cheap = high value, low vol = good).
+SIGNAL_ALIASES = {
+    "mom_20": ["mom_20", "mom20", "momentum", "ret_20", "动量"],
+    "roe": ["roe", "roa", "profitab", "quality", "盈利", "质量"],
+    "value": ["value", "pe", "pb", "ep", "bp", "valuation", "估值", "价值"],
+    "vol_20": ["vol_20", "vol20", "volatility", "std_20", "波动"],
+}
+# Signals whose ATTRACTIVE direction is the negative of the raw field.
+INVERTED_FIELDS = ("pe", "pb", "vol", "std", "波动")
+
+
 def seed_genes(expr: str) -> list:
     e = expr.lower()
-    genes = [(s, 1.0) for s in BASE if s in e]
+    genes = []
+    for sig, aliases in SIGNAL_ALIASES.items():
+        hit = next((a for a in aliases if a in e), None)
+        if not hit:
+            continue
+        # "rank(-pe)" / "-vol_20" already encode "lower is better"; so does an
+        # inverted field name on its own. Fold that into the weight's sign.
+        idx = e.find(hit)
+        negated = "-" in e[max(0, idx - 3):idx]
+        inverted = hit.startswith(INVERTED_FIELDS) or any(hit.startswith(f) for f in INVERTED_FIELDS)
+        w = -1.0 if (negated != inverted) and sig in ("value", "vol_20") else 1.0
+        genes.append((sig, w))
     if not genes:
         rng = random.Random(int(hashlib.sha1(expr.encode()).hexdigest()[:8], 16))
         genes = [(rng.choice(BASE), 1.0)]

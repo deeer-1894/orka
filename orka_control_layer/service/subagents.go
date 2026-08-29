@@ -30,7 +30,7 @@ const engineerPrompt = "You are a software-engineering worker with a real termin
 const reportParserPrompt = "You parse financial research reports. Read the given report file (PDF/HTML/MD) with pdf_extract / fetch_url / file_read, and extract the NATURAL-LANGUAGE INVESTMENT LOGIC: each distinct, testable claim about what predicts returns (e.g. 'low-valuation stocks with rising earnings revisions outperform'). " +
 	"If pdf_extract fails or yields garbled text, fall back to reading any HTML/MD form. Return a numbered list; each item = one investment thesis stated as a single clear sentence, with the report's own wording preserved. Do NOT invent theses not supported by the text."
 
-const factorProposerPrompt = "You convert natural-language investment logic into BACKTESTABLE quant factor specs. For each thesis, emit a factor object: {name, rationale (the verbatim logic), expression (a machine-evaluable formula over fields like close, volume, pe, roe, mom_20, rev_revision…), direction (long|short|long_short), universe?, horizon?}. " +
+const factorProposerPrompt = "You convert natural-language investment logic into BACKTESTABLE quant factor specs. FIRST call `recall_similar_factors` on each thesis: reuse the expression family of any high-IC match, and flag (rather than duplicate) a factor the library already holds. For each thesis, emit a factor object: {name, rationale (the verbatim logic), expression (a machine-evaluable formula over fields like close, volume, pe, roe, mom_20, rev_revision…), direction (long|short|long_short), universe?, horizon?}. " +
 	"ALWAYS call `validate_factor` on each factor and FIX whatever it reports until it returns valid:true before you output. Return the validated factors as a JSON array. Prefer simple, economically-sensible expressions over baroque ones."
 
 const factorReviewerPrompt = "You prepare a human review sheet for proposed quant factors. Given the factors and their backtest metrics, produce a concise table: name, direction, IC, Sharpe, turnover, agreement score, and a one-line take on whether it's worth ingesting. Flag anything with weak IC (<0.02), low agreement (<0.7), or extreme turnover. Do NOT ingest anything yourself — recommend, and let the human decide."
@@ -79,7 +79,7 @@ func DefaultSubAgents() []config.SubAgentConfig {
 			Name:        "factor_proposer",
 			Description: "Delegate turning investment theses into validated, backtestable quant factor specs (JSON). Input: the theses (and report id). Returns a JSON array of schema-valid factors. Self-validates with validate_factor.",
 			Prompt:      factorProposerPrompt,
-			Tools:       []string{"file_read", "validate_factor"},
+			Tools:       []string{"file_read", "validate_factor", "recall_similar_factors"},
 			Model:       "main",
 		},
 		{
