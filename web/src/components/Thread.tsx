@@ -169,7 +169,10 @@ export function Thread({
     const el = scrollRef.current;
     if (!el) return;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-    if (nearBottom) endRef.current?.scrollIntoView({ behavior: "smooth" });
+    // Jump instantly rather than animating: a smooth scrollIntoView keeps
+    // re-targeting while tokens stream in, which fights a user dragging the
+    // scrollbar and makes the thread feel like it won't settle at the bottom.
+    if (nearBottom) el.scrollTop = el.scrollHeight;
   }, [messages.length, status]);
   // Refresh the workspace listing on load and whenever a run settles, so files
   // the agent just produced are recognized by the session strip.
@@ -257,7 +260,7 @@ export function Thread({
 
   return (
     <OpenFileCtx.Provider value={openFile}>
-    <div ref={scrollRef} className="relative flex-1 overflow-y-auto">
+    <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto">
       <ThreadOutline turns={turns} />
       <ThreadFind
         open={findOpen}
@@ -269,7 +272,7 @@ export function Thread({
         onOpen={() => setFindOpen(true)}
         onClose={() => { setFindOpen(false); setFindQuery(""); }}
       />
-      <div className="mx-auto max-w-3xl px-5 py-8">
+      <div className="mx-auto max-w-3xl px-5 pb-24 pt-8">
         {startIdx > 0 && (
           <div className="mb-6 text-center">
             <button
