@@ -819,9 +819,13 @@ function Steps({ items, live }: { items: Message[]; live?: boolean }) {
       )}
       {open && (
         <div className="mt-2 border-l-2 border-border pl-4">
-          {own.map((m, i) => (
-            <TimelineRow key={m.id} m={m} prev={own[i - 1]} />
-          ))}
+          {groupRuns(own).map((g) =>
+            g.items.length > 1 ? (
+              <CollapsedRun key={g.items[0].id} items={g.items} prev={own[own.indexOf(g.items[0]) - 1]} />
+            ) : (
+              <TimelineRow key={g.items[0].id} m={g.items[0]} prev={own[own.indexOf(g.items[0]) - 1]} />
+            ),
+          )}
           {live && (
             <div className="flex items-center gap-2 py-1 text-[12px] text-muted">
               <span className="-ml-[21px] h-2 w-2 animate-pulse rounded-full bg-ok ring-2 ring-surface" />
@@ -833,6 +837,53 @@ function Steps({ items, live }: { items: Message[]; live?: boolean }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// groupRuns collapses CONSECUTIVE successful calls of the same tool into one row.
+// A long research task can fire twenty web_search calls in a row; twenty near
+// identical lines bury the steps that actually matter. Anything that failed, and
+// anything that is not a plain tool step, always stands on its own.
+function groupRuns(items: Message[]): { key: string; items: Message[] }[] {
+  const out: { key: string; items: Message[] }[] = [];
+  for (const m of items) {
+    const p = m.type === "tool" ? (m.payload as ToolPayload) : null;
+    // errors and non-tool events are never folded away
+    const key = p && !p.error ? "tool:" + (p.tool || "") : "solo:" + m.id;
+    const last = out[out.length - 1];
+    if (last && last.key === key) last.items.push(m);
+    else out.push({ key, items: [m] });
+  }
+  return out;
+}
+
+// CollapsedRun renders a run of same-tool steps as one line ("搜索 · 5 次"),
+// expandable to the individual steps.
+function CollapsedRun({ items, prev }: { items: Message[]; prev?: Message }) {
+  const [open, setOpen] = useState(false);
+  const first = toolReceipt((items[0].payload as ToolPayload) || ({} as ToolPayload));
+  const total = items[items.length - 1].ts && prev?.ts ? items[items.length - 1].ts - (prev.ts as number) : 0;
+  if (open) {
+    return (
+      <>
+        {items.map((m, i) => (
+          <TimelineRow key={m.id} m={m} prev={i === 0 ? prev : items[i - 1]} />
+        ))}
+        <button onClick={() => setOpen(false)} className="ml-1 py-0.5 text-[11.5px] text-faint hover:text-accent">收起这 {items.length} 步</button>
+      </>
+    );
+  }
+  return (
+    <div className="relative flex items-start gap-2 py-0.5">
+      <span className="-ml-[21px] mt-1.5 h-2 w-2 shrink-0 rounded-full bg-ok/70 ring-2 ring-surface" title={`${items.length} 步,全部成功`} />
+      <button onClick={() => setOpen(true)} className="group flex items-center gap-1.5 text-left text-[13px]">
+        <Icon name={first.icon} size={14} className="shrink-0 text-muted" />
+        <span className="text-ink">{first.label.replace(/\s*“[^”]*”\s*$/, "")}</span>
+        <span className="text-muted">· {items.length} 次</span>
+        {total > 400 && <span className="text-faint">· {(total / 1000).toFixed(1)}s</span>}
+        <span className="text-faint opacity-0 transition group-hover:opacity-100">展开 ▾</span>
+      </button>
     </div>
   );
 }
