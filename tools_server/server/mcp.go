@@ -53,9 +53,17 @@ func New(cfg Config) *mcpserver.MCPServer {
 func ContextFunc(secret []byte) mcpserver.HTTPContextFunc {
 	return func(ctx context.Context, r *http.Request) context.Context {
 		if tok := r.Header.Get("X-Orka-Token"); tok != "" {
-			if ct, err := security.Verify(tok, secret); err == nil {
+			ct, err := security.Verify(tok, secret)
+			if err == nil {
 				return identity.With(ctx, identity.Identity{Email: ct.UserEmail, Scopes: ct.Scopes})
 			}
+			// A token that was PRESENTED and rejected is an authentication
+			// failure, and must not fall through to the unauthenticated branch.
+			// It used to: an expired token produced a scopeless identity, so
+			// every tool answered "permission denied: missing scope file:write"
+			// — a message that sent both the model and whoever debugged it after
+			// a permissions problem that did not exist.
+			return identity.With(ctx, identity.Identity{AuthErr: err})
 		}
 		if email := r.Header.Get("X-User-Email"); email != "" {
 			return identity.With(ctx, identity.Identity{Email: email}) // untrusted: no scopes

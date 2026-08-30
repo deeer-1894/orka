@@ -345,7 +345,14 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 // guard enforces the required scope before running the handler.
 func guard(scope string, h mcpserver.ToolHandlerFunc) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if scope != "" && !identity.From(ctx).HasScope(scope) {
+		id := identity.From(ctx)
+		// Report an unusable credential as what it is. Saying "missing scope"
+		// here tells the caller to stop asking for something it is in fact
+		// allowed to do; saying the token expired tells it to get a new one.
+		if id.AuthErr != nil {
+			return mcp.NewToolResultError("auth failed (retryable — the caller should refresh its context token): " + id.AuthErr.Error()), nil
+		}
+		if scope != "" && !id.HasScope(scope) {
 			return mcp.NewToolResultError("permission denied: missing scope " + scope), nil
 		}
 		return h(ctx, req)

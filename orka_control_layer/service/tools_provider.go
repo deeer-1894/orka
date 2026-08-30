@@ -56,6 +56,11 @@ type mcpPool struct {
 	entries map[string]*mcpEntry
 }
 
+// connMaxAge is how long a pooled MCP connection is reused before being
+// rebuilt. Long enough that a multi-hour run keeps one connection, short enough
+// that a restarted gateway is picked up without operator action.
+const connMaxAge = 30 * time.Minute
+
 type mcpEntry struct {
 	clients  []*mcpclient.Client // gateway + each enabled connector
 	tools    []agent.BaseTool    // merged tools bound to this user
@@ -78,16 +83,33 @@ func (p *mcpPool) get(ctx context.Context, email string) ([]agent.BaseTool, erro
 		delete(p.entries, email)
 	}
 
-	tok, err := security.Sign(security.NewToken(email, p.scopes, p.tokenTTL), []byte(p.secret))
-	if err != nil {
-		return nil, err
+	// Sign a FRESH token per request rather than baking one into the client.
+	//
+	// A client used to carry the token it was built with, which quietly capped
+	// how long a run could use its tools: past the TTL the gateway could not
+	// verify the token, fell back to an identity with no scopes, and every call
+	// came back "permission denied: missing scope file:write". Measured here, 31
+	// of 44 such denials landed more than 30 minutes into a run — exactly the
+	// default TTL — on a system whose longest run is 4.8 hours. The pool's
+	// refresh-before-expiry only helps between runs; a single long run holds one
+	// client throughout.
+	//
+	// HeaderFunc is evaluated per request, so the token can never outlive the
+	// work. A signing failure yields no header, which the gateway rejects as
+	// unauthenticated rather than silently unscoped.
+	headers := func(context.Context) map[string]string {
+		tok, err := security.Sign(security.NewToken(email, p.scopes, p.tokenTTL), []byte(p.secret))
+		if err != nil {
+			return nil
+		}
+		return map[string]string{"X-Orka-Token": tok}
 	}
 	// The built-in gateway (file_*/web_* over MCP) — auth'd with the signed token.
 	gateway, err := mcpclient.New(ctx, mcpclient.Config{
-		Transport: mcpclient.TransportStreamableHTTP,
-		URL:       p.mcpURL,
-		Headers:   map[string]string{"X-Orka-Token": tok},
-		Name:      "orka-control",
+		Transport:  mcpclient.TransportStreamableHTTP,
+		URL:        p.mcpURL,
+		HeaderFunc: headers,
+		Name:       "orka-control",
 	})
 	if err != nil {
 		return nil, err
@@ -209,9 +231,21 @@ func (p *mcpPool) closeAll() {
 // provider plus an invalidate(email) callback to bust a user's cache when their
 // connectors change.
 func MCPToolsProviderPooled(baseStorage, mcpURL, secret string, tokenTTL time.Duration, scopes []string, connectors ConnectorSource) (ToolsProvider, func(string)) {
-	maxAge := tokenTTL - time.Minute
-	if maxAge < 30*time.Second {
-		maxAge = tokenTTL / 2
+	// How long a pooled CONNECTION is reused. This used to be derived from the
+	// token TTL, because the token was baked into the client and the entry had to
+	// be rebuilt before it went stale. Tokens are now signed per request, so the
+	// two are unrelated: this is purely about not holding a socket forever.
+	//
+	// The old derivation also went negative for any TTL under a minute — and a
+	// non-positive maxAge makes every lookup rebuild the entry and close the
+	// clients an in-flight call is still using, which surfaces as
+	// "transport error: … context canceled" on a perfectly healthy gateway.
+	maxAge := connMaxAge
+	if tokenTTL > 0 && tokenTTL < maxAge {
+		maxAge = tokenTTL // a deliberately short TTL implies short-lived sessions
+	}
+	if maxAge < time.Minute {
+		maxAge = time.Minute // never let the pool churn faster than calls complete
 	}
 	pool := &mcpPool{
 		baseStorage: baseStorage, mcpURL: mcpURL, secret: secret,

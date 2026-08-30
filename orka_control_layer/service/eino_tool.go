@@ -104,7 +104,10 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 			return cached, nil
 		}
 	}
-	out, err := t.base.Invoke(ctx, args)
+	// Retry infrastructure failures before giving up. A dropped MCP socket is not
+	// a result the model should have to reason about, and it was the single
+	// biggest source of tool failures here.
+	out, err, retries := retryTransient(ctx, func() (string, error) { return t.base.Invoke(ctx, args) })
 	if err != nil {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
@@ -119,7 +122,7 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 		if isInterruptErr(err) {
 			return "", err
 		}
-		return "tool error (recoverable — try a different approach, another tool, or proceed without this result): " + err.Error(), nil
+		return toolErrorMessage(name, err, retries), nil
 	}
 	if cacheable && out != "" {
 		toolCachePut(cacheKey, out)

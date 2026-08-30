@@ -13,6 +13,11 @@ const idKey ctxKey = iota
 type Identity struct {
 	Email  string
 	Scopes []string
+	// AuthErr records why a PRESENTED token was rejected (expired, tampered).
+	// It is what separates "this caller may not do that" from "we could not tell
+	// who this caller is" — two states that used to look identical downstream,
+	// so an expired token was reported as a missing permission.
+	AuthErr error
 }
 
 // HasScope reports whether the identity grants scope (wildcard "*" allows all).

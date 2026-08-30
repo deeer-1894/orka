@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/orka-oss/orka_core/agent"
@@ -80,27 +81,74 @@ func (t *RunAgentTool) Invoke(ctx context.Context, args map[string]any) (string,
 		return "", fmt.Errorf("run_agent: send: %w", err)
 	}
 
+	// Remember the actions taken. A GUI run that times out at step 8 of 10 has
+	// really done those eight things — the browser state reflects them — and
+	// returning a bare error threw that away, leaving the orchestrator unable to
+	// tell "nothing happened" from "most of it happened". Measured here, 29 of
+	// 292 run_agent calls timed out, every one discarding its progress.
+	var done []string
 	timeout := time.After(t.Timeout)
 	for {
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
 		case <-timeout:
-			return "", fmt.Errorf("run_agent: timed out after %s", t.Timeout)
+			return partialResult(t.Timeout, done), nil
 		case m := <-frames:
 			switch m["type"] {
 			case "done":
 				return fmt.Sprintf("GUI task completed: %v", m["summary"]), nil
 			case "error":
+				// Report the steps that DID land alongside the failure, for the
+				// same reason: the orchestrator's next move depends on how far
+				// this got, not only on the fact that it stopped.
+				if len(done) > 0 {
+					return "", fmt.Errorf("gui error after %d step(s) (%s): %v",
+						len(done), strings.Join(done, "; "), m["error"])
+				}
 				return "", fmt.Errorf("gui error: %v", m["error"])
 			case "call_user":
 				surface(emit, "call_user", m)
 				return fmt.Sprintf("GUI needs user input: %v", m["reason"]), nil
 			default:
+				if step := describeStep(m); step != "" {
+					done = append(done, step)
+				}
 				surface(emit, fmt.Sprint(m["type"]), m)
 			}
 		}
 	}
+}
+
+// describeStep renders one GUI action frame as a short line of progress.
+// Non-action frames (screenshots, observations) carry no state change and are
+// deliberately ignored — the summary should read as what was DONE.
+func describeStep(m map[string]any) string {
+	if fmt.Sprint(m["type"]) != "action" {
+		return ""
+	}
+	act, target := fmt.Sprint(m["action"]), fmt.Sprint(m["target"])
+	if act == "" || act == "<nil>" {
+		return ""
+	}
+	if target != "" && target != "<nil>" {
+		return act + " " + target
+	}
+	return act
+}
+
+// partialResult reports a timeout as an OUTCOME rather than an error, so the
+// orchestrator can decide whether to continue, retry the remainder, or accept
+// what was achieved. Returned as a normal result for the same reason tool
+// failures are: an error here aborts the whole eino node.
+func partialResult(after time.Duration, done []string) string {
+	if len(done) == 0 {
+		return fmt.Sprintf("GUI task timed out after %s with no completed steps. "+
+			"Nothing was changed; retry with a narrower instruction or use another tool.", after)
+	}
+	return fmt.Sprintf("GUI task INCOMPLETE — timed out after %s having completed %d step(s): %s. "+
+		"These steps already took effect, so do not repeat them; continue from this state or report what is missing.",
+		after, len(done), strings.Join(done, "; "))
 }
 
 func surface(emit func(messages.Message), action string, payload map[string]any) {
