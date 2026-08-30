@@ -992,6 +992,26 @@ function RunsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: strin
                     ⇄ 对比上次
                   </button>
                 )}
+                {/* Continuing is offered BEFORE rerunning, and only when a
+                    transcript survived: for a run that died deep in, redoing the
+                    finished work is the expensive option, not the safe one. */}
+                {r.resumable && (
+                  <button
+                    onClick={() =>
+                      api.resumeRun(r.run_id)
+                        .then((res) => {
+                          toast(`已从第 ${r.resume_steps || res.steps || 0} 步继续`, "success");
+                          if (res.conversation_id) onJumpToConversation(res.conversation_id);
+                          setTimeout(() => refreshResource("runs:all"), 800);
+                        })
+                        .catch(() => toast("无法继续,可能记录已过期", "error"))
+                    }
+                    className="font-medium text-accent hover:underline"
+                    title={`从中断处继续,保留已完成的 ${r.resume_steps || 0} 步`}
+                  >
+                    ▶ 继续
+                  </button>
+                )}
                 <button
                   onClick={() => api.rerunRun(r.run_id).then(() => { toast("已重新触发", "success"); setTimeout(() => refreshResource("runs:all"), 800); }).catch(() => toast("重跑失败,请重试", "error"))}
                   className="hover:text-accent"

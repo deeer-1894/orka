@@ -40,8 +40,9 @@ type ChatRunRequest struct {
 	ConfirmRisky    bool     `json:"confirm_risky"` // gate side-effecting tools behind user approval
 
 	// Internal (never bound from JSON): set when resuming an interrupted run.
-	resumeTarget string // InterruptCtx.ID of the paused tool call
-	resumeData   any    // the user's decision, handed to that tool
+	resumeTarget string     // InterruptCtx.ID of the paused tool call
+	resumeData   any        // the user's decision, handed to that tool
+	resumeFrom   *runResume // recovered transcript of a run that died mid-flight
 }
 
 // ToolsProvider supplies the tool set for a request and an optional cleanup
@@ -248,6 +249,13 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// Keep the run's record alive while it executes, so a record left at
 	// "running" reliably means "abandoned" rather than "we never cleaned up".
 	go s.heartbeatRun(ctx, runRecID)
+	// Journal the transcript so a mid-run death costs one step, not the whole
+	// run. On a resume, seed it with the recovered transcript.
+	journal := newRunJournal(s.Cfg.Storage.BaseStoragePath, runRecID, nil)
+	rc.Ctx = withJournal(rc.Ctx, journal)
+	if req.resumeFrom != nil {
+		rc.Ctx = withRunResume(rc.Ctx, req.resumeFrom)
+	}
 
 	if req.ResumeKey != "" {
 		err = s.resume(ctx, rc, req, raw, deps, tools, model, modelName)
@@ -280,7 +288,13 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	}
 
 	s.finish(ctx, rc, meta, req, raw, err)
-	return s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err())
+	status := s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err())
+	// The journal exists to rescue a run that died with work behind it. Keep it
+	// only when both halves are true — the run ended badly AND it got far enough
+	// that resuming beats restarting — and delete it otherwise, so journals do
+	// not accumulate for every successful run.
+	s.settleJournal(runRecID, journal, status)
+	return status
 }
 
 // RunHeadless runs a detached (scheduled/webhook) request with task-level

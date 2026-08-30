@@ -627,22 +627,62 @@ func (s *Storage) TouchRun(ctx context.Context, runID string) error {
 // records written before heartbeats existed (their process is long gone too).
 // Called once at startup and periodically after, so a run orphaned by a crash
 // is cleared within one staleness window rather than lingering indefinitely.
-func (s *Storage) ReapStaleRuns(ctx context.Context, staleAfter time.Duration) (int64, error) {
+// Returns the ids it closed out, so the caller can check each for a surviving
+// transcript — a crashed run never got to flag itself resumable, and that is
+// exactly the case where continuing is worth the most.
+func (s *Storage) ReapStaleRuns(ctx context.Context, staleAfter time.Duration) ([]string, error) {
 	cutoff := time.Now().Add(-staleAfter).UnixMilli()
-	res, err := s.Runs.UpdateMany(ctx,
-		bson.M{"status": RunRunning, "$or": []bson.M{
-			{"heartbeat_at": bson.M{"$lt": cutoff}},
-			{"heartbeat_at": bson.M{"$exists": false}, "created_at": bson.M{"$lt": cutoff}},
-		}},
-		bson.M{"$set": bson.M{
-			"status": RunInterrupted,
-			"error":  "run interrupted — the serving process went away",
-		}},
-	)
+	filter := bson.M{"status": RunRunning, "$or": []bson.M{
+		{"heartbeat_at": bson.M{"$lt": cutoff}},
+		{"heartbeat_at": bson.M{"$exists": false}, "created_at": bson.M{"$lt": cutoff}},
+	}}
+	// Collect the ids BEFORE the update, while the filter still matches them.
+	cur, err := s.Runs.Find(ctx, filter, options.Find().SetProjection(bson.M{"run_id": 1}))
 	if err != nil {
-		return 0, fmt.Errorf("reap stale runs: %w", err)
+		return nil, fmt.Errorf("reap stale runs: %w", err)
 	}
-	return res.ModifiedCount, nil
+	var rows []struct {
+		RunID string `bson:"run_id"`
+	}
+	if err := cur.All(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("reap stale runs: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	if _, err := s.Runs.UpdateMany(ctx, filter, bson.M{"$set": bson.M{
+		"status": RunInterrupted,
+		"error":  "run interrupted — the serving process went away",
+	}}); err != nil {
+		return nil, fmt.Errorf("reap stale runs: %w", err)
+	}
+	ids := make([]string, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.RunID)
+	}
+	return ids, nil
+}
+
+// SetRunResumable flags a failed run as continuable and records how much of it
+// the surviving transcript covers.
+func (s *Storage) SetRunResumable(ctx context.Context, runID string, steps int) error {
+	_, err := s.Runs.UpdateOne(ctx, bson.M{"run_id": runID},
+		bson.M{"$set": bson.M{"resumable": true, "resume_steps": steps}})
+	if err != nil {
+		return fmt.Errorf("set run resumable: %w", err)
+	}
+	return nil
+}
+
+// ClearRunResumable drops the flag once a run's transcript has been consumed,
+// so a run cannot be resumed twice from the same point.
+func (s *Storage) ClearRunResumable(ctx context.Context, runID string) error {
+	_, err := s.Runs.UpdateOne(ctx, bson.M{"run_id": runID},
+		bson.M{"$set": bson.M{"resumable": false}})
+	if err != nil {
+		return fmt.Errorf("clear run resumable: %w", err)
+	}
+	return nil
 }
 
 // TokensSince totals a user's token spend since a point in time — the input to

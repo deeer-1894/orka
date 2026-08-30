@@ -277,6 +277,19 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 	ckptID := rc.Meta.ConversationID
 	runner := adk.NewRunner(ctx, adk.RunnerConfig{Agent: ag, EnableStreaming: true, CheckPointStore: store})
 
+	// The model input is either a fresh conversation or the transcript of an
+	// earlier attempt that died. Resuming replays what was already established
+	// instead of paying for it again.
+	input := toEinoMessages(rc.Messages)
+	if rr := runResumeFrom(ctx); rr != nil {
+		input = rr.Messages
+	}
+	journal := journalFrom(ctx)
+	journal.setSeed(input)
+	// Capture the tail of the transcript even when a run ends without a trailing
+	// tool call — a run that dies on the final synthesis has still done the work.
+	defer journal.flush()
+
 	var iter *adk.AsyncIterator[*adk.AgentEvent]
 	if rs := resumeFrom(ctx); rs != nil && store != nil && ckptID != "" {
 		var err error
@@ -286,9 +299,9 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 			return err
 		}
 	} else if store != nil && ckptID != "" {
-		iter = runner.Run(ctx, toEinoMessages(rc.Messages), adk.WithCheckPointID(ckptID))
+		iter = runner.Run(ctx, input, adk.WithCheckPointID(ckptID))
 	} else {
-		iter = runner.Run(ctx, toEinoMessages(rc.Messages))
+		iter = runner.Run(ctx, input)
 	}
 
 	type pendingCall struct {
@@ -369,6 +382,12 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 			tokens += m.ResponseMeta.Usage.TotalTokens
 		}
 
+		// Journal every authoritative message. This is the run's transcript, and
+		// the only thing that makes a mid-run failure recoverable rather than
+		// total. Sub-agent turns are journaled too: they are part of what the
+		// orchestrator has already established.
+		journal.append(m)
+
 		switch m.Role {
 		case schema.Assistant:
 			for _, tc := range m.ToolCalls {
@@ -399,6 +418,10 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 			toolCalls++
 			payload := map[string]any{"tool": name, "args": pc.args, "result": m.Content}
 			emit(messages.Tool("call", payload, eventMeta))
+			// Durability boundary: the work this result describes has already
+			// happened, so persist the transcript now. Tens of writes per run —
+			// nothing next to the model call that produced it.
+			journal.flush()
 		}
 	}
 	return nil

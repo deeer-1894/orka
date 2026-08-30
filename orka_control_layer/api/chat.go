@@ -185,6 +185,43 @@ func (a *API) ToolsCatalog(ctx context.Context, c *app.RequestContext) {
 	ok(c, a.Chat.ToolCatalog(ctx, authEmail(c)))
 }
 
+// ResumeRun continues a run that died mid-flight, picking up from the surviving
+// transcript instead of redoing the work. Detached and published into the
+// conversation's stream, exactly like ChatRun, so the client joins it via
+// /chat/attach and sees a normal continuation.
+func (a *API) ResumeRun(ctx context.Context, c *app.RequestContext) {
+	var req struct {
+		RunID string `json:"run_id"`
+	}
+	if err := bind(c, &req); err != nil || req.RunID == "" {
+		fail(c, consts.StatusBadRequest, "run_id required")
+		return
+	}
+	email := authEmail(c)
+	// Resolve the run before detaching so a bad request gets a real error rather
+	// than a stream that opens and immediately dies.
+	rec, err := a.Store.GetRun(ctx, req.RunID)
+	if err != nil || rec.OwnerEmail != email {
+		fail(c, consts.StatusNotFound, "not found")
+		return
+	}
+	if !rec.Resumable {
+		fail(c, consts.StatusConflict, "这个运行无法继续(没有可恢复的记录)")
+		return
+	}
+	conv := rec.ConversationID
+	a.hub.start(conv)
+	go func() {
+		if _, err := a.Chat.ResumeRun(context.Background(), req.RunID, email, func(m messages.Message) {
+			a.hub.publish(conv, m)
+		}); err != nil && a.Log != nil {
+			a.Log.Warn("resume run failed", "run_id", req.RunID, "err", err)
+		}
+		a.hub.finish(conv)
+	}()
+	ok(c, map[string]any{"resumed": true, "conversation_id": conv, "steps": rec.ResumeSteps})
+}
+
 // ConfirmAction approves or rejects a paused side-effecting tool call.
 func (a *API) ConfirmAction(ctx context.Context, c *app.RequestContext) {
 	var req struct {

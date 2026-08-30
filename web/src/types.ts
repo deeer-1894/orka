@@ -179,6 +179,8 @@ export interface RunRecord {
   heartbeat_at?: number;
   budget_hit?: string; // steps | tokens | time — why the run stopped early
   unfinished?: string[]; // plan steps the agent declared but never completed
+  resumable?: boolean; // a transcript survived, so this run can be continued
+  resume_steps?: number; // how much of the run that transcript preserves
 }
 
 export type ArtifactBlock = { type: string; data: Record<string, unknown> };

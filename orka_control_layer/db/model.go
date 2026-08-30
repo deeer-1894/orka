@@ -270,6 +270,13 @@ type RunRecord struct {
 	BudgetHit string `bson:"budget_hit,omitempty" json:"budget_hit,omitempty"`
 	// Unfinished lists plan steps the agent declared but never marked done.
 	Unfinished []string `bson:"unfinished,omitempty" json:"unfinished,omitempty"`
+	// Resumable means a transcript of this run survived its failure, so it can
+	// be continued from where it stopped instead of restarted. Set only when the
+	// run got far enough that resuming is worth more than starting over.
+	Resumable bool `bson:"resumable,omitempty" json:"resumable,omitempty"`
+	// ResumeSteps is how much of the run the transcript preserves — the number
+	// the user is really deciding about when they choose to continue.
+	ResumeSteps int `bson:"resume_steps,omitempty" json:"resume_steps,omitempty"`
 }
 
 // TaskMeta supports template-driven, cron-scheduled, variable-rendered tasks.

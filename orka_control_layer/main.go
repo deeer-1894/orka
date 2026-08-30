@@ -108,7 +108,11 @@ func main() {
 	// Close out runs orphaned by the previous process before serving, then keep
 	// sweeping. A run's registry lives in memory and dies with the process, so
 	// without this the run log fills with executions that are "running" forever.
-	chat.StartRunReaper(ctx)
+	// Deliberately NOT the setup ctx above: that one times out after 15s, which
+	// would run the startup pass and then silently kill the sweeper — the
+	// background scheduler at the bottom of this function detaches for the same
+	// reason.
+	chat.StartRunReaper(context.Background())
 
 	// Artifact tools (publish/get a live shareable page) are local tools with DB
 	// access; the providers append them to every run's tool set.

@@ -64,15 +64,33 @@ func (s *ChatService) StartRunReaper(ctx context.Context) {
 	sweep := func() {
 		c, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
-		n, err := s.Msg.Store.ReapStaleRuns(c, runStaleAfter)
+		ids, err := s.Msg.Store.ReapStaleRuns(c, runStaleAfter)
 		if err != nil {
 			if s.Log != nil {
 				s.Log.Warn("run reaper failed", "err", err)
 			}
 			return
 		}
-		if n > 0 && s.Log != nil {
-			s.Log.Info("reaped orphaned runs", "count", n, "status", db.RunInterrupted)
+		if len(ids) == 0 {
+			return
+		}
+		// A crashed run never reached the code that flags itself resumable, so
+		// the reaper does it: if a transcript survived, continuing is worth far
+		// more here than anywhere else — this is the case where an entire
+		// multi-hour run would otherwise be redone from nothing.
+		resumable := 0
+		for _, id := range ids {
+			f := loadJournal(s.Cfg.Storage.BaseStoragePath, id)
+			if f == nil || len(f.Messages) < resumeWorthwhileSteps {
+				dropJournal(s.Cfg.Storage.BaseStoragePath, id)
+				continue
+			}
+			if s.Msg.Store.SetRunResumable(c, id, len(f.Messages)) == nil {
+				resumable++
+			}
+		}
+		if s.Log != nil {
+			s.Log.Info("reaped orphaned runs", "count", len(ids), "status", db.RunInterrupted, "resumable", resumable)
 		}
 	}
 	sweep() // startup pass: clear the previous process's residue
