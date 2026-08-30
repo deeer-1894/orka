@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"mime"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/cloudwego/hertz/pkg/app"
@@ -75,7 +77,7 @@ func (a *API) FileDownload(ctx context.Context, c *app.RequestContext) {
 	// littering the user's workspace with junk artifacts on every download.
 	ct := mime.TypeByExtension(filepath.Ext(p))
 	if ct == "" {
-		ct = "application/octet-stream"
+		ct = fallbackContentType(filepath.Ext(p))
 	}
 	// `inline=1` lets the web file-preview render the bytes in-page (e.g. a PDF in
 	// an <iframe>); the default stays `attachment` so the "下载" links save a file.
@@ -83,8 +85,49 @@ func (a *API) FileDownload(ctx context.Context, c *app.RequestContext) {
 	if string(c.Query("inline")) == "1" {
 		disp = "inline"
 	}
-	c.Response.Header.Set("Content-Disposition", disp+"; filename=\""+filepath.Base(p)+"\"")
+	c.Response.Header.Set("Content-Disposition", contentDisposition(disp, filepath.Base(p)))
 	c.Data(consts.StatusOK, ct, data)
+}
+
+// contentDisposition builds an RFC 6266 header. HTTP header values are ASCII, so
+// a Chinese (or any non-ASCII) filename written raw makes the whole response
+// malformed — Chrome rejects it outright ("响应无效" / "Failed to fetch"), which
+// broke preview and download for every non-ASCII filename. Emit an ASCII
+// fallback plus the real name in the filename* form.
+func contentDisposition(disp, name string) string {
+	ascii := make([]rune, 0, len(name))
+	nonASCII := false
+	for _, r := range name {
+		switch {
+		case r < 32 || r == '"' || r == '\\' || r == 127:
+			ascii = append(ascii, '_') // never let a quote break the header
+		case r > 127:
+			nonASCII = true
+			ascii = append(ascii, '_')
+		default:
+			ascii = append(ascii, r)
+		}
+	}
+	h := disp + "; filename=\"" + string(ascii) + "\""
+	if nonASCII {
+		h += "; filename*=UTF-8''" + url.PathEscape(name)
+	}
+	return h
+}
+
+// fallbackContentType covers the text formats the agent produces that Go's mime
+// table does not know (notably .md), so the browser renders them inline instead
+// of treating them as opaque downloads.
+func fallbackContentType(ext string) string {
+	switch strings.ToLower(ext) {
+	case ".md", ".markdown":
+		return "text/markdown; charset=utf-8"
+	case ".txt", ".log", ".csv", ".tsv", ".yaml", ".yml", ".ini", ".conf":
+		return "text/plain; charset=utf-8"
+	case ".json":
+		return "application/json; charset=utf-8"
+	}
+	return "application/octet-stream"
 }
 
 // FileList lists a directory.
