@@ -1,0 +1,80 @@
+{
+  "at": "2026-08-30T19:55:44+08:00",
+  "model": "",
+  "passed": 6,
+  "total": 8,
+  "results": [
+    {
+      "id": "plain_answer",
+      "pass": true,
+      "status": "done",
+      "tools": 0,
+      "tokens": 8090,
+      "seconds": 33.428670667
+    },
+    {
+      "id": "arithmetic",
+      "pass": false,
+      "reasons": [
+        "answer missing \"7097463\""
+      ],
+      "status": "done",
+      "tools": 0,
+      "tokens": 8100,
+      "seconds": 27.863462917
+    },
+    {
+      "id": "file_write_read",
+      "pass": false,
+      "reasons": [
+        "never called file_write"
+      ],
+      "status": "done",
+      "tools": 2,
+      "tokens": 26597,
+      "seconds": 96.885496166
+    },
+    {
+      "id": "file_multi_step",
+      "pass": true,
+      "status": "done",
+      "tools": 3,
+      "tokens": 34909,
+      "seconds": 116.225697083
+    },
+    {
+      "id": "plan_completion",
+      "pass": true,
+      "status": "done",
+      "tools": 7,
+      "tokens": 55630,
+      "seconds": 228.40555275
+    },
+    {
+      "id": "web_search_basic",
+      "pass": true,
+      "status": "done",
+      "tools": 1,
+      "tokens": 16578,
+      "seconds": 50.041163
+    },
+    {
+      "id": "refuses_to_invent",
+      "pass": true,
+      "status": "done",
+      "tools": 1,
+      "tokens": 17644,
+      "seconds": 69.491175084
+    },
+    {
+      "id": "memory_recall",
+      "pass": true,
+      "status": "done",
+      "tools": 1,
+      "tokens": 25351,
+      "seconds": 97.216988709
+    }
+  ],
+  "total_tools": 15,
+  "total_tokens": 192899
+}

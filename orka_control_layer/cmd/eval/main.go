@@ -101,6 +101,21 @@ func main() {
 	)
 	flag.Parse()
 
+	// Check the flags that only matter at the END before spending ten minutes of
+	// model calls to reach them. A baseline that cannot be read, or a run whose
+	// scorecard is never written, wastes the whole suite.
+	var prev scorecard
+	if *baseline != "" {
+		if err := readJSON(*baseline, &prev); err != nil {
+			fmt.Fprintf(os.Stderr, "eval: cannot read baseline %s: %v\n", *baseline, err)
+			fmt.Fprintf(os.Stderr, "      create one first with:  --out %s\n", *baseline)
+			os.Exit(2)
+		}
+	}
+	if *out == "" {
+		fmt.Fprintln(os.Stderr, "eval: note — no --out given, so this scorecard will not be saved.")
+	}
+
 	sc, err := run(*url, *email, *password, *token, *tasksF, *only, *model)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "eval:", err)
@@ -115,12 +130,7 @@ func main() {
 		}
 	}
 	if *baseline != "" {
-		var prev scorecard
-		if err := readJSON(*baseline, &prev); err != nil {
-			fmt.Fprintln(os.Stderr, "eval: baseline:", err)
-		} else {
-			compare(prev, sc)
-		}
+		compare(prev, sc) // already loaded and validated before the suite ran
 	}
 	// A failing suite exits non-zero so CI can gate on it.
 	if sc.Passed < sc.Total {
@@ -176,6 +186,11 @@ func (c *client) runTask(t task) result {
 		timeout = 5 * time.Minute
 	}
 	conv := fmt.Sprintf("eval_%s_%d", t.ID, time.Now().UnixNano())
+	// Delete the files this task asserts BEFORE running it. Without this the
+	// suite grades itself on the previous run's leftovers: a task that no longer
+	// writes anything still "passes" because the file is already there, which is
+	// precisely the regression the suite exists to catch.
+	c.clearExpected(t)
 	started := time.Now()
 
 	r := result{ID: t.ID, Pass: true}
@@ -417,6 +432,19 @@ func (c *client) runVerdict(conv string) (string, int) {
 		return "", 0
 	}
 	return out.Data.Runs[0].Status, out.Data.Runs[0].Tokens
+}
+
+// clearExpected removes every file the task (and its follow-up) asserts, so
+// each run starts from a known-empty state.
+func (c *client) clearExpected(t task) {
+	paths := append([]string(nil), t.Expect.Files...)
+	if t.Followup != nil {
+		paths = append(paths, t.Followup.Expect.Files...)
+	}
+	for _, p := range paths {
+		var out any
+		_ = c.postJSON("/api/v1/controller/file/delete", map[string]string{"path": p}, &out)
+	}
 }
 
 func (c *client) fileExists(path string) bool {

@@ -32,13 +32,22 @@ tasks:
       contains: ["幂等"]
       max_tools: 0
 
+  # 1234*5678 = 7006652; + 91011 = 7097663. Verified independently — the first
+  # version of this task asserted 7097463, and the only thing it ever proved was
+  # that a suite with a wrong ground truth is worse than no suite: it fails a
+  # correct answer, and people learn to ignore it.
   - id: arithmetic
     prompt: "计算 (1234 * 5678) + 91011,只给出最终数字。"
     timeout_s: 120
     expect:
-      contains: ["7097463"]
+      contains: ["7097663"]
 
   # --- workspace: the tools that were measured least reliable ---
+  # The prompt deliberately does NOT name a tool: this measures which one the
+  # agent reaches for. On the first baseline it wrote the file with `printf` via
+  # shell — which produces the right bytes but goes through a danger tool (so a
+  # confirm-gated session pauses for no reason) and bypasses the workspace
+  # write-diff/undo machinery that keys on the file tools.
   - id: file_write_read
     prompt: "在工作区创建 eval_a.txt,内容恰好是 ORKA_EVAL_OK。然后读回它并复述内容。"
     timeout_s: 180
@@ -46,6 +55,7 @@ tasks:
       files: ["eval_a.txt"]
       contains: ["ORKA_EVAL_OK"]
       tools_used: ["file_write", "file_read"]
+      tools_banned: ["shell"]
 
   - id: file_multi_step
     prompt: "依次创建三个文件:eval_b1.txt 内容 B1、eval_b2.txt 内容 B2、eval_b3.txt 内容 B3。全部创建完后回复 DONE3。"
