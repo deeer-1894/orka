@@ -599,10 +599,105 @@ func (s *Storage) FinalizeRun(ctx context.Context, r RunRecord) error {
 		"status": r.Status, "output": r.Output, "result": r.Result, "error": r.Error,
 		"tokens": r.Tokens, "tool_calls": r.ToolCalls,
 		"finished_at": r.FinishedAt, "duration_ms": r.DurationMs,
+		"budget_hit": r.BudgetHit, "unfinished": r.Unfinished,
 	}
 	_, err := s.Runs.UpdateOne(ctx, bson.M{"run_id": r.RunID}, bson.M{"$set": set})
 	if err != nil {
 		return fmt.Errorf("finalize run: %w", err)
+	}
+	return nil
+}
+
+// TouchRun refreshes a run's heartbeat. Best-effort: a missed beat is harmless
+// because the reaper's staleness window is many beats wide.
+func (s *Storage) TouchRun(ctx context.Context, runID string) error {
+	_, err := s.Runs.UpdateOne(ctx,
+		bson.M{"run_id": runID, "status": RunRunning},
+		bson.M{"$set": bson.M{"heartbeat_at": time.Now().UnixMilli()}},
+	)
+	return err
+}
+
+// ReapStaleRuns closes out runs that are still marked running but whose owning
+// process is gone — the residue of a restart, crash or deploy. They are marked
+// interrupted rather than failed: the work did not go wrong, it stopped
+// existing, and only one of those is worth alerting on.
+//
+// Staleness is measured from the heartbeat, falling back to the start time for
+// records written before heartbeats existed (their process is long gone too).
+// Called once at startup and periodically after, so a run orphaned by a crash
+// is cleared within one staleness window rather than lingering indefinitely.
+func (s *Storage) ReapStaleRuns(ctx context.Context, staleAfter time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-staleAfter).UnixMilli()
+	res, err := s.Runs.UpdateMany(ctx,
+		bson.M{"status": RunRunning, "$or": []bson.M{
+			{"heartbeat_at": bson.M{"$lt": cutoff}},
+			{"heartbeat_at": bson.M{"$exists": false}, "created_at": bson.M{"$lt": cutoff}},
+		}},
+		bson.M{"$set": bson.M{
+			"status": RunInterrupted,
+			"error":  "run interrupted — the serving process went away",
+		}},
+	)
+	if err != nil {
+		return 0, fmt.Errorf("reap stale runs: %w", err)
+	}
+	return res.ModifiedCount, nil
+}
+
+// TokensSince totals a user's token spend since a point in time — the input to
+// the per-user cost ceiling. Runs that never recorded usage contribute zero.
+func (s *Storage) TokensSince(ctx context.Context, email string, since int64) (int, error) {
+	cur, err := s.Runs.Aggregate(ctx, []bson.M{
+		{"$match": bson.M{"owner_email": email, "created_at": bson.M{"$gte": since}}},
+		{"$group": bson.M{"_id": nil, "total": bson.M{"$sum": "$tokens"}}},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("tokens since: %w", err)
+	}
+	defer cur.Close(ctx)
+	var rows []struct {
+		Total int64 `bson:"total"`
+	}
+	if err := cur.All(ctx, &rows); err != nil {
+		return 0, fmt.Errorf("tokens since: %w", err)
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	return int(rows[0].Total), nil
+}
+
+// RecordTaskOutcome advances a scheduled task's circuit breaker. A success
+// clears the strike count; a failure increments it and returns the new total so
+// the caller can trip the breaker.
+func (s *Storage) RecordTaskOutcome(ctx context.Context, taskID string, ok bool) (int, error) {
+	if taskID == "" {
+		return 0, nil
+	}
+	update := bson.M{"$inc": bson.M{"consecutive_fails": 1}}
+	if ok {
+		update = bson.M{"$set": bson.M{"consecutive_fails": 0}}
+	}
+	var out TaskMeta
+	err := s.Tasks.FindOneAndUpdate(ctx, bson.M{"task_id": taskID}, update,
+		options.FindOneAndUpdate().SetReturnDocument(options.After)).Decode(&out)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("record task outcome: %w", err)
+	}
+	return out.ConsecutiveFails, nil
+}
+
+// DisableTask stops a scheduled task and records why, so an automatic shutdown
+// is distinguishable from one the user performed.
+func (s *Storage) DisableTask(ctx context.Context, taskID, reason string) error {
+	_, err := s.Tasks.UpdateOne(ctx, bson.M{"task_id": taskID},
+		bson.M{"$set": bson.M{"cron_status": "stopped", "next_run_at": int64(0), "disabled_reason": reason}})
+	if err != nil {
+		return fmt.Errorf("disable task: %w", err)
 	}
 	return nil
 }

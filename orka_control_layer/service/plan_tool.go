@@ -56,6 +56,9 @@ func (planTool) Invoke(ctx context.Context, args map[string]any) (string, error)
 	if emit := agent.EmitFrom(ctx); emit != nil {
 		emit(messages.Plan(plan, agent.MetaFrom(ctx)))
 	}
+	// Keep the latest checklist for the completion check at the end of the run:
+	// the agent's own plan is the only contract we can hold a finished run to.
+	planTrackerFrom(ctx).record(plan.Steps)
 	return "已更新任务清单。", nil
 }
 

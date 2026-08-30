@@ -219,6 +219,12 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	if req.resumeTarget != "" {
 		rc.Ctx = withResume(rc.Ctx, req.resumeTarget, req.resumeData)
 	}
+	// Give this run a budget and a place to record the plan it commits to. Both
+	// are read back at finalize: a run that ran out of budget, or that left its
+	// own checklist unfinished, must not be filed as a success.
+	budget := newRunBudget(einoMaxIters, runMaxTokens, runMaxWall)
+	plan := &planTracker{}
+	rc.Ctx = withPlanTracker(withBudget(rc.Ctx, budget), plan)
 
 	// Record this execution as an auditable run (the automation platform's unit).
 	startedAt := time.Now().UnixMilli()
@@ -229,7 +235,19 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	if req.ResumeKey != "" {
 		trigger = "resume"
 	}
+	// Refuse a run that would exceed the caller's rolling cost ceiling. Checked
+	// here, after the run context exists but before any model call, so nothing is
+	// spent discovering the limit.
+	if over := s.quotaExceeded(ctx, req.UserEmail); over != "" {
+		s.Msg.Deliver(rc, raw, messages.Chat(messages.RoleAssistant, over, meta), true)
+		s.Msg.Deliver(rc, raw, messages.Task("failed", meta), true)
+		return db.RunFailed
+	}
+
 	runRecID := s.createRun(ctx, req, meta, trigger)
+	// Keep the run's record alive while it executes, so a record left at
+	// "running" reliably means "abandoned" rather than "we never cleaned up".
+	go s.heartbeatRun(ctx, runRecID)
 
 	if req.ResumeKey != "" {
 		err = s.resume(ctx, rc, req, raw, deps, tools, model, modelName)
@@ -326,6 +344,19 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 	case rc.Interrupt != nil:
 		status = db.RunPaused
 	}
+	// A run that reached the end of its rope is not a success, however confident
+	// its closing paragraph reads. Two independent signals demote it: it ran out
+	// of budget, or it never finished the checklist it published. Both are only
+	// meaningful for a run that otherwise completed — a failure is already worse.
+	var budgetHit string
+	var unfinished []string
+	if status == db.RunDone && rc.Ctx != nil {
+		budgetHit = budgetFrom(rc.Ctx).exhausted()
+		unfinished = planTrackerFrom(rc.Ctx).unfinished()
+		if budgetHit != "" || len(unfinished) > 0 {
+			status = db.RunPartial
+		}
+	}
 	if runID == "" || s.Msg == nil || s.Msg.Store == nil {
 		return status
 	}
@@ -338,7 +369,12 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 		RunID: runID, Status: status, Error: errStr,
 		Output: trunc(out, 400), Result: extractJSON(out), Tokens: tokens, ToolCalls: toolCalls,
 		FinishedAt: now, DurationMs: now - startedAt,
+		BudgetHit: budgetHit, Unfinished: unfinished,
 	})
+	// Advance the scheduled-task circuit breaker. A partial run counts as a
+	// success for this purpose: it did work and stopped honestly, which is not
+	// the repeated hard failure the breaker exists to catch.
+	s.recordTaskOutcome(bg, req.TaskID, req.UserEmail, status != db.RunFailed)
 	// Alert on UNATTENDED failures (scheduled/webhook/rerun) — a manual failure
 	// the user is already watching on screen.
 	if status == db.RunFailed && req.Trigger != "" && req.Trigger != "manual" && req.UserEmail != "" {

@@ -165,7 +165,7 @@ export interface RunRecord {
   conversation_id: string;
   owner_email: string;
   trigger: string; // manual | schedule | resume | rerun
-  status: string; // running | done | failed | paused
+  status: string; // running | done | partial | failed | paused | interrupted
   prompt: string;
   output: string;
   result?: string; // structured JSON extracted from the answer
@@ -176,6 +176,9 @@ export interface RunRecord {
   created_at: number;
   finished_at: number;
   duration_ms: number;
+  heartbeat_at?: number;
+  budget_hit?: string; // steps | tokens | time — why the run stopped early
+  unfinished?: string[]; // plan steps the agent declared but never completed
 }
 
 export type ArtifactBlock = { type: string; data: Record<string, unknown> };

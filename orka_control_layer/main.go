@@ -105,6 +105,10 @@ func main() {
 
 	msg := message_utils.New(store, cfg.Obs.PersistSampling, logger)
 	chat := service.NewChatService(cfg, mainLLM, miniLLM, cpStore, msg, metrics, logger)
+	// Close out runs orphaned by the previous process before serving, then keep
+	// sweeping. A run's registry lives in memory and dies with the process, so
+	// without this the run log fills with executions that are "running" forever.
+	chat.StartRunReaper(ctx)
 
 	// Artifact tools (publish/get a live shareable page) are local tools with DB
 	// access; the providers append them to every run's tool set.

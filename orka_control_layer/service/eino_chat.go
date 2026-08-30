@@ -30,34 +30,36 @@ const einoOrchestratorName = "orka"
 // (via llm.EinoModel) and tool suite (via EinoTools), running in parallel to the
 // hand-rolled runner and gated by config so the working path is untouched.
 
-// budgetGuard forces an agent to wrap up before the hard MaxIterations cliff:
-// on the last allowed model call it strips the tools, so the model MUST answer
-// from what it already has instead of erroring out at the cap (the cause of
-// expensive deep-research runs dying with no result). Model-agnostic — it
-// removes the *ability* to call tools rather than politely asking.
+// budgetGuard enforces a run's budget on every model cycle. When the budget is
+// spent it strips the tools — so the model MUST answer from what it already has
+// instead of erroring out at eino's hard MaxIterations cliff — and appends a
+// notice telling it to report honestly rather than invent a conclusion.
+// Model-agnostic: it removes the *ability* to call tools rather than asking.
+//
+// The budget is shared with the caller (via the run context), so whoever
+// finalizes the run can see that it stopped early and file it as partial.
+// Sub-agents get their own budget scoped to their own step allowance.
 type budgetGuard struct {
 	*adk.BaseChatModelAgentMiddleware
-	maxIters int
+	budget *runBudget
 }
 
 func newBudgetGuard(maxIters int) *budgetGuard {
-	return &budgetGuard{BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{}, maxIters: maxIters}
+	return newBudgetGuardFor(newRunBudget(maxIters, 0, 0))
+}
+
+func newBudgetGuardFor(b *runBudget) *budgetGuard {
+	return &budgetGuard{BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{}, budget: b}
 }
 
 func (g *budgetGuard) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
-	if g.maxIters > 1 {
-		// assistant messages == model-generation cycles so far.
-		n := 0
-		for _, m := range state.Messages {
-			if m != nil && m.Role == schema.Assistant {
-				n++
-			}
-		}
-		if n >= g.maxIters-1 { // last allowed call → no tools, force synthesis
-			state.ToolInfos = nil
-			state.DeferredToolInfos = nil
-		}
+	if !g.budget.observe(state.Messages) {
+		return ctx, state, nil
 	}
+	// Budget spent: last allowed call → no tools, and say so.
+	state.ToolInfos = nil
+	state.DeferredToolInfos = nil
+	state.Messages = append(state.Messages, budgetNotice(g.budget.exhausted()))
 	return ctx, state, nil
 }
 
@@ -102,7 +104,7 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 		// Survive transient/mid-stream model failures instead of failing the run.
 		ModelRetryConfig:    modelRetryConfig(),
 		ModelFailoverConfig: modelFailoverConfig(backup),
-		Handlers:            append([]adk.ChatModelAgentMiddleware{newBudgetGuard(maxIters)}, handlers...),
+		Handlers:            append([]adk.ChatModelAgentMiddleware{newBudgetGuardFor(agentBudget(ctx, maxIters))}, handlers...),
 	})
 }
 
@@ -183,7 +185,7 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 		maxIters = 16
 	}
 	allTools := append(EinoTools(withPlan(withClarify(atomic))), subTools...)
-	handlers := append([]adk.ChatModelAgentMiddleware{newBudgetGuard(maxIters)}, extra...)
+	handlers := append([]adk.ChatModelAgentMiddleware{newBudgetGuardFor(agentBudget(ctx, maxIters))}, extra...)
 	if summarize {
 		// Summarize history compression on the FAST mini model — it's an auxiliary
 		// step, not user-facing synthesis, so it doesn't need the strong model.

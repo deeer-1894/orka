@@ -8,6 +8,17 @@ const (
 	RunDone    = "done"
 	RunFailed  = "failed"
 	RunPaused  = "paused"
+	// RunInterrupted means the process serving this run went away (restart,
+	// crash, deploy). It is deliberately NOT "failed": nothing went wrong with
+	// the work, it just stopped existing, and the two need different handling —
+	// a failure is worth alerting on and retrying, an interruption is worth
+	// resuming. Without it every restart left runs stuck at "running" forever.
+	RunInterrupted = "interrupted"
+	// RunPartial means the run ended in an orderly way but did not finish the
+	// job — it ran out of budget, or left steps of its own plan unfinished.
+	// Previously these were filed as "done", which made the run log unusable as
+	// evidence that anything actually completed.
+	RunPartial = "partial"
 )
 
 // User is an account record (password stored as a bcrypt hash).
@@ -237,7 +248,7 @@ type RunRecord struct {
 	ConversationID string `bson:"conversation_id" json:"conversation_id"`
 	OwnerEmail     string `bson:"owner_email" json:"owner_email"`
 	Trigger        string `bson:"trigger" json:"trigger"` // manual | schedule | resume
-	Status         string `bson:"status" json:"status"`   // running | done | failed | paused
+	Status         string `bson:"status" json:"status"`   // running | done | partial | failed | paused | interrupted
 	Prompt         string `bson:"prompt" json:"prompt"`
 	Output         string `bson:"output" json:"output"` // final answer summary (capped)
 	Result         string `bson:"result,omitempty" json:"result,omitempty"` // structured JSON extracted from the answer (chaining / external consumption)
@@ -248,6 +259,17 @@ type RunRecord struct {
 	CreatedAt      int64  `bson:"created_at" json:"created_at"`
 	FinishedAt     int64  `bson:"finished_at" json:"finished_at"`
 	DurationMs     int64  `bson:"duration_ms" json:"duration_ms"`
+	// HeartbeatAt is refreshed by the owning process while the run is alive. A
+	// running record whose heartbeat has gone cold belongs to a process that no
+	// longer exists, which is the only reliable way to tell the two apart: an
+	// in-memory registry dies with the process it was meant to describe.
+	HeartbeatAt int64 `bson:"heartbeat_at,omitempty" json:"heartbeat_at,omitempty"`
+	// BudgetHit names the exhausted dimension (steps | tokens | time) when the
+	// run was cut short by its budget, so "why did this stop early" is answerable
+	// from the record instead of by re-reading the transcript.
+	BudgetHit string `bson:"budget_hit,omitempty" json:"budget_hit,omitempty"`
+	// Unfinished lists plan steps the agent declared but never marked done.
+	Unfinished []string `bson:"unfinished,omitempty" json:"unfinished,omitempty"`
 }
 
 // TaskMeta supports template-driven, cron-scheduled, variable-rendered tasks.
@@ -265,4 +287,12 @@ type TaskMeta struct {
 	LastResult        string         `bson:"last_result" json:"last_result"`   // short summary of the latest run
 	WebhookToken      string         `bson:"webhook_token,omitempty" json:"webhook_token,omitempty"` // set → POST /hook/{token} triggers this task
 	RetryCount        int            `bson:"retry_count,omitempty" json:"retry_count,omitempty"`     // task-level auto-retry on failure (0 = none)
+	// ConsecutiveFails drives the circuit breaker: an unattended task that keeps
+	// failing is burning tokens on every tick with nobody watching, so after
+	// taskFailureLimit strikes it is disabled and its owner notified. Reset by
+	// the first success.
+	ConsecutiveFails int `bson:"consecutive_fails,omitempty" json:"consecutive_fails,omitempty"`
+	// DisabledReason explains an automatic shutdown ("" = not auto-disabled), so
+	// a stopped task doesn't look like the user stopped it.
+	DisabledReason string `bson:"disabled_reason,omitempty" json:"disabled_reason,omitempty"`
 }

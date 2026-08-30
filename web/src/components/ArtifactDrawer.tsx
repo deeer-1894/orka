@@ -306,7 +306,14 @@ function DashboardPanel({ onJumpToConversation, goTab, onOpenArtifact }: { onJum
 
   const done = runs.filter((r) => r.status === "done").length;
   const failed = runs.filter((r) => r.status === "failed").length;
-  const finished = done + failed;
+  // "partial" ran to an orderly stop without finishing the job (out of budget, or
+  // plan steps left undone). It is an OUTCOME, so it belongs in the denominator —
+  // counting it as success is exactly the flattery this status exists to prevent.
+  const partial = runs.filter((r) => r.status === "partial").length;
+  // "interrupted" means the serving process went away. Nothing was decided, so it
+  // is not an outcome at all and must not drag the success rate down.
+  const interrupted = runs.filter((r) => r.status === "interrupted").length;
+  const finished = done + failed + partial;
   const successRate = finished ? Math.round((done / finished) * 100) : 0;
   const totalTokens = runs.reduce((a, r) => a + (r.tokens || 0), 0);
   const totalTools = runs.reduce((a, r) => a + (r.tool_calls || 0), 0);
@@ -314,7 +321,12 @@ function DashboardPanel({ onJumpToConversation, goTab, onOpenArtifact }: { onJum
   const avgDur = durs.length ? Math.round(durs.reduce((a, b) => a + b, 0) / durs.length / 1000) : 0;
   const triggers = runs.reduce((acc, r) => { const k = r.trigger || "manual"; acc[k] = (acc[k] || 0) + 1; return acc; }, {} as Record<string, number>);
   const fmtNum = (n: number) => (n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(n));
-  const dot = (s: string) => (s === "done" ? "var(--color-ok)" : s === "failed" ? "#e0695f" : s === "running" ? "#e3b341" : "var(--color-faint)");
+  const dot = (s: string) =>
+    s === "done" ? "var(--color-ok)"
+    : s === "failed" ? "#e0695f"
+    : s === "partial" ? "#d2761f"   // finished, but not the whole job
+    : s === "running" ? "#e3b341"
+    : "var(--color-faint)";          // interrupted / paused — no verdict
   const recent = runs.slice(0, 28).reverse();
   const TRIGGER_LABEL: Record<string, string> = { manual: "手动", schedule: "定时", workflow: "流程", webhook: "Webhook", rerun: "重跑", resume: "恢复" };
 
@@ -331,8 +343,12 @@ function DashboardPanel({ onJumpToConversation, goTab, onOpenArtifact }: { onJum
       {workspace}
       <div className="text-[11px] font-medium uppercase tracking-wide text-faint">运行概况</div>
       <div className="grid grid-cols-2 gap-2">
-        <Stat label="总运行" value={String(runs.length)} sub={`${done} 成功 · ${failed} 失败`} />
-        <Stat label="成功率" value={successRate + "%"} sub={`${finished} 个已完成`} />
+        <Stat
+          label="总运行"
+          value={String(runs.length)}
+          sub={[`${done} 成功`, partial ? `${partial} 部分` : "", `${failed} 失败`, interrupted ? `${interrupted} 中断` : ""].filter(Boolean).join(" · ")}
+        />
+        <Stat label="成功率" value={successRate + "%"} sub={`${finished} 个有结论${interrupted ? ` · ${interrupted} 个中断不计` : ""}`} />
         <Stat label="累计 Token" value={fmtNum(totalTokens)} sub={`${fmtNum(totalTools)} 次工具调用`} />
         <Stat label="平均耗时" value={avgDur + "s"} sub={durs.length ? `基于 ${durs.length} 个运行` : "—"} />
       </div>
@@ -350,10 +366,12 @@ function DashboardPanel({ onJumpToConversation, goTab, onOpenArtifact }: { onJum
             />
           ))}
         </div>
-        <div className="mt-1.5 flex gap-3 text-[10.5px] text-faint">
+        <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[10.5px] text-faint">
           <span><span style={{ color: "var(--color-ok)" }}>●</span> 成功</span>
+          <span><span style={{ color: "#d2761f" }}>●</span> 部分完成</span>
           <span><span style={{ color: "#e0695f" }}>●</span> 失败</span>
           <span><span style={{ color: "#e3b341" }}>●</span> 进行中</span>
+          <span><span style={{ color: "var(--color-faint)" }}>●</span> 中断</span>
         </div>
       </div>
 
@@ -854,8 +872,19 @@ function ConnectorsPanel() {
 const RUN_STATUS: Record<string, { label: string; cls: string }> = {
   running: { label: "运行中", cls: "text-accent" },
   done: { label: "完成", cls: "text-ok" },
+  partial: { label: "部分完成", cls: "text-[#d2761f]" },
   failed: { label: "失败", cls: "text-accent" },
   paused: { label: "等待澄清", cls: "text-muted" },
+  interrupted: { label: "已中断", cls: "text-faint" },
+};
+
+// BUDGET_REASON explains a run that stopped short. Naming the exhausted
+// dimension is the difference between "it gave up" and "it hit a ceiling you
+// can raise", which is the actionable version.
+const BUDGET_REASON: Record<string, string> = {
+  steps: "达到步数上限",
+  tokens: "达到 token 上限",
+  time: "达到时间上限",
 };
 const TRIGGER_LABEL: Record<string, string> = {
   manual: "手动", schedule: "定时", resume: "续跑", rerun: "重跑",
@@ -933,6 +962,19 @@ function RunsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: strin
               ) : r.output ? (
                 <div className="mt-1 line-clamp-2 text-[11px] text-muted">↳ {r.output}</div>
               ) : null}
+              {/* Say what a partial run did NOT do. Without this the status is a
+                  label the user has to go re-read the transcript to decode. */}
+              {(r.budget_hit || (r.unfinished && r.unfinished.length > 0)) && (
+                <div className="mt-1.5 rounded-lg border border-[#d2761f]/30 bg-[#d2761f]/[0.07] px-2 py-1.5 text-[11px] text-muted">
+                  {r.budget_hit && <div>⚠ {BUDGET_REASON[r.budget_hit] || r.budget_hit},已停止并如实汇报</div>}
+                  {r.unfinished && r.unfinished.length > 0 && (
+                    <div className={r.budget_hit ? "mt-0.5" : ""}>
+                      未完成 {r.unfinished.length} 步:{r.unfinished.slice(0, 3).join(" · ")}
+                      {r.unfinished.length > 3 && ` 等 ${r.unfinished.length} 项`}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="mt-1.5 flex items-center gap-3 text-[11px] text-faint">
                 <span>耗时 {fmtDur(r.duration_ms)}</span>
                 {r.tool_calls > 0 && <span>工具 {r.tool_calls}</span>}
