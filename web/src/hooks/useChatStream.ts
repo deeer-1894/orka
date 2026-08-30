@@ -78,6 +78,26 @@ export function useChatStreams() {
       }
 
       const state = { terminal: "streaming" as RunStatus, lastSeq: 0 };
+      // Per-run token buffer, flushed on the next animation frame (see below).
+      const pending: { buf: Record<string, string>; proto: Record<string, Message>; raf: number } = { buf: {}, proto: {}, raf: 0 };
+
+      // flushDeltas applies the buffered tokens in one state update.
+      const flushDeltas = () => {
+        if (pending.raf) { cancelAnimationFrame(pending.raf); pending.raf = 0; }
+        const buf = pending.buf, proto = pending.proto;
+        if (!Object.keys(buf).length) return;
+        pending.buf = {}; pending.proto = {};
+        setConvMessages(cid, (m) => {
+          let copy = buf[STREAM_ID] ? m.filter((x) => x.id !== REASON_ID) : m;
+          copy = [...copy];
+          for (const id of Object.keys(buf)) {
+            const i = copy.findIndex((x) => x.id === id);
+            if (i >= 0) copy[i] = { ...copy[i], content: (copy[i].content || "") + buf[id] };
+            else copy.push({ ...proto[id], id, content: buf[id] });
+          }
+          return copy;
+        });
+      };
 
       const handleFrame = (frame: string) => {
         let data = "";
@@ -96,6 +116,8 @@ export function useChatStreams() {
           if (msg.type === "stream" && msg.action === "reset") {
             // The model call was retried/failed over mid-stream: drop the partial
             // text from the failed attempt so it isn't concatenated with the new one.
+            if (pending.raf) { cancelAnimationFrame(pending.raf); pending.raf = 0; }
+            pending.buf = {}; pending.proto = {}; // drop the failed attempt's tokens
             setConvMessages(cid, (m) => m.filter((x) => x.id !== STREAM_ID && x.id !== REASON_ID));
             return;
           }
@@ -103,20 +125,18 @@ export function useChatStreams() {
             // Reasoning ("thinking") deltas accumulate in their own transient
             // bubble so they render as a collapsible indicator, not the answer.
             const bucket = msg.action === "reasoning" ? REASON_ID : STREAM_ID;
-            setConvMessages(cid, (m) => {
-              // The first answer token ends the current thinking round → drop it.
-              let copy = bucket === STREAM_ID ? m.filter((x) => x.id !== REASON_ID) : m;
-              copy = [...copy];
-              const i = copy.findIndex((x) => x.id === bucket);
-              if (i >= 0) {
-                copy[i] = { ...copy[i], content: (copy[i].content || "") + (msg.content || "") };
-              } else {
-                copy.push({ ...msg, id: bucket });
-              }
-              return copy;
-            });
+            // Deltas arrive far faster than the screen refreshes. Rendering each
+            // one separately costs a full React pass per token and makes the text
+            // twitch; buffer them and flush once per animation frame instead, so
+            // the answer streams at the display's own rhythm.
+            pending.buf[bucket] = (pending.buf[bucket] || "") + (msg.content || "");
+            pending.proto[bucket] = pending.proto[bucket] || msg;
+            if (pending.raf === 0) pending.raf = requestAnimationFrame(flushDeltas);
             return;
           }
+          // A buffered flush must never land AFTER the authoritative message, or
+          // it would resurrect the transient bubble the final chat just removed.
+          flushDeltas();
           setConvMessages(cid, (m) => {
             // A real assistant message or a tool step ends the thinking round.
             const dropReason = msg.type === "tool" || (msg.type === "chat" && msg.role === "assistant");
