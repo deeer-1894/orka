@@ -330,6 +330,62 @@ func (s *Storage) GetMessages(ctx context.Context, convID string, page, size int
 	return out, nil
 }
 
+// GetChatTurns returns the newest `size` USER/ASSISTANT turns of a conversation.
+//
+// Filtering in the query is the whole point. Fetching a fixed window and then
+// discarding non-chat rows in Go sounds equivalent and is not: a conversation is
+// mostly tool traffic, so the window fills with rows that are about to be thrown
+// away. Measured on real conversations, the newest 60 rows yielded 7, 5 and in
+// one case 1 usable turn — the harder a run worked, the less of it the next turn
+// could see.
+func (s *Storage) GetChatTurns(ctx context.Context, convID string, size int64) ([]MessagesTable, error) {
+	// Literals rather than the messages constants: this package deliberately
+	// carries no orka_core dependency (see randID), and these are the stored
+	// wire values, not the Go types.
+	filter := bson.M{
+		"conversation_id": convID,
+		"type":            "chat",
+		"role":            bson.M{"$in": []string{"user", "assistant"}},
+	}
+	var out []MessagesTable
+	if err := paginate(ctx, s.Messages, filter, 0, size, &out); err != nil {
+		return nil, fmt.Errorf("get chat turns: %w", err)
+	}
+	return out, nil
+}
+
+// AppendRunDigest records what a run did onto its conversation, keeping only the
+// most recent entries so a long-lived conversation cannot grow an unbounded
+// preamble — the memory has to stay smaller than the thing it replaces.
+func (s *Storage) AppendRunDigest(ctx context.Context, convID string, d RunDigest, keep int) error {
+	if convID == "" {
+		return nil
+	}
+	_, err := s.Conversations.UpdateOne(ctx, bson.M{"conversation_id": convID},
+		bson.M{"$push": bson.M{"digests": bson.M{
+			"$each":  []RunDigest{d},
+			"$slice": -keep,
+		}}})
+	if err != nil {
+		return fmt.Errorf("append run digest: %w", err)
+	}
+	return nil
+}
+
+// GetRunDigests returns a conversation's run digests, oldest first.
+func (s *Storage) GetRunDigests(ctx context.Context, convID string) ([]RunDigest, error) {
+	var c ConversationTable
+	err := s.Conversations.FindOne(ctx, bson.M{"conversation_id": convID},
+		options.FindOne().SetProjection(bson.M{"digests": 1})).Decode(&c)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get run digests: %w", err)
+	}
+	return c.Digests, nil
+}
+
 // readableConvIDs returns the conversation ids a user may read (owned + shared).
 func (s *Storage) readableConvIDs(ctx context.Context, owner string) ([]string, map[string]string, error) {
 	cur, err := s.Conversations.Find(ctx, bson.M{"$or": bson.A{

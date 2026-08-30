@@ -144,6 +144,17 @@ func (j *runJournal) steps() int {
 	return len(j.msgs)
 }
 
+// transcript returns a copy of the messages the run produced, for deriving the
+// conversation digest before the journal is settled.
+func (j *runJournal) transcript() []*schema.Message {
+	if j == nil {
+		return nil
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return append([]*schema.Message(nil), j.msgs...)
+}
+
 // discard removes the journal. Called when a run ends in a state nobody would
 // resume from — success, or a failure with nothing worth keeping.
 func (j *runJournal) discard() {

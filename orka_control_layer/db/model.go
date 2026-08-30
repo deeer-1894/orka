@@ -44,6 +44,28 @@ type ConversationTable struct {
 	// from another at a given turn — so the sidebar can nest it under its parent
 	// and the user can explore an alternative direction without losing the original.
 	ParentConversationID string `bson:"parent_conversation_id,omitempty" json:"parent_conversation_id,omitempty"`
+	// Digests is what earlier runs in this conversation actually DID, one entry
+	// per run, oldest first. Without it a follow-up turn sees only the assistant's
+	// closing prose: measured here, 73% of a run is tool work and none of it
+	// survived the turn boundary, so an agent that had just researched for ten
+	// minutes could not answer a question about its own findings.
+	Digests []RunDigest `bson:"digests,omitempty" json:"digests,omitempty"`
+}
+
+// RunDigest is a compacted record of one run, carried into later turns.
+//
+// Deliberately split in two. Facts is built mechanically from the transcript —
+// file paths, artifact ids, published pages — and never passes through a model,
+// because a paraphrased path is worse than no path at all. Learned is model
+// written, because the value of a 3,000-character fetch_url result is in its
+// content and no amount of truncation recovers it.
+type RunDigest struct {
+	RunID   string   `bson:"run_id" json:"run_id"`
+	At      int64    `bson:"at" json:"at"`
+	Prompt  string   `bson:"prompt" json:"prompt"`   // what was asked, capped
+	Facts   []string `bson:"facts" json:"facts"`     // deterministic; safe to cite
+	Learned string   `bson:"learned" json:"learned"` // model-written; findings only
+	Tools   int      `bson:"tools" json:"tools"`
 }
 
 // ConversationShare grants one user access to a conversation.

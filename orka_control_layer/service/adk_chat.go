@@ -289,6 +289,12 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 
 	s.finish(ctx, rc, meta, req, raw, err)
 	status := s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err())
+	// Compact what this run did into the conversation's memory, BEFORE the
+	// journal is settled — the transcript is the only place the tool work exists,
+	// and a successful run is about to delete it.
+	if t := journal.transcript(); len(t) > 0 {
+		s.digestAsync(req.ConversationID, buildDigest(runRecID, req.Message, t), t)
+	}
 	// The journal exists to rescue a run that died with work behind it. Keep it
 	// only when both halves are true — the run ended badly AND it got far enough
 	// that resuming beats restarting — and delete it otherwise, so journals do
@@ -460,20 +466,24 @@ func (s *ChatService) loadChatHistory(ctx context.Context, convID string, meta m
 	if s.Msg == nil || s.Msg.Store == nil || convID == "" {
 		return nil
 	}
-	rows, err := s.Msg.Store.GetMessages(ctx, convID, 0, 60)
+	// Filtered in the query, not after: a fixed window over ALL rows fills with
+	// tool traffic that is about to be discarded, which left real conversations
+	// with as little as one usable turn of history.
+	rows, err := s.Msg.Store.GetChatTurns(ctx, convID, 40)
 	if err != nil {
 		return nil
 	}
-	out := make([]messages.Message, 0, len(rows))
-	for i := len(rows) - 1; i >= 0; i-- { // GetMessages is newest-first; reverse
-		r := rows[i]
-		if r.Type != string(messages.EventChat) {
-			continue
+	out := make([]messages.Message, 0, len(rows)+1)
+	// What earlier runs DID goes in front of what they SAID. Chat turns alone
+	// carry only the assistant's closing prose, which is a small fraction of the
+	// work and the reason follow-up questions used to hit an amnesiac agent.
+	if ds, derr := s.Msg.Store.GetRunDigests(ctx, convID); derr == nil {
+		if pre := digestPreamble(ds); pre != "" {
+			out = append(out, messages.Chat(messages.RoleUser, pre, meta))
 		}
-		if r.Role != messages.RoleUser && r.Role != messages.RoleAssistant {
-			continue
-		}
-		out = append(out, messages.Chat(r.Role, r.Content, meta))
+	}
+	for i := len(rows) - 1; i >= 0; i-- { // newest-first; reverse to chronological
+		out = append(out, messages.Chat(rows[i].Role, rows[i].Content, meta))
 	}
 	return out
 }
