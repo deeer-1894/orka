@@ -66,21 +66,38 @@ type mcpEntry struct {
 	tools    []agent.BaseTool    // merged tools bound to this user
 	created  time.Time
 	lastUsed time.Time
+	// refs counts the runs currently holding these tools. An entry is only
+	// reachable through get(), which fetches once at the start of a run and hands
+	// the same tools to every step, so "in use" cannot be inferred from lastUsed
+	// — a run working hard for an hour touches the pool exactly once.
+	refs int
+	// retired marks an entry that has been removed from the pool but still has
+	// holders. Its clients are closed by the last one to leave.
+	retired bool
 }
 
-// get returns a live (client, tools) for the user, creating/refreshing as
-// needed. The pool owns the client lifecycle; callers must not close it.
-func (p *mcpPool) get(ctx context.Context, email string) ([]agent.BaseTool, error) {
+// get returns a live (client, tools) for the user plus a release func the caller
+// MUST call when the run is done with them. The pool owns the client lifecycle;
+// callers must not close the clients themselves.
+//
+// The lease is the whole point. Closing an MCP client makes every in-flight
+// request on it fail with "context canceled" — mcp-go folds the client's close
+// signal into each request context — and the pool used to close entries out from
+// under running work: lastUsed was stamped only here, at the start of a run, so
+// the janitor saw a 40-minute run as 40 minutes idle and evicted it mid-flight.
+// Every historical occurrence of this failure was a run longer than the eviction
+// window (183, 176, 143 and 36 minutes), and none was shorter.
+func (p *mcpPool) get(ctx context.Context, email string) ([]agent.BaseTool, func(), error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if e := p.entries[email]; e != nil && time.Since(e.created) < p.maxAge {
 		e.lastUsed = time.Now()
-		return e.tools, nil
+		e.refs++
+		return e.tools, p.releaser(e), nil
 	}
-	if e := p.entries[email]; e != nil { // stale → close and rebuild
-		closeClients(e.clients)
-		delete(p.entries, email)
+	if e := p.entries[email]; e != nil { // stale → rebuild
+		p.retire(email, e)
 	}
 
 	// Sign a FRESH token per request rather than baking one into the client.
@@ -112,7 +129,7 @@ func (p *mcpPool) get(ctx context.Context, email string) ([]agent.BaseTool, erro
 		Name:       "orka-control",
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	clients := []*mcpclient.Client{gateway}
 
@@ -134,11 +151,41 @@ func (p *mcpPool) get(ctx context.Context, email string) ([]agent.BaseTool, erro
 	tools, err := toolsmanager.New([]agent.BaseTool{GUITool}, clients...).GetTools(ctx)
 	if err != nil {
 		closeClients(clients)
-		return nil, err
+		return nil, nil, err
 	}
 	now := time.Now()
-	p.entries[email] = &mcpEntry{clients: clients, tools: tools, created: now, lastUsed: now}
-	return tools, nil
+	e := &mcpEntry{clients: clients, tools: tools, created: now, lastUsed: now, refs: 1}
+	p.entries[email] = e
+	return tools, p.releaser(e), nil
+}
+
+// releaser returns the lease's release func: idempotent, and responsible for
+// closing a retired entry once the last run lets go of it.
+func (p *mcpPool) releaser(e *mcpEntry) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			p.mu.Lock()
+			e.refs--
+			e.lastUsed = time.Now() // a run that just finished is not idle work
+			close := e.retired && e.refs <= 0
+			p.mu.Unlock()
+			if close {
+				closeClients(e.clients)
+			}
+		})
+	}
+}
+
+// retire removes an entry from the pool, closing its clients only if no run is
+// still holding them. A held entry is closed by its last releaser instead.
+// Callers must hold p.mu.
+func (p *mcpPool) retire(email string, e *mcpEntry) {
+	delete(p.entries, email)
+	e.retired = true
+	if e.refs <= 0 {
+		closeClients(e.clients)
+	}
 }
 
 // invalidate drops a user's cached connection set so the next run rebuilds it
@@ -147,8 +194,9 @@ func (p *mcpPool) invalidate(email string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if e := p.entries[email]; e != nil {
-		closeClients(e.clients)
-		delete(p.entries, email)
+		// Retire rather than close: a run in progress keeps working with the tool
+		// set it started with, and the next run picks up the new connectors.
+		p.retire(email, e)
 	}
 }
 
@@ -206,9 +254,11 @@ func (p *mcpPool) janitor(ctx context.Context) {
 		case <-t.C:
 			p.mu.Lock()
 			for email, e := range p.entries {
-				if time.Since(e.lastUsed) >= p.maxAge {
-					closeClients(e.clients)
-					delete(p.entries, email)
+				// refs > 0 means a run is still using these clients. Evicting it
+				// here is what broke long runs: the eviction closed the MCP
+				// connection mid-task and every later tool call failed.
+				if e.refs <= 0 && time.Since(e.lastUsed) >= p.maxAge {
+					p.retire(email, e)
 				}
 			}
 			p.mu.Unlock()
@@ -219,6 +269,8 @@ func (p *mcpPool) janitor(ctx context.Context) {
 func (p *mcpPool) closeAll() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	// Process shutdown: close everything regardless of leases, since the runs
+	// holding them are going away too.
 	for email, e := range p.entries {
 		closeClients(e.clients)
 		delete(p.entries, email)
@@ -254,16 +306,18 @@ func MCPToolsProviderPooled(baseStorage, mcpURL, secret string, tokenTTL time.Du
 	}
 	go pool.janitor(context.Background()) // evict idle connections for process lifetime
 	provider := func(ctx context.Context, req ChatRunRequest) ([]agent.BaseTool, func(), error) {
-		tools, err := pool.get(ctx, req.UserEmail)
+		tools, release, err := pool.get(ctx, req.UserEmail)
 		if err != nil {
 			root := pathsafe.UserRoot(baseStorage, req.UserEmail)
 			fallback := append(filesystem.New(root), GUITool)
 			local := append(append(SkillTools(), ArtifactTools...), QuantTools...)
 			return append(filterEnabled(fallback, req.EnabledTools), local...), nil, err
 		}
-		// no cleanup: the pool owns the connection lifecycle.
+		// The pool still owns the connections, but the run holds a lease on them
+		// for its whole duration — releasing it is what lets the janitor reclaim
+		// them, and holding it is what stops the janitor closing them mid-run.
 		local := append(append(SkillTools(), ArtifactTools...), QuantTools...)
-		return append(filterEnabled(tools, req.EnabledTools), local...), nil, nil
+		return append(filterEnabled(tools, req.EnabledTools), local...), release, nil
 	}
 	return provider, pool.invalidate
 }
