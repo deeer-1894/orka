@@ -11,8 +11,8 @@
   --color-surface2: #f1efe9;
   --color-border: #e7e4dc;
   --color-ink: #2a2925;
-  --color-muted: #6c6961;
-  --color-faint: #9b978d;
+  --color-muted: #5c584f; /* AA 6.56:1 on --color-bg */
+  --color-faint: #737068; /* AA 4.59:1 — was #9b978d at 2.70, below the 4.5 minimum */
   --color-accent: #c45c3e; /* terracotta */
   --color-accentsoft: #f3e3dc;
   --color-userbubble: #efece4;
@@ -34,7 +34,7 @@ html.dark {
   --color-border: #38352f;
   --color-ink: #ece9e2;
   --color-muted: #a8a399;
-  --color-faint: #837d72;
+  --color-faint: #8d8779; /* AA 4.91:1 — was #837d72 at 4.30 */
   --color-accent: #e07a5a;
   --color-accentsoft: #3a2a23;
   --color-userbubble: #2e2b26;
