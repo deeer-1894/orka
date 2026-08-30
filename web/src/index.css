@@ -204,3 +204,15 @@ body {
 .md table { border-collapse: collapse; margin: 0 0 0.9em; font-size: 14px; }
 .md th, .md td { border: 1px solid var(--color-border); padding: 6px 10px; text-align: left; }
 .md hr { border: none; border-top: 1px solid var(--color-border); margin: 1.2em 0; }
+
+/* Touch ergonomics. On a coarse pointer (phone/tablet) an icon-only button needs
+   a ~44px target — several of ours are 21-32px, which is a miss-tap waiting to
+   happen. This only grows the HIT area on touch devices; mouse layouts and every
+   button that carries a text label are untouched. */
+@media (pointer: coarse) {
+  button:has(> svg:only-child),
+  a:has(> svg:only-child) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
