@@ -554,7 +554,11 @@ function FilesPanel({ email }: { email: string }) {
           <div className="h-full bg-accent transition-all" style={{ width: pct + "%" }} />
         </div>
       )}
-      {filtered.length === 0 && <Blank>{items.length === 0 ? "Empty" : "无匹配文件"}</Blank>}
+      {filtered.length === 0 && (
+        items.length === 0
+          ? <Blank icon="folder" title="工作区还是空的">Orka 产出的文件(报告、图表、脚本、导出的文档)都会落在这里,你也可以直接上传文件让它读取。</Blank>
+          : <Blank icon="search" title="没有匹配的文件">换个关键词试试,或清空搜索框查看全部。</Blank>
+      )}
       {grouped.map((g) => (
         <div key={g.id} className="mb-3">
           <div className="mb-1 px-1 text-[11px] font-medium uppercase tracking-wide text-faint">
@@ -715,7 +719,11 @@ function WorkflowsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: 
           <button onClick={save} disabled={!name.trim() || !steps.some((s) => s.prompt.trim())} className="w-full rounded-lg bg-accent px-3 py-1.5 text-[13px] text-white disabled:opacity-40">保存流程</button>
         </div>
       )}
-      {flows.length === 0 && !adding && <Blank>暂无工作流。把一件多步骤的事拆成几步,可设依赖/条件/重试,Orka 按 DAG 执行。</Blank>}
+      {flows.length === 0 && !adding && (
+        <Blank icon="share" title="还没有工作流" action={{ label: "+ 新建流程", onClick: () => setAdding(true) }}>
+          把一件多步骤的事拆成几步并保存下来:可以设步骤依赖、条件跳过和失败重试,Orka 按 DAG 执行,之后一键复跑。
+        </Blank>
+      )}
       <div className="space-y-1.5">
         {flows.map((wf) => (
           <div key={wf.workflow_id} className="rounded-xl border border-border bg-surface2/40 px-3 py-2.5">
@@ -822,7 +830,11 @@ function ConnectorsPanel() {
         </div>
       )}
 
-      {conns.length === 0 && !adding && <Blank>未连接任何外部工具。添加一个 MCP 服务,Orka 即可调用它的工具。</Blank>}
+      {conns.length === 0 && !adding && (
+        <Blank icon="plug" title="还没有外部工具" action={{ label: "+ 添加连接器", onClick: () => setAdding(true) }}>
+          接入一个 MCP 服务后,它提供的工具会自动出现在 Orka 的工具表里,和内置工具一样被调用。
+        </Blank>
+      )}
       <div className="space-y-1.5">
         {conns.map((cn) => (
           <div key={cn.connector_id} className="flex items-center gap-2 rounded-xl border border-border bg-surface2/40 px-3 py-2.5">
@@ -898,7 +910,13 @@ function RunsPanel({ onJumpToConversation }: { onJumpToConversation: (cid: strin
           只看失败
         </button>
       </div>
-      {runs.length === 0 && <Blank>暂无运行记录</Blank>}
+      {runs.length === 0 && (
+        <Blank icon="play" title={onlyFailed ? "没有失败的运行" : "还没有运行记录"}>
+          {onlyFailed
+            ? "所有运行都成功了。取消筛选可以看到全部记录。"
+            : "每次任务执行(手动、定时或流程触发)都会记在这里,含耗时、token、工具调用与最终结果,可重跑或跳回对话。"}
+        </Blank>
+      )}
       <div className="space-y-1.5">
         {runs.map((r) => {
           const st = RUN_STATUS[r.status] || { label: r.status, cls: "text-muted" };
@@ -1062,9 +1080,9 @@ function FactorsPanel() {
       <AgreementTrend factors={all} />
 
       {factors.length === 0 && (
-        <div className="rounded-xl bg-surface2/50 px-3 py-6 text-center text-[12.5px] text-faint">
-          还没有因子。把研报(PDF/HTML/MD)放进工作区 <span className="font-mono">reports/</span> 目录,点上面的按钮自动抽取因子。
-        </div>
+        <Blank icon="table" title="因子库还是空的" action={{ label: running ? "启动中…" : "⛁ 跑研报流水线", onClick: run }}>
+          把研报(PDF / HTML / MD)放进工作区 <span className="font-mono">reports/</span> 目录再跑流水线:它会解析投资逻辑、双盲提取因子、回测打分,产出的因子会列在这里等你审核。
+        </Blank>
       )}
 
       <div className="space-y-1.5">
@@ -1221,7 +1239,11 @@ function TasksPanel({ onJumpToConversation }: { onJumpToConversation: (cid: stri
         </div>
       )}
 
-      {tasks.length === 0 && <Blank>暂无任务</Blank>}
+      {tasks.length === 0 && (
+        <Blank icon="clock" title="还没有定时任务" action={{ label: "+ 新建定时任务", onClick: () => setCreating(true) }}>
+          把一句指令设成定时任务,Orka 会按周期自动跑(比如每天早上汇总昨日数据),也可以开 webhook 用外部事件触发。
+        </Blank>
+      )}
       <div className="space-y-1.5">
         {tasks.map((t) => {
           const scheduled = t.cron_status === "on";
@@ -1290,8 +1312,38 @@ function TasksPanel({ onJumpToConversation }: { onJumpToConversation: (cid: stri
   );
 }
 
-function Blank({ children }: { children: React.ReactNode }) {
-  return <div className="p-6 text-center text-[13px] text-faint">{children}</div>;
+// Blank is the panel empty state. A panel a user opens for the first time shows
+// ONLY this, so it has to answer two questions: what appears here, and how do I
+// make something appear. A bare "暂无 X" answers neither.
+function Blank({
+  icon, title, children, action,
+}: {
+  icon?: IconName;
+  title?: string;
+  children: React.ReactNode;
+  action?: { label: string; onClick: () => void };
+}) {
+  // Legacy single-string usage still renders as a plain hint.
+  if (!title) return <div className="p-6 text-center text-[13px] text-faint">{children}</div>;
+  return (
+    <div className="flex flex-col items-center px-6 py-10 text-center">
+      {icon && (
+        <div className="mb-3 grid h-11 w-11 place-items-center rounded-full bg-surface2 text-muted">
+          <Icon name={icon} size={20} />
+        </div>
+      )}
+      <div className="text-[14px] font-medium text-ink">{title}</div>
+      <p className="mt-1.5 max-w-[34ch] text-[12.5px] leading-relaxed text-muted">{children}</p>
+      {action && (
+        <button
+          onClick={action.onClick}
+          className="mt-4 rounded-lg border border-border px-3 py-1.5 text-[12.5px] text-ink hover:border-accent/40 hover:bg-surface2"
+        >
+          {action.label}
+        </button>
+      )}
+    </div>
+  );
 }
 
 // fmtBytes renders a file size as a human-readable string (195 KB, not 200000b).

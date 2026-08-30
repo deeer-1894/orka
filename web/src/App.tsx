@@ -663,7 +663,12 @@ function NotificationBell({ onJump }: { onJump: (cid: string) => void }) {
               <span className="text-[11px] font-medium uppercase tracking-wide text-faint">通知</span>
               {items.length > 0 && <button onClick={() => api.readNotifications().then(() => { load(); refreshResource("notifications"); })} className="text-[11px] text-faint hover:text-accent">全部已读</button>}
             </div>
-            {items.length === 0 && <div className="px-2 py-4 text-center text-[13px] text-faint">暂无通知</div>}
+            {items.length === 0 && (
+              <div className="px-3 py-6 text-center">
+                <div className="text-[13px] text-ink">没有新通知</div>
+                <p className="mt-1 text-[12px] text-muted">后台任务跑完、定时任务触发或有人分享会话时,会在这里提醒你。</p>
+              </div>
+            )}
             <div className="max-h-[60vh] overflow-y-auto">
               {items.map((n) => {
                 const markRead = () => { if (!n.read) api.readNotifications(n.notification_id).then(() => { load(); refreshResource("notifications"); }); };
