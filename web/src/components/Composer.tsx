@@ -454,7 +454,13 @@ export function Composer({
                 if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pickFile(atMatches[atSel].name); return; }
                 if (e.key === "Escape") { e.preventDefault(); setAtOpen(false); return; }
               }
-              if (e.key === "Enter" && !e.shiftKey) {
+              // Enter sends; Shift+Enter is a newline. ⌘/Ctrl+Enter also sends —
+              // it is the reflex from editors and chat apps, and it works even
+              // when a menu has swallowed the plain Enter.
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                send();
+              } else if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 send();
               }

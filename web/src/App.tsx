@@ -151,6 +151,7 @@ function Workbench({
   const seen = useRef<Set<string>>(new Set());
 
   const [cmdOpen, setCmdOpen] = useState(false);
+  const [keysOpen, setKeysOpen] = useState(false); // "?" shortcut sheet
 
   // The floating composer's height becomes the thread's bottom padding, so every
   // message can be scrolled fully above it no matter how tall the input grows.
@@ -167,17 +168,31 @@ function Workbench({
   }, [activeID]);
 
   // Global keyboard shortcuts (mirrors what ChatGPT/Claude/Cursor offer):
-  //   ⌘/Ctrl+K  → open the command palette
+  //   ⌘/Ctrl+K  → command palette
+  //   ⌘/Ctrl+J  → new chat
+  //   ⌘/Ctrl+B  → toggle the sidebar
+  //   ?         → shortcut sheet (only outside a text field)
   //   Esc       → stop the running task (when one is streaming)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      const el = document.activeElement as HTMLElement | null;
+      const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setCmdOpen((o) => !o);
-      } else if (e.key === "Escape" && statusOf(activeID) === "streaming") {
-        const el = document.activeElement;
-        // don't hijack Esc while typing in an input (it closes menus there)
-        if (!el || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA")) kill(activeID);
+      } else if (mod && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        setActiveID(""); // same as newConversation(), which is declared below
+      } else if (mod && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        setSidebarOpen((o) => !o);
+      } else if (e.key === "?" && !typing && !mod) {
+        // "?" is a character, so it must never fire while composing a message.
+        e.preventDefault();
+        setKeysOpen((o) => !o);
+      } else if (e.key === "Escape" && statusOf(activeID) === "streaming" && !typing) {
+        kill(activeID);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -383,6 +398,7 @@ function Workbench({
     { id: "schedule", group: "操作", icon: "⏰", label: "把上一条设为定时任务", run: () => lastMsgRef.current && setScheduleFor(lastMsgRef.current) },
     { id: "theme", group: "设置", icon: theme === "dark" ? "☀" : "☾", label: theme === "dark" ? "切换到亮色" : "切换到暗色", run: toggleTheme },
     { id: "confirm", group: "设置", icon: "🛡", label: confirmRisky ? "关闭高危操作确认" : "开启高危操作确认", run: toggleConfirm },
+    { id: "keys", group: "帮助", icon: "⌨", label: "键盘快捷键", hint: "?", keywords: "shortcut keyboard 快捷键", run: () => setKeysOpen(true) },
     ...models.map((m): Command => ({ id: "model:" + m.version, group: "切换模型", icon: "◆", label: m.label, hint: m.hint, keywords: m.version, run: () => setVersion(m.version) })),
     ...([
       ["overview", "概览"], ["artifacts", "页面 Artifacts"], ["files", "文件"],
@@ -394,6 +410,7 @@ function Workbench({
   return (
     <div className="relative flex h-screen">
       {cmdOpen && <CommandPalette commands={commands} onClose={() => setCmdOpen(false)} />}
+      {keysOpen && <ShortcutSheet onClose={() => setKeysOpen(false)} />}
       {/* mobile backdrop: tapping it closes whichever overlay is open */}
       {(sidebarOpen || drawerOpen) && (
         <div
@@ -740,3 +757,50 @@ function ModelSelect({ value, onChange, models }: { value: string; onChange: (v:
   );
 }
 
+// ShortcutSheet is the "?" overlay. Power users look for it by reflex, and it is
+// also the only place the non-obvious bindings (⌘J, ⌘B, Esc-to-stop) are stated.
+const SHORTCUTS: { keys: string[]; label: string }[] = [
+  { keys: ["⌘", "K"], label: "命令面板 · 跳会话 / 切模型 / 开面板" },
+  { keys: ["⌘", "J"], label: "新建会话" },
+  { keys: ["⌘", "B"], label: "显示 / 隐藏侧栏" },
+  { keys: ["↵"], label: "发送消息" },
+  { keys: ["⇧", "↵"], label: "换行(不发送)" },
+  { keys: ["@"], label: "在输入框引用工作区文件" },
+  { keys: ["Esc"], label: "停止正在执行的任务" },
+  { keys: ["?"], label: "打开 / 关闭这张表" },
+];
+
+function ShortcutSheet({ onClose }: { onClose: () => void }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  useOverlay(onClose, panelRef);
+  return (
+    <div className="overlay-in fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-6" onClick={onClose}>
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="键盘快捷键"
+        className="pop-in w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center gap-2">
+          <Icon name="keyboard" size={16} className="text-muted" />
+          <span className="flex-1 text-[15px] font-medium text-ink">键盘快捷键</span>
+          <button onClick={onClose} aria-label="关闭" className="text-faint hover:text-ink"><Icon name="close" size={15} /></button>
+        </div>
+        <div className="flex flex-col">
+          {SHORTCUTS.map((s) => (
+            <div key={s.label} className="flex items-center gap-3 border-b border-border/60 py-2 last:border-0">
+              <span className="flex shrink-0 gap-1">
+                {s.keys.map((k) => (
+                  <kbd key={k} className="min-w-[24px] rounded-md border border-border bg-surface2 px-1.5 py-0.5 text-center font-mono text-[11.5px] text-ink">{k}</kbd>
+                ))}
+              </span>
+              <span className="text-[13px] text-muted">{s.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
