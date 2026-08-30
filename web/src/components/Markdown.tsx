@@ -1,3 +1,4 @@
+import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -14,7 +15,13 @@ function normalizeMath(s: string): string {
     .replace(/\\\(([\s\S]+?)\\\)/g, (_m, body) => `$${body}$`);
 }
 
-export function Markdown({
+// Memoized: parsing markdown is the most expensive thing the thread does, and a
+// streaming turn re-renders the whole thread on every token batch — which made
+// EVERY historical answer re-parse each time (measured: 252 re-parses for one
+// turn in a 14-answer conversation). The rendered text only depends on the
+// source string (and the image resolver), so identical props can reuse the tree;
+// the streaming bubble still updates because its string changes every token.
+export const Markdown = memo(function Markdown({
   children,
   resolveImage,
 }: {
@@ -41,4 +48,4 @@ export function Markdown({
       </ReactMarkdown>
     </div>
   );
-}
+});
