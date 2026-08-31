@@ -96,6 +96,26 @@ tasks:
       not_contains: ["已找到", "文件内容如下"]
       tools_used: ["file_list"]
 
+  # --- parallelism: the lever the other eight tasks cannot see ---
+  #
+  # Three independent file writes. Done one per turn they cost three model
+  # round-trips (15-25s each here); emitted together they cost about one. The
+  # assertion is on WALL TIME rather than tool count, because the tool count is
+  # identical either way — which is exactly why the existing suite could not
+  # detect that the agent was serialising everything.
+  #
+  # Measured before the batching instruction was added: 1.65 tool calls per turn
+  # across 3,986 calls, and sub-agents used on 1.0% of them.
+  - id: parallel_writes
+    prompt: "同时创建三个互不相关的文件(它们之间没有依赖,请在一轮里一起发出):par_a.txt 内容 AAA、par_b.txt 内容 BBB、par_c.txt 内容 CCC。完成后回复 PAR3。"
+    timeout_s: 240
+    expect:
+      files: ["par_a.txt", "par_b.txt", "par_c.txt"]
+      contains: ["PAR3"]
+      # Three serial round-trips would blow past this on any endpoint measured
+      # here; three batched calls comfortably fit.
+      max_seconds: 60
+
   # --- memory: the digest carrying tool work across a turn ---
   - id: memory_recall
     prompt: "在工作区创建 eval_d.txt,内容是 MEMORY_TOKEN_7742。写完后只回复两个字:完成。"

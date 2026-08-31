@@ -45,6 +45,10 @@ type expectation struct {
 	ToolsUsed   []string `yaml:"tools_used"`
 	ToolsBanned []string `yaml:"tools_banned"`
 	MaxTools    *int     `yaml:"max_tools"`
+	// MaxSeconds bounds wall time. It is the only assertion that can see
+	// parallelism: three independent calls made serially and made together
+	// produce an IDENTICAL tool count, and differ only in elapsed time.
+	MaxSeconds *float64 `yaml:"max_seconds"`
 }
 
 type followup struct {
@@ -259,6 +263,10 @@ func check(c *client, e expectation, t *turnResult) []string {
 	if e.MaxTools != nil && t.tools > *e.MaxTools {
 		why = append(why, fmt.Sprintf("%d tool calls > max %d", t.tools, *e.MaxTools))
 	}
+	if e.MaxSeconds != nil && t.seconds > *e.MaxSeconds {
+		why = append(why, fmt.Sprintf("took %.0fs > max %.0fs (work that should run in parallel is being serialised)",
+			t.seconds, *e.MaxSeconds))
+	}
 	return why
 }
 
@@ -324,11 +332,12 @@ type client struct {
 }
 
 type turnResult struct {
-	answer string
-	status string
-	tools  int
-	tokens int
-	used   map[string]bool
+	answer  string
+	status  string
+	tools   int
+	tokens  int
+	seconds float64
+	used    map[string]bool
 }
 
 func (c *client) login(email, password string) error {
@@ -372,6 +381,7 @@ func (c *client) turn(conv, prompt string, timeout time.Duration) (*turnResult, 
 		return nil, fmt.Errorf("run: HTTP %d", resp.StatusCode)
 	}
 
+	begun := time.Now()
 	t := &turnResult{used: map[string]bool{}, status: "incomplete"}
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 1<<20), 8<<20) // tool results can be large
@@ -409,6 +419,7 @@ func (c *client) turn(conv, prompt string, timeout time.Duration) (*turnResult, 
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("stream: %w", err)
 	}
+	t.seconds = time.Since(begun).Seconds()
 	// The stream reports done/failed; the run record holds the finer verdict
 	// (partial), which is precisely what several of these tasks assert on.
 	if st, tok := c.runVerdict(conv); st != "" {
