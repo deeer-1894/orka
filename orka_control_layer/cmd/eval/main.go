@@ -27,7 +27,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -43,12 +45,23 @@ type expectation struct {
 	Contains    []string `yaml:"contains"`
 	NotContains []string `yaml:"not_contains"`
 	ToolsUsed   []string `yaml:"tools_used"`
+	// ToolsAnyOf passes when ANY of the named tools was called. Several tasks
+	// care that a CAPABILITY was exercised, not which tool provided it: asked to
+	// look up a repository's stars, the agent hit the GitHub API with
+	// http_request rather than web_search — a better answer that a tools_used
+	// assertion called a regression.
+	ToolsAnyOf  []string `yaml:"tools_any_of"`
 	ToolsBanned []string `yaml:"tools_banned"`
 	MaxTools    *int     `yaml:"max_tools"`
 	// MaxSeconds bounds wall time. It is the only assertion that can see
 	// parallelism: three independent calls made serially and made together
 	// produce an IDENTICAL tool count, and differ only in elapsed time.
 	MaxSeconds *float64 `yaml:"max_seconds"`
+	// FileContains asserts on the CONTENT of a produced file, keyed by path.
+	// The answer text is not enough for tasks whose deliverable is the file: a
+	// report can claim to be sourced in chat while the document itself carries no
+	// citation at all.
+	FileContains map[string][]string `yaml:"file_contains"`
 }
 
 type followup struct {
@@ -255,6 +268,18 @@ func check(c *client, e expectation, t *turnResult) []string {
 			why = append(why, "never called "+name)
 		}
 	}
+	if len(e.ToolsAnyOf) > 0 {
+		hit := false
+		for _, name := range e.ToolsAnyOf {
+			if t.used[name] {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			why = append(why, "called none of "+strings.Join(e.ToolsAnyOf, "/"))
+		}
+	}
 	for _, name := range e.ToolsBanned {
 		if t.used[name] {
 			why = append(why, "called banned tool "+name)
@@ -262,6 +287,19 @@ func check(c *client, e expectation, t *turnResult) []string {
 	}
 	if e.MaxTools != nil && t.tools > *e.MaxTools {
 		why = append(why, fmt.Sprintf("%d tool calls > max %d", t.tools, *e.MaxTools))
+	}
+	for path, subs := range e.FileContains {
+		body, ferr := c.readFile(path)
+		if ferr != nil {
+			why = append(why, "cannot read "+quote(path)+": "+ferr.Error())
+			continue
+		}
+		low := strings.ToLower(body)
+		for _, sub := range subs {
+			if !strings.Contains(low, strings.ToLower(sub)) {
+				why = append(why, quote(path)+" is missing "+quote(sub))
+			}
+		}
 	}
 	if e.MaxSeconds != nil && t.seconds > *e.MaxSeconds {
 		why = append(why, fmt.Sprintf("took %.0fs > max %.0fs (work that should run in parallel is being serialised)",
@@ -461,6 +499,26 @@ func (c *client) clearExpected(t task) {
 		var out any
 		_ = c.postJSON("/api/v1/controller/file/delete", map[string]string{"path": p}, &out)
 	}
+}
+
+// readFile fetches a produced file's content so assertions can inspect the
+// deliverable itself, not only what the agent said about it.
+func (c *client) readFile(path string) (string, error) {
+	req, _ := http.NewRequest("GET",
+		c.base+"/api/v1/controller/file/download?path="+url.QueryEscape(path), nil)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return string(b), err
 }
 
 func (c *client) fileExists(path string) bool {

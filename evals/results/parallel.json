@@ -1,0 +1,85 @@
+{
+  "at": "2026-08-31T23:05:30+08:00",
+  "model": "",
+  "passed": 8,
+  "total": 9,
+  "results": [
+    {
+      "id": "plain_answer",
+      "pass": true,
+      "status": "done",
+      "tools": 0,
+      "tokens": 744,
+      "seconds": 2.411754125
+    },
+    {
+      "id": "arithmetic",
+      "pass": true,
+      "status": "done",
+      "tools": 0,
+      "tokens": 794,
+      "seconds": 3.112036083
+    },
+    {
+      "id": "file_write_read",
+      "pass": true,
+      "status": "done",
+      "tools": 2,
+      "tokens": 13718,
+      "seconds": 72.656004834
+    },
+    {
+      "id": "file_multi_step",
+      "pass": true,
+      "status": "done",
+      "tools": 3,
+      "tokens": 9742,
+      "seconds": 62.841755958
+    },
+    {
+      "id": "plan_completion",
+      "pass": true,
+      "status": "done",
+      "tools": 7,
+      "tokens": 29990,
+      "seconds": 118.303284833
+    },
+    {
+      "id": "web_search_basic",
+      "pass": false,
+      "reasons": [
+        "never called web_search"
+      ],
+      "status": "done",
+      "tools": 1,
+      "tokens": 10049,
+      "seconds": 57.034650875
+    },
+    {
+      "id": "refuses_to_invent",
+      "pass": true,
+      "status": "done",
+      "tools": 1,
+      "tokens": 8707,
+      "seconds": 41.261084625
+    },
+    {
+      "id": "parallel_writes",
+      "pass": true,
+      "status": "done",
+      "tools": 3,
+      "tokens": 8357,
+      "seconds": 36.882468208
+    },
+    {
+      "id": "memory_recall",
+      "pass": true,
+      "status": "done",
+      "tools": 1,
+      "tokens": 12701,
+      "seconds": 51.532585084
+    }
+  ],
+  "total_tools": 18,
+  "total_tokens": 94802
+}

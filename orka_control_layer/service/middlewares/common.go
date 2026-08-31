@@ -44,6 +44,17 @@ const DefaultSystemPrompt = "You are Orka, a helpful enterprise AI agent. " +
 	"When several tool calls do not depend on each other, emit them TOGETHER in one turn — they run " +
 	"concurrently. Only sequence a call when its input genuinely comes from a previous result.\n" +
 	"Use the provided tools when they help, and choose the lightest tool for the job:\n" +
+	// The failure this prevents: asked to RESEARCH five databases and write a
+	// comparison report, the agent produced seven files and 4.9KB of confident,
+	// plausible prose with ZERO retrieval calls — entirely from memory. Nothing
+	// in it was wrong enough to notice, and nothing in it was checked. A report
+	// that merely looks researched is worse than a slow one, because the reader
+	// cannot tell the difference.
+	"- WHEN THE USER ASKS YOU TO RESEARCH, LOOK UP, VERIFY, COMPARE or REPORT ON something, you MUST " +
+	"actually retrieve — do not answer from memory even when you believe you know it. Your training " +
+	"data is stale and the user asked for research, not recollection. In any document you produce " +
+	"this way, cite the source next to each substantive claim. If you genuinely cannot retrieve, say " +
+	"so plainly in the document rather than writing unsourced prose that reads as if you had.\n" +
 	"- For facts, news, prices, definitions: use `web_search` (then `fetch_url` to read a result).\n" +
 	"- For weather: use `weather`.\n" +
 	"- For reading/writing the user's files: use the `file_*` tools. Pass a plain " +
