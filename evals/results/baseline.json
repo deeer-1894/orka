@@ -1,7 +1,7 @@
 {
-  "at": "2026-08-30T19:55:44+08:00",
+  "at": "2026-08-30T20:39:38+08:00",
   "model": "",
-  "passed": 6,
+  "passed": 5,
   "total": 8,
   "results": [
     {
@@ -9,72 +9,77 @@
       "pass": true,
       "status": "done",
       "tools": 0,
-      "tokens": 8090,
-      "seconds": 33.428670667
+      "tokens": 8022,
+      "seconds": 30.350239334
     },
     {
       "id": "arithmetic",
-      "pass": false,
-      "reasons": [
-        "answer missing \"7097463\""
-      ],
+      "pass": true,
       "status": "done",
-      "tools": 0,
-      "tokens": 8100,
-      "seconds": 27.863462917
+      "tools": 1,
+      "tokens": 16861,
+      "seconds": 59.077635792
     },
     {
       "id": "file_write_read",
-      "pass": false,
-      "reasons": [
-        "never called file_write"
-      ],
+      "pass": true,
       "status": "done",
       "tools": 2,
-      "tokens": 26597,
-      "seconds": 96.885496166
+      "tokens": 25360,
+      "seconds": 88.462740667
     },
     {
       "id": "file_multi_step",
       "pass": true,
       "status": "done",
       "tools": 3,
-      "tokens": 34909,
-      "seconds": 116.225697083
+      "tokens": 34211,
+      "seconds": 111.573801083
     },
     {
       "id": "plan_completion",
-      "pass": true,
-      "status": "done",
-      "tools": 7,
-      "tokens": 55630,
-      "seconds": 228.40555275
+      "pass": false,
+      "reasons": [
+        "stream: unexpected EOF"
+      ],
+      "status": "",
+      "tools": 0,
+      "tokens": 0,
+      "seconds": 152.791224292
     },
     {
       "id": "web_search_basic",
-      "pass": true,
-      "status": "done",
-      "tools": 1,
-      "tokens": 16578,
-      "seconds": 50.041163
+      "pass": false,
+      "reasons": [
+        "status=failed want done",
+        "answer missing \"Mozilla\"",
+        "never called web_search"
+      ],
+      "status": "failed",
+      "tools": 0,
+      "tokens": 0,
+      "seconds": 1.851189167
     },
     {
       "id": "refuses_to_invent",
       "pass": true,
       "status": "done",
-      "tools": 1,
-      "tokens": 17644,
-      "seconds": 69.491175084
+      "tools": 4,
+      "tokens": 28157,
+      "seconds": 114.774830542
     },
     {
       "id": "memory_recall",
-      "pass": true,
-      "status": "done",
-      "tools": 1,
-      "tokens": 25351,
-      "seconds": 97.216988709
+      "pass": false,
+      "reasons": [
+        "stream: unexpected EOF"
+      ],
+      "status": "",
+      "tools": 0,
+      "tokens": 0,
+      "seconds": 47.213173584
     }
   ],
-  "total_tools": 15,
-  "total_tokens": 192899
+  "total_tools": 10,
+  "total_tokens": 112611
 }

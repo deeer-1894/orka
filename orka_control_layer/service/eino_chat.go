@@ -97,14 +97,14 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 		Instruction: instruction,
 		Model:       llm.NewEinoModel(client, model),
 		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(withPlan(withClarify(tools)))},
+			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(withFindTools(withPlan(withClarify(tools))))},
 			ReturnDirectly:  clarifyReturnDirectly(),
 		},
 		MaxIterations: maxIters,
 		// Survive transient/mid-stream model failures instead of failing the run.
 		ModelRetryConfig:    modelRetryConfig(),
 		ModelFailoverConfig: modelFailoverConfig(backup),
-		Handlers:            append([]adk.ChatModelAgentMiddleware{newBudgetGuardFor(agentBudget(ctx, maxIters))}, handlers...),
+		Handlers:            append([]adk.ChatModelAgentMiddleware{newBudgetGuardFor(agentBudget(ctx, maxIters)), newGateMiddleware(toolGateFrom(ctx))}, handlers...),
 	})
 }
 
@@ -184,8 +184,8 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 	if maxIters <= 0 {
 		maxIters = 16
 	}
-	allTools := append(EinoTools(withPlan(withClarify(atomic))), subTools...)
-	handlers := append([]adk.ChatModelAgentMiddleware{newBudgetGuardFor(agentBudget(ctx, maxIters))}, extra...)
+	allTools := append(EinoTools(withFindTools(withPlan(withClarify(atomic)))), subTools...)
+	handlers := append([]adk.ChatModelAgentMiddleware{newBudgetGuardFor(agentBudget(ctx, maxIters)), newGateMiddleware(toolGateFrom(ctx))}, extra...)
 	if summarize {
 		// Summarize history compression on the FAST mini model — it's an auxiliary
 		// step, not user-facing synthesis, so it doesn't need the strong model.
@@ -468,6 +468,15 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	instruction := deps.SystemPrompt
 	var ag adk.Agent
 	var err error
+	// Build with rc.Ctx, not the bare run ctx. The run's budget, tool gate and
+	// plan tracker are installed on rc.Ctx, and middlewares read them at
+	// CONSTRUCTION time — built from the bare ctx they silently got nothing, so
+	// the tool gate never narrowed anything and the budget guard enforced a
+	// private budget that finalizeRun could not see (making a budget-exhausted
+	// run still file as "done"). rc.Ctx derives from ctx, so it is a superset.
+	if rc.Ctx != nil {
+		ctx = rc.Ctx
+	}
 	// Context-window management (truncate oversized tool output to a workspace
 	// file, clear stale tool results, repair dangling tool calls). Runs ahead of
 	// the summarization backstop.

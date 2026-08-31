@@ -206,7 +206,11 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 	// container/VM for hard isolation when exposing it to untrusted workloads.
 	if os.Getenv("SHELL_TOOL") == "1" {
 		add(mcp.NewTool("shell",
-			mcp.WithDescription("Run a shell command in your workspace (POSIX sh). Use it like a terminal: run CLI tools, scripts, git, package managers, data processing, or code you wrote (e.g. `python3 app.py`, `grep -rn foo .`, `ls -la`). The working directory is your workspace and output is captured. Prefer this over describing manual steps when one command would do the job."),
+			// The "not for reading/writing files" clause is load-bearing: the eval
+			// suite caught the agent creating files with `printf > f.txt` instead of
+			// file_write, which needs an approval in a confirm-gated session and
+			// bypasses the workspace write-diff/undo machinery keyed on file_*.
+			mcp.WithDescription("Run a shell command in your workspace (POSIX sh). Use it like a terminal: run CLI tools, scripts, git, package managers, data processing, or code you wrote (e.g. `python3 app.py`, `grep -rn foo .`, `ls -la`). The working directory is your workspace and output is captured. Prefer this over describing manual steps when one command would do the job. Do NOT use it to read or write files — use file_read/file_write/file_list, which are safer and tracked."),
 			mcp.WithString("command", mcp.Required(), mcp.Description("the shell command to run")),
 			mcp.WithNumber("timeout_sec", mcp.Description("max seconds before it's killed (default 30, max 120)")),
 		), shellExec(baseStorage))

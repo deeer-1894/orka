@@ -226,6 +226,10 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	budget := newRunBudget(einoMaxIters, runMaxTokens, runMaxWall)
 	plan := &planTracker{}
 	rc.Ctx = withPlanTracker(withBudget(rc.Ctx, budget), plan)
+	// Narrow the tool surface to what this run plausibly needs; find_tools opens
+	// the rest on demand. Per run, so one conversation unlocking the CSV tools
+	// does not make every other conversation pay for them.
+	rc.Ctx = withToolGate(rc.Ctx, newToolGate())
 
 	// Record this execution as an auditable run (the automation platform's unit).
 	startedAt := time.Now().UnixMilli()
