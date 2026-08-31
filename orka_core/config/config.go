@@ -42,6 +42,39 @@ type LLMConfig struct {
 	MiniModel     string `yaml:"mini_model"`
 	VLMModel      string `yaml:"vlm_model"`
 	MaxRetries    int    `yaml:"max_retries"` // total LLM attempts incl. first on transient 429/5xx/network (default 3)
+	// Models the user may pick per conversation, beyond the main/mini pair.
+	// Providers that host many models behind one endpoint (Ark, OpenRouter…)
+	// serve any of them from the same client — only the model NAME changes — so
+	// this is an allow-list, not a set of connections. Model and MiniModel are
+	// always selectable whether or not they appear here.
+	Models []string `yaml:"models"`
+}
+
+// SelectableModels returns the models a request may ask for: the configured
+// tiers first (they are the defaults everything else falls back to), then the
+// rest of the allow-list, de-duplicated and in a stable order.
+func (c LLMConfig) SelectableModels() []string {
+	out := make([]string, 0, len(c.Models)+2)
+	seen := map[string]bool{}
+	for _, m := range append([]string{c.Model, c.MiniModel}, c.Models...) {
+		if m != "" && !seen[m] {
+			seen[m] = true
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// AllowsModel reports whether a caller may run on the named model. An empty
+// allow-list means only the configured tiers are reachable, so a request cannot
+// invent a model name and have it forwarded to the provider.
+func (c LLMConfig) AllowsModel(name string) bool {
+	for _, m := range c.SelectableModels() {
+		if m == name {
+			return true
+		}
+	}
+	return false
 }
 
 type StorageConfig struct {
@@ -146,6 +179,11 @@ func (c *Config) applyEnv() {
 	envStr(&c.LLM.Model, "MODEL")
 	envStr(&c.LLM.MiniModel, "MINI_MODEL")
 	envStr(&c.LLM.VLMModel, "VLM_MODEL")
+	// MODELS is a comma-separated allow-list of models the UI may offer, for
+	// providers that host many behind one endpoint.
+	if v, ok := os.LookupEnv("MODELS"); ok {
+		c.LLM.Models = splitComma(v)
+	}
 	envInt(&c.LLM.MaxRetries, "LLM_MAX_RETRIES")
 	envStr(&c.Storage.MongoURI, "MONGO_URI")
 	envStr(&c.Storage.MongoDB, "MONGO_DB")

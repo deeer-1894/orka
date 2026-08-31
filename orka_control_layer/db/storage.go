@@ -656,6 +656,7 @@ func (s *Storage) FinalizeRun(ctx context.Context, r RunRecord) error {
 		"tokens": r.Tokens, "tool_calls": r.ToolCalls,
 		"finished_at": r.FinishedAt, "duration_ms": r.DurationMs,
 		"budget_hit": r.BudgetHit, "unfinished": r.Unfinished,
+		"model": r.Model, "escalated": r.Escalated,
 	}
 	_, err := s.Runs.UpdateOne(ctx, bson.M{"run_id": r.RunID}, bson.M{"$set": set})
 	if err != nil {

@@ -93,9 +93,36 @@ func NewChatService(cfg *config.Config, main, mini llm.Client, store checkpoint.
 	return s
 }
 
+// modelFor resolves a request's selected_version to a client and model name.
+//
+// "" is the main tier and "mini" the fast one, as before. Anything else is
+// treated as an explicit model NAME: providers that host many models behind one
+// endpoint serve all of them from the same client, so picking one is a matter
+// of the name alone. Unknown names fall back to the main tier rather than being
+// forwarded — a request must not be able to bill an arbitrary model.
+//
+// ModelAuto is resolved by the router, not here; it starts on the fast tier and
+// this returns that, so a caller with no router still behaves sensibly.
 func (s *ChatService) modelFor(version string) (llm.Client, string) {
-	if version == "mini" && s.Mini != nil {
-		return s.Mini, s.Cfg.LLM.MiniModel
+	switch version {
+	case "":
+		return s.Main, s.Cfg.LLM.Model
+	case "mini", ModelAuto:
+		if s.Mini != nil {
+			return s.Mini, s.Cfg.LLM.MiniModel
+		}
+		return s.Main, s.Cfg.LLM.Model
+	}
+	if s.Cfg.LLM.AllowsModel(version) {
+		return s.Main, version
+	}
+	return s.Main, s.Cfg.LLM.Model
+}
+
+// strongModelFor is the tier the router escalates to for a given selection.
+func (s *ChatService) strongModelFor(version string) (llm.Client, string) {
+	if version != "" && version != "mini" && version != ModelAuto && s.Cfg.LLM.AllowsModel(version) {
+		return s.Main, version // an explicit pick is never overridden
 	}
 	return s.Main, s.Cfg.LLM.Model
 }
@@ -374,6 +401,12 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 	// meaningful for a run that otherwise completed — a failure is already worse.
 	var budgetHit string
 	var unfinished []string
+	// With automatic routing the request no longer says which model ran, so the
+	// record has to.
+	servingModel, escalated := req.SelectedVersion, false
+	if mr, ok := rc.Vars[varModelRouter].(*modelRouter); ok {
+		servingModel, escalated = mr.chosen()
+	}
 	if status == db.RunDone && rc.Ctx != nil {
 		budgetHit = budgetFrom(rc.Ctx).exhausted()
 		unfinished = planTrackerFrom(rc.Ctx).unfinished()
@@ -394,6 +427,7 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 		Output: trunc(out, 400), Result: extractJSON(out), Tokens: tokens, ToolCalls: toolCalls,
 		FinishedAt: now, DurationMs: now - startedAt,
 		BudgetHit: budgetHit, Unfinished: unfinished,
+		Model: servingModel, Escalated: escalated,
 	})
 	// Advance the scheduled-task circuit breaker. A partial run counts as a
 	// success for this purpose: it did work and stopped honestly, which is not

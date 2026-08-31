@@ -171,9 +171,26 @@ func (a *API) Followups(ctx context.Context, c *app.RequestContext) {
 
 func (a *API) ListModels(_ context.Context, c *app.RequestContext) {
 	llm := a.Chat.Cfg.LLM
-	out := []map[string]string{{"version": "", "label": llm.Model, "hint": "主模型 · 更强"}}
+	var out []map[string]string
+	// Automatic routing first, and only when there is something to route
+	// between: offering it with one configured model would be a lie.
+	if llm.MiniModel != "" && llm.MiniModel != llm.Model {
+		out = append(out, map[string]string{
+			"version": service.ModelAuto, "label": "自动",
+			"hint": "先用快模型,复杂了自动升级",
+		})
+	}
+	out = append(out, map[string]string{"version": "", "label": llm.Model, "hint": "主模型 · 更强"})
 	if llm.MiniModel != "" && llm.MiniModel != llm.Model {
 		out = append(out, map[string]string{"version": "mini", "label": llm.MiniModel, "hint": "更快 · 更省"})
+	}
+	// Any other model the deployment allows, selectable by name. Same endpoint,
+	// same client — only the model name changes.
+	for _, m := range llm.SelectableModels() {
+		if m == llm.Model || m == llm.MiniModel {
+			continue
+		}
+		out = append(out, map[string]string{"version": m, "label": m, "hint": "手动指定"})
 	}
 	ok(c, out)
 }

@@ -292,6 +292,11 @@ type RunRecord struct {
 	BudgetHit string `bson:"budget_hit,omitempty" json:"budget_hit,omitempty"`
 	// Unfinished lists plan steps the agent declared but never marked done.
 	Unfinished []string `bson:"unfinished,omitempty" json:"unfinished,omitempty"`
+	// Model is the model that actually served the run, and Escalated marks a run
+	// that started on the fast tier and moved up. Recorded because with automatic
+	// routing "which model ran this?" stops being answerable from the request.
+	Model     string `bson:"model,omitempty" json:"model,omitempty"`
+	Escalated bool   `bson:"escalated,omitempty" json:"escalated,omitempty"`
 	// Resumable means a transcript of this run survived its failure, so it can
 	// be continued from where it stopped instead of restarted. Set only when the
 	// run got far enough that resuming is worth more than starting over.

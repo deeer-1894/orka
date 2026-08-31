@@ -48,6 +48,7 @@ function liveTabFromMessages(messages: Message[], streaming: boolean): Tab | nul
 interface ModelOption { version: string; label: string; hint: string }
 // Fallback until /models resolves (keeps the picker non-empty on first paint).
 const MODELS_FALLBACK: ModelOption[] = [
+  { version: "auto", label: "自动", hint: "先用快模型,复杂了自动升级" },
   { version: "", label: "主模型", hint: "更强" },
   { version: "mini", label: "mini", hint: "更快 · 更省" },
 ];
