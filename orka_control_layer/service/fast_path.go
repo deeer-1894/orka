@@ -105,7 +105,7 @@ const fastPathInstruction = "\n\n[本次为快速回答模式,你没有任何工
 // persisted transcript and the conversation digest are all unchanged — the only
 // difference is that no agent was built.
 func (s *ChatService) tryFastPath(ctx context.Context, rc *agent.RunContext, req ChatRunRequest, client llm.Client, model string, raw func(messages.Message)) bool {
-	if client == nil || !fastPathEligible(req) {
+	if client == nil || s.DisableFastPath || !fastPathEligible(req) {
 		return false
 	}
 	system := middlewares.DefaultSystemPrompt + fastPathInstruction

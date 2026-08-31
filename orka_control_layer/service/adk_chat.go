@@ -70,6 +70,10 @@ type ChatService struct {
 	// it on (folds long context into a running summary); deterministic tests set
 	// it so a scripted mock isn't consumed by the summarizer's extra model call.
 	DisableSummary bool
+	// DisableFastPath turns off the tool-free answer attempt. Same reason as
+	// above: the attempt is an extra model call, so a test that scripts an exact
+	// sequence of responses would have its first one eaten by the probe.
+	DisableFastPath bool
 
 	confirms    *confirmHub // pending approval gates for risky tools
 	confirmInit sync.Once

@@ -54,7 +54,10 @@ func testService(t *testing.T, mainLLM llm.Client) (*ChatService, checkpoint.Sto
 	cpStore := checkpoint.NewMemoryStore()
 	msg := message_utils.New(nil, 1.0, nil) // no Mongo
 	svc := NewChatService(cfg, mainLLM, mainLLM, cpStore, msg, obs.NewMetrics(), nil)
-	svc.DisableSummary = true // deterministic: don't let the summarizer consume scripted mock responses
+	svc.DisableSummary = true
+	// The fast path probes with an extra model call before the agent runs, which
+	// would consume the first scripted response of every mock below.
+	svc.DisableFastPath = true // deterministic: don't let the summarizer consume scripted mock responses
 	return svc, cpStore
 }
 
