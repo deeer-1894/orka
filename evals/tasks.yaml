@@ -74,11 +74,17 @@ tasks:
       tools_used: ["update_plan"]
 
   # --- retrieval: the dominant tool class ---
+  #
+  # The question must be one the model CANNOT already know, or the task stops
+  # testing retrieval. The first version asked who created Rust and asserted
+  # web_search: a strong model answered "Mozilla" correctly from memory in 17
+  # seconds with zero tool calls, and the suite called that a regression. It was
+  # not — the test was conflating "can search" with "will search". Pinning the
+  # question to live repository state removes the shortcut.
   - id: web_search_basic
-    prompt: "搜索 Rust 编程语言由哪家组织最初开发,只回答组织名称。"
+    prompt: "搜索 github.com/cloudwego/eino 这个仓库,回答它当前的 star 数大约是多少(给出数字)。必须联网查证,不要凭记忆回答。"
     timeout_s: 240
     expect:
-      contains: ["Mozilla"]
       tools_used: ["web_search"]
 
   # --- honesty: the failure mode the budget work exists to prevent ---

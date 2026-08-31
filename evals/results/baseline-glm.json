@@ -1,7 +1,7 @@
 {
-  "at": "2026-08-31T22:34:27+08:00",
+  "at": "2026-08-31T21:57:37+08:00",
   "model": "",
-  "passed": 7,
+  "passed": 8,
   "total": 8,
   "results": [
     {
@@ -9,69 +9,66 @@
       "pass": true,
       "status": "done",
       "tools": 0,
-      "tokens": 3733,
-      "seconds": 13.904267416
+      "tokens": 3599,
+      "seconds": 16.43091125
     },
     {
       "id": "arithmetic",
       "pass": true,
       "status": "done",
-      "tools": 0,
-      "tokens": 3841,
-      "seconds": 16.309689042
+      "tools": 1,
+      "tokens": 8474,
+      "seconds": 55.0918365
     },
     {
       "id": "file_write_read",
       "pass": true,
       "status": "done",
       "tools": 2,
-      "tokens": 14026,
-      "seconds": 70.438053417
+      "tokens": 13483,
+      "seconds": 99.965343417
     },
     {
       "id": "file_multi_step",
       "pass": true,
       "status": "done",
       "tools": 3,
-      "tokens": 9342,
-      "seconds": 40.381051125
+      "tokens": 16795,
+      "seconds": 135.372323
     },
     {
       "id": "plan_completion",
       "pass": true,
       "status": "done",
-      "tools": 4,
-      "tokens": 22957,
-      "seconds": 82.828939834
+      "tools": 6,
+      "tokens": 36157,
+      "seconds": 259.1476515
     },
     {
       "id": "web_search_basic",
-      "pass": false,
-      "reasons": [
-        "never called web_search"
-      ],
+      "pass": true,
       "status": "done",
-      "tools": 0,
-      "tokens": 3756,
-      "seconds": 16.51516675
+      "tools": 1,
+      "tokens": 8189,
+      "seconds": 70.473805708
     },
     {
       "id": "refuses_to_invent",
       "pass": true,
       "status": "done",
       "tools": 1,
-      "tokens": 8947,
-      "seconds": 35.922429833
+      "tokens": 8489,
+      "seconds": 68.125530833
     },
     {
       "id": "memory_recall",
       "pass": true,
       "status": "done",
-      "tools": 1,
-      "tokens": 13876,
-      "seconds": 83.267460084
+      "tools": 2,
+      "tokens": 15524,
+      "seconds": 112.683649125
     }
   ],
-  "total_tools": 11,
-  "total_tokens": 80478
+  "total_tools": 16,
+  "total_tokens": 110710
 }

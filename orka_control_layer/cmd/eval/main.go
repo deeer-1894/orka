@@ -97,7 +97,7 @@ func main() {
 		out      = flag.String("out", "", "write the scorecard here")
 		baseline = flag.String("baseline", "", "compare against a previous scorecard")
 		only     = flag.String("only", "", "run just this task id")
-		model    = flag.String("model", "", "label recorded in the scorecard")
+		model    = flag.String("model", "", "selected_version to run on: \"\" main, mini, auto, or a model name; also recorded in the scorecard")
 	)
 	flag.Parse()
 
@@ -138,7 +138,7 @@ func main() {
 	}
 }
 
-func run(base, email, password, token, tasksFile, only, model string) (scorecard, error) {
+func run(base, email, password, token, tasksFile, only, model string) (scorecard, error) { //nolint:revive // argument-limit
 	var s suite
 	raw, err := os.ReadFile(tasksFile)
 	if err != nil {
@@ -147,7 +147,7 @@ func run(base, email, password, token, tasksFile, only, model string) (scorecard
 	if err := yaml.Unmarshal(raw, &s); err != nil {
 		return scorecard{}, fmt.Errorf("parse %s: %w", tasksFile, err)
 	}
-	c := &client{base: base, token: token}
+	c := &client{base: base, token: token, model: model}
 	if c.token == "" {
 		if email == "" || password == "" {
 			return scorecard{}, fmt.Errorf("need --token, or --email and --password")
@@ -317,6 +317,10 @@ func compare(prev, cur scorecard) {
 type client struct {
 	base  string
 	token string
+	// model is the selected_version every task runs on, so a suite can be scored
+	// per tier. The per-round-trip floor is ~15s on the strong tier here, which
+	// makes "which tier" the dominant cost of a multi-step task.
+	model string
 }
 
 type turnResult struct {
@@ -353,6 +357,7 @@ func (c *client) turn(conv, prompt string, timeout time.Duration) (*turnResult, 
 
 	body, _ := json.Marshal(map[string]any{
 		"message": prompt, "conversation_id": conv, "confirm_risky": false,
+		"selected_version": c.model,
 	})
 	req, _ := http.NewRequestWithContext(ctx, "POST",
 		c.base+"/api/v1/controller/chat/run", bytes.NewReader(body))
