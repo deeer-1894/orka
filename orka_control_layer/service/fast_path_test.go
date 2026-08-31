@@ -80,6 +80,7 @@ func TestFastPathAllowsManualTrigger(t *testing.T) {
 func newFastPathService(t *testing.T, resp llm.Response) (*ChatService, *agent.RunContext, *collector) {
 	t.Helper()
 	svc, _ := testService(t, llm.NewMock(resp))
+	svc.DisableFastPath = false // testService disables it; these tests are ABOUT it
 	col := &collector{}
 	rc := &agent.RunContext{Ctx: context.Background(), Vars: map[string]any{},
 		Meta: messages.Meta{ConversationID: "c1"}}
