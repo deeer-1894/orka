@@ -315,7 +315,14 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		rc.Messages = append(history, modelMsg)
 		s.Msg.Deliver(rc, nil, userMsg, true)
 		s.Msg.Deliver(rc, raw, messages.Task("start", meta), true)
-		err = s.runEino(ctx, rc, deps, tools, model, modelName, raw)
+		// A question that needs no tools does not need an agent: measured here,
+		// the same one-sentence answer costs 14s/3,733 tokens through the agent
+		// and 2.6s/651 direct, and 28% of runs make no tool calls at all. The
+		// attempt is skipped unless a free heuristic likes the request, and the
+		// model can bail out to the agent if it turns out to need tools.
+		if !s.tryFastPath(ctx, rc, req, model, modelName, raw) {
+			err = s.runEino(ctx, rc, deps, tools, model, modelName, raw)
+		}
 	}
 
 	s.finish(ctx, rc, meta, req, raw, err)

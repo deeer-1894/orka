@@ -1,0 +1,77 @@
+{
+  "at": "2026-08-31T22:43:27+08:00",
+  "model": "mini",
+  "passed": 7,
+  "total": 8,
+  "results": [
+    {
+      "id": "plain_answer",
+      "pass": true,
+      "status": "done",
+      "tools": 0,
+      "tokens": 3613,
+      "seconds": 16.245054166
+    },
+    {
+      "id": "arithmetic",
+      "pass": true,
+      "status": "done",
+      "tools": 0,
+      "tokens": 3849,
+      "seconds": 13.947263334
+    },
+    {
+      "id": "file_write_read",
+      "pass": true,
+      "status": "done",
+      "tools": 2,
+      "tokens": 12459,
+      "seconds": 43.279888834
+    },
+    {
+      "id": "file_multi_step",
+      "pass": true,
+      "status": "done",
+      "tools": 3,
+      "tokens": 10610,
+      "seconds": 56.820045875
+    },
+    {
+      "id": "plan_completion",
+      "pass": true,
+      "status": "done",
+      "tools": 5,
+      "tokens": 22766,
+      "seconds": 81.782362792
+    },
+    {
+      "id": "web_search_basic",
+      "pass": false,
+      "reasons": [
+        "never called web_search"
+      ],
+      "status": "done",
+      "tools": 2,
+      "tokens": 13901,
+      "seconds": 50.494059834
+    },
+    {
+      "id": "refuses_to_invent",
+      "pass": true,
+      "status": "done",
+      "tools": 1,
+      "tokens": 9107,
+      "seconds": 39.918982792
+    },
+    {
+      "id": "memory_recall",
+      "pass": true,
+      "status": "done",
+      "tools": 2,
+      "tokens": 18243,
+      "seconds": 93.911468291
+    }
+  ],
+  "total_tools": 15,
+  "total_tokens": 94548
+}
