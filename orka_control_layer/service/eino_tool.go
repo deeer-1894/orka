@@ -127,6 +127,12 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 	if cacheable && out != "" {
 		toolCachePut(cacheKey, out)
 	}
+	// Annotate a call the run has already made identically. Not blocked and not
+	// an error — the model is simply told the result is unchanged, which from
+	// inside a loop it cannot tell: every attempt succeeds and looks fresh.
+	if note := loopDetectorFrom(ctx).observe(cacheKey, out); note != "" {
+		return out + note, nil
+	}
 	return out, nil
 }
 

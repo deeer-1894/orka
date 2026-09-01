@@ -261,6 +261,9 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// the rest on demand. Per run, so one conversation unlocking the CSV tools
 	// does not make every other conversation pay for them.
 	rc.Ctx = withToolGate(rc.Ctx, newToolGate())
+	// Break the tail-end spin: a run that has finished its work but cannot
+	// confirm it will otherwise repeat the same check until the budget is gone.
+	rc.Ctx = withLoopDetector(rc.Ctx, newLoopDetector())
 
 	// Record this execution as an auditable run (the automation platform's unit).
 	startedAt := time.Now().UnixMilli()
