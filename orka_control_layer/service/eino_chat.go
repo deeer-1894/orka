@@ -79,7 +79,35 @@ func summarizationHandlers(ctx context.Context, client llm.Client, model string)
 	if err != nil {
 		return nil // summarization is best-effort; never block agent construction
 	}
-	return []adk.ChatModelAgentMiddleware{mw}
+	return []adk.ChatModelAgentMiddleware{bestEffort(mw)}
+}
+
+// bestEffortMiddleware makes a context-management middleware unable to fail a
+// run. Its job is to keep the context small; if it cannot, the right outcome is
+// a larger context, not a dead run.
+//
+// It was not: eino treats a middleware error as a NodeRunError and aborts. The
+// summarizer's own model call can return empty content ("summary content is
+// empty") or simply fail, and 11 runs here died that way — including one that
+// had already implemented two N-Queens solvers, verified all five counts against
+// known values and benchmarked them, losing the lot to a failed summary of work
+// that was already finished.
+type bestEffortMiddleware struct {
+	adk.ChatModelAgentMiddleware
+}
+
+func bestEffort(mw adk.ChatModelAgentMiddleware) adk.ChatModelAgentMiddleware {
+	return &bestEffortMiddleware{ChatModelAgentMiddleware: mw}
+}
+
+func (b *bestEffortMiddleware) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
+	newCtx, newState, err := b.ChatModelAgentMiddleware.BeforeModelRewriteState(ctx, state, mc)
+	if err != nil {
+		// Carry on with the un-summarised state. Worst case the context is
+		// bigger than intended, which the token budget already guards against.
+		return ctx, state, nil
+	}
+	return newCtx, newState, nil
 }
 
 // BuildEinoAgent constructs an eino ReAct ChatModelAgent over our model + tools.

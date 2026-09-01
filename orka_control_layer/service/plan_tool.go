@@ -23,7 +23,14 @@ const planToolName = "update_plan"
 
 func (planTool) Name() string { return planToolName }
 func (planTool) Description() string {
-	return "Declare and update your task checklist so the user can follow along. Call it once at the start of a multi-step task with all steps as \"pending\", then call it again whenever progress changes — mark the step you are working on as \"active\" and finished steps as \"done\". Always pass the COMPLETE list of steps every time (it replaces the previous plan). Skip it for trivial one-step requests."
+	// The consequence is spelled out because leaving the checklist stale is not
+	// a cosmetic slip: this list IS the contract the run is graded against, and a
+	// run that did all its work but never updated the plan is recorded as
+	// incomplete. Measured here on a task that wrote the code, ran it, produced
+	// the benchmark and the report, called update_plan once at the start and was
+	// filed partial with all five steps still open.
+	return "Declare and update your task checklist so the user can follow along. Call it once at the start of a multi-step task with all steps as \"pending\", then call it AGAIN EVERY TIME a step finishes — mark the step you are working on as \"active\" and finished steps as \"done\". Always pass the COMPLETE list of steps every time (it replaces the previous plan). " +
+		"IMPORTANT: this checklist is what the run is judged by. If you finish the work but leave steps marked pending, the run is recorded as INCOMPLETE even though you did it — so update the plan as you go, and make sure every step is \"done\" before your final answer. Skip this tool entirely for trivial one-step requests."
 }
 func (planTool) Schema() map[string]any {
 	return map[string]any{
