@@ -70,3 +70,26 @@ func TestContextHandlersBuild(t *testing.T) {
 		t.Fatalf("expected patchtoolcalls + reduction handlers, got %d", len(mw))
 	}
 }
+
+// A sub-agent's result is the most expensive output in the system — a whole
+// nested agent run. Clearing it as "an old tool result" cost the worst run
+// measured here: four researchers returned sourced reports in 140 seconds, the
+// reducer replaced them with placeholders, and the orchestrator spent 680
+// seconds re-reading unrelated files with nothing left to synthesise.
+func TestSubAgentResultsAreProtectedFromReduction(t *testing.T) {
+	protected := map[string]bool{}
+	for _, n := range append(protectedToolOutputs(), subAgentNames()...) {
+		protected[n] = true
+	}
+	for _, sp := range DefaultSubAgents() {
+		if sp.Name != "" && !protected[sp.Name] {
+			t.Errorf("sub-agent %q may be cleared from context", sp.Name)
+		}
+	}
+	// The pipeline's own control tools must stay protected too.
+	for _, n := range []string{"validate_factor", "factor_agreement", planToolName} {
+		if !protected[n] {
+			t.Errorf("%q lost its protection", n)
+		}
+	}
+}

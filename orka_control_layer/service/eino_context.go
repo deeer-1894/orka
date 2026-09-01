@@ -45,6 +45,34 @@ const (
 	offloadDir = ".orka_offload"
 )
 
+// protectedToolOutputs are results the reducer must never truncate or clear:
+// their output IS the state the next step consumes, so a placeholder breaks it.
+func protectedToolOutputs() []string {
+	return []string{"validate_factor", "factor_agreement", planToolName}
+}
+
+// subAgentNames returns every delegate's tool name.
+//
+// A sub-agent's result is the MOST expensive output in the system — a whole
+// nested agent run, several minutes and tens of thousands of tokens — so
+// clearing it as "an old tool result" is exactly backwards. Left unprotected it
+// produced the worst run measured here: four researchers returned excellent
+// sourced reports in the first 140 seconds, the reducer then replaced them with
+// placeholders once the context crossed its threshold, and the orchestrator —
+// with nothing left to synthesise — spent the next 680 seconds listing the
+// workspace and re-reading unrelated files, ending partial with five plan steps
+// unfinished. Delegation looked like the problem; losing its results was.
+func subAgentNames() []string {
+	specs := DefaultSubAgents()
+	out := make([]string, 0, len(specs))
+	for _, sp := range specs {
+		if sp.Name != "" {
+			out = append(out, sp.Name)
+		}
+	}
+	return out
+}
+
 // contextHandlers builds the P1 middleware chain for a run. Order matters:
 // patchtoolcalls repairs dangling tool calls first, then reduction trims, then
 // the caller's summarization handlers run as the final backstop.
@@ -66,8 +94,8 @@ func contextHandlers(ctx context.Context, baseStorage, userEmail string) []adk.C
 		MaxLengthForTrunc: maxToolOutputChars,
 		// Never truncate the pipeline's own control tools: their output IS the
 		// state that flows to the next step, and a placeholder would break it.
-		TruncExcludeTools:  []string{"validate_factor", "factor_agreement", planToolName},
-		ClearExcludeTools:  []string{"validate_factor", "factor_agreement", planToolName},
+		TruncExcludeTools:  append(protectedToolOutputs(), subAgentNames()...),
+		ClearExcludeTools:  append(protectedToolOutputs(), subAgentNames()...),
 		MaxTokensForClear:  clearAboveTokens,
 		ClearAtLeastTokens: clearAboveTokens / 3,
 	})

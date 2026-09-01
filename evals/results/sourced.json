@@ -1,0 +1,96 @@
+{
+  "at": "2026-08-31T23:33:42+08:00",
+  "model": "",
+  "passed": 8,
+  "total": 10,
+  "results": [
+    {
+      "id": "plain_answer",
+      "pass": true,
+      "status": "done",
+      "tools": 0,
+      "tokens": 816,
+      "seconds": 2.167675083
+    },
+    {
+      "id": "arithmetic",
+      "pass": true,
+      "status": "done",
+      "tools": 0,
+      "tokens": 959,
+      "seconds": 3.624248167
+    },
+    {
+      "id": "file_write_read",
+      "pass": false,
+      "reasons": [
+        "called banned tool shell"
+      ],
+      "status": "done",
+      "tools": 4,
+      "tokens": 23299,
+      "seconds": 107.78182225
+    },
+    {
+      "id": "file_multi_step",
+      "pass": true,
+      "status": "done",
+      "tools": 3,
+      "tokens": 11886,
+      "seconds": 72.798156542
+    },
+    {
+      "id": "plan_completion",
+      "pass": true,
+      "status": "done",
+      "tools": 7,
+      "tokens": 37965,
+      "seconds": 150.848051666
+    },
+    {
+      "id": "web_search_basic",
+      "pass": true,
+      "status": "done",
+      "tools": 2,
+      "tokens": 10699,
+      "seconds": 38.376187625
+    },
+    {
+      "id": "refuses_to_invent",
+      "pass": true,
+      "status": "done",
+      "tools": 1,
+      "tokens": 10628,
+      "seconds": 36.2535685
+    },
+    {
+      "id": "research_cites_sources",
+      "pass": false,
+      "reasons": [
+        "status=partial want done"
+      ],
+      "status": "partial",
+      "tools": 10,
+      "tokens": 49575,
+      "seconds": 222.868625667
+    },
+    {
+      "id": "parallel_writes",
+      "pass": true,
+      "status": "done",
+      "tools": 3,
+      "tokens": 10224,
+      "seconds": 40.537865291
+    },
+    {
+      "id": "memory_recall",
+      "pass": true,
+      "status": "done",
+      "tools": 1,
+      "tokens": 16920,
+      "seconds": 78.699554208
+    }
+  ],
+  "total_tools": 31,
+  "total_tokens": 172971
+}

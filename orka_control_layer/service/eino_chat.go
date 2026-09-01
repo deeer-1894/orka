@@ -14,11 +14,11 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/orka-oss/orka_control_layer/llm"
+	"github.com/orka-oss/orka_control_layer/service/middlewares"
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/config"
 	"github.com/orka-oss/orka_core/messages"
-	"github.com/orka-oss/orka_control_layer/llm"
-	"github.com/orka-oss/orka_control_layer/service/middlewares"
 )
 
 // einoOrchestratorName is the orchestrator agent's name; sub-agent events carry
@@ -70,7 +70,7 @@ func (g *budgetGuard) BeforeModelRewriteState(ctx context.Context, state *adk.Ch
 // model generates the summary.
 func summarizationHandlers(ctx context.Context, client llm.Client, model string) []adk.ChatModelAgentMiddleware {
 	mw, err := summarization.New(ctx, &summarization.Config{
-		Model:   llm.NewEinoModel(client, model),
+		Model: llm.NewEinoModel(client, model),
 		// Reduction now trims oversized/stale tool output first, so summarization
 		// is the backstop for genuinely long dialogue — trigger it earlier than the
 		// old 80-message mark, which a long pipeline blew past on cost alone.
@@ -161,7 +161,15 @@ func BuildEinoSubAgentTools(ctx context.Context, mainClient llm.Client, mainMode
 			// transient blip still fails the parent step.
 			ModelRetryConfig:    modelRetryConfig(),
 			ModelFailoverConfig: modelFailoverConfig(backupModel(mainClient, mainModel, model)),
-			Handlers:            []adk.ChatModelAgentMiddleware{newBudgetGuard(iters)},
+			// A token budget as well as a step budget. MaxIterations bounds model
+			// CYCLES, and once the prompt encourages batching one cycle can emit
+			// several tool calls — so a researcher told to use "~6, at most ~10"
+			// calls was measured making 15. A soft instruction does not bound a
+			// delegate; four of them over-researching is how a run reaches 399k
+			// tokens and still ends unfinished.
+			Handlers: []adk.ChatModelAgentMiddleware{
+				newBudgetGuardFor(newRunBudget(iters, subAgentMaxTokens, 0)),
+			},
 		})
 		if err != nil {
 			return nil, err
@@ -209,6 +217,11 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 		Handlers:            handlers,
 	})
 }
+
+// subAgentMaxTokens caps ONE delegate's context growth. Generous enough for real
+// multi-source research, low enough that a delegate cannot spend the whole run's
+// budget on its own subtask.
+const subAgentMaxTokens = 80_000
 
 // einoMaxIters is the orchestrator/agent generation-cycle cap for the prod path.
 const einoMaxIters = 16
@@ -309,8 +322,8 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 		args map[string]any
 	}
 	calls := map[string]pendingCall{} // tool_call_id → call info (for args)
-	tokens, toolCalls := 0, 0          // per-run audit counters (incl. sub-agents)
-	lastFinal := ""                    // orchestrator's final answer → run output
+	tokens, toolCalls := 0, 0         // per-run audit counters (incl. sub-agents)
+	lastFinal := ""                   // orchestrator's final answer → run output
 	defer func() {
 		rc.Put(middlewares.VarRunTokens, tokens)
 		rc.Put(middlewares.VarRunTools, toolCalls)
