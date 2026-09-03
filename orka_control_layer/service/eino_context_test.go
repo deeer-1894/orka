@@ -7,7 +7,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/filesystem"
+	"github.com/cloudwego/eino/adk/middlewares/reduction"
+	"github.com/cloudwego/eino/schema"
+
+	"github.com/orka-oss/orka_core/config"
+	filesystem2 "github.com/orka-oss/orka_middleware/local/filesystem"
 )
 
 // TestWorkspaceBackendOffload verifies that oversized tool output offloaded by
@@ -65,7 +71,7 @@ func TestWorkspaceBackendConfinement(t *testing.T) {
 // TestContextHandlersBuild asserts the P1 chain actually constructs (a silent
 // build failure would leave runs with no context management at all).
 func TestContextHandlersBuild(t *testing.T) {
-	mw := contextHandlers(context.Background(), t.TempDir(), "ctx@test.com")
+	mw := contextHandlers(context.Background(), t.TempDir(), "ctx@test.com", nil, nil)
 	if len(mw) < 2 {
 		t.Fatalf("expected patchtoolcalls + reduction handlers, got %d", len(mw))
 	}
@@ -78,7 +84,7 @@ func TestContextHandlersBuild(t *testing.T) {
 // seconds re-reading unrelated files with nothing left to synthesise.
 func TestSubAgentResultsAreProtectedFromReduction(t *testing.T) {
 	protected := map[string]bool{}
-	for _, n := range append(protectedToolOutputs(), subAgentNames()...) {
+	for _, n := range append(protectedToolOutputs(), subAgentNames(nil)...) {
 		protected[n] = true
 	}
 	for _, sp := range DefaultSubAgents() {
@@ -90,6 +96,152 @@ func TestSubAgentResultsAreProtectedFromReduction(t *testing.T) {
 	for _, n := range []string{"validate_factor", "factor_agreement", planToolName} {
 		if !protected[n] {
 			t.Errorf("%q lost its protection", n)
+		}
+	}
+}
+
+// config.yaml documents a custom sub_agents registry and BuildEinoSubAgentTools
+// honours it, so protection keyed to the BUILT-IN names left every custom
+// delegate exposed to exactly the failure the built-ins are protected from.
+func TestCustomSubAgentsAreProtected(t *testing.T) {
+	specs := []config.SubAgentConfig{
+		{Name: "analyst", Tools: []string{"file_read"}},
+		{Name: "auditor", Tools: []string{"file_read"}},
+	}
+	got := map[string]bool{}
+	for _, n := range subAgentNames(specs) {
+		got[n] = true
+	}
+	for _, sp := range specs {
+		if !got[sp.Name] {
+			t.Errorf("configured sub-agent %q is not protected from reduction", sp.Name)
+		}
+	}
+	if got["researcher"] {
+		t.Error("built-in names leaked in when a custom registry is configured")
+	}
+}
+
+// The path an offloaded result is advertised at must be the path file_read
+// opens. These diverged: eino named files "/tmp/clear/{call_id}" while the
+// backend stored them under .orka_offload/, so the model was handed a path that
+// resolves inside its workspace to a file that was never written — every
+// offloaded result was unreachable.
+func TestOffloadPathIsReadableByFileRead(t *testing.T) {
+	base, email := t.TempDir(), "ctx@test.com"
+	be := newWorkspaceBackend(base, email)
+	root := filepath.Join(base, email)
+
+	gen := offloadPathFor("clear")
+	advertised, err := gen(context.Background(), &reduction.ToolDetail{
+		ToolContext: &adk.ToolContext{Name: "researcher", CallID: "call_a1b2c3"},
+	})
+	if err != nil {
+		t.Fatalf("gen path: %v", err)
+	}
+	if err := be.Write(context.Background(), &filesystem.WriteRequest{
+		FilePath: advertised, Content: "conclusion: X\nbody",
+	}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Exactly what the agent does with the advertised path.
+	fileRead := filesystem2.New(root)[0]
+	if fileRead.Name() != readFileToolName {
+		t.Fatalf("expected %s tool first, got %s", readFileToolName, fileRead.Name())
+	}
+	out, err := fileRead.Invoke(context.Background(), map[string]any{"path": advertised})
+	if err != nil {
+		t.Fatalf("file_read on the advertised path %q failed: %v", advertised, err)
+	}
+	if !strings.Contains(out, "conclusion: X") {
+		t.Fatalf("read back wrong content: %.60q", out)
+	}
+	// The name should say what it holds, so file_list reads as an index.
+	if !strings.Contains(advertised, "researcher") {
+		t.Errorf("offload path %q does not name the tool that produced it", advertised)
+	}
+}
+
+// Clearing keeps the tool CALL but used to reduce the result to a bare pointer.
+// The abstract is what lets the orchestrator synthesise without re-reading, and
+// decide when re-reading is worth it.
+func TestClearKeepsAnAbstractOfTheResult(t *testing.T) {
+	body := "结论:X 优于 Y,置信度中等。\n" + strings.Repeat("supporting detail line\n", 400)
+	res, err := l0ClearHandler()(context.Background(), &reduction.ToolDetail{
+		ToolContext:  &adk.ToolContext{Name: "researcher", CallID: "call_z9"},
+		ToolArgument: &schema.ToolArgument{Text: `{"brief":"compare X and Y"}`},
+		ToolResult: &schema.ToolResult{Parts: []schema.ToolOutputPart{
+			{Type: schema.ToolPartTypeText, Text: body},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("clear handler: %v", err)
+	}
+	if !res.NeedClear || !res.NeedOffload {
+		t.Fatalf("expected clear+offload, got clear=%v offload=%v", res.NeedClear, res.NeedOffload)
+	}
+	placeholder := joinToolText(res.ToolResult.Parts)
+	if !strings.Contains(placeholder, "结论:X 优于 Y") {
+		t.Errorf("placeholder carries no gist of the result:\n%s", placeholder)
+	}
+	if !strings.Contains(placeholder, res.OffloadFilePath) {
+		t.Errorf("placeholder does not point at the archive it wrote")
+	}
+	// It has to be far smaller than what it replaces, or it is not a reduction.
+	if len([]rune(placeholder)) > len([]rune(body))/4 {
+		t.Errorf("placeholder is %d runes against a %d-rune result", len([]rune(placeholder)), len([]rune(body)))
+	}
+	// The request survives so the model still knows what was asked.
+	if res.ToolArgument == nil || !strings.Contains(res.ToolArgument.Text, "compare X and Y") {
+		t.Error("clearing dropped the tool call arguments")
+	}
+	// The archive explains itself to whoever finds it later.
+	if !strings.Contains(res.OffloadContent, "researcher") || !strings.Contains(res.OffloadContent, "supporting detail line") {
+		t.Error("offloaded body lost either its header or its content")
+	}
+}
+
+// An empty result has nothing to reclaim; clearing it would spend a placeholder
+// to save nothing and point at an empty file.
+func TestClearSkipsEmptyResults(t *testing.T) {
+	res, err := l0ClearHandler()(context.Background(), &reduction.ToolDetail{
+		ToolContext: &adk.ToolContext{Name: "file_write", CallID: "c1"},
+		ToolResult:  &schema.ToolResult{Parts: []schema.ToolOutputPart{{Type: schema.ToolPartTypeText, Text: "   \n"}}},
+	})
+	if err != nil {
+		t.Fatalf("clear handler: %v", err)
+	}
+	if res.NeedClear {
+		t.Error("an empty tool result should not be cleared")
+	}
+}
+
+// Offload paths are built from model- and provider-supplied ids; they must stay
+// one segment inside the offload dir.
+func TestOffloadPathConfinement(t *testing.T) {
+	p, err := offloadPathFor("clear")(context.Background(), &reduction.ToolDetail{
+		ToolContext: &adk.ToolContext{Name: "../../etc", CallID: "../../passwd"},
+	})
+	if err != nil {
+		t.Fatalf("gen path: %v", err)
+	}
+	if strings.Contains(p, "..") {
+		t.Fatalf("traversal survived into the offload path: %q", p)
+	}
+	if !strings.HasPrefix(p, offloadDir) {
+		t.Fatalf("offload path escaped the offload dir: %q", p)
+	}
+	// Long or exotic names must still yield a plain, writable filename.
+	long, err := offloadPathFor("clear")(context.Background(), &reduction.ToolDetail{
+		ToolContext: &adk.ToolContext{Name: strings.Repeat("研究员", 40), CallID: strings.Repeat("z", 200)},
+	})
+	if err != nil {
+		t.Fatalf("gen path: %v", err)
+	}
+	for _, r := range filepath.Base(long) {
+		if r > 127 {
+			t.Fatalf("non-ASCII rune %q leaked into filename %q", r, long)
 		}
 	}
 }

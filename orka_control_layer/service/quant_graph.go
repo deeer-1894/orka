@@ -127,7 +127,7 @@ func (s *ChatService) scopedAgentRun(ctx context.Context, owner, instruction, ta
 		backup = backupModel(s.Main, s.Cfg.LLM.Model, model)
 	}
 	ag, err := BuildEinoAgent(ctx, client, model, instruction, tools, 12, backup,
-		contextHandlers(ctx, s.Cfg.Storage.BaseStoragePath, owner)...)
+		contextHandlers(ctx, s.Cfg.Storage.BaseStoragePath, owner, tools, s.Cfg.Agent.SubAgents)...)
 	if err != nil {
 		return "", err
 	}

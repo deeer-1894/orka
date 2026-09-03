@@ -521,7 +521,7 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	// Context-window management (truncate oversized tool output to a workspace
 	// file, clear stale tool results, repair dangling tool calls). Runs ahead of
 	// the summarization backstop.
-	ctxMW := contextHandlers(ctx, s.Cfg.Storage.BaseStoragePath, runUserEmail(rc))
+	ctxMW := contextHandlers(ctx, s.Cfg.Storage.BaseStoragePath, runUserEmail(rc), tools, s.Cfg.Agent.SubAgents)
 	// Automatic tier selection, when asked for. Prepended so it decides before
 	// the other middlewares see the call.
 	if r := s.routerFor(rc, model); r != nil {
