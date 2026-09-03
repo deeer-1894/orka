@@ -73,7 +73,7 @@ func (s *ChatService) describeImages(ctx context.Context, userText string, urls 
 	}
 	prompt := "Describe the attached image(s) in detail and extract ALL text, data, and elements relevant to the user's request. " +
 		"Be thorough and literal — this description is the only way a downstream text-only agent can 'see' the image.\n\nUser's request: " + userText
-	resp, err := s.Main.Chat(ctx, llm.Request{
+	resp, err := s.Main.Chat(llm.WithAgent(ctx, "attachment-vlm"), llm.Request{
 		Model:    vlm,
 		Messages: []llm.ChatMessage{{Role: llm.RoleUser, Content: prompt, Images: urls}},
 	})

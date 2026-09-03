@@ -169,8 +169,8 @@ func (s *ChatService) routerFor(rc *agent.RunContext, startModel string) *modelR
 		}
 	}
 	return newModelRouter(
-		llm.NewEinoModel(fastClient, fastName), fastName,
-		llm.NewEinoModel(strongClient, strongName), strongName,
+		llm.NewEinoModel(fastClient, fastName).ForAgent("router-fast"), fastName,
+		llm.NewEinoModel(strongClient, strongName).ForAgent("router-strong"), strongName,
 		routeStrongFirst(prompt),
 	)
 }

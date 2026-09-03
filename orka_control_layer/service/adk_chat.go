@@ -736,7 +736,7 @@ func (s *ChatService) titleAsync(convID, message string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		resp, err := model.Chat(ctx, llm.Request{Model: modelName, Messages: []llm.ChatMessage{
+		resp, err := model.Chat(llm.WithAgent(ctx, "title"), llm.Request{Model: modelName, Messages: []llm.ChatMessage{
 			{Role: llm.RoleSystem, Content: "You generate a very short chat title (max 6 words) summarizing the user's first message. Reply with ONLY the title — same language as the message, no quotes, no punctuation at the end, no prefixes."},
 			{Role: llm.RoleUser, Content: message},
 		}})

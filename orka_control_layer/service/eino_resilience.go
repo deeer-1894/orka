@@ -84,7 +84,7 @@ func backupModel(client llm.Client, modelName, currentModel string) model.BaseCh
 	if client == nil || modelName == "" || modelName == currentModel {
 		return nil
 	}
-	return llm.NewEinoModel(client, modelName)
+	return llm.NewEinoModel(client, modelName).ForAgent("failover")
 }
 
 // emitStreamReset tells the UI to drop the transient streaming bubble, so a

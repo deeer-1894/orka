@@ -158,7 +158,7 @@ func (s *ChatService) digestAsync(convID string, d db.RunDigest, msgs []*schema.
 // is confined to the one thing a model is needed for. Anything a later turn
 // might cite as fact comes from the deterministic half instead.
 func (s *ChatService) summarizeFindings(ctx context.Context, model llm.Client, modelName, prompt, source string) string {
-	resp, err := model.Chat(ctx, llm.Request{Model: modelName, Messages: []llm.ChatMessage{
+	resp, err := model.Chat(llm.WithAgent(ctx, "run-digest"), llm.Request{Model: modelName, Messages: []llm.ChatMessage{
 		{Role: llm.RoleSystem, Content: "你在为一个 AI agent 压缩它刚完成的一轮工作,供它在下一轮回忆。\n" +
 			"只写这轮**查到/得出了什么**——具体的结论、数据、事实。\n" +
 			"不要复述它做了哪些操作(那部分已单独记录)。不要写开场白、不要总结体裁。\n" +

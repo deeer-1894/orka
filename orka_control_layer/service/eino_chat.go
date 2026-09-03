@@ -70,7 +70,7 @@ func (g *budgetGuard) BeforeModelRewriteState(ctx context.Context, state *adk.Ch
 // model generates the summary.
 func summarizationHandlers(ctx context.Context, client llm.Client, model string) []adk.ChatModelAgentMiddleware {
 	mw, err := summarization.New(ctx, &summarization.Config{
-		Model: llm.NewEinoModel(client, model),
+		Model: llm.NewEinoModel(client, model).ForAgent("summarizer"),
 		// Reduction now trims oversized/stale tool output first, so summarization
 		// is the backstop for genuinely long dialogue — trigger it earlier than the
 		// old 80-message mark, which a long pipeline blew past on cost alone.

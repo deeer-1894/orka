@@ -133,7 +133,7 @@ func (s *ChatService) tryFastPath(ctx context.Context, rc *agent.RunContext, req
 	if sc, okStream := client.(llm.StreamingClient); okStream {
 		resp, err = sc.ChatStream(ctx, r, func(string) {})
 	} else {
-		resp, err = client.Chat(ctx, r)
+		resp, err = client.Chat(llm.WithAgent(ctx, "fast-path"), r)
 	}
 	if err != nil {
 		return false // any trouble → the agent path, which has retry and failover

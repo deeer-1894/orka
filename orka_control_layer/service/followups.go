@@ -30,7 +30,7 @@ func (s *ChatService) SuggestFollowups(ctx context.Context, prompt, answer strin
 	// (mimo-v2.5) usually answers in a few seconds; 15s absorbs its variance.
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	resp, err := s.Mini.Chat(ctx, llm.Request{
+	resp, err := s.Mini.Chat(llm.WithAgent(ctx, "followups"), llm.Request{
 		Model: model,
 		// Headroom: the reasoning mini model spends ~450 tokens thinking before the
 		// tiny JSON answer, so a low cap would truncate the answer entirely.

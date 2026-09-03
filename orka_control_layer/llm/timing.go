@@ -47,6 +47,13 @@ func withAgent(ctx context.Context, name string) context.Context {
 	return context.WithValue(ctx, agentKey{}, name)
 }
 
+// WithAgent labels model calls made directly on a Client, rather than through an
+// EinoModel — the auxiliary work that has no agent of its own (summarizing,
+// titling, digesting, the no-tool fast path). They are easy to forget and not
+// small: six unlabelled calls once accounted for 36% of a run's model time, more
+// than the orchestrator's own.
+func WithAgent(ctx context.Context, name string) context.Context { return withAgent(ctx, name) }
+
 // AgentFromContext reports the agent a model call belongs to, or "".
 func AgentFromContext(ctx context.Context) string {
 	s, _ := ctx.Value(agentKey{}).(string)
