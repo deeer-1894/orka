@@ -31,7 +31,8 @@ func (planTool) Description() string {
 	// filed partial with all five steps still open.
 	return "Declare and update your task checklist so the user can follow along. Call it once at the start of a multi-step task with all steps as \"pending\", then call it AGAIN EVERY TIME a step finishes — mark the step you are working on as \"active\" and finished steps as \"done\". Always pass the COMPLETE list of steps every time (it replaces the previous plan). " +
 		"IMPORTANT: this checklist is what the run is judged by. If you finish the work but leave steps marked pending, the run is recorded as INCOMPLETE even though you did it — so update the plan as you go, and make sure every step is \"done\" before your final answer. Skip this tool entirely for trivial one-step requests. " +
-		"Send it in the SAME batch of tool calls as the work of that step, never as a turn of its own: a turn that only updates the checklist costs a full model round-trip and moves nothing forward. Do not re-send an unchanged checklist."
+		"While work remains, send it in the SAME batch of tool calls as that step's work rather than as a turn of its own, and do not re-send an unchanged checklist — a turn that only repeats the checklist costs a full model round-trip and moves nothing forward. " +
+		"The ONE exception is the last update: before your final answer, call this tool once more with every step \"done\". That call has no work left to accompany it and is worth its round-trip, because without it a run that finished everything is still recorded as INCOMPLETE."
 }
 func (planTool) Schema() map[string]any {
 	return map[string]any{
