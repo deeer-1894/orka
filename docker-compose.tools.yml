@@ -17,6 +17,7 @@ services:
         # Unset means the Dockerfile's upstream default; set GOPROXY in .env on
         # a network where proxy.golang.org is unreachable.
         GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     image: orka-tools
     container_name: orka-tools
     ports:

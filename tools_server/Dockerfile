@@ -30,10 +30,17 @@ FROM python:3.12-slim-bookworm
 # charts/exports render CJK instead of tofu. Python libs power the data + code
 # tools: matplotlib (chart), pandas/openpyxl (csv/xlsx/sql/join), python-pptx
 # (slides), numpy (the python runner's analysis staples).
+# Same story as GOPROXY above: files.pythonhosted.org read-times-out from some
+# networks and the build dies here, several minutes in, on an error that names
+# the symptom and not the cause. Default stays upstream; override with
+# PIP_INDEX_URL in .env (compose forwards it). The retries/timeout are for a
+# merely slow link rather than a blocked one.
+ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git curl ca-certificates jq pandoc wkhtmltopdf poppler-utils fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir matplotlib pandas numpy openpyxl python-pptx
+    && pip install --no-cache-dir --index-url "$PIP_INDEX_URL" --retries 5 --timeout 60 \
+        matplotlib pandas numpy openpyxl python-pptx
 # Run as a non-root user; the container is the sandbox, not the in-container uid.
 RUN useradd -m -u 10001 orka && mkdir -p /workspace && chown orka:orka /workspace
 COPY --from=build /out/orka_tools /usr/local/bin/orka_tools
