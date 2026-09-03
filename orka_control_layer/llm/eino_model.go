@@ -18,11 +18,24 @@ type EinoModel struct {
 	client Client
 	model  string
 	tools  []*schema.ToolInfo // bound via WithTools; nil until bound
+	agent  string             // who this instance belongs to, for call attribution
 }
 
 // NewEinoModel wraps c as an eino ToolCallingChatModel for the given model name.
 func NewEinoModel(c Client, modelName string) *EinoModel {
 	return &EinoModel{client: c, model: modelName}
+}
+
+// ForAgent labels an instance with the agent that owns it, so timing can be
+// attributed. This is the only place the answer is known: eino calls the model
+// from inside its graph with a context we never construct, and every concurrent
+// delegate of a given kind shares one name, so nothing downstream can tell a
+// delegate's call from the orchestrator's. Each agent builds its own EinoModel,
+// which makes the instance itself the attribution.
+func (m *EinoModel) ForAgent(name string) *EinoModel {
+	cp := *m
+	cp.agent = name
+	return &cp
 }
 
 var _ model.ToolCallingChatModel = (*EinoModel)(nil)
@@ -37,7 +50,7 @@ func (m *EinoModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatMo
 
 // Generate runs a single completion.
 func (m *EinoModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
-	resp, err := m.client.Chat(ctx, m.request(input, opts))
+	resp, err := m.client.Chat(withAgent(ctx, m.agent), m.request(input, opts))
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +75,7 @@ func (m *EinoModel) Stream(ctx context.Context, input []*schema.Message, opts ..
 	go func() {
 		defer sw.Close()
 		streamedContent := false
-		resp, err := sc.ChatStream(ctx, req, func(delta string) {
+		resp, err := sc.ChatStream(withAgent(ctx, m.agent), req, func(delta string) {
 			if delta != "" {
 				streamedContent = true
 				sw.Send(&schema.Message{Role: schema.Assistant, Content: delta}, nil)

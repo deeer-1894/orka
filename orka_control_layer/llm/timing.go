@@ -33,6 +33,26 @@ func timingEnabled() bool {
 	return v == "1" || strings.EqualFold(v, "true")
 }
 
+// agentKey carries the calling agent's name from EinoModel down to the timing
+// decorator. It has to travel on the context rather than be resolved from run
+// meta: eino invokes the model from inside its own graph, and concurrent
+// delegates of one kind share a single name, so the model instance is the only
+// place that knows which agent a call belongs to.
+type agentKey struct{}
+
+func withAgent(ctx context.Context, name string) context.Context {
+	if name == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, agentKey{}, name)
+}
+
+// AgentFromContext reports the agent a model call belongs to, or "".
+func AgentFromContext(ctx context.Context) string {
+	s, _ := ctx.Value(agentKey{}).(string)
+	return s
+}
+
 // Timed decorates a Client so each call reports its own duration. Wrap INSIDE
 // the limiter and outside nothing — the point is to time the provider exchange,
 // not the queueing in front of it, which is what the limiter's own accounting
@@ -59,6 +79,9 @@ var llmStats struct {
 }
 
 func (t *Timed) label(ctx context.Context) string {
+	if a := AgentFromContext(ctx); a != "" {
+		return a
+	}
 	if t.agentOf == nil {
 		return ""
 	}
