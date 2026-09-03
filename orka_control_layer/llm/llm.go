@@ -63,6 +63,11 @@ type Usage struct {
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
+	// ReasoningTokens is the part of CompletionTokens a reasoning model spent
+	// thinking. Broken out because it is billed and generated like output but
+	// bought nothing the caller can read, and because it dominates: measured on
+	// a realistic agent turn here, 1650 of 1985 output tokens (83%).
+	ReasoningTokens int
 }
 
 // Response is the model's reply.

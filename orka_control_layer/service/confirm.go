@@ -201,6 +201,9 @@ func (g confirmGate) Invoke(ctx context.Context, args map[string]any) (string, e
 	if g.hub.isAllowed(conv, g.inner.Name()) { // already approved for this session
 		return g.inner.Invoke(ctx, args)
 	}
+	if !needsConfirm(g.inner.Name(), args) {
+		return g.inner.Invoke(ctx, args)
+	}
 
 	// --- native interrupt/resume path -------------------------------------
 	// On the way back in, the user's decision arrives as resume data addressed
@@ -263,6 +266,29 @@ func (s *ChatService) wrapConfirm(tools []agent.BaseTool, interruptible bool) []
 		}
 	}
 	return out
+}
+
+// needsConfirm decides from the ACTUAL call, not just the tool's name.
+//
+// dangerTools is a name list, and for http_request the name is the wrong unit:
+// the tool covers both a read and a write, and a GET is a read. The gate fired
+// on `GET https://pkg.go.dev/...` during a research run — a fetch of a public
+// documentation page, indistinguishable in effect from fetch_url, which is not
+// gated at all. Asking a human to approve that teaches them to approve without
+// reading, which is how a gate stops protecting anything.
+//
+// Only the method is inspected. Everything else on the list runs arbitrary code
+// or commits a consequential change however it is called, so it stays gated.
+func needsConfirm(tool string, args map[string]any) bool {
+	if tool != "http_request" {
+		return true
+	}
+	switch strings.ToUpper(strings.TrimSpace(asStr(args["method"]))) {
+	case "", "GET", "HEAD", "OPTIONS": // "" is the tool's documented GET default
+		return false
+	default: // POST/PUT/PATCH/DELETE can change state on the far end
+		return true
+	}
 }
 
 // summarizeAction renders a short, human line describing what the tool is about

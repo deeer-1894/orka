@@ -117,6 +117,18 @@ type wireUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	// OpenAI-compatible providers nest the reasoning split here; absent on
+	// non-reasoning models, which correctly yields zero.
+	CompletionTokensDetails *struct {
+		ReasoningTokens int `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details"`
+}
+
+func (u *wireUsage) reasoning() int {
+	if u == nil || u.CompletionTokensDetails == nil {
+		return 0
+	}
+	return u.CompletionTokensDetails.ReasoningTokens
 }
 
 type wireResponse struct {
@@ -205,7 +217,7 @@ func (c *OpenAIClient) Chat(ctx context.Context, req Request) (Response, error) 
 	msg := wresp.Choices[0].Message
 	out := Response{Content: msg.Content, Reasoning: msg.ReasoningContent, FinishReason: wresp.Choices[0].FinishReason}
 	if u := wresp.Usage; u != nil {
-		out.Usage = Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
+		out.Usage = Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens, ReasoningTokens: u.reasoning()}
 	}
 	for _, tc := range msg.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments})
@@ -304,7 +316,7 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 			return Response{}, fmt.Errorf("llm error: %s", chunk.Error.Message)
 		}
 		if u := chunk.Usage; u != nil { // final usage chunk (stream_options)
-			usage = Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
+			usage = Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens, ReasoningTokens: u.reasoning()}
 		}
 		if len(chunk.Choices) == 0 {
 			continue

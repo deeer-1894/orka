@@ -10,6 +10,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/config"
 	"github.com/orka-oss/orka_core/state"
 	"github.com/orka-oss/orka_core/trace"
@@ -97,7 +98,10 @@ func main() {
 	// what a per-account rate limit punishes — retrying a limit you keep
 	// exceeding just burns latency and quota. Tunable via ORKA_LLM_MAX_CONCURRENCY
 	// / ORKA_LLM_MIN_INTERVAL_MS.
-	mainLLM = llm.NewLimiterFromEnv(llm.NewRetry(
+	// Timed sits INSIDE the limiter on purpose: it then measures the provider
+	// exchange alone, so queue time is the difference between a call's observed
+	// spacing and its logged duration rather than being folded into it.
+	mainLLM = llm.NewLimiterFromEnv(llm.NewTimedFromEnv(llm.NewRetry(
 		llm.NewOpenAIClient(cfg.LLM.OpenAIBaseURL, cfg.LLM.OpenAIAPIKey),
 		llm.RetryConfig{
 			MaxAttempts: cfg.LLM.MaxRetries,
@@ -105,7 +109,7 @@ func main() {
 				logger.Warn("llm transient error; retrying", "attempt", attempt, "delay", delay.String(), "err", err.Error())
 			},
 		},
-	))
+	), func(ctx context.Context) string { return agent.MetaFrom(ctx).AgentID }))
 	miniLLM = mainLLM
 
 	msg := message_utils.New(store, cfg.Obs.PersistSampling, logger)
