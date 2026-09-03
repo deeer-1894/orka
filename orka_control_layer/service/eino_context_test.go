@@ -72,7 +72,7 @@ func TestWorkspaceBackendConfinement(t *testing.T) {
 // TestContextHandlersBuild asserts the P1 chain actually constructs (a silent
 // build failure would leave runs with no context management at all).
 func TestContextHandlersBuild(t *testing.T) {
-	mw := contextHandlers(context.Background(), t.TempDir(), "ctx@test.com", nil, nil)
+	mw := contextHandlers(context.Background(), t.TempDir(), "ctx@test.com", "test", nil, nil)
 	if len(mw) < 2 {
 		t.Fatalf("expected patchtoolcalls + reduction handlers, got %d", len(mw))
 	}
@@ -131,7 +131,7 @@ func TestSubAgentsGetContextHandlers(t *testing.T) {
 	ctx := withOffloadRoot(context.Background(), t.TempDir())
 	tools := []agent.BaseTool{gateStubTool{name: "fetch_url"}, gateStubTool{name: "web_search"}}
 
-	mw := subAgentContextHandlers(ctx, tools)
+	mw := subAgentContextHandlers(ctx, "researcher", tools)
 	if len(mw) < 2 {
 		t.Fatalf("a delegate got %d context handlers, want patchtoolcalls + reduction", len(mw))
 	}
@@ -140,7 +140,7 @@ func TestSubAgentsGetContextHandlers(t *testing.T) {
 // Without storage there is nowhere to offload to, so a delegate must be left
 // alone rather than handed a reducer that points at files it cannot write.
 func TestSubAgentContextHandlersNeedStorage(t *testing.T) {
-	if mw := subAgentContextHandlers(context.Background(), nil); mw != nil {
+	if mw := subAgentContextHandlers(context.Background(), "researcher", nil); mw != nil {
 		t.Fatalf("expected no handlers without an offload root, got %d", len(mw))
 	}
 }

@@ -55,6 +55,11 @@ func main() {
 	}
 
 	logger := obs.NewLogger(cfg.Obs.LogLevel)
+	// Make the configured handler the package default too, so code reached deep
+	// inside the agent graph (where threading a *slog.Logger would mean a
+	// parameter on two exported builders) still logs as JSON at the configured
+	// level instead of the stdlib's plain-text stderr default.
+	slog.SetDefault(logger)
 	metrics := obs.NewMetrics()
 
 	// OpenTelemetry tracing (OTLP / stdout / no-op per env).

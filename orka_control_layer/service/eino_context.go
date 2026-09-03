@@ -115,8 +115,15 @@ func subAgentNames(specs []config.SubAgentConfig) []string {
 //
 // Best-effort: any middleware that fails to construct is skipped rather than
 // blocking the agent — a degraded context policy beats no agent.
-func contextHandlers(ctx context.Context, baseStorage, userEmail string, tools []agent.BaseTool, specs []config.SubAgentConfig) []adk.ChatModelAgentMiddleware {
+func contextHandlers(ctx context.Context, baseStorage, userEmail, label string, tools []agent.BaseTool, specs []config.SubAgentConfig) []adk.ChatModelAgentMiddleware {
 	var out []adk.ChatModelAgentMiddleware
+
+	// Bracket the reduction pass so one log line reports both sides of it. Off
+	// unless ORKA_CTX_DEBUG=1 (see eino_context_probe.go).
+	probePre, probePost := ctxProbePair(label)
+	if probePre != nil {
+		out = append(out, probePre)
+	}
 
 	// Small/fast models occasionally emit a tool_call the history never answers;
 	// left dangling it poisons every subsequent request.
@@ -151,6 +158,9 @@ func contextHandlers(ctx context.Context, baseStorage, userEmail string, tools [
 	})
 	if err == nil {
 		out = append(out, red)
+	}
+	if probePost != nil {
+		out = append(out, probePost)
 	}
 	return out
 }
@@ -338,14 +348,14 @@ func replaceTextParts(parts []schema.ToolOutputPart, placeholder string) []schem
 //
 // tools must be the delegate's OWN scoped set — l0ClearConfigs is keyed by tool
 // name, and a delegate only ever calls what it was given.
-func subAgentContextHandlers(ctx context.Context, tools []agent.BaseTool) []adk.ChatModelAgentMiddleware {
+func subAgentContextHandlers(ctx context.Context, name string, tools []agent.BaseTool) []adk.ChatModelAgentMiddleware {
 	base := offloadRootFrom(ctx)
 	if base == "" {
 		return nil // no storage configured → nowhere to offload; leave the delegate as-is
 	}
 	// nil specs: a delegate has no delegates of its own, so there is nothing
 	// sub-agent-shaped in its tool set to protect.
-	return contextHandlers(ctx, base, agent.MetaFrom(ctx).UserEmail, tools, nil)
+	return contextHandlers(ctx, base, agent.MetaFrom(ctx).UserEmail, name, tools, nil)
 }
 
 // runUserEmail resolves whose workspace this run writes to, so offloaded tool

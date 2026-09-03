@@ -201,7 +201,7 @@ func BuildEinoSubAgentTools(ctx context.Context, mainClient llm.Client, mainMode
 			// mid-work, which is the expensive way to learn a context is too big.
 			Handlers: append([]adk.ChatModelAgentMiddleware{
 				newBudgetGuardFor(newRunBudget(iters, subAgentMaxTokens, 0)),
-			}, subAgentContextHandlers(ctx, scoped)...),
+			}, subAgentContextHandlers(ctx, sp.Name, scoped)...),
 		})
 		if err != nil {
 			return nil, err
@@ -529,7 +529,7 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	// Context-window management (truncate oversized tool output to a workspace
 	// file, clear stale tool results, repair dangling tool calls). Runs ahead of
 	// the summarization backstop.
-	ctxMW := contextHandlers(ctx, s.Cfg.Storage.BaseStoragePath, runUserEmail(rc), tools, s.Cfg.Agent.SubAgents)
+	ctxMW := contextHandlers(ctx, s.Cfg.Storage.BaseStoragePath, runUserEmail(rc), einoOrchestratorName, tools, s.Cfg.Agent.SubAgents)
 	// Automatic tier selection, when asked for. Prepended so it decides before
 	// the other middlewares see the call.
 	if r := s.routerFor(rc, model); r != nil {
