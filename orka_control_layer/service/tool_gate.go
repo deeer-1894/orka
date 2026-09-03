@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -31,6 +32,18 @@ import (
 // dynamic tool filtering/selection based on conversation context". The tools
 // remain REGISTERED throughout, so anything already unlocked (or called from a
 // replayed transcript) still executes — only their visibility changes.
+//
+// Re-measured since (ORKA_CTX_DEBUG=1 prints it per run): the registry has grown
+// to 60 tools costing 7,135 tokens, of which the gate shows 20 for 2,596 — it
+// now saves 4,539 tokens on EVERY model call, and the saving grows with the
+// registry while the core set does not. For scale, the 64-step run that prompted
+// this measurement spent ~424k tokens in total; ungated, its tool tables alone
+// would have come to ~456k.
+//
+// What remains is genuinely core: at ~130 tokens per tool there is no fat left
+// to trim by editing schemas. Cutting further means narrowing per TASK rather
+// than per deployment, and the qrcode story below is the standing warning about
+// what that costs when the model cannot see what it is missing.
 
 // coreTools are always visible. Chosen from measured usage: these cover ~95% of
 // all tool calls ever made here. Anything outside this set is one find_tools
@@ -248,8 +261,27 @@ func (m *gateMiddleware) BeforeModelRewriteState(ctx context.Context, state *adk
 	if len(state.ToolInfos) == 0 {
 		return ctx, state, nil
 	}
+	before := len(state.ToolInfos)
 	state.ToolInfos = m.gate.visible()
+	// What the gate is worth, in the same unit the context probe reports, so the
+	// tool table can be compared against the message history it rides alongside.
+	// Same switch as the probe: this is tuning data, not production logging.
+	if ctxProbeEnabled() {
+		slog.Default().Info("tool gate",
+			"registered", len(m.gate.allInfos()), "visible", len(state.ToolInfos), "state_before", before,
+			"schema_tok_all", schemaTokens(m.gate.allInfos()),
+			"schema_tok_visible", schemaTokens(state.ToolInfos),
+		)
+	}
 	return ctx, state, nil
+}
+
+// allInfos returns the full registered list captured on the first model call.
+// Copied under the lock: callers read it while the gate keeps mutating unlocked.
+func (g *toolGate) allInfos() []*schema.ToolInfo {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]*schema.ToolInfo(nil), g.all...)
 }
 
 // ---- find_tools ----
