@@ -256,7 +256,26 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 const subAgentMaxTokens = 80_000
 
 // einoMaxIters is the orchestrator/agent generation-cycle cap for the prod path.
-const einoMaxIters = 16
+//
+// It was 16, which the budget guard turns into 15 usable cycles, and that was
+// the ceiling on how complex a task could BE. Measured across 333 runs, the
+// completion rate is flat at 67-71% up to 30 tool calls and collapses to 18%
+// beyond it — and 30 calls is exactly 15 cycles at the 2.1 calls-per-cycle the
+// batching prompt achieves. The runs that did finish real work spent 43 and 94
+// calls; under a 15-cycle budget neither could have.
+//
+// The number was sized for an orchestrator that delegates, spending its cycles
+// on fan-out rather than atomic work. Delegation runs at 1.17% of tool calls
+// (2.33% after the prompt rewrite in ff0141a), so in practice the orchestrator
+// does the atomic work itself and pays a cycle for every couple of tool calls.
+// Raising the ceiling is the honest response to what it actually does; the
+// prompt has already been tried.
+//
+// 40 covers ~84 tool calls at the measured batching rate. It is not a licence to
+// run forever: runMaxTokens (800k) and runMaxWall (2h) still bound the run, and
+// they bound it by COST rather than by how many steps the task happens to need,
+// which is the right shape of limit.
+const einoMaxIters = 40
 
 // RunEinoOnce runs the agent to completion on a single user message and returns
 // the final assistant text. Tool steps and intermediate assistant turns are
@@ -544,7 +563,11 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 		if miniModel == "" {
 			miniModel = model
 		}
-		ag, err = BuildEinoOrchestrator(ctx, client, model, s.Mini, miniModel, instruction, tools, s.Cfg.Agent.SubAgents, 16, !s.DisableSummary, ctxMW...)
+		// einoMaxIters, not a literal: this is eino's own hard cycle cliff, and the
+		// run budget is built from the same constant. Drifting apart means either
+		// the guard never fires (and eino errors out instead of reporting) or it
+		// fires far too early.
+		ag, err = BuildEinoOrchestrator(ctx, client, model, s.Mini, miniModel, instruction, tools, s.Cfg.Agent.SubAgents, einoMaxIters, !s.DisableSummary, ctxMW...)
 	} else {
 		if instruction == "" {
 			instruction = middlewares.DefaultSystemPrompt

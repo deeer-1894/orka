@@ -30,7 +30,8 @@ func (planTool) Description() string {
 	// the benchmark and the report, called update_plan once at the start and was
 	// filed partial with all five steps still open.
 	return "Declare and update your task checklist so the user can follow along. Call it once at the start of a multi-step task with all steps as \"pending\", then call it AGAIN EVERY TIME a step finishes — mark the step you are working on as \"active\" and finished steps as \"done\". Always pass the COMPLETE list of steps every time (it replaces the previous plan). " +
-		"IMPORTANT: this checklist is what the run is judged by. If you finish the work but leave steps marked pending, the run is recorded as INCOMPLETE even though you did it — so update the plan as you go, and make sure every step is \"done\" before your final answer. Skip this tool entirely for trivial one-step requests."
+		"IMPORTANT: this checklist is what the run is judged by. If you finish the work but leave steps marked pending, the run is recorded as INCOMPLETE even though you did it — so update the plan as you go, and make sure every step is \"done\" before your final answer. Skip this tool entirely for trivial one-step requests. " +
+		"Send it in the SAME batch of tool calls as the work of that step, never as a turn of its own: a turn that only updates the checklist costs a full model round-trip and moves nothing forward. Do not re-send an unchanged checklist."
 }
 func (planTool) Schema() map[string]any {
 	return map[string]any{
@@ -59,6 +60,16 @@ func (planTool) Invoke(ctx context.Context, args map[string]any) (string, error)
 	plan := planFromArgs(args)
 	if len(plan.Steps) == 0 {
 		return "计划为空,已忽略。", nil
+	}
+	// A re-post of the identical checklist carries no information, and the model
+	// does it: consecutive update_plan calls 41-80 seconds apart were measured
+	// here, each one a whole model round-trip that moved no work forward. Say so
+	// rather than acknowledging it, so the feedback lands where the decision is
+	// made. The event is still suppressed, not the record — an unchanged plan is
+	// by definition already recorded.
+	if planTrackerFrom(ctx).same(plan.Steps) {
+		return "计划与上次完全相同,未做改动。不要为了汇报进度单独调用本工具 —— " +
+			"只在计划真正变化时调用,并把它和这一轮的实际工作放在同一批工具调用里。", nil
 	}
 	if emit := agent.EmitFrom(ctx); emit != nil {
 		emit(messages.Plan(plan, agent.MetaFrom(ctx)))

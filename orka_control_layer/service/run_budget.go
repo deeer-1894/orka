@@ -152,6 +152,26 @@ func (p *planTracker) record(steps []messages.PlanStep) {
 	p.mu.Unlock()
 }
 
+// same reports whether steps are identical to the plan already recorded, so a
+// re-post of an unchanged checklist can be answered without spending an event.
+// An empty tracker is never "the same": the first plan of a run is always news.
+func (p *planTracker) same(steps []messages.PlanStep) bool {
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.steps) == 0 || len(p.steps) != len(steps) {
+		return false
+	}
+	for i := range steps {
+		if steps[i].Title != p.steps[i].Title || steps[i].Status != p.steps[i].Status {
+			return false
+		}
+	}
+	return true
+}
+
 // unfinished returns the titles of steps still pending or active. A plan the
 // agent never published yields nothing, which correctly means "no claim to
 // check" rather than "incomplete".
