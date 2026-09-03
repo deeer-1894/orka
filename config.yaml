@@ -13,8 +13,20 @@ llm:
   # API key is NOT stored here — set OPENAI_API_KEY in the environment.
   openai_base_url: "https://open.bigmodel.cn/api/paas/v4"
   openai_api_key: ""
-  # main drives the orchestrator loop (many calls → prefer the fast tier);
-  # mini backs summarization/sub-agents and is the failover target for main.
+  # main drives the orchestrator loop; mini backs summarization/sub-agents and is
+  # the failover target for main.
+  #
+  # This used to advise the FAST tier for main, on the reasoning that the
+  # orchestrator makes many calls. Per call that is true and by a lot — measured
+  # on a realistic turn (20k context, tools, full output), a reasoning model took
+  # 31.3s against 7.3s, spending 83% of its output on thinking. Per TASK it did
+  # not hold. Same prompt, three runs:
+  #   strong tier   501k tokens  1053s   4/4 subtopics + the finished report
+  #   fast tier     352k tokens   578s   did not finish
+  #   fast tier     407k tokens   533s   2/4 subtopics, no report; ended early
+  #                                      with two plan steps still open
+  # The fast model buys its speed back in extra cycles and stops short. Prefer
+  # the stronger tier for main until an eval on your own workload says otherwise.
   model: "GLM-5.3-Flash"
   mini_model: "GLM-5.3"
   vlm_model: "GLM-5.3"
