@@ -379,7 +379,18 @@ func fileRead(base string) mcpserver.ToolHandlerFunc {
 
 func fileWrite(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		rel := req.GetString("path", "")
+		// "file" is accepted because models reach for it: a researcher told to
+		// save findings called file_write with {"file": "findings/eino.md"},
+		// which read as an EMPTY path, resolved to the workspace root, and failed
+		// with "is a directory" — an error about the wrong thing entirely, which
+		// the agent then reported to the user as a workspace problem.
+		rel := strings.TrimSpace(req.GetString("path", ""))
+		if rel == "" {
+			rel = strings.TrimSpace(req.GetString("file", ""))
+		}
+		if rel == "" {
+			return mcp.NewToolResultError("path is required: pass the relative file path as \"path\", e.g. {\"path\": \"notes/summary.md\", \"content\": \"...\"}"), nil
+		}
 		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil

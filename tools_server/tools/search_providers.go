@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // searchProvider runs a query and returns formatted results, or "" if it is not
@@ -35,6 +38,18 @@ func searchProviders() []searchProvider {
 	}
 	return ps
 }
+
+// logSearchFailure makes a provider's failure visible. Returning "" on any error
+// is right — the caller must be free to try the next provider — but doing it
+// silently meant a throttled premium provider was indistinguishable from an
+// unconfigured one, and the agent was told "search is unavailable, configure a
+// key" while a perfectly good key was sitting in its environment.
+func logSearchFailure(provider, q, reason string) {
+	slog.Default().Warn("search provider failed",
+		"provider", provider, "reason", reason, "query", trunc(q, 60))
+}
+
+func trimBody(b []byte) string { return trunc(strings.TrimSpace(string(b)), 160) }
 
 func formatResults(provider, q string, items [][3]string) string {
 	if len(items) == 0 {
@@ -89,23 +104,67 @@ func doubaoSearchAt(ctx context.Context, endpoint, q string, limit int) string {
 		// caller here goes on to fetch_url the link.
 		"Filter": map[string]any{"NeedUrl": true},
 	})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+os.Getenv("DOUBAO_SEARCH_API_KEY"))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := httpSearchC.Do(req)
-	if err != nil {
-		return ""
+	// The account-wide QPS limit is the failure that actually happens, because
+	// the agent batches: a researcher that emits four searches in one turn fires
+	// them concurrently, and the burst is throttled even though the sustained
+	// rate is nothing. Observed exactly that — eight searches succeeding over
+	// half a minute, then four in the same second all failing. Retry the burst
+	// rather than falling through to the keyless endpoints, which are blocked
+	// here and turn a throttle into "search is unavailable".
+	var raw []byte
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-time.After(time.Duration(attempt) * 700 * time.Millisecond):
+			case <-ctx.Done():
+				return ""
+			}
+		}
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+os.Getenv("DOUBAO_SEARCH_API_KEY"))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := httpSearchC.Do(req)
+		if err != nil {
+			logSearchFailure("doubao", q, "transport: "+err.Error())
+			continue
+		}
+		raw, _ = io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		code := resp.StatusCode
+		resp.Body.Close()
+		if code == http.StatusTooManyRequests || code >= 500 {
+			logSearchFailure("doubao", q, "http "+strconv.Itoa(code)+" (retrying)")
+			raw = nil
+			continue
+		}
+		if code/100 != 2 {
+			logSearchFailure("doubao", q, "http "+strconv.Itoa(code)+": "+trimBody(raw))
+			return ""
+		}
+		break
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if raw == nil {
+		return "" // burst never got through; the caller falls back and says so
+	}
 	var r struct {
+		ResponseMetadata struct {
+			Error *struct {
+				Code    any    `json:"Code"`
+				Message string `json:"Message"`
+			} `json:"Error"`
+		} `json:"ResponseMetadata"`
 		Result struct {
 			WebResults []struct {
 				Title, Url, Snippet, Summary string
 			} `json:"WebResults"`
 		} `json:"Result"`
 	}
-	if json.Unmarshal(raw, &r) != nil {
+	if err := json.Unmarshal(raw, &r); err != nil {
+		logSearchFailure("doubao", q, "decode: "+err.Error())
+		return ""
+	}
+	// A 200 can still carry an application error (empty query, quota, bad key).
+	if e := r.ResponseMetadata.Error; e != nil && e.Message != "" {
+		logSearchFailure("doubao", q, "api: "+e.Message)
 		return ""
 	}
 	items := make([][3]string, 0, limit)

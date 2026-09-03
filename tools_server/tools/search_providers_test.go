@@ -69,6 +69,66 @@ func TestDoubaoSearchFallsThroughOnFailure(t *testing.T) {
 	}
 }
 
+// The failure that actually happens is a throttled BURST: the agent batches, so
+// a researcher emitting four searches in one turn fires them concurrently and
+// the account QPS limit rejects them, even though the sustained rate is nothing.
+// Falling through on the first 429 turns a momentary throttle into "search is
+// unavailable" — and here the keyless fallback behind it is blocked outright.
+func TestDoubaoSearchRetriesAThrottledBurst(t *testing.T) {
+	t.Setenv("DOUBAO_SEARCH_API_KEY", "test-key")
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Result":{"WebResults":[
+			{"Title":"限流后重试成功","Url":"https://a.example","Summary":"内容"}]}}`))
+	}))
+	defer srv.Close()
+
+	out := doubaoSearchAt(context.Background(), srv.URL, "查询", 5)
+	if calls < 2 {
+		t.Fatalf("a 429 should be retried, made %d call(s)", calls)
+	}
+	if !strings.Contains(out, "限流后重试成功") {
+		t.Errorf("retry did not recover the result:\n%s", out)
+	}
+}
+
+// A 200 can still carry an application error — empty query, exhausted quota, a
+// bad key. Treating that as "no results" is what made a real failure look
+// identical to an unconfigured provider.
+func TestDoubaoSearchSurfacesApplicationError(t *testing.T) {
+	t.Setenv("DOUBAO_SEARCH_API_KEY", "test-key")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ResponseMetadata":{"Error":{"Code":"10400","Message":"query or search type is empty"}},"Result":null}`))
+	}))
+	defer srv.Close()
+	if got := doubaoSearchAt(context.Background(), srv.URL, "q", 5); got != "" {
+		t.Errorf("an application error should yield \"\", got %q", got)
+	}
+}
+
+// A client error other than 429 is not worth three round-trips.
+func TestDoubaoSearchDoesNotRetryClientErrors(t *testing.T) {
+	t.Setenv("DOUBAO_SEARCH_API_KEY", "bad")
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	if got := doubaoSearchAt(context.Background(), srv.URL, "q", 5); got != "" {
+		t.Errorf("expected \"\", got %q", got)
+	}
+	if calls != 1 {
+		t.Errorf("401 retried %d times; only 429/5xx should retry", calls)
+	}
+}
+
 // searchProviders is what decides whether the keyless fallback is used at all;
 // a blank key must read as "not configured" so an empty compose passthrough
 // does not register a provider that can only fail.

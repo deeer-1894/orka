@@ -14,8 +14,24 @@ import (
 // must NOT include it themselves.
 const needInput = "If you are missing information you cannot obtain with your tools, end your reply with a single line `NEED_USER_INPUT: <the question>` so the orchestrator can ask the user — do NOT guess."
 
-const researcherPrompt = "You are a rigorous research worker. Use web_search then fetch_url to gather facts from authoritative sources, cross-check across at least two, and return a concise findings summary: a short conclusion first, then key points each followed by its source URL. Never fabricate sources or numbers. " +
-	"BE EFFICIENT AND CONVERGE: aim for ~6 tool calls total, and at most ~10. Once you have cross-checked 2-3 authoritative sources, STOP searching and WRITE the findings — do not chase exhaustive coverage. If a search fails or a page won't load, move on; never repeat the same query."
+// researcherPrompt: gather, then LEAVE THE GATHERING BEHIND on disk.
+//
+// A delegate's return value is the only thing that survives it — its transcript
+// is discarded when the agent tool returns. Measured on this deployment, a
+// researcher spends around eleven model cycles at ~13k context each, roughly
+// 143k tokens of reading, and returns between 990 and 7,155 characters. Every
+// page it opened is gone at that moment, so a later question about a detail it
+// saw but did not quote costs a whole second delegation that re-fetches the
+// same sources from zero.
+//
+// Writing findings to a file makes that loss optional. The orchestrator gets a
+// pointer plus a conclusion — small enough that its context does not grow with
+// the number of delegates — and the detail stays addressable for whoever needs
+// it, including a later run, since the workspace outlives the run.
+const researcherPrompt = "You are a rigorous research worker. Use web_search then fetch_url to gather facts from authoritative sources and cross-check across at least two. Never fabricate sources or numbers. " +
+	"BE EFFICIENT AND CONVERGE: aim for ~6 tool calls total, and at most ~10. Once you have cross-checked 2-3 authoritative sources, STOP searching and write up — do not chase exhaustive coverage. If a search fails or a page won't load, move on; never repeat the same query.\n" +
+	"WRITE YOUR FINDINGS TO A FILE, then report briefly. Use file_write to save the FULL findings to `findings/<short-topic-slug>.md`: your conclusion, every key point with its source URL, and the concrete details worth keeping (names, parameters, numbers, quotes) — the pages you read are discarded the moment you finish, so anything you leave out is lost and someone will pay to fetch it again. " +
+	"Then RETURN ONLY: the file path, a 2-4 sentence conclusion, and the source URLs. Do NOT repeat the full findings in your reply — the file holds them, and whoever needs the detail can file_read it."
 
 const writerPrompt = "You are a writing/file worker. Produce the requested document and, when asked to save it, use file_write with a plain relative filename. Return a short confirmation: what you wrote and the filename."
 
@@ -48,10 +64,13 @@ func DefaultSubAgents() []config.SubAgentConfig {
 	return []config.SubAgentConfig{
 		{
 			Name:        "researcher",
-			Description: "Delegate DEEP web research (multiple sources, cross-checked, cited) that would otherwise burn many tool calls. Input: a self-contained research brief. Returns a cited findings summary.",
+			Description: "Delegate DEEP web research (multiple sources, cross-checked, cited) that would otherwise burn many tool calls. Input: a self-contained research brief. Writes the full findings to findings/<topic>.md and returns that path plus a short cited conclusion — file_read the path when you need the detail.",
 			Prompt:      researcherPrompt,
-			Tools:       []string{"web_search", "fetch_url", "http_request", "current_time"},
-			Model:       "mini",
+			// file_write/file_read are what let the findings outlive the delegate:
+			// without them the reader physically cannot record anything, so every
+			// fact has to transit the orchestrator's context as prose or be lost.
+			Tools: []string{"web_search", "fetch_url", "http_request", "current_time", "file_write", "file_read"},
+			Model: "mini",
 		},
 		{
 			Name:        "writer",
