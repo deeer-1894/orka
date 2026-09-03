@@ -6,6 +6,9 @@ go.work.sum
 
 # env / secrets
 .env
+# local variants and backups carry real keys; .env.example stays tracked
+.env.bak*
+.env.local
 
 # local data
 /data/
