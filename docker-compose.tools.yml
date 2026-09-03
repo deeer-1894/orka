@@ -13,6 +13,10 @@ services:
     build:
       context: .
       dockerfile: tools_server/Dockerfile
+      args:
+        # Unset means the Dockerfile's upstream default; set GOPROXY in .env on
+        # a network where proxy.golang.org is unreachable.
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
     image: orka-tools
     container_name: orka-tools
     ports:
@@ -27,6 +31,14 @@ services:
       - TOOLS_ADDR=:8090
       - BASE_STORAGE_PATH=/workspace
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      # web_search runs HERE, so a key set only in .env never reached it: the
+      # keyless DuckDuckGo/Wikipedia fallback stayed in force and returned
+      # "temporarily unavailable" on 390 of 391 calls. Empty is the same as unset
+      # (searchProviders skips blanks), so listing all four is safe.
+      - DOUBAO_SEARCH_API_KEY=${DOUBAO_SEARCH_API_KEY:-}
+      - SERPER_API_KEY=${SERPER_API_KEY:-}
+      - BRAVE_API_KEY=${BRAVE_API_KEY:-}
+      - SEARXNG_URL=${SEARXNG_URL:-}
     restart: unless-stopped
     # Tighten the container: drop privileges, no new privileges via setuid.
     security_opt:

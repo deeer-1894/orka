@@ -13,7 +13,12 @@ WORKDIR /src
 COPY orka_core/ ./orka_core/
 COPY tools_server/ ./tools_server/
 WORKDIR /src/tools_server
-ENV GOWORK=off CGO_ENABLED=0 GOFLAGS=-trimpath
+# The module proxy is a build ARG because the default is unreachable from some
+# networks (mainland China among them), where the build fails on a dial timeout
+# with no hint that the proxy is the problem. Default stays upstream; override
+# with --build-arg GOPROXY=... or GOPROXY in .env (compose forwards it).
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOWORK=off CGO_ENABLED=0 GOFLAGS=-trimpath GOPROXY=$GOPROXY
 RUN go build -o /out/orka_tools .
 
 # ---- runtime ----
