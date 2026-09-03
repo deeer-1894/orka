@@ -195,9 +195,13 @@ func BuildEinoSubAgentTools(ctx context.Context, mainClient llm.Client, mainMode
 			// calls was measured making 15. A soft instruction does not bound a
 			// delegate; four of them over-researching is how a run reaches 399k
 			// tokens and still ends unfinished.
-			Handlers: []adk.ChatModelAgentMiddleware{
+			// The budget bounds what a delegate may SPEND; the context handlers
+			// bound what it carries while spending it. Without the latter a
+			// delegate's own retrieval sat verbatim until the budget cut it off
+			// mid-work, which is the expensive way to learn a context is too big.
+			Handlers: append([]adk.ChatModelAgentMiddleware{
 				newBudgetGuardFor(newRunBudget(iters, subAgentMaxTokens, 0)),
-			},
+			}, subAgentContextHandlers(ctx, scoped)...),
 		})
 		if err != nil {
 			return nil, err
@@ -518,6 +522,10 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	if rc.Ctx != nil {
 		ctx = rc.Ctx
 	}
+	// Sub-agents are built inside BuildEinoOrchestrator, past the last point that
+	// can see storage config; this is how they reach an offload backend of their
+	// own (see subAgentContextHandlers).
+	ctx = withOffloadRoot(ctx, s.Cfg.Storage.BaseStoragePath)
 	// Context-window management (truncate oversized tool output to a workspace
 	// file, clear stale tool results, repair dangling tool calls). Runs ahead of
 	// the summarization backstop.

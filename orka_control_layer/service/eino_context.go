@@ -314,6 +314,40 @@ func replaceTextParts(parts []schema.ToolOutputPart, placeholder string) []schem
 	return out
 }
 
+// subAgentContextHandlers builds the reduction chain for ONE delegate.
+//
+// Delegates had none. The orchestrator's middlewares stop at the orchestrator —
+// BuildEinoSubAgentTools installs only a budget guard — so a researcher's own
+// retrieval accumulated verbatim and unbounded, which is where the volume
+// actually is: fetch_url averages 3,024 characters here and http_request 14,039,
+// and a delegate told to make "~6, at most ~10" calls was measured making 15.
+// Nothing trimmed that; only subAgentMaxTokens eventually cut the delegate off,
+// mid-work, which is the expensive way to discover a context is too big.
+//
+// Thresholds are the orchestrator's, deliberately. The pressure being managed is
+// the model's context window, which does not care which agent filled it, and
+// ClearAtLeastTokens already stops a clear that would not reclaim enough to be
+// worth breaking the prompt cache — so an ordinary short delegation is never
+// touched, and only the over-researching one is.
+//
+// Clearing a delegate's retrieval is safe in a way it was not before this file
+// learned to leave an abstract behind: eino preserves the tool ARGUMENTS, so a
+// cited source URL survives in the fetch_url call that fetched it, and the L0
+// keeps the head of what came back. The delegate can still cite; it just has to
+// re-read for detail.
+//
+// tools must be the delegate's OWN scoped set — l0ClearConfigs is keyed by tool
+// name, and a delegate only ever calls what it was given.
+func subAgentContextHandlers(ctx context.Context, tools []agent.BaseTool) []adk.ChatModelAgentMiddleware {
+	base := offloadRootFrom(ctx)
+	if base == "" {
+		return nil // no storage configured → nowhere to offload; leave the delegate as-is
+	}
+	// nil specs: a delegate has no delegates of its own, so there is nothing
+	// sub-agent-shaped in its tool set to protect.
+	return contextHandlers(ctx, base, agent.MetaFrom(ctx).UserEmail, tools, nil)
+}
+
 // runUserEmail resolves whose workspace this run writes to, so offloaded tool
 // output lands in the right storage root.
 func runUserEmail(rc *agent.RunContext) string {
@@ -321,6 +355,27 @@ func runUserEmail(rc *agent.RunContext) string {
 		return ""
 	}
 	return agent.MetaFrom(rc.Ctx).UserEmail
+}
+
+// --- offload root carrier -----------------------------------------------------
+
+// Sub-agents are constructed deep inside BuildEinoOrchestrator, which has no
+// access to storage config. Carrying the base path on the context — the same way
+// the run budget, tool gate and plan tracker already reach middlewares — keeps
+// two exported builders from growing a storage parameter they otherwise have no
+// use for.
+type offloadRootKey struct{}
+
+func withOffloadRoot(ctx context.Context, base string) context.Context {
+	if base == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, offloadRootKey{}, base)
+}
+
+func offloadRootFrom(ctx context.Context) string {
+	s, _ := ctx.Value(offloadRootKey{}).(string)
+	return s
 }
 
 // --- workspace-backed offload store -----------------------------------------

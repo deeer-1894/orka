@@ -12,6 +12,7 @@ import (
 	"github.com/cloudwego/eino/adk/middlewares/reduction"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/config"
 	filesystem2 "github.com/orka-oss/orka_middleware/local/filesystem"
 )
@@ -119,6 +120,44 @@ func TestCustomSubAgentsAreProtected(t *testing.T) {
 	}
 	if got["researcher"] {
 		t.Error("built-in names leaked in when a custom registry is configured")
+	}
+}
+
+// Delegates ran with no context management at all: BuildEinoSubAgentTools
+// installed a budget guard and nothing else, so a researcher's own retrieval
+// (fetch_url averages 3k chars here, http_request 14k, over as many as 15 calls)
+// accumulated verbatim until the budget cut it off mid-work.
+func TestSubAgentsGetContextHandlers(t *testing.T) {
+	ctx := withOffloadRoot(context.Background(), t.TempDir())
+	tools := []agent.BaseTool{gateStubTool{name: "fetch_url"}, gateStubTool{name: "web_search"}}
+
+	mw := subAgentContextHandlers(ctx, tools)
+	if len(mw) < 2 {
+		t.Fatalf("a delegate got %d context handlers, want patchtoolcalls + reduction", len(mw))
+	}
+}
+
+// Without storage there is nowhere to offload to, so a delegate must be left
+// alone rather than handed a reducer that points at files it cannot write.
+func TestSubAgentContextHandlersNeedStorage(t *testing.T) {
+	if mw := subAgentContextHandlers(context.Background(), nil); mw != nil {
+		t.Fatalf("expected no handlers without an offload root, got %d", len(mw))
+	}
+}
+
+// The offload root has to survive onto the context the orchestrator is BUILT
+// from, or delegates silently fall back to no reduction again.
+func TestOffloadRootRoundTrips(t *testing.T) {
+	if got := offloadRootFrom(context.Background()); got != "" {
+		t.Fatalf("unset root should be empty, got %q", got)
+	}
+	ctx := withOffloadRoot(context.Background(), "/data/storage")
+	if got := offloadRootFrom(ctx); got != "/data/storage" {
+		t.Fatalf("root did not survive the context: %q", got)
+	}
+	// An empty base must not install a value that later reads as configured.
+	if got := offloadRootFrom(withOffloadRoot(context.Background(), "")); got != "" {
+		t.Fatalf("empty base should stay unset, got %q", got)
 	}
 }
 
