@@ -60,24 +60,62 @@ func AgentFromContext(ctx context.Context) string {
 	return s
 }
 
-// Timed decorates a Client so each call reports its own duration. Wrap INSIDE
-// the limiter and outside nothing — the point is to time the provider exchange,
-// not the queueing in front of it, which is what the limiter's own accounting
-// would measure.
-type Timed struct {
+// UsageSink receives what a completed model call actually cost. It exists
+// because the alternative — recomputing a run's spend from its message list —
+// is not measuring spend at all.
+//
+// The run budget used to sum ResponseMeta.Usage over the messages it was handed
+// each cycle. That is a reading of "usage still recorded in the current window",
+// and the window is continuously rewritten by the very context management this
+// system relies on: reduction clears tool results, and summarization collapses
+// the history to a system message plus one summary, taking the assistant
+// messages that carried the usage with it. So the total kept resetting. Measured
+// on one run: 2,293,602 tokens actually billed against an 800k cap that never
+// fired, because the number it compared was never the number that was spent.
+//
+// The provider exchange is the one place a cost is unambiguous, happens once,
+// and cannot be edited afterwards. Retries and failovers each land here
+// separately, which is correct — every one of them is billed.
+type UsageSink interface {
+	AddUsage(promptTokens, completionTokens int)
+}
+
+type usageSinkKey struct{}
+
+// WithUsageSink attaches the run's accountant to a context. Model calls made
+// under it report their cost as they complete.
+func WithUsageSink(ctx context.Context, s UsageSink) context.Context {
+	if s == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, usageSinkKey{}, s)
+}
+
+func usageSinkFrom(ctx context.Context) UsageSink {
+	s, _ := ctx.Value(usageSinkKey{}).(UsageSink)
+	return s
+}
+
+// Metered decorates a Client so every call reports its cost, and — when
+// ORKA_LLM_DEBUG is set — its duration and token split.
+//
+// Wrap INSIDE the limiter: the point is to measure the provider exchange, not
+// the queueing in front of it, so queue time stays visible as the difference
+// between a call's spacing and its logged duration.
+type Metered struct {
 	Client
 	agentOf func(context.Context) string
 }
 
-// NewTimedFromEnv returns c unchanged unless ORKA_LLM_DEBUG is set, so the
-// decorator costs nothing in production and needs no call-site changes.
-// agentOf resolves the calling agent for attribution; nil is fine.
-func NewTimedFromEnv(c Client, agentOf func(context.Context) string) Client {
-	if !timingEnabled() {
-		return c
-	}
-	return &Timed{Client: c, agentOf: agentOf}
+// NewMetered always wraps. Reporting usage is load-bearing — the run's cost
+// ceiling depends on it — so unlike the logging it cannot be conditional on a
+// debug switch. agentOf resolves the calling agent for attribution; nil is fine.
+func NewMetered(c Client, agentOf func(context.Context) string) Client {
+	return &Metered{Client: c, agentOf: agentOf}
 }
+
+// Timed is the previous name, kept so external callers still compile.
+type Timed = Metered
 
 var llmStats struct {
 	mu sync.Mutex
@@ -85,7 +123,18 @@ var llmStats struct {
 	d  time.Duration
 }
 
-func (t *Timed) label(ctx context.Context) string {
+// report books the call's cost first, then logs. The booking is unconditional;
+// the logging is not.
+func (t *Metered) report(ctx context.Context, req Request, resp Response, d time.Duration, streamed bool, err error) {
+	if s := usageSinkFrom(ctx); s != nil {
+		s.AddUsage(resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+	}
+	if timingEnabled() {
+		t.log(ctx, req, resp, d, streamed, err)
+	}
+}
+
+func (t *Metered) label(ctx context.Context) string {
 	if a := AgentFromContext(ctx); a != "" {
 		return a
 	}
@@ -95,7 +144,7 @@ func (t *Timed) label(ctx context.Context) string {
 	return t.agentOf(ctx)
 }
 
-func (t *Timed) log(ctx context.Context, req Request, resp Response, d time.Duration, streamed bool, err error) {
+func (t *Metered) log(ctx context.Context, req Request, resp Response, d time.Duration, streamed bool, err error) {
 	llmStats.mu.Lock()
 	llmStats.n++
 	llmStats.d += d
@@ -121,23 +170,23 @@ func (t *Timed) log(ctx context.Context, req Request, resp Response, d time.Dura
 	slog.Default().Info("llm call", args...)
 }
 
-func (t *Timed) Chat(ctx context.Context, req Request) (Response, error) {
+func (t *Metered) Chat(ctx context.Context, req Request) (Response, error) {
 	start := time.Now()
 	resp, err := t.Client.Chat(ctx, req)
-	t.log(ctx, req, resp, time.Since(start), false, err)
+	t.report(ctx, req, resp, time.Since(start), false, err)
 	return resp, err
 }
 
 // ChatStream reports the FULL exchange, not time-to-first-token. A streamed call
 // still blocks its agent until the last token, so that is the number the wall
 // clock is made of.
-func (t *Timed) ChatStream(ctx context.Context, req Request, onDelta func(string)) (Response, error) {
+func (t *Metered) ChatStream(ctx context.Context, req Request, onDelta func(string)) (Response, error) {
 	sc, ok := t.Client.(StreamingClient)
 	if !ok {
 		return t.Chat(ctx, req)
 	}
 	start := time.Now()
 	resp, err := sc.ChatStream(ctx, req, onDelta)
-	t.log(ctx, req, resp, time.Since(start), true, err)
+	t.report(ctx, req, resp, time.Since(start), true, err)
 	return resp, err
 }

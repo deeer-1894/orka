@@ -38,15 +38,50 @@ type runBudget struct {
 	// object lives exactly as long as the thing it measures; wrong for a
 	// DELEGATE, whose object outlives each delegation. See newDelegateBudget.
 	sticky bool
+	// metered budgets take their token count from AddUsage — reported by the LLM
+	// client as each call completes — instead of recomputing it from the message
+	// list. The list is not a ledger: reduction clears tool results and
+	// summarization collapses the history to a system message plus a summary,
+	// discarding the assistant messages that carried the usage, so the total kept
+	// resetting. A run billed 2,293,602 tokens against an 800k cap that never
+	// fired. Delegates stay un-metered: their budget object is per delegate TYPE
+	// while the sink is per RUN, so metering them would charge one delegation for
+	// every other delegation's calls.
+	metered bool
 
 	mu     sync.Mutex
 	steps  int
 	tokens int
+	spent  int    // billed tokens reported by AddUsage; metered budgets only
 	hit    string // "" until exhausted, then steps | tokens | time
 }
 
+// AddUsage books one completed model call. Implements llm.UsageSink.
+//
+// Every call lands here exactly once and cannot be un-booked, which is the
+// property the message list lacked. Retries and failovers each report
+// separately, which is right: each was billed.
+func (b *runBudget) AddUsage(promptTokens, completionTokens int) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	b.spent += promptTokens + completionTokens
+	b.mu.Unlock()
+}
+
+// spentTokens reports what this budget has booked so far.
+func (b *runBudget) spentTokens() int {
+	if b == nil {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.spent
+}
+
 func newRunBudget(maxSteps, maxTokens int, wall time.Duration) *runBudget {
-	b := &runBudget{maxSteps: maxSteps, maxTokens: maxTokens, sticky: true}
+	b := &runBudget{maxSteps: maxSteps, maxTokens: maxTokens, sticky: true, metered: true}
 	if wall > 0 {
 		b.deadline = time.Now().Add(wall)
 	}
@@ -78,9 +113,16 @@ func newDelegateBudget(maxSteps, maxTokens int) *runBudget {
 }
 
 // observe records the state of the conversation before a model call and reports
-// whether the budget is now exhausted. Counting from the message list (rather
-// than incrementing a counter) keeps it correct when eino retries or fails over
-// a call: those replay the same state instead of advancing it.
+// whether the budget is now exhausted.
+//
+// Steps come from the message list, which is right: retries and failovers replay
+// the same state rather than advancing it, so counting rather than incrementing
+// keeps a replayed cycle from spending one.
+//
+// Tokens do NOT, for a metered budget. The same list is rewritten underneath us
+// by reduction and summarization, which discard the assistant messages carrying
+// the usage — reading spend from it measures the current window, not the run.
+// See AddUsage.
 func (b *runBudget) observe(msgs []*schema.Message) bool {
 	if b == nil {
 		return false
@@ -93,9 +135,8 @@ func (b *runBudget) observe(msgs []*schema.Message) bool {
 		if m.Role == schema.Assistant {
 			steps++
 		}
-		// Both are optional: only a completed model response carries usage, and
-		// providers may omit it entirely. Missing usage means this dimension
-		// simply doesn't bind — steps and wall clock still do.
+		// Optional: only a completed model response carries usage, and providers
+		// may omit it. Used by un-metered (delegate) budgets only.
 		if m.ResponseMeta != nil && m.ResponseMeta.Usage != nil {
 			tokens += m.ResponseMeta.Usage.TotalTokens
 		}
@@ -103,6 +144,9 @@ func (b *runBudget) observe(msgs []*schema.Message) bool {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.metered {
+		tokens = b.spent
+	}
 	b.steps, b.tokens = steps, tokens
 	if b.hit != "" && b.sticky {
 		return true // stay exhausted; never un-trip

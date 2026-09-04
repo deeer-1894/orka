@@ -256,7 +256,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// own checklist unfinished, must not be filed as a success.
 	budget := newRunBudget(einoMaxIters, runMaxTokens, runMaxWall)
 	plan := &planTracker{}
-	rc.Ctx = withPlanTracker(withBudget(rc.Ctx, budget), plan)
+	rc.Ctx = llm.WithUsageSink(withPlanTracker(withBudget(rc.Ctx, budget), plan), budget)
 	// Narrow the tool surface to what this run plausibly needs; find_tools opens
 	// the rest on demand. Per run, so one conversation unlocking the CSV tools
 	// does not make every other conversation pay for them.

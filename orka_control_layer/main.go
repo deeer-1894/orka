@@ -101,7 +101,7 @@ func main() {
 	// Timed sits INSIDE the limiter on purpose: it then measures the provider
 	// exchange alone, so queue time is the difference between a call's observed
 	// spacing and its logged duration rather than being folded into it.
-	mainLLM = llm.NewLimiterFromEnv(llm.NewTimedFromEnv(llm.NewRetry(
+	mainLLM = llm.NewLimiterFromEnv(llm.NewMetered(llm.NewRetry(
 		llm.NewOpenAIClient(cfg.LLM.OpenAIBaseURL, cfg.LLM.OpenAIAPIKey),
 		llm.RetryConfig{
 			MaxAttempts: cfg.LLM.MaxRetries,

@@ -66,7 +66,9 @@ func TestDelegateBudgetStillBoundsOneDelegation(t *testing.T) {
 // spent budget. Delegates run no summarizer, which is why non-sticky is safe
 // there and only there.
 func TestRunBudgetStaysSticky(t *testing.T) {
-	b := newRunBudget(40, 80_000, 0)
+	b := newRunBudget(200, 80_000, 0)
+	// Spend is reported by the LLM client, not read off the messages.
+	b.AddUsage(85_000, 5_000)
 	if !b.observe([]*schema.Message{usedMsg(90_000)}) {
 		t.Fatal("run budget should exhaust")
 	}

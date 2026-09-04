@@ -44,12 +44,17 @@ func TestBudgetTripsOnSteps(t *testing.T) {
 	}
 }
 
+// A run's token spend arrives from the LLM client as calls complete, not from
+// the message list — that list is rewritten by reduction and summarization, so
+// reading spend off it measures the current window rather than the run.
 func TestBudgetTripsOnTokens(t *testing.T) {
 	b := newRunBudget(0, 500, 0)
-	if b.observe([]*schema.Message{assistantWithTokens(200)}) {
+	b.AddUsage(150, 50)
+	if b.observe(nil) {
 		t.Fatal("tripped under the token ceiling")
 	}
-	if !b.observe([]*schema.Message{assistantWithTokens(200), assistantWithTokens(400)}) {
+	b.AddUsage(300, 100)
+	if !b.observe(nil) {
 		t.Fatal("did not trip over the token ceiling")
 	}
 	if got := b.exhausted(); got != "tokens" {
