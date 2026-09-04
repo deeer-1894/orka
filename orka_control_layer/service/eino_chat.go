@@ -358,10 +358,20 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 	})
 }
 
-// subAgentMaxTokens caps ONE delegate's context growth. Generous enough for real
-// multi-source research, low enough that a delegate cannot spend the whole run's
-// budget on its own subtask.
-const subAgentMaxTokens = 80_000
+// subAgentMaxTokens caps what ONE delegation may spend.
+//
+// The comment used to say this bounded "context growth", and the name still
+// suggests it. It does not: the budget sums TotalTokens per call, which is
+// prompt plus completion, and the prompt is re-counted in full every cycle. The
+// figure therefore grows super-linearly with the work done rather than tracking
+// how much context is being carried. Measured on one delegate: 1.4k per call for
+// the first four cycles, 6.2k by the fifth, 14.6k by the tenth, cumulative 62k —
+// so 80k buys about eleven cycles, not the open-ended research the name implies.
+//
+// Delegations were coming back as "工具已停用" status reports for exactly this
+// reason. Raised to a figure that lets a delegate finish while still stopping a
+// runaway well short of the run's own 800k, and named for what it measures.
+const subAgentMaxTokens = 250_000
 
 // einoMaxIters is the orchestrator/agent generation-cycle cap for the prod path.
 //
@@ -379,11 +389,17 @@ const subAgentMaxTokens = 80_000
 // Raising the ceiling is the honest response to what it actually does; the
 // prompt has already been tried.
 //
-// 40 covers ~84 tool calls at the measured batching rate. It is not a licence to
-// run forever: runMaxTokens (800k) and runMaxWall (2h) still bound the run, and
-// they bound it by COST rather than by how many steps the task happens to need,
-// which is the right shape of limit.
-const einoMaxIters = 40
+// 40 was still a ceiling on task complexity rather than on cost. Every long run
+// measured afterwards ended the same way: exactly 40 cycles, then partial, with
+// the deliverable unwritten. A step count answers "how many moves may this take",
+// which is a property of the task and not something the platform should decide.
+//
+// So this is now a safety cliff and nothing else, and the binding limits are the
+// ones denominated in what a run actually spends: runMaxTokens (800k) and
+// runMaxWall (2h). A runaway loop still terminates — sooner, in fact, since a
+// loop burns tokens fast — while a task that genuinely needs sixty steps is no
+// longer cut off at forty for being complicated.
+const einoMaxIters = 200
 
 // RunEinoOnce runs the agent to completion on a single user message and returns
 // the final assistant text. Tool steps and intermediate assistant turns are
