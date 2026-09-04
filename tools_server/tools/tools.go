@@ -412,6 +412,16 @@ func fileWrite(base string) mcpserver.ToolHandlerFunc {
 	}
 }
 
+const (
+	// maxListEntries caps one directory listing. Chosen to cover any workspace a
+	// person would recognise while refusing to dump an archive.
+	maxListEntries = 60
+	// The two directories the agent's own machinery writes to. Named here rather
+	// than imported so the tools gateway keeps no dependency on the control layer.
+	trashDirName   = ".orka_trash"
+	offloadDirName = ".orka_offload"
+)
+
 func fileList(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		rel := req.GetString("path", "")
@@ -427,12 +437,37 @@ func fileList(base string) mcpserver.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		var sb strings.Builder
+		shown, hidden, skipped := 0, 0, 0
 		for _, e := range entries {
+			// Machinery, not the user's files: .orka_trash holds pre-overwrite
+			// backups and .orka_offload the reduction archive. Both accumulate
+			// across runs — the offload directory reached 303 entries here — and
+			// listing them invites the agent to browse its own plumbing. Reading a
+			// known path inside them still works, which is all the offload
+			// placeholder ever asks for.
+			if n := e.Name(); n == trashDirName || n == offloadDirName {
+				skipped++
+				continue
+			}
+			if shown >= maxListEntries {
+				hidden++
+				continue
+			}
 			kind := "f"
 			if e.IsDir() {
 				kind = "d"
 			}
 			fmt.Fprintf(&sb, "%s\t%s\n", kind, e.Name())
+			shown++
+		}
+		// A directory listing is a lookup, not a payload. Unbounded, one of these
+		// was the largest single message in an orchestrator's context for 14 of 40
+		// cycles, at ~3,900 tokens a call.
+		if hidden > 0 {
+			fmt.Fprintf(&sb, "… and %d more entries (narrow the path to see them)\n", hidden)
+		}
+		if skipped > 0 {
+			fmt.Fprintf(&sb, "(%d internal director%s hidden)\n", skipped, map[bool]string{true: "y", false: "ies"}[skipped == 1])
 		}
 		return mcp.NewToolResultText(sb.String()), nil
 	}
