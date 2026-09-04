@@ -26,7 +26,15 @@ const (
 	// progress at all.
 	runMaxWall = 2 * time.Hour
 	// userDailyTokens caps a single user's rolling 24h spend across all runs.
-	userDailyTokens = 5_000_000
+	// Override with agent.user_daily_tokens / USER_DAILY_TOKENS.
+	//
+	// The default was 5M against a measured p90 run of ~144k — roughly 35 runs a
+	// day, which looked generous until a run of genuine multi-source research
+	// turned out to cost 1.3M on its own. Four of those exhaust a day. Sizing a
+	// DAILY ceiling off a p90 SINGLE run is the mistake: the ceiling has to clear
+	// the largest run the deployment intends to support, several times over, or
+	// it stops being a runaway guard and becomes a cap on ordinary work.
+	userDailyTokens = 30_000_000
 	// taskFailureLimit is how many consecutive failures disable a scheduled task.
 	// Three distinguishes a persistent fault from a transient one — a flaky
 	// network or a rate limit rarely repeats three times running.
@@ -45,11 +53,20 @@ func (s *ChatService) quotaExceeded(ctx context.Context, email string) string {
 	if err != nil {
 		return "" // never block work because the meter is unreadable
 	}
-	if used < userDailyTokens {
+	limit := s.dailyTokenLimit()
+	if used < limit {
 		return ""
 	}
-	return fmt.Sprintf("已达到 24 小时用量上限(%s / %s token)。请稍后再试,或在配置中调高上限。",
-		humanCount(used), humanCount(userDailyTokens))
+	return fmt.Sprintf("已达到 24 小时用量上限(%s / %s token)。请稍后再试,或在配置中调高上限(agent.user_daily_tokens)。",
+		humanCount(used), humanCount(limit))
+}
+
+// dailyTokenLimit is the configured 24h ceiling, or the built-in default.
+func (s *ChatService) dailyTokenLimit() int {
+	if s.Cfg != nil && s.Cfg.Agent.UserDailyTokens > 0 {
+		return s.Cfg.Agent.UserDailyTokens
+	}
+	return userDailyTokens
 }
 
 // recordTaskOutcome advances a scheduled task's circuit breaker and trips it

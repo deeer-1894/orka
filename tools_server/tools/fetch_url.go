@@ -18,6 +18,18 @@ var (
 	reScript = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
 	reStyle  = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
 	reTitle  = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+	// Site chrome. Stripping only script/style left every documentation page
+	// carrying its own sidebar and footer into the model's context: one fetched
+	// CloudWeGo page began "Title: Summarization | CloudWeGo DocumentationKitex
+	// Hertz Volo EinoAboutBlogCooperation…" followed by the site's whole article
+	// list before a word of the page itself. Downstream that boilerplate is what
+	// the context layer's placeholder budget got spent describing, so the model
+	// re-read the archive to find the content — the cheapest place to fix it is
+	// here, before it is ever stored.
+	//
+	// Non-greedy and unanchored on purpose: nested <nav> would leave a stray
+	// close tag, which the tag stripper removes anyway.
+	reChrome = regexp.MustCompile(`(?is)<(nav|header|footer|aside)[^>]*>.*?</(nav|header|footer|aside)>`)
 )
 
 // fetchFailureHint reports a failed fetch AND points somewhere useful, because
@@ -127,6 +139,10 @@ func fetchURL() mcpserver.ToolHandlerFunc {
 		}
 		body := reScript.ReplaceAllString(html, " ")
 		body = reStyle.ReplaceAllString(body, " ")
+		// After script/style so their contents cannot hide a chrome tag, and
+		// before clean() while the tags still exist. The title is read from the
+		// raw html above, so removing <header> cannot take it with it.
+		body = reChrome.ReplaceAllString(body, " ")
 		body = clean(body)
 		if len(body) > maxFetchBodyChars {
 			body = body[:maxFetchBodyChars] + "…"

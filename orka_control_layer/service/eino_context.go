@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,9 +68,31 @@ const (
 	// own leftovers instead of research.
 	offloadDir = ".orka_offload"
 	// offloadAbstractChars sizes the L0 kept in context for a cleared result.
-	// ~260 chars is 60-100 tokens: two orders of magnitude below the result it
-	// stands in for, and still enough to carry a conclusion.
-	offloadAbstractChars = 260
+	//
+	// It was 260 chars on the theory that a result's opening lines ARE its
+	// finding. That held for sub-agent reports, which are prompted to answer
+	// conclusion-first. It does not hold for the raw tool output this actually
+	// clears now that MULTI_AGENT=0, and the three placeholders measured on a
+	// 178-call research run show where all 260 chars went:
+	//
+	//   'URL: https://…/middleware_toolreduction/ Title: Reduction | CloudWeGo
+	//    Reduction | CloudWeGo MaxLengthForTrunc? │ │ Yes → Truncate content…'
+	//   'URL: https://…/middleware_summarization/ Title: Summarization | CloudWeGo
+	//    … DocumentationKitex Hertz Volo EinoAboutBlogCooperationEnglish中文 Light'
+	//   '# file_read # 请求:{"path": ".orka_offload/…/file_read-clear-call_3jrj…"}
+	//    # 归档于 … # file_read # 请求:{"path": ".orka_offload/…"} # 归档于 …'
+	//
+	// A 120-char URL already carried by ToolArgument, site navigation, and — for
+	// a re-read — nothing but nested archive headers. None of it says what the
+	// page CONTAINED, so the model had no basis to decide and read the file back:
+	// 101 of 178 tool calls were archive re-reads, 24 of them repeats of a path
+	// already read, one file fetched back five times.
+	//
+	// l0Digest drops those three classes and this budget buys prose instead. The
+	// arithmetic that matters is per-read: ~180 extra tokens held in context
+	// against a ~5,000-token re-read avoided, so a placeholder pays for itself
+	// the first time it prevents one.
+	offloadAbstractChars = 700
 	// readFileToolName is the tool Orka already exposes for reading a workspace
 	// file. It is the only way back to an offloaded result, so the placeholder,
 	// the offload path and this name have to agree.
@@ -203,14 +226,40 @@ func l0ClearHandler(buildCtx context.Context) func(context.Context, *reduction.T
 		if strings.TrimSpace(full) == "" {
 			return &reduction.ClearResult{NeedClear: false}, nil // nothing to reclaim
 		}
+		name := toolNameOf(d)
+
+		// A result that IS an archive read back must not become a second archive.
+		//
+		// It did, and the loop closed on itself: clearing evicts a fetch to a file,
+		// the model reads the file back, the read's own result crosses the
+		// threshold and is archived to a NEW file, and so on. Measured over one
+		// run: of 101 archive re-reads, 65 targeted files whose original content
+		// was itself a file_read result — three and four levels deep, each level
+		// prepending its own header until the L0 budget held nothing but nesting
+		// metadata. The archive directory reached 11MB of the same pages.
+		//
+		// Pointing back at the source instead breaks the chain and costs nothing:
+		// the bytes are already on disk at src. It also makes the placeholder
+		// STABLE across cycles — no new call-id filename each time — which stops
+		// this path from invalidating the provider's prefix cache on every pass.
+		if src := archivedSource(d); src != "" {
+			return &reduction.ClearResult{
+				NeedClear:    true,
+				ToolArgument: d.ToolArgument,
+				ToolResult: &schema.ToolResult{Parts: replaceTextParts(d.ToolResult.Parts, fmt.Sprintf(
+					"<persisted-output>\n[%s] 这是归档内容的回读,未重复归档。原件仍在 %s,用 %s 读取。\n摘要:%s\n</persisted-output>",
+					name, src, readFileToolName, l0Digest(full, offloadAbstractChars)))},
+				NeedOffload: false,
+			}, nil
+		}
+
 		path, err := genPath(ctx, d)
 		if err != nil {
 			return nil, err
 		}
-		name := toolNameOf(d)
 		placeholder := fmt.Sprintf(
 			"<persisted-output>\n[%s] 完整结果(%d 字符)已归档到 %s,用 %s 读取。\n摘要:%s\n</persisted-output>",
-			name, len([]rune(full)), path, readFileToolName, l0Abstract(full, offloadAbstractChars))
+			name, len([]rune(full)), path, readFileToolName, l0Digest(full, offloadAbstractChars))
 
 		return &reduction.ClearResult{
 			NeedClear:       true,
@@ -223,21 +272,139 @@ func l0ClearHandler(buildCtx context.Context) func(context.Context, *reduction.T
 	}
 }
 
-// l0Abstract renders the L0 tier: a short gist that stays in context so the model
-// can judge whether the archived text is worth fetching back.
+// l0Abstract renders a plain head-of-text gist: whitespace collapsed, truncated.
 //
-// The head of the result, not a model-written summary. Clearing happens mid-run
-// on the critical path, where an extra LLM call would buy latency exactly when
-// the context is already straining — and the head is well aimed, because these
-// agents are prompted to answer conclusion-first (the researcher is told to
-// return "a short conclusion first, then key points"), so a result's opening
-// lines ARE its finding.
+// Still the right shape for text that is already a conclusion — a sub-agent
+// report, a tool argument — and the fallback when l0Digest's filters reject
+// everything. It is NOT the right shape for raw page text; see l0Digest.
 func l0Abstract(text string, limit int) string {
 	fields := strings.Fields(text) // collapses newlines and runs of spaces
 	if len(fields) == 0 {
 		return ""
 	}
 	return trunc(strings.Join(fields, " "), limit)
+}
+
+// l0Digest renders the L0 tier: a gist dense enough that the model can decide
+// whether the archived text is worth fetching back WITHOUT fetching it back.
+//
+// Line structure is the signal, so this works line by line rather than
+// collapsing the whole result first the way l0Abstract does. Three classes of
+// line are measured noise and get dropped (see offloadAbstractChars for the
+// placeholders that motivated each):
+//
+//   - archive headers, which is all a re-read of an archive contains at the top
+//   - the URL echo, ~120 chars already present in the ToolArgument kept alongside
+//   - site navigation: short, non-CJK, no sentence punctuation
+//
+// Box-drawing runes are stripped rather than used to reject a line, because the
+// diagrams in these docs carry real text between the glyphs ("Yes → Truncate
+// content, save full content to Backend").
+//
+// A markdown heading is kept even though it would fail the navigation test: an
+// outline is the densest possible description of a document. Pages fetched
+// through fetch_url arrive flattened and rarely have any, so this mostly matters
+// for archived file_read of real markdown.
+func l0Digest(text string, limit int) string {
+	var kept []string
+	n := 0
+	for _, raw := range strings.Split(text, "\n") {
+		line := strings.Join(strings.Fields(stripBoxDrawing(raw)), " ")
+		if line == "" || isArchiveHeader(line) || strings.HasPrefix(line, "URL: ") {
+			continue
+		}
+		if !isMarkdownHeading(line) && isNavigationChrome(line) {
+			continue
+		}
+		if n > 0 {
+			n++ // the space strings.Join will insert before this line
+		}
+		room := limit - n
+		if room <= 0 {
+			break
+		}
+		if len([]rune(line)) > room {
+			// trunc appends an ellipsis, so it returns n+1 runes; spend one of the
+			// remaining runes on it rather than overrunning the budget.
+			kept = append(kept, trunc(line, room-1))
+			break
+		}
+		kept = append(kept, line)
+		n += len([]rune(line))
+	}
+	if len(kept) == 0 {
+		// Every line was filtered — a diagram, a blob, a format not anticipated
+		// here. A head-of-text gist beats an empty placeholder.
+		return l0Abstract(text, limit)
+	}
+	return strings.Join(kept, " ")
+}
+
+// isArchiveHeader matches the lines offloadBody writes. They appear inside a
+// tool RESULT only when that result is an archive being read back, where they
+// are pure nesting metadata.
+//
+// The tool-name line ("# fetch_url") is matched on shape rather than on a
+// registry, because the tool set is per-run. Requiring a snake_case identifier
+// keeps it off ordinary markdown headings: a first draft tested only for
+// "single word" and swallowed "# Reduction" — the heading of the very page this
+// digest exists to describe. A document heading that happens to be one
+// lowercase word is still lost; that is the residual cost of not knowing the
+// tool list here.
+var toolNameHeadingRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
+func isArchiveHeader(line string) bool {
+	rest := strings.TrimPrefix(line, "# ")
+	if rest == line {
+		return false
+	}
+	return strings.HasPrefix(rest, "请求:") || strings.HasPrefix(rest, "归档于 ") ||
+		toolNameHeadingRe.MatchString(rest)
+}
+
+func isMarkdownHeading(line string) bool {
+	h := strings.TrimLeft(line, "#")
+	return h != line && strings.HasPrefix(h, " ")
+}
+
+// isNavigationChrome rejects menu items and other short label lines. A line long
+// enough, or carrying CJK, or punctuated like a sentence, is treated as content.
+func isNavigationChrome(line string) bool {
+	if len([]rune(line)) >= 24 || strings.ContainsAny(line, ".:。，、；:") {
+		return false
+	}
+	for _, r := range line {
+		if r >= 0x4E00 && r <= 0x9FFF { // CJK unified ideographs
+			return false
+		}
+	}
+	return true
+}
+
+// stripBoxDrawing removes the Unicode Box Drawing block, which these docs use
+// for ASCII diagrams whose text is worth keeping.
+func stripBoxDrawing(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 0x2500 && r <= 0x257F {
+			return ' '
+		}
+		return r
+	}, s)
+}
+
+// offloadPathRe finds an archive path inside a tool's arguments. Deliberately
+// not JSON-aware: file_read passes {"path": …}, but shell and python reach the
+// same files through a command line or a script body, and a run measured here
+// spent 28 of its 30 shell/python calls grepping the archive.
+var offloadPathRe = regexp.MustCompile(regexp.QuoteMeta(offloadDir) + `/[\w./-]+`)
+
+// archivedSource returns the archive path a tool result was itself read FROM,
+// or "" when the result is original. See the call site in l0ClearHandler.
+func archivedSource(d *reduction.ToolDetail) string {
+	if d == nil || d.ToolArgument == nil {
+		return ""
+	}
+	return offloadPathRe.FindString(d.ToolArgument.Text)
 }
 
 // offloadBody is the L2 tier: the full text, headed by the same abstract the

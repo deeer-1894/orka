@@ -90,6 +90,10 @@ type AgentConfig struct {
 	MultiAgent       bool             `yaml:"multi_agent"` // expose orchestrator sub-agents the model can delegate to
 	SubAgents        []SubAgentConfig `yaml:"sub_agents"`  // optional custom registry; empty = built-in researcher/writer/browser/engineer
 	SkillsDir        string           `yaml:"skills_dir"`  // global dir of Claude-Code-style SKILL.md packages (default ./skills)
+	// UserDailyTokens caps one user's rolling 24h spend. 0 uses the built-in
+	// default. Exposed because the refusal it produces tells the user to "raise
+	// it in config", which was not true of a hardcoded constant.
+	UserDailyTokens int `yaml:"user_daily_tokens"`
 }
 
 // SubAgentConfig declares one orchestrator-facing sub-agent. The Name+Description
@@ -192,6 +196,7 @@ func (c *Config) applyEnv() {
 	envInt(&c.Agent.CheckpointTTLSec, "CHECKPOINT_TTL_SEC")
 	envStr(&c.Agent.GUIAgentWSURL, "GUI_AGENT_WS_URL")
 	envStr(&c.Agent.SkillsDir, "SKILLS_DIR")
+	envInt(&c.Agent.UserDailyTokens, "USER_DAILY_TOKENS")
 	if os.Getenv("MULTI_AGENT") == "1" {
 		c.Agent.MultiAgent = true
 	}

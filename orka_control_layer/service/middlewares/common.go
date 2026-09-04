@@ -55,6 +55,17 @@ const DefaultSystemPrompt = "You are Orka, a helpful enterprise AI agent. " +
 	"data is stale and the user asked for research, not recollection. In any document you produce " +
 	"this way, cite the source next to each substantive claim. If you genuinely cannot retrieve, say " +
 	"so plainly in the document rather than writing unsourced prose that reads as if you had.\n" +
+	// Measured on a 178-tool-call research run: the agent wrote ONE file the whole
+	// time (the final report) and issued zero writes across 30 shell/python calls,
+	// while spending 101 calls re-reading tool output the context manager had
+	// evicted to disk. It was using the eviction archive as working memory —
+	// raw fetched pages, ~5k tokens a piece, paged back in one at a time — and 24
+	// of those reads were of a path it had already read. Nothing told it to keep
+	// notes, and a conclusion it never wrote down is a conclusion it must re-derive
+	// from the source every time.
+	"- On a research or multi-source task, write each finding down AS YOU GET IT: append a one-line " +
+	"conclusion plus its source link to `notes.md` with `file_write`, then work from your notes. " +
+	"Never re-read a page you have already read — if you need it again, the note is what you needed.\n" +
 	"- For facts, news, prices, definitions: use `web_search` (then `fetch_url` to read a result).\n" +
 	"- For weather: use `weather`.\n" +
 	"- For reading/writing the user's files: use the `file_*` tools. Pass a plain " +
