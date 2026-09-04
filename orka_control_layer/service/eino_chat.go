@@ -68,13 +68,37 @@ func (g *budgetGuard) BeforeModelRewriteState(ctx context.Context, state *adk.Ch
 // replacement for the hand-rolled Memory truncation (which dropped old turns).
 // Triggers on message count to avoid a token-counter dependency; the agent's own
 // model generates the summary.
+// summarizationTrigger sets BOTH thresholds, and leaving either at zero is a
+// trap rather than a default.
+//
+// eino's shouldSummarize checks the message count, then FALLS THROUGH to a token
+// check — and getTriggerContextTokens only substitutes its own 160k default when
+// the whole Trigger is nil. A Trigger carrying just ContextMessages leaves
+// ContextTokens at 0, so `tokens > 0` matches every call and the last resort
+// becomes unconditional.
+//
+// It did, silently. The summarizer ran on all 23 orchestrator cycles of a run
+// whose message count never exceeded 8, at 38-41s per call: 876 seconds, 60% of
+// that run's model time and three times the orchestrator's own, spent
+// compressing a context that was never large. It makes no tool call and never
+// reaches the run record, so nothing pointed at it until the model calls were
+// timed per agent.
+//
+// The token threshold sits well above clearAboveTokens on purpose: reduction is
+// the cheap layer and must get its chance first, or a model call is paying to do
+// a placeholder's job.
+func summarizationTrigger() *summarization.TriggerCondition {
+	return &summarization.TriggerCondition{ContextMessages: 48, ContextTokens: 120_000}
+}
+
 func summarizationHandlers(ctx context.Context, client llm.Client, model string) []adk.ChatModelAgentMiddleware {
 	mw, err := summarization.New(ctx, &summarization.Config{
 		Model: llm.NewEinoModel(client, model).ForAgent("summarizer"),
 		// Reduction now trims oversized/stale tool output first, so summarization
 		// is the backstop for genuinely long dialogue — trigger it earlier than the
 		// old 80-message mark, which a long pipeline blew past on cost alone.
-		Trigger: &summarization.TriggerCondition{ContextMessages: 48},
+		//
+		Trigger: summarizationTrigger(),
 	})
 	if err != nil {
 		return nil // summarization is best-effort; never block agent construction
