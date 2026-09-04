@@ -9,6 +9,7 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/middlewares/summarization"
+	"github.com/cloudwego/eino/adk/prebuilt/deep"
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
@@ -160,11 +161,27 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 	})
 }
 
-// BuildEinoSubAgentTools builds each sub-agent spec as a NATIVE eino
-// ChatModelAgent (scoped tools, prompt, model) wrapped via adk.NewAgentTool, so
-// the orchestrator delegates to them as real eino agents (Phase 3) rather than
-// through the hand-rolled runner. Mirrors BuildSubAgents' scoping/model rules.
+// BuildEinoSubAgentTools exposes the delegates as one tool each, which is how
+// the AgentTool orchestrator consumes them.
 func BuildEinoSubAgentTools(ctx context.Context, mainClient llm.Client, mainModel string, miniClient llm.Client, miniModel string, atomic []agent.BaseTool, specs []config.SubAgentConfig) ([]tool.BaseTool, error) {
+	subs, err := BuildEinoSubAgents(ctx, mainClient, mainModel, miniClient, miniModel, atomic, specs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]tool.BaseTool, 0, len(subs))
+	for _, s := range subs {
+		out = append(out, adk.NewAgentTool(ctx, s))
+	}
+	return out, nil
+}
+
+// BuildEinoSubAgents builds each sub-agent spec as a NATIVE eino ChatModelAgent
+// (scoped tools, prompt, model). Mirrors BuildSubAgents' scoping/model rules.
+//
+// Returned as agents rather than tools because the two orchestrators consume
+// them differently: the AgentTool one wants a tool per delegate, while DeepAgent
+// takes the agents themselves and exposes a single `task` tool over them.
+func BuildEinoSubAgents(ctx context.Context, mainClient llm.Client, mainModel string, miniClient llm.Client, miniModel string, atomic []agent.BaseTool, specs []config.SubAgentConfig) ([]adk.Agent, error) {
 	if len(specs) == 0 {
 		specs = DefaultSubAgents()
 	}
@@ -172,7 +189,7 @@ func BuildEinoSubAgentTools(ctx context.Context, mainClient llm.Client, mainMode
 	for _, t := range atomic {
 		byName[t.Name()] = t
 	}
-	var out []tool.BaseTool
+	var out []adk.Agent
 	for _, sp := range specs {
 		if sp.Name == "" {
 			continue
@@ -230,9 +247,76 @@ func BuildEinoSubAgentTools(ctx context.Context, mainClient llm.Client, mainMode
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, adk.NewAgentTool(ctx, sub))
+		out = append(out, sub)
 	}
 	return out, nil
+}
+
+// BuildEinoDeepOrchestrator builds the orchestrator on eino's prebuilt DeepAgent
+// instead of wiring one delegation tool per specialist.
+//
+// The measured problem is that the orchestrator does not delegate: 3-5% of its
+// tool calls across every run examined, and 120 of one run's 124 calls were
+// atomic work it did itself — 52 shell, 32 file_read, 21 fetch_url — while its
+// cycles are the run's critical path. Four separate prompt rewrites moved
+// delegation from 1.17% to about 5%, which is the ceiling that asking gets you.
+//
+// The reason is structural rather than a matter of persuasion. Delegation was
+// one tool per specialist (researcher/writer/browser/engineer), so a step like
+// "read that file and check X" matched no specialist and the orchestrator had
+// nothing to delegate TO. DeepAgent inverts it: a single `task` tool, plus a
+// built-in general-purpose subagent, so any self-contained step has somewhere to
+// go. That lowers the bar for delegating instead of arguing for it.
+//
+// What we keep, and why each is deliberate:
+//
+//   - WithoutWriteTodos: our update_plan drives the UI's live checklist AND the
+//     run-completion check; DeepAgent's write_todos only writes to session state,
+//     so adopting it would silently drop both.
+//   - Backend/Shell left nil: our file and shell tools run inside the MCP tools
+//     container, which is the actual sandbox boundary. Setting Backend here would
+//     register a SECOND set of file tools (read_file/write_file/edit_file/glob/
+//     grep) that bypass it and duplicate ours by another name.
+//   - Handlers: the budget guard, tool gate, context probe, reduction and
+//     summarization all carry incidents behind them and transfer unchanged —
+//     adk.ChatModelAgentMiddleware is exactly what DeepAgent's Handlers take.
+func BuildEinoDeepOrchestrator(ctx context.Context, mainClient llm.Client, mainModel string, miniClient llm.Client, miniModel, instruction string, atomic []agent.BaseTool, specs []config.SubAgentConfig, maxIters int, summarize bool, extra ...adk.ChatModelAgentMiddleware) (adk.Agent, error) {
+	subs, err := BuildEinoSubAgents(ctx, mainClient, mainModel, miniClient, miniModel, atomic, specs)
+	if err != nil {
+		return nil, err
+	}
+	if maxIters <= 0 {
+		maxIters = einoMaxIters
+	}
+	handlers := append([]adk.ChatModelAgentMiddleware{
+		newBudgetGuardFor(agentBudget(ctx, maxIters)),
+		newGateMiddleware(toolGateFrom(ctx)),
+	}, extra...)
+	if summarize {
+		handlers = append(handlers, summarizationHandlers(ctx, miniClient, miniModel)...)
+	}
+	return deep.New(ctx, &deep.Config{
+		Name:        einoOrchestratorName,
+		Description: "Orka orchestrator",
+		ChatModel:   llm.NewEinoModel(mainClient, mainModel).ForAgent(einoOrchestratorName),
+		Instruction: instruction,
+		SubAgents:   subs,
+		ToolsConfig: adk.ToolsConfig{
+			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(withFindTools(withPlan(withClarify(atomic))))},
+			ReturnDirectly:  clarifyReturnDirectly(),
+			// Stream delegate events up so the UI keeps its per-agent lanes.
+			EmitInternalEvents: true,
+		},
+		MaxIteration: maxIters,
+		// See the doc comment: ours drives the UI and the completion check.
+		WithoutWriteTodos: true,
+		// The whole point. A step that matches no specialist still has somewhere
+		// to go, which is what four prompt rewrites could not achieve.
+		WithoutGeneralSubAgent: false,
+		Handlers:               handlers,
+		ModelRetryConfig:       modelRetryConfig(),
+		ModelFailoverConfig:    modelFailoverConfig(backupModel(miniClient, miniModel, mainModel)),
+	})
 }
 
 // BuildEinoOrchestrator builds the orchestrator agent: atomic tools PLUS native
@@ -591,7 +675,7 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 		// run budget is built from the same constant. Drifting apart means either
 		// the guard never fires (and eino errors out instead of reporting) or it
 		// fires far too early.
-		ag, err = BuildEinoOrchestrator(ctx, client, model, s.Mini, miniModel, instruction, tools, s.Cfg.Agent.SubAgents, einoMaxIters, !s.DisableSummary, ctxMW...)
+		ag, err = BuildEinoDeepOrchestrator(ctx, client, model, s.Mini, miniModel, instruction, tools, s.Cfg.Agent.SubAgents, einoMaxIters, !s.DisableSummary, ctxMW...)
 	} else {
 		if instruction == "" {
 			instruction = middlewares.DefaultSystemPrompt
