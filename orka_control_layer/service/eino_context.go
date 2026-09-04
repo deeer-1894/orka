@@ -59,6 +59,12 @@ const (
 	clearAboveTokens = 24000
 	// offloadDir is where truncated tool output lands inside the user's workspace,
 	// so the agent can retrieve it with the file_read tool it already has.
+	// Per-RUN subdirectories under it (see offloadDirFor): the archive is scratch
+	// for the run that produced it, and pooling every run's scratch in one
+	// directory turned it into a corpus. It reached 303 files, cost ~3,900 tokens
+	// every time file_list touched it, and an orchestrator that found it spent 40
+	// of its 52 shell calls grepping earlier runs' fetches — archaeology on its
+	// own leftovers instead of research.
 	offloadDir = ".orka_offload"
 	// offloadAbstractChars sizes the L0 kept in context for a cleared result.
 	// ~260 chars is 60-100 tokens: two orders of magnitude below the result it
@@ -146,15 +152,15 @@ func contextHandlers(ctx context.Context, baseStorage, userEmail, label string, 
 		// under .orka_offload/ — file_read resolved the advertised path inside the
 		// user's root, found nothing, and every offloaded result was unreachable.
 		// Generating the path here makes the two agree by construction.
-		GenTruncOffloadFilePath: offloadPathFor("trunc"),
-		GenClearOffloadFilePath: offloadPathFor("clear"),
+		GenTruncOffloadFilePath: offloadPathFor(ctx, "trunc"),
+		GenClearOffloadFilePath: offloadPathFor(ctx, "clear"),
 		TruncExcludeTools:       protected,
 		ClearExcludeTools:       protected,
 		MaxTokensForClear:       clearAboveTokens,
 		ClearAtLeastTokens:      clearAboveTokens / 3,
 		// Per-tool handlers are the only way to override eino's clear placeholder
 		// (there is no general hook), so every tool the run owns gets one.
-		ToolConfig: l0ClearConfigs(tools, backend),
+		ToolConfig: l0ClearConfigs(ctx, tools, backend),
 	})
 	if err == nil {
 		out = append(out, red)
@@ -168,11 +174,11 @@ func contextHandlers(ctx context.Context, baseStorage, userEmail, label string, 
 // l0ClearConfigs gives each of the run's tools a clear handler that leaves an L0
 // abstract behind. Returns nil without a backend: with nowhere to offload to
 // there is no L2 to point at, and eino's plain placeholder is the honest answer.
-func l0ClearConfigs(tools []agent.BaseTool, backend filesystem.Backend) map[string]*reduction.ToolReductionConfig {
+func l0ClearConfigs(buildCtx context.Context, tools []agent.BaseTool, backend filesystem.Backend) map[string]*reduction.ToolReductionConfig {
 	if backend == nil || len(tools) == 0 {
 		return nil
 	}
-	handler := l0ClearHandler()
+	handler := l0ClearHandler(buildCtx)
 	cfgs := make(map[string]*reduction.ToolReductionConfig, len(tools))
 	for _, t := range tools {
 		if t == nil || t.Name() == "" {
@@ -187,8 +193,8 @@ func l0ClearConfigs(tools []agent.BaseTool, backend filesystem.Backend) map[stri
 
 // l0ClearHandler replaces a cleared tool result with an abstract plus a pointer,
 // instead of the pointer alone.
-func l0ClearHandler() func(context.Context, *reduction.ToolDetail) (*reduction.ClearResult, error) {
-	genPath := offloadPathFor("clear")
+func l0ClearHandler(buildCtx context.Context) func(context.Context, *reduction.ToolDetail) (*reduction.ClearResult, error) {
+	genPath := offloadPathFor(buildCtx, "clear")
 	return func(ctx context.Context, d *reduction.ToolDetail) (*reduction.ClearResult, error) {
 		if d == nil || d.ToolResult == nil {
 			return &reduction.ClearResult{NeedClear: false}, nil
@@ -252,7 +258,8 @@ func offloadBody(name string, d *reduction.ToolDetail, full string) string {
 // directory the agent can list. An opaque call id told the model nothing about
 // what a file held; "researcher-clear-a1b2c3d4.txt" makes file_list on
 // .orka_offload/ readable as an index of the run's archived work.
-func offloadPathFor(kind string) func(context.Context, *reduction.ToolDetail) (string, error) {
+func offloadPathFor(buildCtx context.Context, kind string) func(context.Context, *reduction.ToolDetail) (string, error) {
+	dir := offloadDirFor(buildCtx)
 	return func(_ context.Context, d *reduction.ToolDetail) (string, error) {
 		id := ""
 		if d != nil && d.ToolContext != nil {
@@ -262,8 +269,40 @@ func offloadPathFor(kind string) func(context.Context, *reduction.ToolDetail) (s
 			// Call ids are optional; a unique name still beats overwriting a sibling.
 			id = strconv.FormatInt(time.Now().UnixNano(), 36)
 		}
-		return filepath.Join(offloadDir, fileSegment(toolNameOf(d))+"-"+kind+"-"+fileSegment(id)+".txt"), nil
+		return filepath.Join(dir, fileSegment(toolNameOf(d))+"-"+kind+"-"+fileSegment(id)+".txt"), nil
 	}
+}
+
+// offloadDirFor scopes a run's archive to its own subdirectory. Pooled, the
+// archive is a growing corpus of every run's fetches that happens to sit in the
+// agent's workspace — and an agent that finds one will mine it. Scoped, it holds
+// only what this run itself offloaded, which is the only thing the placeholders
+// point at anyway.
+//
+// Falls back to the flat directory when no run id is on the context (tests, the
+// quant pipeline), which is the previous behaviour rather than a broken path.
+func offloadDirFor(ctx context.Context) string {
+	if id := runIDFrom(ctx); id != "" {
+		return filepath.Join(offloadDir, fileSegment(id))
+	}
+	return offloadDir
+}
+
+type runIDKey struct{}
+
+// withRunID carries the run's record id for archive scoping. Same carrier as the
+// budget, tool gate and offload root — the run's identity has to reach code that
+// runs deep inside the agent graph.
+func withRunID(ctx context.Context, id string) context.Context {
+	if id == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, runIDKey{}, id)
+}
+
+func runIDFrom(ctx context.Context) string {
+	s, _ := ctx.Value(runIDKey{}).(string)
+	return s
 }
 
 func toolNameOf(d *reduction.ToolDetail) string {

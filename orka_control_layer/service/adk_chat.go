@@ -290,7 +290,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// Journal the transcript so a mid-run death costs one step, not the whole
 	// run. On a resume, seed it with the recovered transcript.
 	journal := newRunJournal(s.Cfg.Storage.BaseStoragePath, runRecID, nil)
-	rc.Ctx = withJournal(rc.Ctx, journal)
+	rc.Ctx = withRunID(withJournal(rc.Ctx, journal), runRecID)
 	if req.resumeFrom != nil {
 		rc.Ctx = withRunResume(rc.Ctx, req.resumeFrom)
 	}

@@ -171,7 +171,7 @@ func TestOffloadPathIsReadableByFileRead(t *testing.T) {
 	be := newWorkspaceBackend(base, email)
 	root := filepath.Join(base, email)
 
-	gen := offloadPathFor("clear")
+	gen := offloadPathFor(context.Background(), "clear")
 	advertised, err := gen(context.Background(), &reduction.ToolDetail{
 		ToolContext: &adk.ToolContext{Name: "researcher", CallID: "call_a1b2c3"},
 	})
@@ -207,7 +207,7 @@ func TestOffloadPathIsReadableByFileRead(t *testing.T) {
 // decide when re-reading is worth it.
 func TestClearKeepsAnAbstractOfTheResult(t *testing.T) {
 	body := "结论:X 优于 Y,置信度中等。\n" + strings.Repeat("supporting detail line\n", 400)
-	res, err := l0ClearHandler()(context.Background(), &reduction.ToolDetail{
+	res, err := l0ClearHandler(context.Background())(context.Background(), &reduction.ToolDetail{
 		ToolContext:  &adk.ToolContext{Name: "researcher", CallID: "call_z9"},
 		ToolArgument: &schema.ToolArgument{Text: `{"brief":"compare X and Y"}`},
 		ToolResult: &schema.ToolResult{Parts: []schema.ToolOutputPart{
@@ -244,7 +244,7 @@ func TestClearKeepsAnAbstractOfTheResult(t *testing.T) {
 // An empty result has nothing to reclaim; clearing it would spend a placeholder
 // to save nothing and point at an empty file.
 func TestClearSkipsEmptyResults(t *testing.T) {
-	res, err := l0ClearHandler()(context.Background(), &reduction.ToolDetail{
+	res, err := l0ClearHandler(context.Background())(context.Background(), &reduction.ToolDetail{
 		ToolContext: &adk.ToolContext{Name: "file_write", CallID: "c1"},
 		ToolResult:  &schema.ToolResult{Parts: []schema.ToolOutputPart{{Type: schema.ToolPartTypeText, Text: "   \n"}}},
 	})
@@ -259,7 +259,7 @@ func TestClearSkipsEmptyResults(t *testing.T) {
 // Offload paths are built from model- and provider-supplied ids; they must stay
 // one segment inside the offload dir.
 func TestOffloadPathConfinement(t *testing.T) {
-	p, err := offloadPathFor("clear")(context.Background(), &reduction.ToolDetail{
+	p, err := offloadPathFor(context.Background(), "clear")(context.Background(), &reduction.ToolDetail{
 		ToolContext: &adk.ToolContext{Name: "../../etc", CallID: "../../passwd"},
 	})
 	if err != nil {
@@ -272,7 +272,7 @@ func TestOffloadPathConfinement(t *testing.T) {
 		t.Fatalf("offload path escaped the offload dir: %q", p)
 	}
 	// Long or exotic names must still yield a plain, writable filename.
-	long, err := offloadPathFor("clear")(context.Background(), &reduction.ToolDetail{
+	long, err := offloadPathFor(context.Background(), "clear")(context.Background(), &reduction.ToolDetail{
 		ToolContext: &adk.ToolContext{Name: strings.Repeat("研究员", 40), CallID: strings.Repeat("z", 200)},
 	})
 	if err != nil {
@@ -282,5 +282,44 @@ func TestOffloadPathConfinement(t *testing.T) {
 		if r > 127 {
 			t.Fatalf("non-ASCII rune %q leaked into filename %q", r, long)
 		}
+	}
+}
+
+// Pooled, the archive is every run's fetches sitting in the agent's workspace,
+// and an agent that finds one will mine it: it grew to 303 files, cost ~3,900
+// tokens on every file_list, and an orchestrator spent 40 of its 52 shell calls
+// grepping earlier runs' leftovers instead of researching. Scoped, a run sees
+// only what it offloaded — which is all its own placeholders point at.
+func TestOffloadIsScopedPerRun(t *testing.T) {
+	a, err := offloadPathFor(withRunID(context.Background(), "run_aaa"), "clear")(
+		context.Background(), &reduction.ToolDetail{ToolContext: &adk.ToolContext{Name: "fetch_url", CallID: "c1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := offloadPathFor(withRunID(context.Background(), "run_bbb"), "clear")(
+		context.Background(), &reduction.ToolDetail{ToolContext: &adk.ToolContext{Name: "fetch_url", CallID: "c1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a == b {
+		t.Fatalf("two runs share one archive path: %q", a)
+	}
+	if !strings.Contains(a, "run_aaa") || !strings.Contains(b, "run_bbb") {
+		t.Errorf("paths are not run-scoped: %q / %q", a, b)
+	}
+	for _, p := range []string{a, b} {
+		if !strings.HasPrefix(p, offloadDir) {
+			t.Errorf("escaped the offload dir: %q", p)
+		}
+	}
+	// No run id (tests, the quant pipeline) keeps the previous flat layout
+	// rather than inventing a broken path.
+	flat, err := offloadPathFor(context.Background(), "clear")(
+		context.Background(), &reduction.ToolDetail{ToolContext: &adk.ToolContext{Name: "fetch_url", CallID: "c1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(flat) != offloadDir {
+		t.Errorf("without a run id the path should stay flat, got %q", flat)
 	}
 }
