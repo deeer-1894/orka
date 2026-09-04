@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -97,7 +98,47 @@ const (
 	// file. It is the only way back to an offloaded result, so the placeholder,
 	// the offload path and this name have to agree.
 	readFileToolName = "file_read"
+	// argClearAboveChars is the argument size past which a cleared tool call
+	// keeps a pointer instead of its payload. Below it, the argument IS the
+	// request — a URL, a path, a query — and is worth its tokens.
+	//
+	// Clearing only ever touched tool RESULTS, on the assumption that the result
+	// is the big half. For retrieval that holds. For anything that WRITES it is
+	// backwards, and a code task measured here shows by how much: across 26 tool
+	// calls the arguments carried 53,959 chars against 16,116 of results, and
+	// file_write alone was 46,774 of the arguments while its results — "ok" —
+	// came to 630. Context climbed 23k → 45k and the clear pass never ran once,
+	// because the only pool it could see was the 4.6k of results, short of
+	// ClearAtLeastTokens, and eino skips the whole pass when it cannot meet that.
+	argClearAboveChars = 1200
+	// argDigestChars sizes the gist left behind for a cleared argument. Smaller
+	// than offloadAbstractChars: an argument's identity is usually its first
+	// line, and the file it names can be read in full.
+	argDigestChars = 300
+	// clearFloorTokens is how much the clear pass must be able to release before
+	// eino will run it at all — it skips the ENTIRE pass otherwise, so the floor
+	// has to sit below one maximal clearable item or items pile up underneath it
+	// forever. It did not: at clearAboveTokens/3 the floor was 8,000 while
+	// maxToolOutputChars caps a single result at 24,000 chars (~6,800 tokens), so
+	// no lone result could ever trip it, and a code run sat at 45k context with
+	// the pass declining to run 16 cycles running.
+	//
+	// Not zero: its purpose is real, and measured here — rewriting history
+	// mid-conversation drops this provider's prefix-cache hit rate from 98% to
+	// 63%, so a pass that reclaims a trickle costs more than it saves.
+	clearFloorTokens = 4000
 )
+
+// durableArgPayload names, per tool, the argument field holding a payload that
+// the call itself puts on disk, and the field saying where it landed.
+//
+// This is the case worth special-casing: file_write's content is at its path the
+// moment the call returns, so the history can point at the real file rather than
+// archive a second copy. It also stays correct if the agent rewrote the file —
+// the pointer resolves to what is there NOW, which is what a later read wants.
+var durableArgPayload = map[string]struct{ payload, location string }{
+	"file_write": {payload: "content", location: "path"},
+}
 
 // protectedToolOutputs are results the reducer must never truncate or clear:
 // their output IS the state the next step consumes, so a placeholder breaks it.
@@ -180,7 +221,7 @@ func contextHandlers(ctx context.Context, baseStorage, userEmail, label string, 
 		TruncExcludeTools:       protected,
 		ClearExcludeTools:       protected,
 		MaxTokensForClear:       clearAboveTokens,
-		ClearAtLeastTokens:      clearAboveTokens / 3,
+		ClearAtLeastTokens:      clearFloorTokens,
 		// Per-tool handlers are the only way to override eino's clear placeholder
 		// (there is no general hook), so every tool the run owns gets one.
 		ToolConfig: l0ClearConfigs(ctx, tools, backend),
@@ -261,15 +302,75 @@ func l0ClearHandler(buildCtx context.Context) func(context.Context, *reduction.T
 			"<persisted-output>\n[%s] 完整结果(%d 字符)已归档到 %s,用 %s 读取。\n摘要:%s\n</persisted-output>",
 			name, len([]rune(full)), path, readFileToolName, l0Digest(full, offloadAbstractChars))
 
+		// Shrink the argument too. eino writes ToolArgument back into the history
+		// and then measures what the pass released by re-counting the whole edited
+		// message list, so this counts toward ClearAtLeastTokens — which is what
+		// lets the pass run at all on a write-heavy run.
+		arg, carried := clearedToolArgument(name, d.ToolArgument, path)
+
 		return &reduction.ClearResult{
 			NeedClear:       true,
-			ToolArgument:    d.ToolArgument, // keep the request; only the result is archived
+			ToolArgument:    arg,
 			ToolResult:      &schema.ToolResult{Parts: replaceTextParts(d.ToolResult.Parts, placeholder)},
 			NeedOffload:     true,
 			OffloadFilePath: path,
-			OffloadContent:  offloadBody(name, d, full),
+			OffloadContent:  offloadBody(name, d, full, carried),
 		}, nil
 	}
+}
+
+// clearedToolArgument shrinks a cleared tool call's argument, returning the
+// replacement and any payload the offload file must carry so nothing is lost.
+//
+// Two shapes. A tool whose payload the call itself puts on disk (file_write)
+// needs no archive at all — the history points at the path it wrote, and
+// carried is empty. Anything else large rides along in the SAME offload file as
+// the result, because ClearResult offers one file per call and a request and
+// its answer belong together anyway.
+//
+// A small argument is returned untouched: it is the request, and a run that
+// cannot see what it asked for is worse off than one paying 40 tokens to know.
+func clearedToolArgument(name string, arg *schema.ToolArgument, offloadPath string) (*schema.ToolArgument, string) {
+	if arg == nil || len(arg.Text) <= argClearAboveChars {
+		return arg, ""
+	}
+	if spec, ok := durableArgPayload[name]; ok {
+		if shrunk, ok := pointArgAtItsOwnFile(arg.Text, spec.payload, spec.location); ok {
+			return &schema.ToolArgument{Text: shrunk}, ""
+		}
+	}
+	return &schema.ToolArgument{Text: fmt.Sprintf(
+		"<persisted-arg>[%s] 完整参数(%d 字符)见 %s 的「请求」段,用 %s 读取。摘要:%s</persisted-arg>",
+		name, len([]rune(arg.Text)), offloadPath, readFileToolName,
+		l0Abstract(arg.Text, argDigestChars))}, arg.Text
+}
+
+// pointArgAtItsOwnFile replaces the payload field with a note naming the path
+// the same call wrote it to, leaving every other field intact so the call still
+// reads as the request it was.
+//
+// Reports false rather than guessing when the argument is not the expected
+// object — a model that sent something unusual keeps its argument verbatim.
+func pointArgAtItsOwnFile(argText, payloadField, locationField string) (string, bool) {
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(argText), &obj); err != nil {
+		return "", false
+	}
+	payload, ok := obj[payloadField].(string)
+	if !ok || len(payload) <= argClearAboveChars {
+		return "", false
+	}
+	location, ok := obj[locationField].(string)
+	if !ok || location == "" {
+		return "", false
+	}
+	obj[payloadField] = fmt.Sprintf("<persisted-arg>已写入 %s(%d 字符),用 %s 读取当前内容</persisted-arg>",
+		location, len([]rune(payload)), readFileToolName)
+	shrunk, err := json.Marshal(obj)
+	if err != nil {
+		return "", false
+	}
+	return string(shrunk), true
 }
 
 // l0Abstract renders a plain head-of-text gist: whitespace collapsed, truncated.
@@ -410,10 +511,15 @@ func archivedSource(d *reduction.ToolDetail) string {
 // offloadBody is the L2 tier: the full text, headed by the same abstract the
 // model keeps plus the request that produced it — so a file found later with
 // file_list explains itself without the conversation that created it.
-func offloadBody(name string, d *reduction.ToolDetail, full string) string {
+// carriedArg, when non-empty, is an argument too large to keep in context whose
+// only remaining copy is this file — so it is written out whole rather than as
+// the one-line gist that suffices when the argument itself survives in history.
+func offloadBody(name string, d *reduction.ToolDetail, full, carriedArg string) string {
 	var b strings.Builder
 	b.WriteString("# " + name + "\n")
-	if d.ToolArgument != nil && strings.TrimSpace(d.ToolArgument.Text) != "" {
+	if carriedArg != "" {
+		b.WriteString("# 请求(完整):\n" + carriedArg + "\n")
+	} else if d.ToolArgument != nil && strings.TrimSpace(d.ToolArgument.Text) != "" {
 		b.WriteString("# 请求:" + l0Abstract(d.ToolArgument.Text, 300) + "\n")
 	}
 	b.WriteString("# 归档于 " + time.Now().UTC().Format(time.RFC3339) + "\n\n")
