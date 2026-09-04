@@ -34,6 +34,10 @@ type runBudget struct {
 	maxSteps  int // model generation cycles (0 = unlimited)
 	maxTokens int // cumulative tokens across the run (0 = unlimited)
 	deadline  time.Time
+	// sticky keeps an exhausted budget exhausted. Right for a RUN, whose budget
+	// object lives exactly as long as the thing it measures; wrong for a
+	// DELEGATE, whose object outlives each delegation. See newDelegateBudget.
+	sticky bool
 
 	mu     sync.Mutex
 	steps  int
@@ -42,11 +46,35 @@ type runBudget struct {
 }
 
 func newRunBudget(maxSteps, maxTokens int, wall time.Duration) *runBudget {
-	b := &runBudget{maxSteps: maxSteps, maxTokens: maxTokens}
+	b := &runBudget{maxSteps: maxSteps, maxTokens: maxTokens, sticky: true}
 	if wall > 0 {
 		b.deadline = time.Now().Add(wall)
 	}
 	return b
+}
+
+// newDelegateBudget bounds ONE delegation, on a budget object that is reused
+// across all of them.
+//
+// A delegate agent is constructed once per run and its middlewares — including
+// the budget guard — are shared by every invocation of it. With a sticky budget
+// the first delegation to spend its allowance poisoned the object for the rest
+// of the run: every later delegation entered already-exhausted, had its tools
+// stripped on the first cycle, and returned a status report saying so. Observed
+// verbatim from four delegates in one run: "本轮对话在任务启动后立即被系统终止
+// (token 用量达到上限,工具已停用)" and "无。本会话尚未产生任何实际调研成果". The
+// orchestrator then did the work itself — 27% of the URLs it fetched had already
+// been fetched by a delegate — which reads as a delegation problem and is a
+// bookkeeping one.
+//
+// Non-sticky is safe HERE specifically because stickiness exists to survive
+// summarization, which collapses a message list and would otherwise let a spent
+// budget revive. Delegates run no summarizer (subAgentContextHandlers installs
+// patchtoolcalls and reduction only), and reduction rewrites tool results
+// without touching the assistant usage this counts — so within one delegation
+// the total only grows, and the guard still latches for as long as it matters.
+func newDelegateBudget(maxSteps, maxTokens int) *runBudget {
+	return &runBudget{maxSteps: maxSteps, maxTokens: maxTokens, sticky: false}
 }
 
 // observe records the state of the conversation before a model call and reports
@@ -76,9 +104,10 @@ func (b *runBudget) observe(msgs []*schema.Message) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.steps, b.tokens = steps, tokens
-	if b.hit != "" {
+	if b.hit != "" && b.sticky {
 		return true // stay exhausted; never un-trip
 	}
+	b.hit = "" // non-sticky: this delegation is judged on its own messages
 	switch {
 	// -1 leaves the final cycle free of tools so the model can still answer.
 	case b.maxSteps > 1 && steps >= b.maxSteps-1:

@@ -241,7 +241,7 @@ func BuildEinoSubAgents(ctx context.Context, mainClient llm.Client, mainModel st
 			// delegate's own retrieval sat verbatim until the budget cut it off
 			// mid-work, which is the expensive way to learn a context is too big.
 			Handlers: append([]adk.ChatModelAgentMiddleware{
-				newBudgetGuardFor(newRunBudget(iters, subAgentMaxTokens, 0)),
+				newBudgetGuardFor(newDelegateBudget(iters, subAgentMaxTokens)),
 			}, subAgentContextHandlers(ctx, sp.Name, scoped)...),
 		})
 		if err != nil {
