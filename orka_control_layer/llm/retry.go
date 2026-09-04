@@ -94,7 +94,7 @@ func (r *Retry) ChatStream(ctx context.Context, req Request, onDelta func(string
 
 // wait sleeps for the backoff of the given attempt, honoring ctx cancellation.
 func (r *Retry) wait(ctx context.Context, attempt int, cause error) error {
-	delay := r.backoff(attempt)
+	delay := r.backoffFor(attempt, cause)
 	if r.cfg.OnRetry != nil {
 		r.cfg.OnRetry(attempt, delay, cause)
 	}
@@ -108,6 +108,33 @@ func (r *Retry) wait(ctx context.Context, attempt int, cause error) error {
 	}
 }
 
+// rateLimitBaseDelay is the starting backoff for a 429, as opposed to the
+// sub-second one that suits a transport blip.
+//
+// A rate limit is not a blip: it is the provider stating that the CURRENT rate
+// is too high, so retrying in 377ms re-asserts exactly the rate it objected to.
+// Ark's burst protection says so in the error — "System protection triggered by
+// request burst. Please slow down traffic growth and increase requests gradually
+// before retrying" — and a run here died against it after retries at 377ms and
+// 957ms, having spent 738k tokens first.
+const rateLimitBaseDelay = 6 * time.Second
+
+// rateLimitMaxDelay lets the third attempt land far enough out to matter. The
+// alternative to waiting is losing the run.
+const rateLimitMaxDelay = 45 * time.Second
+
+func (r *Retry) backoffFor(attempt int, err error) time.Duration {
+	var ae *APIError
+	if errors.As(err, &ae) && ae.Status == 429 {
+		d := rateLimitBaseDelay << (attempt - 1)
+		if d > rateLimitMaxDelay || d <= 0 {
+			d = rateLimitMaxDelay
+		}
+		return jittered(d)
+	}
+	return r.backoff(attempt)
+}
+
 // backoff returns base*2^(attempt-1), capped at MaxDelay, with ±20% jitter to
 // avoid synchronized retries across concurrent sub-agents.
 func (r *Retry) backoff(attempt int) time.Duration {
@@ -115,6 +142,12 @@ func (r *Retry) backoff(attempt int) time.Duration {
 	if d > r.cfg.MaxDelay || d <= 0 {
 		d = r.cfg.MaxDelay
 	}
+	return jittered(d)
+}
+
+// jittered spreads retries so concurrent callers do not resynchronise on the
+// same instant — which, against a burst limit, is what turns one 429 into many.
+func jittered(d time.Duration) time.Duration {
 	jitter := 1 + (rand.Float64()*0.4 - 0.2) // [0.8, 1.2)
 	return time.Duration(float64(d) * jitter)
 }
