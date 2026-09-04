@@ -74,6 +74,24 @@ func probeLLMsTxt(ctx context.Context, u *url.URL) string {
 	return cand
 }
 
+// maxFetchBodyChars caps the extracted text of one page.
+//
+// It was 4,000, which is six times stricter than the caller's own limit: the
+// control layer truncates a tool result at 24k characters and offloads the rest
+// to a file the agent can read back. Capping here at 4k threw away content the
+// context layer would gladly have taken, and the agent noticed — needing more of
+// a documentation page than 4k, it switched to http_request, which returns the
+// RAW body, then shelled out to python to strip the markup itself. Measured on
+// one run: 29 of the orchestrator's 29 shell calls were `cd .orka_offload/... &&
+// python3 - <<EOF import re, html`, re-implementing this function's own job on
+// this function's own output.
+//
+// Sized just under the control layer's threshold so a long page arrives as
+// clean text and, if it is still too big, gets truncated by the layer that keeps
+// a head/tail preview and files the remainder — where what lands on disk is
+// readable text rather than HTML.
+const maxFetchBodyChars = 20000
+
 // fetchURL downloads a page and returns its readable text. Pairs with
 // web_search: search to find a link, fetch_url to read it — no GUI needed.
 func fetchURL() mcpserver.ToolHandlerFunc {
@@ -110,8 +128,8 @@ func fetchURL() mcpserver.ToolHandlerFunc {
 		body := reScript.ReplaceAllString(html, " ")
 		body = reStyle.ReplaceAllString(body, " ")
 		body = clean(body)
-		if len(body) > 4000 {
-			body = body[:4000] + "…"
+		if len(body) > maxFetchBodyChars {
+			body = body[:maxFetchBodyChars] + "…"
 		}
 		out := "URL: " + u + "\n"
 		if title != "" {
