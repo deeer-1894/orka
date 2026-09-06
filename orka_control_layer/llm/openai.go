@@ -222,14 +222,32 @@ func (c *OpenAIClient) Chat(ctx context.Context, req Request) (Response, error) 
 	for _, tc := range msg.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments})
 	}
-	// Reasoning models (e.g. MiMo) sometimes return their whole answer in
-	// reasoning_content with an empty content on a non-tool turn. Fall back to the
-	// reasoning so downstream consumers always get usable text — notably eino's
-	// summarizer, which fatally errors ("summary content is empty") otherwise.
-	if out.Content == "" && len(out.ToolCalls) == 0 && out.Reasoning != "" {
+	applyReasoningFallback(&out)
+	return out, nil
+}
+
+// applyReasoningFallback recovers an answer the model put in reasoning_content
+// instead of content. Shared by both transports so they cannot drift.
+//
+// The empty-content case is the known one: some reasoning models return their
+// whole answer as reasoning on a non-tool turn, which also fatally breaks eino's
+// summarizer ("summary content is empty").
+//
+// The near-empty case cost a whole run. After 1,061 seconds, 29 tool calls and
+// eight verified deliverables, the user saw the single character "D" — the
+// summary had gone to reasoning_content and one stray character leaked into
+// content, so content was not empty and the old check never fired.
+//
+// The threshold is deliberately one rune. Short answers are legitimate and
+// common here — "7097663", "PAR3", "完成" are all real, asserted answers — so
+// anything wider would replace a correct reply with the model's scratch work.
+func applyReasoningFallback(out *Response) {
+	if len(out.ToolCalls) > 0 || out.Reasoning == "" {
+		return
+	}
+	if out.Content == "" || (len([]rune(out.Content)) <= 1 && len(out.Reasoning) > 200) {
 		out.Content = out.Reasoning
 	}
-	return out, nil
 }
 
 // ---- streaming ----
@@ -362,10 +380,6 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 		acc := toolAcc[idx]
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: acc.id, Name: acc.name, Arguments: acc.args.String()})
 	}
-	// Reasoning models (e.g. MiMo) may stream only reasoning_content with no
-	// content on a non-tool turn; fall back so downstream never gets empty text.
-	if out.Content == "" && len(out.ToolCalls) == 0 && out.Reasoning != "" {
-		out.Content = out.Reasoning
-	}
+	applyReasoningFallback(&out)
 	return out, nil
 }
