@@ -37,20 +37,64 @@ function outputFile(p: ToolPayload): string | undefined {
   return m ? m[m.length - 1] : undefined; // the produced file is usually last
 }
 
+// wsWalkDirs bounds the workspace scan. Deep enough for how agents actually
+// organise output (findings/, reports/, quant/factors/), shallow and capped so a
+// large workspace cannot turn one refresh into a burst of listings.
+const wsWalkDirs = 24;
+const wsWalkDepth = 2;
+
+// listWorkspace maps every way a file might be NAMED to the path that can
+// actually open it. A tool argument carries "findings/eino.md" while the
+// assistant's prose usually just says "eino.md", and the preview needs the full
+// path either way — a bare basename cannot be fetched once the file lives in a
+// subdirectory.
+async function listWorkspace(): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  let frontier = ["."];
+  let budget = wsWalkDirs;
+  for (let depth = 0; depth <= wsWalkDepth && frontier.length && budget > 0; depth++) {
+    const next: string[] = [];
+    for (const dir of frontier) {
+      if (budget-- <= 0) break;
+      let items: { name: string; dir: boolean }[];
+      try {
+        items = await fileApi.list(dir);
+      } catch {
+        continue; // a listing that fails just contributes nothing
+      }
+      for (const it of items) {
+        const rel = dir === "." ? it.name : `${dir}/${it.name}`;
+        if (it.dir) {
+          if (!it.name.startsWith(".")) next.push(rel); // skip .orka_offload and friends
+        } else {
+          out.set(rel, rel);
+          // Root files win a basename collision: an unqualified mention most
+          // likely means the one at the top level.
+          if (!out.has(it.name) || dir === ".") out.set(it.name, rel);
+        }
+      }
+    }
+    frontier = next;
+  }
+  return out;
+}
+
 // sessionFiles collects the workspace files this conversation produced — the
 // basis for the "本会话文件" strip. It scans tool results AND assistant text for
 // filename tokens, then keeps only those that actually exist in the workspace
 // (`exists` set). The intersection is what ties files to the session: it catches
 // shell/python-produced files (chart.png, report.pdf) that aren't in any tool's
 // args, while dropping filenames merely mentioned in prose but never created.
-function sessionFiles(messages: Message[], exists: Set<string>): string[] {
+function sessionFiles(messages: Message[], exists: Map<string, string>): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   const add = (raw: string) => {
-    const name = raw.replace(/^\.?\//, "").split("/").pop() || "";
-    if (name && exists.has(name) && !seen.has(name)) {
-      seen.add(name);
-      out.push(name);
+    const rel = raw.replace(/^\.?\//, "");
+    // Try the name as given, then its basename — prose rarely spells the folder.
+    const path = exists.get(rel) ?? exists.get(rel.split("/").pop() || "");
+    if (path && !seen.has(path)) {
+      seen.add(path);
+      out.push(path);
     }
   };
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -166,7 +210,7 @@ export function Thread({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [previewFile, setPreviewFile] = useState<{ name: string; history?: boolean } | null>(null);
   const openFile = (name: string, opts?: { history?: boolean }) => setPreviewFile({ name, history: opts?.history });
-  const [wsFiles, setWsFiles] = useState<Set<string>>(new Set());
+  const [wsFiles, setWsFiles] = useState<Map<string, string>>(new Map());
   // Smart auto-scroll: only follow new content when the user is already near the
   // bottom, so scrolling up to read history isn't yanked back down.
   useEffect(() => {
@@ -182,10 +226,18 @@ export function Thread({
   // the agent just produced are recognized by the session strip.
   useEffect(() => {
     if (status === "streaming") return;
-    fileApi
-      .list(".")
-      .then((items) => setWsFiles(new Set(items.filter((i) => !i.dir).map((i) => i.name))))
-      .catch(() => {});
+    let cancelled = false;
+    // Walk into subdirectories, not just the root. Agents organise their output:
+    // a survey wrote all four of its findings into findings/, and because this
+    // only ever listed "." — then dropped directories and kept bare filenames —
+    // nothing it produced could match, and the strip stayed empty for a run that
+    // had written four files.
+    listWorkspace().then((found) => {
+      if (!cancelled) setWsFiles(found);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [status]);
 
   // Grouping + filename-scan walk every message; memoize so a re-render that
