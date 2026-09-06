@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -27,27 +28,27 @@ type Meta struct {
 // the per-handler guard (call).
 func Registry() map[string]Meta {
 	return map[string]Meta{
-		"file_read":   {Group: "file", Scope: "file:read"},
-		"file_write":  {Group: "file", Scope: "file:write"},
-		"file_list":   {Group: "file", Scope: "file:read"},
-		"web_search":   {Group: "web", Scope: "web:search"},
-		"fetch_url":    {Group: "web", Scope: "web:search"},
-		"weather":      {Group: "web", Scope: "web:search"},
-		"current_time": {Group: "util", Scope: ""}, // always available
-		"calculator":   {Group: "util", Scope: ""},
-		"unit_convert": {Group: "util", Scope: ""},
-		"base64":       {Group: "util", Scope: ""},
-		"hash":         {Group: "util", Scope: ""},
-		"uuid":         {Group: "util", Scope: ""},
-		"json_format":  {Group: "util", Scope: ""},
-		"text_stats":   {Group: "util", Scope: ""},
+		"file_read":     {Group: "file", Scope: "file:read"},
+		"file_write":    {Group: "file", Scope: "file:write"},
+		"file_list":     {Group: "file", Scope: "file:read"},
+		"web_search":    {Group: "web", Scope: "web:search"},
+		"fetch_url":     {Group: "web", Scope: "web:search"},
+		"weather":       {Group: "web", Scope: "web:search"},
+		"current_time":  {Group: "util", Scope: ""}, // always available
+		"calculator":    {Group: "util", Scope: ""},
+		"unit_convert":  {Group: "util", Scope: ""},
+		"base64":        {Group: "util", Scope: ""},
+		"hash":          {Group: "util", Scope: ""},
+		"uuid":          {Group: "util", Scope: ""},
+		"json_format":   {Group: "util", Scope: ""},
+		"text_stats":    {Group: "util", Scope: ""},
 		"regex_extract": {Group: "util", Scope: ""},
 		"json_query":    {Group: "util", Scope: ""},
 		"datetime":      {Group: "util", Scope: ""},
 		"random":        {Group: "util", Scope: ""},
 		"memory":        {Group: "file", Scope: "file:write"}, // persists to the user's storage
-		"http_request": {Group: "web", Scope: "web:search"}, // network egress → gated
-		"shell":        {Group: "shell", Scope: ""},         // env-gated (SHELL_TOOL=1); confined to the workspace
+		"http_request":  {Group: "web", Scope: "web:search"},  // network egress → gated
+		"shell":         {Group: "shell", Scope: ""},          // env-gated (SHELL_TOOL=1); confined to the workspace
 		// Office / productivity tools.
 		"currency":    {Group: "office", Scope: ""},
 		"timezone":    {Group: "office", Scope: ""},
@@ -365,7 +366,11 @@ func guard(scope string, h mcpserver.ToolHandlerFunc) mcpserver.ToolHandlerFunc 
 
 func fileRead(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		p, err := util.ResolvePath(base, identity.From(ctx).Email, req.GetString("path", ""))
+		rel := pathArg(req)
+		if rel == "" {
+			return missingPathError(req, "{\"path\": \"notes/summary.md\"}"), nil
+		}
+		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -377,19 +382,55 @@ func fileRead(base string) mcpserver.ToolHandlerFunc {
 	}
 }
 
+// pathArgAliases are the keys models actually reach for when they mean "path".
+//
+// Each one cost a real failure before it was added. {"file": ...} read as an
+// EMPTY path, resolved to the workspace root and failed with "is a directory" —
+// an error about the wrong thing, which the agent reported to the user as a
+// workspace problem. {"filename": ...} did the same later: a survey that had
+// already written three findings files correctly slipped to "filename" on the
+// fourth, got a bare `open /workspace/...` filesystem error that never mentioned
+// the argument, did not self-correct, and the run ended partial with the report
+// unwritten.
+//
+// Accepting the synonyms is the cheap half. The expensive half was the error: a
+// tool that rejects an argument has to say WHICH argument and what it expected,
+// or the model has nothing to correct from.
+var pathArgAliases = []string{"path", "file", "filename", "file_path", "filepath"}
+
+// pathArg pulls the relative path out of a call under any of its usual names.
+func pathArg(req mcp.CallToolRequest) string {
+	for _, k := range pathArgAliases {
+		if v := strings.TrimSpace(req.GetString(k, "")); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// missingPathError names the expected argument and shows the keys that WERE
+// sent, so the model can see its own mistake instead of guessing at a
+// filesystem error.
+func missingPathError(req mcp.CallToolRequest, example string) *mcp.CallToolResult {
+	var got []string
+	if args, ok := req.Params.Arguments.(map[string]any); ok {
+		for k := range args {
+			got = append(got, k)
+		}
+		sort.Strings(got)
+	}
+	msg := "path is required: pass the relative file path as \"path\", e.g. " + example
+	if len(got) > 0 {
+		msg += ". You sent: " + strings.Join(got, ", ")
+	}
+	return mcp.NewToolResultError(msg)
+}
+
 func fileWrite(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// "file" is accepted because models reach for it: a researcher told to
-		// save findings called file_write with {"file": "findings/eino.md"},
-		// which read as an EMPTY path, resolved to the workspace root, and failed
-		// with "is a directory" — an error about the wrong thing entirely, which
-		// the agent then reported to the user as a workspace problem.
-		rel := strings.TrimSpace(req.GetString("path", ""))
+		rel := pathArg(req)
 		if rel == "" {
-			rel = strings.TrimSpace(req.GetString("file", ""))
-		}
-		if rel == "" {
-			return mcp.NewToolResultError("path is required: pass the relative file path as \"path\", e.g. {\"path\": \"notes/summary.md\", \"content\": \"...\"}"), nil
+			return missingPathError(req, "{\"path\": \"notes/summary.md\", \"content\": \"...\"}"), nil
 		}
 		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel)
 		if err != nil {
@@ -424,7 +465,7 @@ const (
 
 func fileList(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		rel := req.GetString("path", "")
+		rel := pathArg(req) // empty is legitimate here: it means the workspace root
 		if rel == "" {
 			rel = "."
 		}
