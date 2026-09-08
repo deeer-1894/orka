@@ -18,6 +18,16 @@
   --color-userbubble: #efece4;
   --color-ok: #4f7a5b;
   --color-codebg: #f3f1ea;
+
+  /* Syntax tokens. highlight.js ships themes built for white or slate editors,
+     which look borrowed against warm paper — so the library only tokenizes and
+     these decide the colour. Hues are pulled toward the terracotta/ochre family
+     the rest of the UI already uses, and each is checked against --color-codebg. */
+  --color-synkw: #8a4f7d;   /* keyword, literal      */
+  --color-synstr: #4f7a5b;  /* string, regexp        */
+  --color-synnum: #a5673f;  /* number, meta          */
+  --color-synfn: #3f6b8a;   /* function, built-in    */
+  --color-syntype: #8a6a24; /* type, class, section  */
 }
 
 :root {
@@ -40,6 +50,11 @@ html.dark {
   --color-userbubble: #2e2b26;
   --color-ok: #6fa57d;
   --color-codebg: #26241f;
+  --color-synkw: #d19ec0;
+  --color-synstr: #8fbf9a;
+  --color-synnum: #e0a370;
+  --color-synfn: #82b4d8;
+  --color-syntype: #dcb679;
 }
 html.dark *::-webkit-scrollbar-thumb {
   background: #45413a;
@@ -204,6 +219,23 @@ body {
 .md table { border-collapse: collapse; margin: 0 0 0.9em; font-size: 14px; }
 .md th, .md td { border: 1px solid var(--color-border); padding: 6px 10px; text-align: left; }
 .md hr { border: none; border-top: 1px solid var(--color-border); margin: 1.2em 0; }
+
+/* Syntax highlighting for previewed source files. Only class names come from
+   highlight.js; the colours are the app's own tokens, so a theme switch carries
+   the code with it and there is no vendor stylesheet to keep in sync. Anything
+   hljs tags but we do not name here inherits --color-ink, which is the correct
+   fallback: unstyled code is still readable code. */
+.hljs-keyword, .hljs-literal, .hljs-selector-tag, .hljs-doctag { color: var(--color-synkw); }
+.hljs-string, .hljs-regexp, .hljs-char.escape_, .hljs-symbol { color: var(--color-synstr); }
+.hljs-number, .hljs-meta, .hljs-meta .hljs-keyword, .hljs-link { color: var(--color-synnum); }
+.hljs-title, .hljs-built_in, .hljs-selector-id { color: var(--color-synfn); }
+.hljs-type, .hljs-title.class_, .hljs-section, .hljs-attribute, .hljs-selector-class { color: var(--color-syntype); }
+.hljs-attr, .hljs-property, .hljs-variable, .hljs-template-variable, .hljs-params { color: var(--color-muted); }
+.hljs-comment, .hljs-quote { color: var(--color-faint); font-style: italic; }
+.hljs-deletion { color: var(--color-accent); }
+.hljs-addition { color: var(--color-ok); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
 
 /* Touch ergonomics. On a coarse pointer (phone/tablet) an icon-only button needs
    a ~44px target — several of ours are 21-32px, which is a miss-tap waiting to

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { auth, files as fileApi, type FileVersion } from "../api";
 import { lineDiff, diffStats } from "../lib/diff";
 import { useOverlay } from "../lib/useOverlay";
+import { highlight } from "../lib/highlight";
 import { Markdown } from "./Markdown";
 
 // fetchText pulls a workspace file's text content (auth via Bearer header).
@@ -110,12 +111,37 @@ export function FilePreview({ name, onClose, conv, initialHistory }: { name: str
           ) : isMd ? (
             <Markdown resolveImage={resolveWorkspaceImage(name, conv)}>{content}</Markdown>
           ) : (
-            <pre className="whitespace-pre-wrap break-words font-mono text-[12.5px] text-ink">{content}</pre>
+            <CodeView name={name} code={content} />
           )}
         </div>
         )}
       </div>
     </div>
+  );
+}
+
+// CodeView shows a text file's contents, syntax-highlighted when the extension
+// names a language we have a grammar for. Highlighting is a progressive
+// enhancement, and deliberately so: the plain text renders on the first paint,
+// and the coloured version replaces it once the grammar chunk arrives. A file
+// whose language is unknown, oversized, or whose chunk fails to load simply
+// stays plain — the preview is never blocked on the highlighter.
+function CodeView({ name, code }: { name: string; code: string }) {
+  const [html, setHtml] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setHtml(null);
+    highlight(name, code).then((h) => alive && setHtml(h));
+    return () => { alive = false; };
+  }, [name, code]);
+
+  const cls = "whitespace-pre-wrap break-words font-mono text-[12.5px] text-ink";
+  return html === null ? (
+    <pre className={cls}>{code}</pre>
+  ) : (
+    // Safe: hljs escapes the source it wraps, so the only markup here is its own
+    // token spans. index.css colours them from the app's palette.
+    <pre className={cls + " hljs"} dangerouslySetInnerHTML={{ __html: html }} />
   );
 }
 
