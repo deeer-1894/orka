@@ -594,6 +594,13 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 			if name == "" {
 				name = m.ToolName
 			}
+			// A call resumed after human approval was requested by a PREVIOUS run,
+			// so its arguments were never seen here. The confirm gate stashed them
+			// on the way back in; without this the audit trail records `args: null`
+			// for precisely the calls a human was asked to vet.
+			if pc.args == nil {
+				pc.args = confirmedArgsFrom(ctx).take(name)
+			}
 			// clarify pauses the run: surface the question and interrupt so the
 			// existing checkpoint/resume machinery takes over (the clarify question
 			// is recorded into history so the resumed run has full context).

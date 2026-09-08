@@ -218,6 +218,10 @@ func (g confirmGate) Invoke(ctx context.Context, args map[string]any) (string, e
 			if !dec.Approve {
 				return "用户拒绝了该操作,已跳过。", nil
 			}
+			// The resumed run's tool-call map is empty — the assistant turn that
+			// carried these arguments was emitted by the run that interrupted.
+			// Publish them so the audit record of an APPROVED call is not null.
+			confirmedArgsFrom(ctx).put(g.inner.Name(), args)
 			return g.inner.Invoke(ctx, args)
 		}
 		if isResume { // targeted at us but with no decision → treat as declined
