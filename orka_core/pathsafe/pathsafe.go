@@ -35,14 +35,40 @@ func Resolve(root, rel string) (string, error) {
 }
 
 // UserRoot returns the per-user storage root base/<user>, where user is
-// sanitized to a single path segment.
+// sanitized to a single path segment. This is the ACCOUNT root: things that
+// belong to the person rather than to one piece of work (the quant factor
+// library, run journals) live here.
 func UserRoot(base, user string) string {
 	if user == "" {
 		user = "_anonymous"
 	}
-	// keep a single safe segment: drop separators and traversal
-	user = strings.ReplaceAll(user, "/", "_")
-	user = strings.ReplaceAll(user, "\\", "_")
-	user = strings.ReplaceAll(user, "..", "_")
-	return filepath.Join(filepath.Clean(base), user)
+	return filepath.Join(filepath.Clean(base), segment(user))
+}
+
+// Workspace returns the storage root an agent run actually works in:
+// base/<user>/<conv>. One conversation's files are invisible to another, which
+// is what stops an account's workspace from silently becoming a shared dumping
+// ground — every run listing the root used to see every file every other run
+// had ever produced, and name collisions across unrelated tasks were routine.
+//
+// An empty conv falls back to the account root. That is not a per-conversation
+// workspace, and is deliberate: a scheduled task or a quant pipeline has no
+// conversation, and giving each invocation its own directory would scatter
+// their output instead of accumulating it where the next run expects it.
+func Workspace(base, user, conv string) string {
+	root := UserRoot(base, user)
+	if strings.TrimSpace(conv) == "" {
+		return root
+	}
+	return filepath.Join(root, segment(conv))
+}
+
+// segment reduces s to a single safe path component: no separators, no
+// traversal. Containment is still enforced by Resolve — this only keeps a
+// hostile identifier from spanning directories in the first place.
+func segment(s string) string {
+	s = strings.ReplaceAll(s, "/", "_")
+	s = strings.ReplaceAll(s, "\\", "_")
+	s = strings.ReplaceAll(s, "..", "_")
+	return s
 }

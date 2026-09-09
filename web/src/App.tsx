@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, auth, setOnUnauthorized } from "./api";
+import { api, auth, setOnUnauthorized, workspace } from "./api";
 import { useChatStreams } from "./hooks/useChatStream";
 import { useEventStream } from "./hooks/useEventStream";
 import { Login } from "./components/Login";
@@ -157,6 +157,18 @@ function Workbench({
   // The floating composer's height becomes the thread's bottom padding, so every
   // message can be scrolled fully above it no matter how tall the input grows.
   const composerRef = useRef<HTMLDivElement>(null);
+  // Files belong to a conversation now, so the file API has to know which one is
+  // open. Set here rather than passed down: every panel that touches files (the
+  // drawer, the session strip, the preview, the @-picker, uploads) would
+  // otherwise need the same prop threaded to it, and any one of them forgetting
+  // it would silently read the account root instead.
+  //
+  // During render, NOT in an effect. Child effects run before parent effects, so
+  // an effect here lands after the children have already fetched: the session
+  // file strip listed the account root and showed every path prefixed with the
+  // conversation id, because its own walk had run one tick too early.
+  workspace.set(activeID);
+
   const [composerH, setComposerH] = useState(0);
   useEffect(() => {
     const el = composerRef.current;
@@ -524,7 +536,7 @@ function Workbench({
           </button>
         </header>
 
-        <Thread messages={messages} status={status} onResume={onResume} onResumed={onResumed} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} onFork={onFork} fileConv={isShared ? activeID : undefined} bottomInset={composerH} />
+        <Thread messages={messages} status={status} onResume={onResume} onResumed={onResumed} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} onFork={onFork} fileConv={isShared ? activeID : undefined} conv={activeID} bottomInset={composerH} />
         {/* The composer floats OVER the thread (its height is fed back as the
             thread's bottom padding), so the conversation scrolls clear of it
             instead of the last lines being clipped behind the tool row. */}
@@ -552,6 +564,7 @@ function Workbench({
         setTab={setDrawerTab}
         liveTab={liveTab}
         email={user.email}
+        conv={activeID}
         onJumpToConversation={onJumpToConversation}
         focusArtifact={drawerArtifact}
         onClearArtifact={() => setDrawerArtifact(null)}

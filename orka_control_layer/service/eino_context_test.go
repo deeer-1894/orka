@@ -23,8 +23,8 @@ import (
 // would point the model at a file none of Orka's tools can open).
 func TestWorkspaceBackendOffload(t *testing.T) {
 	base := t.TempDir()
-	email := "ctx@test.com"
-	be := newWorkspaceBackend(base, email)
+	email, conv := "ctx@test.com", "conv-1"
+	be := newWorkspaceBackend(base, email, conv)
 	if be == nil {
 		t.Fatal("expected a backend when storage is configured")
 	}
@@ -35,10 +35,16 @@ func TestWorkspaceBackendOffload(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	// It must be a real file inside the user's workspace, under the offload dir.
-	onDisk := filepath.Join(base, email, offloadDir, "call-123")
+	// It must be a real file inside THIS CONVERSATION's workspace, under the
+	// offload dir. The account root is not good enough: the file tools are
+	// conversation-scoped, so a placeholder pointing one level up names a file
+	// the model cannot open.
+	onDisk := filepath.Join(base, email, conv, offloadDir, "call-123")
 	if _, err := os.Stat(onDisk); err != nil {
-		t.Fatalf("offloaded content is not in the user's workspace: %v", err)
+		t.Fatalf("offloaded content is not in the conversation's workspace: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, email, offloadDir, "call-123")); err == nil {
+		t.Fatal("offloaded content landed in the shared account root, where another conversation would see it")
 	}
 
 	got, err := be.Read(ctx, &filesystem.ReadRequest{FilePath: filepath.Join(offloadDir, "call-123")})
@@ -167,9 +173,9 @@ func TestOffloadRootRoundTrips(t *testing.T) {
 // resolves inside its workspace to a file that was never written — every
 // offloaded result was unreachable.
 func TestOffloadPathIsReadableByFileRead(t *testing.T) {
-	base, email := t.TempDir(), "ctx@test.com"
-	be := newWorkspaceBackend(base, email)
-	root := filepath.Join(base, email)
+	base, email, conv := t.TempDir(), "ctx@test.com", "conv-1"
+	be := newWorkspaceBackend(base, email, conv)
+	root := filepath.Join(base, email, conv)
 
 	gen := offloadPathFor(context.Background(), "clear")
 	advertised, err := gen(context.Background(), &reduction.ToolDetail{

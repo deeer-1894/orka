@@ -33,7 +33,7 @@ func (s *ChatService) processAttachments(ctx context.Context, req ChatRunRequest
 	if len(req.FileIDs) == 0 {
 		return ""
 	}
-	root := pathsafe.UserRoot(s.Cfg.Storage.BaseStoragePath, req.UserEmail)
+	root := pathsafe.Workspace(s.Cfg.Storage.BaseStoragePath, req.UserEmail, req.ConversationID)
 	var out strings.Builder
 	var imgURLs, imgNames []string
 	for _, f := range req.FileIDs {

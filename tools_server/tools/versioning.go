@@ -25,12 +25,12 @@ const stampFormat = "20060102-150405.000000000"
 // trash before it is overwritten. Best-effort: any failure returns false and
 // never blocks the write. Paths already under the trash are skipped so backups
 // never recurse on themselves.
-func backupBeforeWrite(base, user, rel string) bool {
+func backupBeforeWrite(root, rel string) bool {
 	clean := filepath.ToSlash(strings.TrimSpace(rel))
 	if clean == TrashDir || strings.HasPrefix(clean, TrashDir+"/") {
 		return false
 	}
-	src, err := util.ResolvePath(base, user, rel)
+	src, err := util.ResolvePath(root, rel)
 	if err != nil {
 		return false
 	}
@@ -39,7 +39,7 @@ func backupBeforeWrite(base, user, rel string) bool {
 		return false // nothing to back up (new file or unreadable)
 	}
 	ts := time.Now().Format(stampFormat)
-	dst, err := util.ResolvePath(base, user, filepath.Join(TrashDir, ts, rel))
+	dst, err := util.ResolvePath(root, filepath.Join(TrashDir, ts, rel))
 	if err != nil {
 		return false
 	}
@@ -49,7 +49,7 @@ func backupBeforeWrite(base, user, rel string) bool {
 	if os.WriteFile(dst, old, 0o644) != nil {
 		return false
 	}
-	pruneVersions(base, user, rel, maxVersionsPerFile)
+	pruneVersions(root, rel, maxVersionsPerFile)
 	return true
 }
 
@@ -57,8 +57,8 @@ func backupBeforeWrite(base, user, rel string) bool {
 const maxVersionsPerFile = 20
 
 // pruneVersions deletes the oldest snapshots of rel beyond keep (best-effort).
-func pruneVersions(base, user, rel string, keep int) {
-	trashRoot, err := util.ResolvePath(base, user, TrashDir)
+func pruneVersions(root, rel string, keep int) {
+	trashRoot, err := util.ResolvePath(root, TrashDir)
 	if err != nil {
 		return
 	}

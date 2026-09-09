@@ -201,7 +201,11 @@ func contextHandlers(ctx context.Context, baseStorage, userEmail, label string, 
 		out = append(out, mw)
 	}
 
-	backend := newWorkspaceBackend(baseStorage, userEmail)
+	// The offload backend MUST land inside the same workspace the file tools
+	// see: the placeholder it leaves behind names a path the model is expected to
+	// re-open with file_read, and a path in the account root is unreachable from
+	// a conversation-scoped tool.
+	backend := newWorkspaceBackend(baseStorage, userEmail, agent.MetaFrom(ctx).ConversationID)
 	// Never reduce the pipeline's own control tools: their output IS the state
 	// that flows to the next step, and a placeholder would break it.
 	protected := append(protectedToolOutputs(), subAgentNames(specs)...)
@@ -711,11 +715,11 @@ func offloadRootFrom(ctx context.Context) string {
 // are not used by the reduction middleware and report that plainly.
 type workspaceBackend struct{ root string }
 
-func newWorkspaceBackend(baseStorage, userEmail string) filesystem.Backend {
+func newWorkspaceBackend(baseStorage, userEmail, conv string) filesystem.Backend {
 	if baseStorage == "" {
 		return nil // no storage configured → truncation offload disabled
 	}
-	return &workspaceBackend{root: pathsafe.UserRoot(baseStorage, userEmail)}
+	return &workspaceBackend{root: pathsafe.Workspace(baseStorage, userEmail, conv)}
 }
 
 // resolve keeps every path inside the user's workspace root (pathsafe rejects

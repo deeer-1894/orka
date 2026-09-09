@@ -12,7 +12,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	"github.com/orka-oss/orka_core/pathsafe"
 	"github.com/orka-oss/tools_server/identity"
 )
 
@@ -32,7 +31,7 @@ func runInWorkspace(ctx context.Context, root, name string, args []string, extra
 // docExport converts a workspace Markdown file to HTML / DOCX / PDF via pandoc.
 func docExport(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		root := pathsafe.UserRoot(base, identity.From(ctx).Email)
+		root := identity.From(ctx).Root(base)
 		in := filepath.Base(strings.TrimSpace(req.GetString("path", "")))
 		if in == "" || in == "." {
 			return mcp.NewToolResultError("path (a workspace .md file) is required"), nil
@@ -96,7 +95,7 @@ func humanBytes(n int64) string {
 // chartGenerate renders a workspace CSV into a bar/line/pie PNG via matplotlib.
 func chartGenerate(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		root := pathsafe.UserRoot(base, identity.From(ctx).Email)
+		root := identity.From(ctx).Root(base)
 		data := filepath.Base(strings.TrimSpace(req.GetString("data", "")))
 		if data == "" || data == "." {
 			return mcp.NewToolResultError("data (a workspace .csv file) is required"), nil

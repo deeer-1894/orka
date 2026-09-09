@@ -11,7 +11,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	"github.com/orka-oss/orka_core/pathsafe"
 	"github.com/orka-oss/tools_server/identity"
 )
 
@@ -22,10 +21,10 @@ import (
 // isolation, run the tools gateway inside a container/VM (see shellExec docs).
 var shellDenylist = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\brm\s+-[a-zA-Z]*\s*(/|~|\$HOME|/\*|\.\.)`), // rm -rf targeting / ~ .. etc.
-	regexp.MustCompile(`(?i)\b(sudo|doas)\b`),                          // privilege escalation
+	regexp.MustCompile(`(?i)\b(sudo|doas)\b`),                           // privilege escalation
 	regexp.MustCompile(`(?i)\b(shutdown|reboot|halt|poweroff|init\s+0)\b`),
-	regexp.MustCompile(`(?i)\bmkfs|\bdd\s+if=|\bfdisk\b`),                 // disk wipe
-	regexp.MustCompile(`:\s*\(\s*\)\s*\{.*\}\s*;`),                        // fork bomb
+	regexp.MustCompile(`(?i)\bmkfs|\bdd\s+if=|\bfdisk\b`),                                     // disk wipe
+	regexp.MustCompile(`:\s*\(\s*\)\s*\{.*\}\s*;`),                                            // fork bomb
 	regexp.MustCompile(`(?i)\b(curl|wget|fetch)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh|python3?)`), // pipe-to-shell RCE
 	regexp.MustCompile(`(?i)(id_rsa|id_ed25519|\.ssh/|\.aws/credentials|\.config/gcloud)`),    // credential theft
 }
@@ -66,7 +65,7 @@ func shellExec(base string) mcpserver.ToolHandlerFunc {
 				"If you genuinely need this, run it yourself in a sandbox."), nil
 		}
 
-		root := pathsafe.UserRoot(base, identity.From(ctx).Email)
+		root := identity.From(ctx).Root(base)
 		if err := os.MkdirAll(root, 0o755); err != nil {
 			return mcp.NewToolResultError("workspace unavailable: " + err.Error()), nil
 		}

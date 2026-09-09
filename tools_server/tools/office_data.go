@@ -10,7 +10,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	"github.com/orka-oss/orka_core/pathsafe"
 	"github.com/orka-oss/tools_server/identity"
 )
 
@@ -41,7 +40,7 @@ func baseName(s string) string {
 // xlsxToCSV converts a .xlsx sheet to CSV via pandas.
 func xlsxToCSV(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		root := pathsafe.UserRoot(base, identity.From(ctx).Email)
+		root := identity.From(ctx).Root(base)
 		in := baseName(req.GetString("path", ""))
 		if in == "" || in == "." {
 			return mcp.NewToolResultError("path (a workspace .xlsx file) is required"), nil
@@ -72,7 +71,7 @@ print(f'{os.environ["XL_IN"]} -> {os.environ["XL_OUT"]} ({len(df)} rows x {len(d
 // csvToXLSX converts a CSV to a .xlsx workbook via pandas.
 func csvToXLSX(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		root := pathsafe.UserRoot(base, identity.From(ctx).Email)
+		root := identity.From(ctx).Root(base)
 		in := baseName(req.GetString("path", ""))
 		if in == "" || in == "." {
 			return mcp.NewToolResultError("path (a workspace .csv file) is required"), nil
@@ -101,7 +100,7 @@ print(f'{os.environ["CX_IN"]} -> {os.environ["CX_OUT"]} ({len(df)} rows x {len(d
 // pdfExtract pulls the text out of a workspace PDF via poppler's pdftotext.
 func pdfExtract(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		root := pathsafe.UserRoot(base, identity.From(ctx).Email)
+		root := identity.From(ctx).Root(base)
 		in := baseName(req.GetString("path", ""))
 		if in == "" || in == "." {
 			return mcp.NewToolResultError("path (a workspace .pdf file) is required"), nil
@@ -140,7 +139,7 @@ func pdfExtract(base string) mcpserver.ToolHandlerFunc {
 // docRead converts an office document to Markdown via pandoc (inverse of doc_export).
 func docRead(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		root := pathsafe.UserRoot(base, identity.From(ctx).Email)
+		root := identity.From(ctx).Root(base)
 		in := baseName(req.GetString("path", ""))
 		if in == "" || in == "." {
 			return mcp.NewToolResultError("path (a .docx/.html/.rtf/.odt/.epub file) is required"), nil
@@ -163,7 +162,7 @@ func docRead(base string) mcpserver.ToolHandlerFunc {
 // sqlQuery loads the named CSVs into in-memory SQLite and runs the query.
 func sqlQuery(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		root := pathsafe.UserRoot(base, identity.From(ctx).Email)
+		root := identity.From(ctx).Root(base)
 		query := strings.TrimSpace(req.GetString("query", ""))
 		tables := strings.TrimSpace(req.GetString("tables", ""))
 		if query == "" || tables == "" {
@@ -209,7 +208,7 @@ else:
 // csvJoin merges two CSVs on a key column via pandas.
 func csvJoin(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		root := pathsafe.UserRoot(base, identity.From(ctx).Email)
+		root := identity.From(ctx).Root(base)
 		left := baseName(req.GetString("left", ""))
 		right := baseName(req.GetString("right", ""))
 		if left == "" || left == "." || right == "" || right == "." {
@@ -256,7 +255,7 @@ print(m.head(10).to_string(index=False))
 // slidesGenerate builds a .pptx deck from Markdown via python-pptx.
 func slidesGenerate(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		root := pathsafe.UserRoot(base, identity.From(ctx).Email)
+		root := identity.From(ctx).Root(base)
 		content := req.GetString("content", "")
 		if strings.TrimSpace(content) == "" {
 			return mcp.NewToolResultError("content (Markdown: # title, ## slides, - bullets) is required"), nil
@@ -305,7 +304,7 @@ print(f'{len(prs.slides)} slide(s) -> {os.environ["SL_OUT"]}')
 // pythonRun executes an inline snippet or a workspace .py file and captures output.
 func pythonRun(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		root := pathsafe.UserRoot(base, identity.From(ctx).Email)
+		root := identity.From(ctx).Root(base)
 		code := req.GetString("code", "")
 		file := baseName(req.GetString("path", ""))
 		var args []string

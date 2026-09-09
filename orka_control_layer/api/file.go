@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/base64"
+	"errors"
+	"io/fs"
 	"mime"
 	"net/url"
 	"os"
@@ -16,14 +18,52 @@ import (
 	"github.com/orka-oss/orka_core/pathsafe"
 )
 
-// userRoot resolves the caller's storage root from the authenticated identity.
-func (a *API) userRoot(c *app.RequestContext) string {
-	return pathsafe.UserRoot(a.BaseStorage, authEmail(c))
+// workspaceRoot resolves the storage root a file request should act in.
+//
+// A conversation id selects that conversation's workspace, which is what makes
+// the UI's file browser show one conversation's files rather than everything
+// the account has ever produced. Empty selects the account root — the parent of
+// all of them — which is what a caller with no conversation open gets.
+//
+// Sharing rides on the same lookup: a conversation someone else owns resolves
+// under THEIR account, gated by the same read/write permission that governs the
+// thread itself. write=true demands edit rights, so a viewer of a shared thread
+// can open its files but not delete them.
+//
+// An unknown conversation id is not an error: it resolves under the caller's
+// own account, so a file operation racing conversation creation still lands in
+// the right place, and the id cannot address anything outside their own root.
+func (a *API) workspaceRoot(ctx context.Context, c *app.RequestContext, convID string, write bool) (string, bool) {
+	me := authEmail(c)
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return pathsafe.UserRoot(a.BaseStorage, me), true
+	}
+	conv, err := a.Store.GetConversation(ctx, convID)
+	if err != nil || conv.OwnerEmail == "" || conv.OwnerEmail == me {
+		return pathsafe.Workspace(a.BaseStorage, me, convID), true
+	}
+	if write && !conv.CanWrite(me) {
+		return "", false
+	}
+	if !write && !conv.CanRead(me) {
+		return "", false
+	}
+	return pathsafe.Workspace(a.BaseStorage, conv.OwnerEmail, convID), true
 }
 
-func (a *API) resolve(c *app.RequestContext, rel string) (string, error) {
-	return pathsafe.Resolve(a.userRoot(c), rel)
+// resolveIn confines rel to the workspace named by convID.
+func (a *API) resolveIn(ctx context.Context, c *app.RequestContext, convID, rel string, write bool) (string, error) {
+	root, allowed := a.workspaceRoot(ctx, c, convID, write)
+	if !allowed {
+		return "", errForbidden
+	}
+	return pathsafe.Resolve(root, rel)
 }
+
+// errForbidden separates "you may not" from a malformed path, so the handler can
+// answer 404 (never confirming a conversation exists) instead of 400.
+var errForbidden = errors.New("forbidden")
 
 // FileUpload accepts a multipart "file" and stores it under {dir}/{filename}.
 func (a *API) FileUpload(ctx context.Context, c *app.RequestContext) {
@@ -33,7 +73,7 @@ func (a *API) FileUpload(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	rel := filepath.Join(string(c.FormValue("dir")), fh.Filename)
-	dst, err := a.resolve(c, rel)
+	dst, err := a.resolveIn(ctx, c, string(c.FormValue("conv")), rel, true)
 	if err != nil {
 		fail(c, consts.StatusBadRequest, err.Error())
 		return
@@ -53,14 +93,10 @@ func (a *API) FileUpload(ctx context.Context, c *app.RequestContext) {
 // can read a shared conversation fetch files from that conversation's OWNER
 // workspace (read-only); without it, files resolve under the caller's own root.
 func (a *API) FileDownload(ctx context.Context, c *app.RequestContext) {
-	root := a.userRoot(c)
-	if convID := string(c.Query("conv")); convID != "" {
-		conv, err := a.Store.GetConversation(ctx, convID)
-		if err != nil || !conv.CanRead(authEmail(c)) {
-			fail(c, consts.StatusNotFound, "not found")
-			return
-		}
-		root = pathsafe.UserRoot(a.BaseStorage, conv.OwnerEmail)
+	root, allowed := a.workspaceRoot(ctx, c, string(c.Query("conv")), false)
+	if !allowed {
+		fail(c, consts.StatusNotFound, "not found")
+		return
 	}
 	p, err := pathsafe.Resolve(root, string(c.Query("path")))
 	if err != nil {
@@ -133,19 +169,28 @@ func fallbackContentType(ext string) string {
 // FileList lists a directory.
 func (a *API) FileList(ctx context.Context, c *app.RequestContext) {
 	var req struct {
-		Path string `json:"path"`
+		Path           string `json:"path"`
+		ConversationID string `json:"conversation_id"`
 	}
 	_ = bind(c, &req)
 	if req.Path == "" {
 		req.Path = "."
 	}
-	p, err := a.resolve(c, req.Path)
+	p, err := a.resolveIn(ctx, c, req.ConversationID, req.Path, false)
 	if err != nil {
 		fail(c, consts.StatusBadRequest, err.Error())
 		return
 	}
 	entries, err := os.ReadDir(p)
 	if err != nil {
+		// A conversation whose workspace has never been written to has no
+		// directory yet — which is every conversation, until its first run
+		// produces something. That is an EMPTY workspace, not a missing one, and
+		// answering 404 would put an error in the file panel of every new chat.
+		if errors.Is(err, fs.ErrNotExist) {
+			ok(c, []map[string]any{})
+			return
+		}
 		fail(c, consts.StatusNotFound, err.Error())
 		return
 	}
@@ -165,13 +210,14 @@ func (a *API) FileList(ctx context.Context, c *app.RequestContext) {
 // FileDelete removes a file.
 func (a *API) FileDelete(ctx context.Context, c *app.RequestContext) {
 	var req struct {
-		Path string `json:"path"`
+		Path           string `json:"path"`
+		ConversationID string `json:"conversation_id"`
 	}
 	if err := bind(c, &req); err != nil || req.Path == "" {
 		fail(c, consts.StatusBadRequest, "path required")
 		return
 	}
-	p, err := a.resolve(c, req.Path)
+	p, err := a.resolveIn(ctx, c, req.ConversationID, req.Path, true)
 	if err != nil {
 		fail(c, consts.StatusBadRequest, err.Error())
 		return
@@ -189,13 +235,14 @@ func (a *API) FileDelete(ctx context.Context, c *app.RequestContext) {
 // GetFileURL returns the download URL for a stored file.
 func (a *API) GetFileURL(ctx context.Context, c *app.RequestContext) {
 	var req struct {
-		Path string `json:"path"`
+		Path           string `json:"path"`
+		ConversationID string `json:"conversation_id"`
 	}
 	if err := bind(c, &req); err != nil || req.Path == "" {
 		fail(c, consts.StatusBadRequest, "path required")
 		return
 	}
-	if _, err := a.resolve(c, req.Path); err != nil {
+	if _, err := a.resolveIn(ctx, c, req.ConversationID, req.Path, false); err != nil {
 		fail(c, consts.StatusBadRequest, err.Error())
 		return
 	}
@@ -210,6 +257,9 @@ type chunkUploadReq struct {
 	Index    int    `json:"index"`
 	Total    int    `json:"total"`
 	Data     string `json:"data"` // base64 chunk
+	// ConversationID picks the workspace the assembled file lands in, so an
+	// attachment is uploaded where the run that will read it can see it.
+	ConversationID string `json:"conversation_id"`
 }
 
 // FileUploadChunk accepts one chunk; assembles the file once all are received.
@@ -231,7 +281,7 @@ func (a *API) FileUploadChunk(ctx context.Context, c *app.RequestContext) {
 	}
 	// assemble
 	data, filename := a.chunks.assemble(req.UploadID)
-	dst, err := a.resolve(c, filename)
+	dst, err := a.resolveIn(ctx, c, req.ConversationID, filename, true)
 	if err != nil {
 		fail(c, consts.StatusBadRequest, err.Error())
 		return

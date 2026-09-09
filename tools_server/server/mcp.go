@@ -55,7 +55,7 @@ func ContextFunc(secret []byte) mcpserver.HTTPContextFunc {
 		if tok := r.Header.Get("X-Orka-Token"); tok != "" {
 			ct, err := security.Verify(tok, secret)
 			if err == nil {
-				return identity.With(ctx, identity.Identity{Email: ct.UserEmail, Scopes: ct.Scopes})
+				return identity.With(ctx, identity.Identity{Email: ct.UserEmail, Scopes: ct.Scopes, Conversation: ct.Conversation})
 			}
 			// A token that was PRESENTED and rejected is an authentication
 			// failure, and must not fall through to the unauthenticated branch.

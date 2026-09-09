@@ -142,8 +142,8 @@ func parseFlexDate(s string) (time.Time, error) {
 // Backed by a JSON file in the user's storage root.
 func memoryTool(base string) mcpserver.ToolHandlerFunc {
 	const file = ".orka_memory.json"
-	load := func(email string) (map[string]string, string) {
-		p, err := util.ResolvePath(base, email, file)
+	load := func(root string) (map[string]string, string) {
+		p, err := util.ResolvePath(root, file)
 		if err != nil {
 			return map[string]string{}, ""
 		}
@@ -154,8 +154,10 @@ func memoryTool(base string) mcpserver.ToolHandlerFunc {
 		return m, p
 	}
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		email := identity.From(ctx).Email
-		m, p := load(email)
+		// The scratchpad follows the workspace, so one conversation's stashed
+		// values are not visible to another. It still spans runs, which is what
+		// long tasks need.
+		m, p := load(identity.From(ctx).Root(base))
 		switch strings.ToLower(req.GetString("op", "get")) {
 		case "set":
 			key := req.GetString("key", "")

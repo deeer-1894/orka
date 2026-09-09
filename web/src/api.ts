@@ -256,27 +256,53 @@ export const api = {
 
 export type FileVersion = { ts: string; when: number; size: number; path: string };
 
+// Each conversation has its own file workspace, so every file call names one.
+// Rather than thread it through a dozen components as a prop, the open
+// conversation is held here — the same shape as auth.token(), and the same
+// reason: it is ambient to the whole session, not an argument any one caller
+// should have to remember. An explicit `conv` still wins, which is what lets a
+// shared thread read the files of a conversation that is not the open one.
+let activeWorkspace = "";
+
+export const workspace = {
+  // set is called when the open conversation changes. "" = the account root,
+  // which is the parent of every conversation's workspace.
+  set: (id: string) => {
+    activeWorkspace = id || "";
+  },
+  current: () => activeWorkspace,
+};
+
+const ws = (conv?: string) => conv || activeWorkspace;
+const convParam = (conv?: string) => (ws(conv) ? "&conv=" + encodeURIComponent(ws(conv)) : "");
+
 export const files = {
-  list: (path: string) =>
-    post<{ name: string; dir: boolean; size: number }[]>("/file/list", { path }),
-  delete: (path: string) => post("/file/delete", { path }),
-  versions: (path: string) => post<FileVersion[]>("/file/versions", { path }),
-  restore: (path: string, ts: string) => post<{ restored: string }>("/file/restore", { path, ts }),
-  // conv (optional) reads the file from a shared conversation's OWNER workspace.
+  list: (path: string, conv?: string) =>
+    post<{ name: string; dir: boolean; size: number; mtime?: number }[]>("/file/list", {
+      path,
+      conversation_id: ws(conv),
+    }),
+  delete: (path: string, conv?: string) => post("/file/delete", { path, conversation_id: ws(conv) }),
+  versions: (path: string, conv?: string) =>
+    post<FileVersion[]>("/file/versions", { path, conversation_id: ws(conv) }),
+  restore: (path: string, ts: string, conv?: string) =>
+    post<{ restored: string }>("/file/restore", { path, ts, conversation_id: ws(conv) }),
   downloadURL: (path: string, conv?: string) =>
-    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}${conv ? "&conv=" + encodeURIComponent(conv) : ""}`,
+    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}${convParam(conv)}`,
   // previewURL serves the same bytes with Content-Disposition: inline so the
   // browser renders them in-page (PDF in an <iframe>) instead of downloading.
   previewURL: (path: string, conv?: string) =>
-    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}&inline=1${conv ? "&conv=" + encodeURIComponent(conv) : ""}`,
-  upload: async (file: File, dir: string, onProgress?: (pct: number) => void) => {
+    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}&inline=1${convParam(conv)}`,
+  upload: async (file: File, dir: string, onProgress?: (pct: number) => void, conv?: string) => {
     const CHUNK = 256 * 1024;
     const total = Math.max(1, Math.ceil(file.size / CHUNK));
     const uploadID = crypto.randomUUID();
     const filename = (dir ? dir.replace(/\/$/, "") + "/" : "") + file.name;
     for (let i = 0; i < total; i++) {
       const b64 = await blobToB64(file.slice(i * CHUNK, (i + 1) * CHUNK));
-      await post("/file/upload-chunk", { upload_id: uploadID, filename, index: i, total, data: b64 });
+      await post("/file/upload-chunk", {
+        upload_id: uploadID, filename, index: i, total, data: b64, conversation_id: ws(conv),
+      });
       onProgress?.(Math.round(((i + 1) / total) * 100));
     }
     return filename;

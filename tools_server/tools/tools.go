@@ -5,7 +5,9 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -370,7 +372,7 @@ func fileRead(base string) mcpserver.ToolHandlerFunc {
 		if rel == "" {
 			return missingPathError(req, "{\"path\": \"notes/summary.md\"}"), nil
 		}
-		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel)
+		p, err := util.ResolvePath(identity.From(ctx).Root(base), rel)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -432,7 +434,7 @@ func fileWrite(base string) mcpserver.ToolHandlerFunc {
 		if rel == "" {
 			return missingPathError(req, "{\"path\": \"notes/summary.md\", \"content\": \"...\"}"), nil
 		}
-		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel)
+		p, err := util.ResolvePath(identity.From(ctx).Root(base), rel)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -440,7 +442,7 @@ func fileWrite(base string) mcpserver.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		// Back up the prior version before overwriting (recoverable + diffable).
-		backed := backupBeforeWrite(base, identity.From(ctx).Email, rel)
+		backed := backupBeforeWrite(identity.From(ctx).Root(base), rel)
 		content := req.GetString("content", "")
 		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -469,12 +471,23 @@ func fileList(base string) mcpserver.ToolHandlerFunc {
 		if rel == "" {
 			rel = "."
 		}
-		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel)
+		root := identity.From(ctx).Root(base)
+		p, err := util.ResolvePath(root, rel)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		entries, err := os.ReadDir(p)
 		if err != nil {
+			// A workspace that has never been written to has no directory yet.
+			// Since workspaces became per-conversation that is the state EVERY
+			// conversation starts in, and reporting "no such file or directory"
+			// for the agent's own root reads as a broken tool — the first
+			// file_list of a new conversation used to answer with a tool error.
+			// An empty workspace is empty, not missing. A missing SUBdirectory is
+			// still an error: there the model asked for something specific.
+			if errors.Is(err, fs.ErrNotExist) && p == filepath.Clean(root) {
+				return mcp.NewToolResultText("(empty workspace)\n"), nil
+			}
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		var sb strings.Builder

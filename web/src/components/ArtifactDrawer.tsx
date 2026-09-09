@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, artifacts as artifactApi, files as fileApi } from "../api";
 import type { Artifact, Connector, Factor, MetricsSnapshot, RunRecord, TaskMeta, WeightedPortfolio, Workflow } from "../types";
 import { toast } from "../lib/toast";
@@ -16,7 +16,7 @@ type Tab = "overview" | "artifacts" | "files" | "runs" | "tasks" | "flows" | "fa
 const TAB_META: Record<Tab, { label: string; tip: string }> = {
   overview: { label: "概览", tip: "工作区概览与近期活动" },
   artifacts: { label: "页面", tip: "实时、可分享的可视化页面(Artifacts)" },
-  files: { label: "文件", tip: "工作区里的文件" },
+  files: { label: "文件", tip: "本会话的文件" },
   runs: { label: "运行", tip: "执行历史:每次任务运行的记录" },
   flows: { label: "流程", tip: "工作流定义:可复用的多步 DAG 管线" },
   tasks: { label: "任务", tip: "定时 / 触发的任务(调度与待办)" },
@@ -31,7 +31,7 @@ type Face = "overview" | "stage" | "files" | "ops";
 const FACES: { id: Face; label: string; tip: string; icon: IconName; subs: Tab[] }[] = [
   { id: "overview", label: "概览", tip: "工作区概览与近期活动", icon: "chart", subs: ["overview"] },
   { id: "stage", label: "页面", tip: "看 Orka 产出的可视化页面(Artifacts)", icon: "image", subs: ["artifacts"] },
-  { id: "files", label: "文件", tip: "工作区里的文件", icon: "folder", subs: ["files"] },
+  { id: "files", label: "文件", tip: "本会话的文件", icon: "folder", subs: ["files"] },
   { id: "ops", label: "运营台", tip: "执行与可观测:运行 / 流程 / 任务 / 因子 / 集成 / 指标", icon: "gear", subs: ["runs", "flows", "tasks", "factors", "integrations", "metrics"] },
 ];
 // Icons for the 运营台 sub-tabs, so the dense sub-nav scans at a glance.
@@ -49,6 +49,7 @@ export function ArtifactDrawer({
   setTab,
   liveTab,
   email,
+  conv,
   onJumpToConversation,
   focusArtifact,
   onClearArtifact,
@@ -58,6 +59,7 @@ export function ArtifactDrawer({
   tab: Tab;
   setTab: (t: Tab) => void;
   liveTab: Tab | null; // where the agent is working now (Live Focus)
+  conv: string; // the open conversation, whose file workspace the Files tab shows
   email: string;
   onJumpToConversation: (cid: string) => void;
   focusArtifact: string | null; // artifact to open inline (from the in-chat card)
@@ -119,7 +121,7 @@ export function ArtifactDrawer({
     tick();
     const id = setInterval(tick, 5000);
     return () => { alive = false; clearInterval(id); };
-  }, [open, tab]);
+  }, [open, tab, conv]);
   // Clear a tab's badge once it's viewed.
   useEffect(() => {
     setNewTabs((prev) => { if (!prev.has(tab)) return prev; const n = new Set(prev); n.delete(tab); return n; });
@@ -217,9 +219,9 @@ export function ArtifactDrawer({
           </div>
         )}
         <div className="flex-1 overflow-y-auto">
-          {tab === "overview" && <DashboardPanel onJumpToConversation={onJumpToConversation} goTab={setTab} onOpenArtifact={(id) => { setFocusArt(id); setTab("artifacts"); }} />}
+          {tab === "overview" && <DashboardPanel conv={conv} onJumpToConversation={onJumpToConversation} goTab={setTab} onOpenArtifact={(id) => { setFocusArt(id); setTab("artifacts"); }} />}
           {tab === "artifacts" && (focusArt ? <ArtifactPane artifactId={focusArt} onBack={() => setFocusArt(null)} /> : <ArtifactGallery onOpen={setFocusArt} />)}
-          {tab === "files" && <FilesPanel email={email} />}
+          {tab === "files" && <FilesPanel email={email} conv={conv} />}
           {tab === "runs" && <RunsPanel onJumpToConversation={onJumpToConversation} />}
           {tab === "flows" && <WorkflowsPanel onJumpToConversation={onJumpToConversation} />}
           {tab === "integrations" && <ConnectorsPanel />}
@@ -239,7 +241,7 @@ const ARTKIND_ICON: Record<string, string> = {
   pr_review: "🔀", architecture: "🗺️", incident: "🚨", checklist: "✅", audit: "🔍", custom: "📊",
 };
 
-function DashboardPanel({ onJumpToConversation, goTab, onOpenArtifact }: { onJumpToConversation: (cid: string) => void; goTab: (t: Tab) => void; onOpenArtifact: (id: string) => void }) {
+function DashboardPanel({ onJumpToConversation, goTab, onOpenArtifact, conv }: { onJumpToConversation: (cid: string) => void; goTab: (t: Tab) => void; onOpenArtifact: (id: string) => void; conv: string }) {
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [metrics, setMetrics] = useState<MetricsSnapshot | null>(null);
   const [arts, setArts] = useState<Artifact[]>([]);
@@ -256,7 +258,9 @@ function DashboardPanel({ onJumpToConversation, goTab, onOpenArtifact }: { onJum
     ])
       .then(([r, m, a, fc, tc]) => { setRuns(r.runs || []); setMetrics(m); setArts(a); setFileCount(fc); setTaskCount(tc); })
       .finally(() => setLoading(false));
-  }, []);
+    // The file count describes the OPEN conversation's workspace, so it has to
+    // be recounted when a different one is opened.
+  }, [conv]);
 
   if (loading) return <Blank>加载中…</Blank>;
 
@@ -273,7 +277,7 @@ function DashboardPanel({ onJumpToConversation, goTab, onOpenArtifact }: { onJum
     <>
       <div className="grid grid-cols-3 gap-2">
         <NavTile icon="image" label="页面" value={arts.length} onClick={() => goTab("artifacts")} />
-        <NavTile icon="folder" label="文件" value={fileCount} onClick={() => goTab("files")} />
+        <NavTile icon="folder" label="本会话文件" value={fileCount} onClick={() => goTab("files")} />
         <NavTile icon="clock" label="定时任务" value={taskCount} onClick={() => goTab("tasks")} />
       </div>
       {arts.length > 0 && (
@@ -445,28 +449,50 @@ function isHidden(name: string): boolean {
   return name.startsWith(".") || JUNK.has(name);
 }
 
-function FilesPanel({ email }: { email: string }) {
+// join builds a workspace-relative path from the current directory and a name.
+// "." is the root and must not become a literal "./" prefix — the backend
+// resolves paths against the workspace root, and every operation here (preview,
+// download, delete) needs the SAME path, so building it in one place is what
+// keeps a file in a subfolder openable at all.
+function join(dir: string, name: string) {
+  return dir === "." ? name : dir + "/" + name;
+}
+
+function FilesPanel({ email, conv }: { email: string; conv: string }) {
   const [items, setItems] = useState<FileItem[]>([]);
   const [pct, setPct] = useState<number | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [showHidden, setShowHidden] = useState(false);
   const [sort, setSort] = useState<SortKey>("name");
+  // Folders are navigable. They used to render as inert text, so anything the
+  // agent wrote into a subdirectory was listed once and could never be opened.
+  const [cwd, setCwd] = useState(".");
   const inputRef = useRef<HTMLInputElement>(null);
-  const refresh = () => fileApi.list(".").then(setItems).catch(() => setItems([]));
+  const refresh = useCallback(
+    () => fileApi.list(cwd).then(setItems).catch(() => setItems([])),
+    [cwd],
+  );
   useEffect(() => {
-    refresh(); /* eslint-disable-next-line */
-  }, [email]);
+    refresh();
+  }, [refresh, email]);
+  // A different conversation is a different workspace, so the path we were
+  // browsing does not exist in it.
+  useEffect(() => {
+    setCwd(".");
+    setQuery("");
+  }, [conv]);
   const onUpload = async (f: File) => {
     setPct(0);
     try {
-      await fileApi.upload(f, "", setPct);
+      await fileApi.upload(f, cwd === "." ? "" : cwd, setPct);
       await refresh();
     } finally {
       setPct(null);
     }
   };
-  const del = (name: string) => fileApi.delete(name).then(refresh);
+  const del = (name: string) => fileApi.delete(join(cwd, name)).then(refresh);
+  const crumbs = cwd === "." ? [] : cwd.split("/");
 
   const q = query.trim().toLowerCase();
   const hiddenCount = items.filter((it) => isHidden(it.name)).length;
@@ -504,9 +530,11 @@ function FilesPanel({ email }: { email: string }) {
     <div key={it.name} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface2">
       <span className={meta.color}>{meta.icon}</span>
       {it.dir ? (
-        <span className="flex-1 truncate text-[14px] text-ink">{it.name}</span>
+        <button onClick={() => setCwd(join(cwd, it.name))} className="flex-1 truncate text-left text-[14px] text-ink hover:text-accent" title="打开文件夹">
+          {it.name}/
+        </button>
       ) : (
-        <button onClick={() => setPreview(it.name)} className="flex-1 truncate text-left text-[14px] text-ink hover:text-accent" title="预览">
+        <button onClick={() => setPreview(join(cwd, it.name))} className="flex-1 truncate text-left text-[14px] text-ink hover:text-accent" title="预览">
           {it.name}
         </button>
       )}
@@ -515,7 +543,7 @@ function FilesPanel({ email }: { email: string }) {
       )}
       <span className="text-[11px] text-faint">{fmtBytes(it.size)}</span>
       {!it.dir && (
-        <a href={fileApi.downloadURL(it.name)} className="text-accent opacity-0 group-hover:opacity-100" aria-label={"下载 " + it.name}>
+        <a href={fileApi.downloadURL(join(cwd, it.name))} className="text-accent opacity-0 group-hover:opacity-100" aria-label={"下载 " + it.name}>
           <Icon name="download" size={13} />
         </a>
       )}
@@ -529,7 +557,25 @@ function FilesPanel({ email }: { email: string }) {
   return (
     <div className="p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="inline-flex items-center gap-1.5 truncate text-[12px] text-faint" title={email}><Icon name="folder" size={13} /> 我的文件</span>
+        <span className="inline-flex min-w-0 items-center gap-1.5 truncate text-[12px] text-faint" title={email}>
+          <Icon name="folder" size={13} />
+          {/* Breadcrumb: each segment walks back up. The root is labelled for
+              what it now is — this conversation's workspace, not the account's. */}
+          <button onClick={() => setCwd(".")} className={crumbs.length ? "hover:text-accent" : ""}>
+            {conv ? "本会话文件" : "我的文件"}
+          </button>
+          {crumbs.map((seg, i) => (
+            <span key={i} className="inline-flex min-w-0 items-center gap-1.5">
+              <span className="text-faint/60">/</span>
+              <button
+                onClick={() => setCwd(crumbs.slice(0, i + 1).join("/"))}
+                className={"truncate " + (i === crumbs.length - 1 ? "text-ink" : "hover:text-accent")}
+              >
+                {seg}
+              </button>
+            </span>
+          ))}
+        </span>
         <button
           onClick={() => inputRef.current?.click()}
           className="shrink-0 rounded-lg border border-border px-2.5 py-1 text-[12px] text-muted hover:border-accent/40"
@@ -574,7 +620,11 @@ function FilesPanel({ email }: { email: string }) {
       )}
       {filtered.length === 0 && (
         items.length === 0
-          ? <Blank icon="folder" title="工作区还是空的">Orka 产出的文件(报告、图表、脚本、导出的文档)都会落在这里,你也可以直接上传文件让它读取。</Blank>
+          ? cwd !== "."
+            ? <Blank icon="folder" title="这个文件夹是空的">返回上一层继续浏览。</Blank>
+            : conv
+              ? <Blank icon="folder" title="本会话还没有文件">每个会话有自己独立的文件空间。Orka 在这个会话里产出的文件(报告、图表、脚本、导出的文档)都会落在这里,你也可以直接上传文件让它读取。</Blank>
+              : <Blank icon="folder" title="还没有打开会话">文件按会话分开存放。打开或新建一个会话,它的文件就会显示在这里。</Blank>
           : <Blank icon="search" title="没有匹配的文件">换个关键词试试,或清空搜索框查看全部。</Blank>
       )}
       {grouped.map((g) => (

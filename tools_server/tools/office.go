@@ -122,7 +122,7 @@ func qrGenerate(base string) mcpserver.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError("qr encode failed: " + err.Error()), nil
 		}
-		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel)
+		p, err := util.ResolvePath(identity.From(ctx).Root(base), rel)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -135,8 +135,8 @@ func qrGenerate(base string) mcpserver.ToolHandlerFunc {
 
 // ---- CSV / table tools ----
 
-func readCSV(base, email, rel string) ([][]string, error) {
-	p, err := util.ResolvePath(base, email, rel)
+func readCSV(root, rel string) ([][]string, error) {
+	p, err := util.ResolvePath(root, rel)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +165,7 @@ func colIndex(header []string, name string) int {
 // csvQuery filters a workspace CSV by `col=value` and selects columns.
 func csvQuery(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		rows, err := readCSV(base, identity.From(ctx).Email, req.GetString("path", ""))
+		rows, err := readCSV(identity.From(ctx).Root(base), req.GetString("path", ""))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -224,7 +224,7 @@ func csvQuery(base string) mcpserver.ToolHandlerFunc {
 // csvStats computes count/sum/avg/min/max on a numeric column, optionally grouped.
 func csvStats(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		rows, err := readCSV(base, identity.From(ctx).Email, req.GetString("path", ""))
+		rows, err := readCSV(identity.From(ctx).Root(base), req.GetString("path", ""))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -288,7 +288,7 @@ func csvStats(base string) mcpserver.ToolHandlerFunc {
 // csvToJSON converts a workspace CSV to a JSON array of objects.
 func csvToJSON(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		rows, err := readCSV(base, identity.From(ctx).Email, req.GetString("path", ""))
+		rows, err := readCSV(identity.From(ctx).Root(base), req.GetString("path", ""))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

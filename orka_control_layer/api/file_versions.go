@@ -30,14 +30,15 @@ type fileVersion struct {
 // FileVersions lists prior versions of a file from the trash, newest first.
 func (a *API) FileVersions(ctx context.Context, c *app.RequestContext) {
 	var req struct {
-		Path string `json:"path"`
+		Path           string `json:"path"`
+		ConversationID string `json:"conversation_id"`
 	}
 	if err := bind(c, &req); err != nil || req.Path == "" {
 		fail(c, consts.StatusBadRequest, "path required")
 		return
 	}
 	rel := filepath.Clean(req.Path)
-	trashRoot, err := a.resolve(c, trashDir)
+	trashRoot, err := a.resolveIn(ctx, c, req.ConversationID, trashDir, false)
 	if err != nil {
 		fail(c, consts.StatusBadRequest, err.Error())
 		return
@@ -48,7 +49,7 @@ func (a *API) FileVersions(ctx context.Context, c *app.RequestContext) {
 		if !s.IsDir() {
 			continue
 		}
-		vp, rerr := a.resolve(c, filepath.Join(trashDir, s.Name(), rel))
+		vp, rerr := a.resolveIn(ctx, c, req.ConversationID, filepath.Join(trashDir, s.Name(), rel), false)
 		if rerr != nil {
 			continue
 		}
@@ -72,15 +73,16 @@ func (a *API) FileVersions(ctx context.Context, c *app.RequestContext) {
 // contents are backed up first, so a restore is itself reversible.
 func (a *API) FileRestore(ctx context.Context, c *app.RequestContext) {
 	var req struct {
-		Path string `json:"path"`
-		TS   string `json:"ts"`
+		Path           string `json:"path"`
+		TS             string `json:"ts"`
+		ConversationID string `json:"conversation_id"`
 	}
 	if err := bind(c, &req); err != nil || req.Path == "" || req.TS == "" {
 		fail(c, consts.StatusBadRequest, "path and ts required")
 		return
 	}
 	rel := filepath.Clean(req.Path)
-	versionPath, err := a.resolve(c, filepath.Join(trashDir, filepath.Clean(req.TS), rel))
+	versionPath, err := a.resolveIn(ctx, c, req.ConversationID, filepath.Join(trashDir, filepath.Clean(req.TS), rel), true)
 	if err != nil {
 		fail(c, consts.StatusBadRequest, err.Error())
 		return
@@ -90,14 +92,14 @@ func (a *API) FileRestore(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusNotFound, "version not found")
 		return
 	}
-	cur, err := a.resolve(c, rel)
+	cur, err := a.resolveIn(ctx, c, req.ConversationID, rel, true)
 	if err != nil {
 		fail(c, consts.StatusBadRequest, err.Error())
 		return
 	}
 	// Snapshot the current contents before clobbering them (reversible restore).
 	if old, rerr := os.ReadFile(cur); rerr == nil {
-		a.snapshotToTrash(c, rel, old)
+		a.snapshotToTrash(ctx, c, req.ConversationID, rel, old)
 	}
 	if err := os.MkdirAll(filepath.Dir(cur), 0o755); err != nil {
 		fail(c, consts.StatusInternalServerError, err.Error())
@@ -111,8 +113,8 @@ func (a *API) FileRestore(ctx context.Context, c *app.RequestContext) {
 }
 
 // snapshotToTrash writes content to .orka_trash/<now>/<rel> (best-effort).
-func (a *API) snapshotToTrash(c *app.RequestContext, rel string, content []byte) {
-	dst, err := a.resolve(c, filepath.Join(trashDir, time.Now().Format(stampFormat), rel))
+func (a *API) snapshotToTrash(ctx context.Context, c *app.RequestContext, convID, rel string, content []byte) {
+	dst, err := a.resolveIn(ctx, c, convID, filepath.Join(trashDir, time.Now().Format(stampFormat), rel), true)
 	if err != nil {
 		return
 	}

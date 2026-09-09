@@ -191,6 +191,7 @@ export function Thread({
   onSchedule,
   onFork,
   fileConv,
+  conv,
 }: {
   messages: Message[];
   status: RunStatus;
@@ -205,12 +206,18 @@ export function Thread({
   onSchedule: (prompt: string) => void;
   onFork?: (messageID: string) => void;
   fileConv?: string; // when viewing a shared conversation, read files from its owner via this id
+  conv?: string; // the conversation being viewed — its workspace is what the strip lists
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [previewFile, setPreviewFile] = useState<{ name: string; history?: boolean } | null>(null);
   const openFile = (name: string, opts?: { history?: boolean }) => setPreviewFile({ name, history: opts?.history });
   const [wsFiles, setWsFiles] = useState<Map<string, string>>(new Map());
+  // Drop the previous conversation's listing before the new one arrives, so the
+  // strip never briefly resolves names against a workspace that is not open.
+  useEffect(() => {
+    setWsFiles(new Map());
+  }, [conv]);
   // Smart auto-scroll: only follow new content when the user is already near the
   // bottom, so scrolling up to read history isn't yanked back down.
   useEffect(() => {
@@ -238,7 +245,12 @@ export function Thread({
     return () => {
       cancelled = true;
     };
-  }, [status]);
+    // conv is load-bearing: each conversation has its own file workspace, and
+    // without it the map from the PREVIOUS conversation was reused — the strip
+    // resolved names against the wrong workspace, and every path came out
+    // prefixed with a conversation id because the stale listing had been taken
+    // from the account root.
+  }, [status, conv]);
 
   // Grouping + filename-scan walk every message; memoize so a re-render that
   // doesn't change the message list (hover, find typing, status flips) doesn't

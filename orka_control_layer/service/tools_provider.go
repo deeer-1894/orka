@@ -28,7 +28,7 @@ var GUITool agent.BaseTool = guiMockTool{}
 // per-user storage root) plus the GUI tool. No remote dependency.
 func LocalToolsProvider(baseStorage string) ToolsProvider {
 	return func(_ context.Context, req ChatRunRequest) ([]agent.BaseTool, func(), error) {
-		root := pathsafe.UserRoot(baseStorage, req.UserEmail)
+		root := pathsafe.Workspace(baseStorage, req.UserEmail, req.ConversationID)
 		tools := append(filesystem.New(root), GUITool)
 		tools = filterEnabled(tools, req.EnabledTools)
 		// skill mgmt + artifact publishing + quant pipeline are always available
@@ -39,10 +39,12 @@ func LocalToolsProvider(baseStorage string) ToolsProvider {
 }
 
 // mcpPool reuses one MCP connection per user across chat requests instead of
-// dialing + handshaking on every message. Entries are keyed by user email
-// because the signed context token (and thus the gateway's per-user identity +
-// RBAC) is baked into the client's headers. Entries are refreshed before the
-// token expires so the gateway never sees a stale token.
+// dialing + handshaking on every message. Entries are keyed by user email AND
+// conversation, because the signed context token baked into the client's
+// headers now carries both — identity and RBAC as before, plus the workspace
+// the file tools may touch. Keyed by email alone, the first conversation to
+// dial would lend its workspace to every later one. Entries are refreshed
+// before the token expires so the gateway never sees a stale token.
 type mcpPool struct {
 	baseStorage string
 	mcpURL      string
@@ -55,6 +57,11 @@ type mcpPool struct {
 	mu      sync.Mutex
 	entries map[string]*mcpEntry
 }
+
+// poolKey addresses one workspace's connection. The email alone is not enough
+// any more: two conversations of the same user get different file roots, and a
+// shared entry would hand the second one the first one's workspace.
+func poolKey(email, conv string) string { return email + "\x00" + conv }
 
 // connMaxAge is how long a pooled MCP connection is reused before being
 // rebuilt. Long enough that a multi-hour run keeps one connection, short enough
@@ -87,17 +94,18 @@ type mcpEntry struct {
 // the janitor saw a 40-minute run as 40 minutes idle and evicted it mid-flight.
 // Every historical occurrence of this failure was a run longer than the eviction
 // window (183, 176, 143 and 36 minutes), and none was shorter.
-func (p *mcpPool) get(ctx context.Context, email string) ([]agent.BaseTool, func(), error) {
+func (p *mcpPool) get(ctx context.Context, email, conv string) ([]agent.BaseTool, func(), error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if e := p.entries[email]; e != nil && time.Since(e.created) < p.maxAge {
+	key := poolKey(email, conv)
+	if e := p.entries[key]; e != nil && time.Since(e.created) < p.maxAge {
 		e.lastUsed = time.Now()
 		e.refs++
 		return e.tools, p.releaser(e), nil
 	}
-	if e := p.entries[email]; e != nil { // stale → rebuild
-		p.retire(email, e)
+	if e := p.entries[key]; e != nil { // stale → rebuild
+		p.retire(key, e)
 	}
 
 	// Sign a FRESH token per request rather than baking one into the client.
@@ -115,7 +123,7 @@ func (p *mcpPool) get(ctx context.Context, email string) ([]agent.BaseTool, func
 	// work. A signing failure yields no header, which the gateway rejects as
 	// unauthenticated rather than silently unscoped.
 	headers := func(context.Context) map[string]string {
-		tok, err := security.Sign(security.NewToken(email, p.scopes, p.tokenTTL), []byte(p.secret))
+		tok, err := security.Sign(security.NewToken(email, p.scopes, p.tokenTTL).InConversation(conv), []byte(p.secret))
 		if err != nil {
 			return nil
 		}
@@ -155,7 +163,7 @@ func (p *mcpPool) get(ctx context.Context, email string) ([]agent.BaseTool, func
 	}
 	now := time.Now()
 	e := &mcpEntry{clients: clients, tools: tools, created: now, lastUsed: now, refs: 1}
-	p.entries[email] = e
+	p.entries[key] = e
 	return tools, p.releaser(e), nil
 }
 
@@ -180,23 +188,29 @@ func (p *mcpPool) releaser(e *mcpEntry) func() {
 // retire removes an entry from the pool, closing its clients only if no run is
 // still holding them. A held entry is closed by its last releaser instead.
 // Callers must hold p.mu.
-func (p *mcpPool) retire(email string, e *mcpEntry) {
-	delete(p.entries, email)
+func (p *mcpPool) retire(key string, e *mcpEntry) {
+	delete(p.entries, key)
 	e.retired = true
 	if e.refs <= 0 {
 		closeClients(e.clients)
 	}
 }
 
-// invalidate drops a user's cached connection set so the next run rebuilds it
-// (called when the user adds/removes a connector).
+// invalidate drops every pooled connection belonging to a user, so a connector
+// change is picked up on their next run. It must sweep rather than look up one
+// key: a user now holds one entry PER CONVERSATION, and addressing them by
+// email alone would silently invalidate nothing.
 func (p *mcpPool) invalidate(email string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if e := p.entries[email]; e != nil {
+	prefix := email + "\x00"
+	for key, e := range p.entries {
+		if e == nil || !strings.HasPrefix(key, prefix) {
+			continue
+		}
 		// Retire rather than close: a run in progress keeps working with the tool
 		// set it started with, and the next run picks up the new connectors.
-		p.retire(email, e)
+		p.retire(key, e)
 	}
 }
 
@@ -306,9 +320,9 @@ func MCPToolsProviderPooled(baseStorage, mcpURL, secret string, tokenTTL time.Du
 	}
 	go pool.janitor(context.Background()) // evict idle connections for process lifetime
 	provider := func(ctx context.Context, req ChatRunRequest) ([]agent.BaseTool, func(), error) {
-		tools, release, err := pool.get(ctx, req.UserEmail)
+		tools, release, err := pool.get(ctx, req.UserEmail, req.ConversationID)
 		if err != nil {
-			root := pathsafe.UserRoot(baseStorage, req.UserEmail)
+			root := pathsafe.Workspace(baseStorage, req.UserEmail, req.ConversationID)
 			fallback := append(filesystem.New(root), GUITool)
 			local := append(append(SkillTools(), ArtifactTools...), QuantTools...)
 			return append(filterEnabled(fallback, req.EnabledTools), local...), nil, err
