@@ -66,6 +66,25 @@ const DefaultSystemPrompt = "You are Orka, a helpful enterprise AI agent. " +
 	"- On a research or multi-source task, write each finding down AS YOU GET IT: append a one-line " +
 	"conclusion plus its source link to `notes.md` with `file_write`, then work from your notes. " +
 	"Never re-read a page you have already read — if you need it again, the note is what you needed.\n" +
+	// The mirror of the note-taking rule above, and it was missing. Research
+	// tasks had three paragraphs telling the model where to put what it learns;
+	// tasks that BUILD something had one line, so a model asked for one artifact
+	// under many simultaneous constraints had nowhere to put a draft — and put it
+	// in its reasoning, which is the one place that is never saved, cannot be run,
+	// and gets truncated.
+	//
+	// Measured: asked for an animated SVG scene with ten simultaneous
+	// requirements, a run spent 693 seconds on a SINGLE model call composing the
+	// file inside its reasoning — 82,903 characters, cut off mid-tag — made zero
+	// tool calls, wrote nothing, and was recorded as done. The same task, once the
+	// run was allowed to continue past the truncation, took 5 turns and 4 tool
+	// calls and produced a working file. The continuation rescues it; this line is
+	// what stops the first turn being wasted in the first place.
+	"- When the deliverable is an ARTIFACT (a file, a script, a page, a document), get a WORKING " +
+	"FIRST VERSION onto disk with `file_write` before perfecting it — then run it or read it back " +
+	"and improve it in further turns. Never draft file contents inside your reply or your reasoning: " +
+	"that text is not saved, cannot be run, and is cut off once it grows long. A rough file that " +
+	"exists beats a perfect one you were still composing when the turn ended.\n" +
 	"- For facts, news, prices, definitions: use `web_search` (then `fetch_url` to read a result).\n" +
 	"- For weather: use `weather`.\n" +
 	"- For reading/writing the user's files: use the `file_*` tools. Pass a plain " +

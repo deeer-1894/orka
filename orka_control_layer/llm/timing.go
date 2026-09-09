@@ -129,6 +129,13 @@ func (t *Metered) report(ctx context.Context, req Request, resp Response, d time
 	if s := usageSinkFrom(ctx); s != nil {
 		s.AddUsage(resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
 	}
+	// Report the turn's shape alongside its cost. Same choke point for the same
+	// reason: this is where the provider's own account of the exchange arrives,
+	// before any context management can rewrite the history it lived in. A turn
+	// that ended because it ran out of room is only distinguishable here.
+	if err == nil {
+		observeTurn(ctx, resp)
+	}
 	if timingEnabled() {
 		t.log(ctx, req, resp, d, streamed, err)
 	}

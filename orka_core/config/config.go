@@ -42,6 +42,14 @@ type LLMConfig struct {
 	MiniModel     string `yaml:"mini_model"`
 	VLMModel      string `yaml:"vlm_model"`
 	MaxRetries    int    `yaml:"max_retries"` // total LLM attempts incl. first on transient 429/5xx/network (default 3)
+	// MaxTokens caps a single turn's output. 0 (the default) leaves the
+	// provider's own ceiling in place: too low a cap truncates a legitimately
+	// large single deliverable, and a 40k-character SVG file is a real answer.
+	// Set it when a model's habit of reasoning instead of acting is costing more
+	// than the occasional truncated write — one run here spent 693 seconds and
+	// 82,903 characters composing a file inside its reasoning without ever
+	// calling a tool.
+	MaxTokens int `yaml:"max_tokens"`
 	// Models the user may pick per conversation, beyond the main/mini pair.
 	// Providers that host many models behind one endpoint (Ark, OpenRouter…)
 	// serve any of them from the same client — only the model NAME changes — so
@@ -189,6 +197,7 @@ func (c *Config) applyEnv() {
 		c.LLM.Models = splitComma(v)
 	}
 	envInt(&c.LLM.MaxRetries, "LLM_MAX_RETRIES")
+	envInt(&c.LLM.MaxTokens, "LLM_MAX_TOKENS")
 	envStr(&c.Storage.MongoURI, "MONGO_URI")
 	envStr(&c.Storage.MongoDB, "MONGO_DB")
 	envStr(&c.Storage.RedisAddr, "REDIS_ADDR")

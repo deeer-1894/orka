@@ -18,6 +18,17 @@ type OpenAIClient struct {
 	BaseURL string
 	APIKey  string
 	HTTP    *http.Client
+	// DefaultMaxTokens caps a single turn's output when the caller did not set
+	// its own. Applied here rather than at the eight places an eino model is
+	// built, so every path inherits it and none can forget.
+	//
+	// It bounds waste, not correctness — a model that reasons instead of acting
+	// is stopped sooner, but stopping it is not what makes the run recover.
+	// Truncation being survivable is (see applyReasoningFallback and the
+	// continuation loop). Zero leaves the provider's own ceiling in place, which
+	// is the safe default: too low a cap truncates a genuinely large single
+	// deliverable, and a 40k-character SVG is a legitimate answer.
+	DefaultMaxTokens int
 }
 
 // NewOpenAIClient builds a client. baseURL should include the /v1 suffix.
@@ -29,9 +40,16 @@ type OpenAIClient struct {
 // deadline like followups). Connection pooling is tuned so the many sequential
 // ReAct calls reuse warm TLS connections (also helps provider prefix-caching).
 func NewOpenAIClient(baseURL, apiKey string) *OpenAIClient {
+	return NewOpenAIClientCapped(baseURL, apiKey, 0)
+}
+
+// NewOpenAIClientCapped is NewOpenAIClient with a default per-turn output cap.
+// maxTokens of 0 leaves the provider's own ceiling in place.
+func NewOpenAIClientCapped(baseURL, apiKey string, maxTokens int) *OpenAIClient {
 	return &OpenAIClient{
-		BaseURL: baseURL,
-		APIKey:  apiKey,
+		BaseURL:          baseURL,
+		APIKey:           apiKey,
+		DefaultMaxTokens: maxTokens,
 		HTTP: &http.Client{
 			Transport: &http.Transport{
 				Proxy:                 http.ProxyFromEnvironment,
@@ -142,6 +160,15 @@ type wireResponse struct {
 	} `json:"error"`
 }
 
+// wireRequestFor builds the wire request, applying the client's default output
+// cap when the caller has not chosen one of its own.
+func (c *OpenAIClient) wireRequestFor(req Request) wireRequest {
+	if req.MaxTokens == 0 {
+		req.MaxTokens = c.DefaultMaxTokens
+	}
+	return toWireRequest(req)
+}
+
 // toWireRequest maps the public Request to the OpenAI wire format.
 func toWireRequest(req Request) wireRequest {
 	wr := wireRequest{Model: req.Model, Temperature: req.Temperature, MaxTokens: req.MaxTokens}
@@ -179,7 +206,7 @@ func toWireRequest(req Request) wireRequest {
 
 // Chat implements Client.
 func (c *OpenAIClient) Chat(ctx context.Context, req Request) (Response, error) {
-	wr := toWireRequest(req)
+	wr := c.wireRequestFor(req)
 
 	body, err := json.Marshal(wr)
 	if err != nil {
@@ -245,6 +272,18 @@ func applyReasoningFallback(out *Response) {
 	if len(out.ToolCalls) > 0 || out.Reasoning == "" {
 		return
 	}
+	// A TRUNCATED reasoning block is a draft the model was cut off mid-way
+	// through, not an answer it chose to give. Promoting it is what turned a run
+	// that did nothing into a plausible-looking success: 693 seconds of the model
+	// composing an SVG inside its own reasoning, 82,903 characters ending
+	// mid-tag, surfaced as the reply and filed as done. The run had produced no
+	// file and made no tool call.
+	//
+	// Left empty, the turn reads as what it is — unfinished — and the run
+	// continues instead of ending on it.
+	if out.FinishReason == "length" {
+		return
+	}
 	if out.Content == "" || (len([]rune(out.Content)) <= 1 && len(out.Reasoning) > 200) {
 		out.Content = out.Reasoning
 	}
@@ -277,7 +316,7 @@ type wireStreamChunk struct {
 // ChatStream implements StreamingClient: it streams content deltas via onDelta
 // and assembles the full Response (content + any tool calls) by the end.
 func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func(string)) (Response, error) {
-	wr := toWireRequest(req)
+	wr := c.wireRequestFor(req)
 	wr.Stream = true
 	wr.StreamOpts = &streamOpts{IncludeUsage: true} // ask the provider for a final usage chunk
 	body, err := json.Marshal(wr)

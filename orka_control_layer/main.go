@@ -102,7 +102,7 @@ func main() {
 	// exchange alone, so queue time is the difference between a call's observed
 	// spacing and its logged duration rather than being folded into it.
 	mainLLM = llm.NewLimiterFromEnv(llm.NewMetered(llm.NewRetry(
-		llm.NewOpenAIClient(cfg.LLM.OpenAIBaseURL, cfg.LLM.OpenAIAPIKey),
+		llm.NewOpenAIClientCapped(cfg.LLM.OpenAIBaseURL, cfg.LLM.OpenAIAPIKey, cfg.LLM.MaxTokens),
 		llm.RetryConfig{
 			MaxAttempts: cfg.LLM.MaxRetries,
 			OnRetry: func(attempt int, delay time.Duration, err error) {

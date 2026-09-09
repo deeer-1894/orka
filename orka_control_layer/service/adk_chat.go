@@ -278,6 +278,10 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	s.registerSteer(runID, steer)
 	defer s.unregisterSteer(runID)
 	rc.Ctx = withSteerBox(rc.Ctx, steer)
+	// Record the shape of each model turn, so a run that stopped because it ran
+	// out of output room is distinguishable from one that finished speaking.
+	turns := newTurnTracker()
+	rc.Ctx = withTurnTracker(rc.Ctx, turns)
 
 	// Record this execution as an auditable run (the automation platform's unit).
 	startedAt := time.Now().UnixMilli()
@@ -343,26 +347,44 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		// model can bail out to the agent if it turns out to need tools.
 		if !s.tryFastPath(ctx, rc, req, model, modelName, raw) {
 			err = s.runEino(ctx, rc, deps, tools, model, modelName, raw)
-			// Steering lands at the run's next model call, and a message sent
-			// during the FINAL call has no next call to land in — so the run
-			// continues with it rather than dropping it. Never over a run that
-			// failed, was cancelled, or paused for the user: those are waiting on
-			// something else, and restarting the model under them would be wrong.
-			// The fast path is not covered here (it makes no model call at all);
-			// a message that raced it falls to the report below.
-			for round := 0; round < steerTailRounds; round++ {
+			// The run stopping is not the same as the run being finished. Three
+			// things can make it keep going, and all three are the same move —
+			// append and re-enter:
+			//
+			//   - a message the user steered in during the FINAL model call, which
+			//     had no next call to land in;
+			//   - a turn the provider truncated before the model called anything;
+			//   - the model's own checklist, left unfinished.
+			//
+			// Never over a run that failed, was cancelled, or paused for a human:
+			// those are waiting on something else, and restarting the model under
+			// them would be wrong. The fast path is not covered (it makes no model
+			// call at all); a steered message that raced it falls to the report
+			// below.
+			for round := 0; round < continuationRounds; round++ {
 				if err != nil || ctx.Err() != nil || rc.Interrupt != nil {
 					break
 				}
-				left := steer.drain()
-				if len(left) == 0 {
+				// The user's own words go in as user turns, and take precedence:
+				// they may well be what makes the rest moot.
+				if left := steer.drain(); len(left) > 0 {
+					for _, text := range left {
+						m := messages.Chat(messages.RoleUser, text, meta)
+						s.Msg.Deliver(rc, raw, m, true)
+						rc.Messages = append(rc.Messages, m)
+					}
+					err = s.runEino(ctx, rc, deps, tools, model, modelName, raw)
+					continue
+				}
+				nudge := continuationNudge(rc.Ctx)
+				if nudge == "" {
 					break
 				}
-				for _, text := range left {
-					m := messages.Chat(messages.RoleUser, text, meta)
-					s.Msg.Deliver(rc, raw, m, true)
-					rc.Messages = append(rc.Messages, m)
-				}
+				logContinuation(round, nudge)
+				// Appended for the MODEL, not delivered to the user: they asked for
+				// the task, not for a transcript of us arguing with the model about
+				// whether it is done.
+				rc.Messages = append(rc.Messages, messages.Chat(messages.RoleUser, nudge, meta))
 				err = s.runEino(ctx, rc, deps, tools, model, modelName, raw)
 			}
 		}
@@ -468,6 +490,12 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 	if status == db.RunDone && rc.Ctx != nil {
 		budgetHit = budgetFrom(rc.Ctx).exhausted()
 		unfinished = planTrackerFrom(rc.Ctx).unfinished()
+		// A run whose LAST word was cut off mid-sentence did not finish, whatever
+		// the text reads like. This was the whole of one 693-second run: a single
+		// truncated turn, no tool call, no file — filed as done.
+		if last := turnTrackerFrom(rc.Ctx).lastTurn(); last.Truncated() {
+			budgetHit = firstNonEmpty(budgetHit, "output truncated")
+		}
 		if budgetHit != "" || len(unfinished) > 0 {
 			status = db.RunPartial
 		}

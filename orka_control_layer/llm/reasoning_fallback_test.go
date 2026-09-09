@@ -1,6 +1,9 @@
 package llm
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The run that motivated the near-empty case: 1,061 seconds, 29 tool calls,
 // eight verified deliverables — and the user saw the single character "D". The
@@ -71,5 +74,41 @@ func TestReasoningFallbackNeedsSubstantialReasoning(t *testing.T) {
 	applyReasoningFallback(&out)
 	if out.Content != "D" {
 		t.Fatalf("content = %q; a brief thought is not an answer either", out.Content)
+	}
+}
+
+// The 693-second run: the model composed an SVG inside its reasoning, hit the
+// provider's output ceiling, and returned mid-tag with no tool call and no
+// content. Promoting that draft made a run that produced nothing look like a
+// finished answer, and it was filed as done.
+func TestATruncatedReasoningDraftIsNotAnAnswer(t *testing.T) {
+	out := &Response{
+		Content:      "",
+		Reasoning:    strings.Repeat("<circle cx=\"120\" cy=\"88\" r=\"14\"/> wait, that overlaps the road — ", 400),
+		FinishReason: "length",
+	}
+	applyReasoningFallback(out)
+	if out.Content != "" {
+		t.Fatalf("a truncated draft was promoted to the answer (%d chars)", len(out.Content))
+	}
+}
+
+// The rescue this fallback exists for must still work: a reasoning model that
+// finished normally, putting its real answer in reasoning_content.
+func TestAFinishedReasoningAnswerIsStillRecovered(t *testing.T) {
+	out := &Response{Content: "", Reasoning: "答案是 7097663。", FinishReason: "stop"}
+	applyReasoningFallback(out)
+	if out.Content != "答案是 7097663。" {
+		t.Fatalf("a completed reasoning answer was lost: %q", out.Content)
+	}
+}
+
+// Truncation with real content is left alone either way — there is nothing to
+// rescue, and blanking it would discard what the model did manage to say.
+func TestATruncatedTurnWithContentKeepsIt(t *testing.T) {
+	out := &Response{Content: "报告写到一半", Reasoning: "思考", FinishReason: "length"}
+	applyReasoningFallback(out)
+	if out.Content != "报告写到一半" {
+		t.Fatalf("content = %q", out.Content)
 	}
 }
