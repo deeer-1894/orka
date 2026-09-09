@@ -44,6 +44,13 @@ export function FilePreview({ name, onClose, conv, initialHistory }: { name: str
   const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
   const isPdf = /\.pdf$/i.test(name);
   const isMd = /\.(md|markdown)$/i.test(name);
+  // An HTML page the agent produced is a thing to LOOK AT, not source to read.
+  // It used to fall into the text branch and render as markup — the animation
+  // the run was asked for was there, and the only way to see it was to guess the
+  // download URL by hand. The server serves it sandboxed (opaque origin, scripts
+  // on, no access to our storage), so it can be rendered in place.
+  const isHTML = /\.html?$/i.test(name);
+  const [showSource, setShowSource] = useState(false);
   // Allowlist of extensions safe to show as text; anything else binary.
   const isText =
     isMd || /\.(txt|csv|tsv|json|ya?ml|xml|html?|css|js|ts|tsx|jsx|py|go|rs|java|c|cpp|h|sh|sql|toml|ini|conf|log|rtf)$/i.test(name);
@@ -54,12 +61,12 @@ export function FilePreview({ name, onClose, conv, initialHistory }: { name: str
   useOverlay(onClose);
 
   useEffect(() => {
-    if (!isText) return;
+    if (!isText || (isHTML && !showSource)) return;
     fetch(url, { headers: { Authorization: "Bearer " + auth.token() } })
       .then((r) => (r.ok ? r.text() : Promise.reject(new Error("HTTP " + r.status))))
       .then((t) => setContent(t.slice(0, 100_000)))
       .catch((e) => setErr(String(e)));
-  }, [url, isText]);
+  }, [url, isText, isHTML, showSource]);
 
   // Lazy-load version history the first time the history view is opened.
   useEffect(() => {
@@ -85,6 +92,26 @@ export function FilePreview({ name, onClose, conv, initialHistory }: { name: str
               🕘 历史{hasHistory ? ` · ${versions!.length}` : ""}
             </button>
           )}
+          {isHTML && (
+            <>
+              <button
+                onClick={() => setShowSource((v) => !v)}
+                className={"text-[12px] hover:underline " + (showSource ? "text-accent font-medium" : "text-muted")}
+                title={showSource ? "回到渲染视图" : "查看 HTML 源码"}
+              >
+                {showSource ? "预览" : "源码"}
+              </button>
+              <a
+                href={fileApi.previewURL(name, conv)}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[12px] text-muted hover:underline"
+                title="在新标签页打开"
+              >
+                新标签
+              </a>
+            </>
+          )}
           <a href={url} className="text-[12px] text-accent hover:underline">下载</a>
           <button onClick={onClose} className="ml-1 text-faint hover:text-ink">✕</button>
         </div>
@@ -96,6 +123,17 @@ export function FilePreview({ name, onClose, conv, initialHistory }: { name: str
             <img src={url} alt={name} className="mx-auto max-w-full rounded" />
           ) : isPdf ? (
             <iframe src={fileApi.previewURL(name, conv)} title={name} className="h-[70vh] w-full border-0 bg-white" />
+          ) : isHTML && !showSource ? (
+            // No sandbox attribute here: the SERVER sends
+            // `Content-Security-Policy: sandbox allow-scripts` with the file, so
+            // the document is already confined to an opaque origin and cannot
+            // reach this app's storage — and that protection also covers opening
+            // the URL in a tab of its own, which an attribute cannot.
+            <iframe
+              src={fileApi.previewURL(name, conv)}
+              title={name}
+              className="h-[70vh] w-full border-0 bg-white"
+            />
           ) : !isText ? (
             <div className="px-4 py-10 text-center">
               <div className="text-[34px]">📄</div>

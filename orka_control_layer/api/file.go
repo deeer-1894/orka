@@ -121,8 +121,41 @@ func (a *API) FileDownload(ctx context.Context, c *app.RequestContext) {
 	if string(c.Query("inline")) == "1" {
 		disp = "inline"
 	}
+	// HTML served for RENDERING is model-generated code about to execute on this
+	// app's own origin — the origin whose localStorage holds the session token.
+	// The sandbox directive gives the document an opaque origin: scripts still
+	// run (an animation needs them), but it can reach neither the page that
+	// framed it nor any storage or cookie of ours. Applied at the response, not
+	// at the <iframe>, so opening the same URL in a tab of its own is bound by it
+	// too.
+	if csp := inlineCSP(disp, ct); csp != "" {
+		c.Response.Header.Set("Content-Security-Policy", csp)
+	}
+	c.Response.Header.Set("X-Content-Type-Options", "nosniff")
 	c.Response.Header.Set("Content-Disposition", contentDisposition(disp, filepath.Base(p)))
 	c.Data(consts.StatusOK, ct, data)
+}
+
+// inlineCSP returns the Content-Security-Policy for a file about to be
+// RENDERED, or "" when none is needed.
+//
+// Only HTML needs one — it is the only thing served here that executes — and
+// only when it is rendered rather than saved. What it prevents: a page the
+// MODEL wrote, running on the origin whose localStorage holds the session
+// token.
+//
+// The response header rather than an <iframe sandbox> attribute, for two
+// reasons. It covers the top-level case, where there is no element to carry an
+// attribute and the page would otherwise run unrestricted. And it cannot be
+// forgotten by whoever embeds the file next — the protection travels with the
+// bytes instead of with the caller.
+func inlineCSP(disp, contentType string) string {
+	if disp != "inline" || !strings.HasPrefix(contentType, "text/html") {
+		return ""
+	}
+	// No allow-same-origin: that is the whole point. With it, the document would
+	// run as this app and could read the session token out of localStorage.
+	return "sandbox allow-scripts"
 }
 
 // contentDisposition builds an RFC 6266 header. HTTP header values are ASCII, so
