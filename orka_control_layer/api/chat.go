@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
@@ -150,6 +151,41 @@ func (a *API) ChatKill(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	fail(c, consts.StatusNotFound, "no running session for id")
+}
+
+// ChatSteer handles POST /chat/steer — a message typed while a run is still
+// going. It is handed to the live run, which injects it before its next model
+// call, so it lands in the turn already in progress instead of queueing behind
+// it.
+//
+// A 404 here is not an error the client should show: it means the run ended in
+// the moment between typing and sending, and the correct recovery is to send
+// the same text as an ordinary /chat/run turn. The client must not swallow the
+// message, which is exactly what the composer used to do.
+func (a *API) ChatSteer(ctx context.Context, c *app.RequestContext) {
+	var req struct {
+		ConversationID string `json:"conversation_id"`
+		TaskID         string `json:"task_id"`
+		Message        string `json:"message"`
+	}
+	if err := bind(c, &req); err != nil {
+		fail(c, consts.StatusBadRequest, "bad request: "+err.Error())
+		return
+	}
+	id := firstNonEmptyStr(req.TaskID, req.ConversationID)
+	if id == "" {
+		fail(c, consts.StatusBadRequest, "task_id or conversation_id required")
+		return
+	}
+	if strings.TrimSpace(req.Message) == "" {
+		fail(c, consts.StatusBadRequest, "message required")
+		return
+	}
+	if a.Chat.Steer(id, req.Message) {
+		ok(c, map[string]string{"status": "steered", "id": id})
+		return
+	}
+	fail(c, consts.StatusNotFound, "no running session accepted the message")
 }
 
 // ListModels handles GET /models, exposing the configured model names so the UI

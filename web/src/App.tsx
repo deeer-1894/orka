@@ -302,6 +302,18 @@ function Workbench({
       lastMsgRef.current = msg;
       const id = await ensureConversation();
       seen.current.add(id);
+      // A message typed while this conversation is still running goes INTO that
+      // run — the agent picks it up at its next model call and can change course
+      // mid-task. Starting a second run instead would be wrong twice over: the
+      // correction would arrive after the work it was meant to correct, and two
+      // runs on one conversation share a stream hub entry, so their events would
+      // interleave. Attachments are not steerable (they need the upload pre-pass
+      // the run has already passed), so those still start a turn of their own.
+      if (statusOf(id) === "streaming" && fileIDs.length === 0) {
+        // false = the run ended while we were sending. Fall through and send it
+        // as an ordinary turn; the one thing we must never do is drop it.
+        if (await api.steer(id, msg)) return;
+      }
       // carry a new chat's tool selection onto its freshly-created conversation id
       if (id && toolGroups.size) saveTools(id, toolGroups);
       const enabledTools = toolGroups.size ? [...toolGroups] : [];
@@ -312,7 +324,7 @@ function Workbench({
       });
       refreshTasks();
     },
-    [ensureConversation, run, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill, confirmRisky],
+    [ensureConversation, run, statusOf, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill, confirmRisky],
   );
 
   // Re-send the last user message after a failure (network drop, sandbox down…).

@@ -686,6 +686,15 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 		ctxMW = append([]adk.ChatModelAgentMiddleware{r}, ctxMW...)
 		rc.Put(varModelRouter, r)
 	}
+	// A message the user typed after this run started goes in ahead of all of
+	// them: the router should pick a tier for the request as it now stands, and
+	// the reducer should account for the message it is about to send. Only the
+	// orchestrator gets this — sub-agents build their own chain, and draining
+	// consumes, so a sub-agent could otherwise swallow the message where the
+	// user cannot see it.
+	if box := steerBoxFrom(ctx); box != nil {
+		ctxMW = append([]adk.ChatModelAgentMiddleware{newSteerInjector(box)}, ctxMW...)
+	}
 	if s.Cfg.Agent.MultiAgent {
 		if instruction == "" {
 			instruction = OrchestratorPrompt

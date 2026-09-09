@@ -83,6 +83,9 @@ type ChatService struct {
 
 	mu   sync.Mutex
 	runs map[string]context.CancelFunc
+	// Mailboxes for messages typed while a run is in flight, keyed the same way
+	// as runs. Separate from runs so /chat/kill's path keeps its shape.
+	steers map[string]*steerBox
 }
 
 // NewChatService builds a ChatService with sane defaults. By default it serves
@@ -267,6 +270,14 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// Break the tail-end spin: a run that has finished its work but cannot
 	// confirm it will otherwise repeat the same check until the budget is gone.
 	rc.Ctx = withLoopDetector(rc.Ctx, newLoopDetector())
+	// Accept messages typed while this run is in flight. Registered under the
+	// same id as the kill switch, so /chat/steer resolves a run exactly the way
+	// /chat/kill does, and registered here — before any model call — so a message
+	// sent in the first moments of a run is not refused for arriving too early.
+	steer := newSteerBox(s.steerDeliver(rc, raw, meta))
+	s.registerSteer(runID, steer)
+	defer s.unregisterSteer(runID)
+	rc.Ctx = withSteerBox(rc.Ctx, steer)
 
 	// Record this execution as an auditable run (the automation platform's unit).
 	startedAt := time.Now().UnixMilli()
@@ -332,7 +343,37 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		// model can bail out to the agent if it turns out to need tools.
 		if !s.tryFastPath(ctx, rc, req, model, modelName, raw) {
 			err = s.runEino(ctx, rc, deps, tools, model, modelName, raw)
+			// Steering lands at the run's next model call, and a message sent
+			// during the FINAL call has no next call to land in — so the run
+			// continues with it rather than dropping it. Never over a run that
+			// failed, was cancelled, or paused for the user: those are waiting on
+			// something else, and restarting the model under them would be wrong.
+			// The fast path is not covered here (it makes no model call at all);
+			// a message that raced it falls to the report below.
+			for round := 0; round < steerTailRounds; round++ {
+				if err != nil || ctx.Err() != nil || rc.Interrupt != nil {
+					break
+				}
+				left := steer.drain()
+				if len(left) == 0 {
+					break
+				}
+				for _, text := range left {
+					m := messages.Chat(messages.RoleUser, text, meta)
+					s.Msg.Deliver(rc, raw, m, true)
+					rc.Messages = append(rc.Messages, m)
+				}
+				err = s.runEino(ctx, rc, deps, tools, model, modelName, raw)
+			}
 		}
+	}
+	// Whatever is still in the mailbox was never shown to the model — the run
+	// failed, was cancelled, paused, or outran the continuation budget. The user
+	// watched it send, so say plainly that it did not arrive. Silence here is the
+	// exact failure this replaces, just moved later.
+	for _, text := range steer.drain() {
+		s.Msg.Deliver(rc, raw, messages.Chat(messages.RoleAssistant,
+			"⚠️ 这条消息没能进入本次任务:「"+text+"」\n任务已经结束或暂停,重新发一次即可。", meta), true)
 	}
 
 	s.finish(ctx, rc, meta, req, raw, err)

@@ -243,6 +243,15 @@ export const api = {
     return (j.data ?? []) as { version: string; label: string; hint: string }[];
   },
   kill: (id: string) => post("/chat/kill", { conversation_id: id, task_id: id }),
+  // steer hands a message to a run that is still going, to be injected before
+  // its next model call. Resolves false when no live run took it — the run
+  // ended in the moment between typing and sending — and the caller must then
+  // send the same text as an ordinary turn rather than dropping it. Silent:
+  // that outcome is a normal race, not something to interrupt the user with.
+  steer: (id: string, message: string) =>
+    post("/chat/steer", { conversation_id: id, task_id: id, message }, true)
+      .then(() => true)
+      .catch(() => false),
 };
 
 export type FileVersion = { ts: string; when: number; size: number; path: string };

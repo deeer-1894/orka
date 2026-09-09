@@ -216,8 +216,14 @@ export function Composer({
     requestAnimationFrame(() => ta?.focus());
   };
 
+  // While a run is going, a plain message is not blocked — it is steered into
+  // that run (App routes it) and reaches the agent at its next model call.
+  // Attachments are the exception: they need the upload pre-pass the running
+  // turn is already past, so they wait rather than being silently dropped.
+  const holdForAttachments = busy && attachments.length > 0;
+
   const send = () => {
-    if ((!text.trim() && attachments.length === 0) || busy || uploading > 0) return;
+    if ((!text.trim() && attachments.length === 0) || uploading > 0 || holdForAttachments) return;
     onSend(text.trim(), attachments.map((a) => a.path));
     setText("");
     setAttachments([]);
@@ -372,6 +378,13 @@ export function Composer({
               </span>
             ))}
             {uploading > 0 && <span className="rounded-lg bg-surface2/60 px-2 py-1 text-[12px] text-faint">上传中 {uploading}…</span>}
+            {/* A disabled send button with no stated reason is the same silent
+                failure this change removes. Say why. */}
+            {holdForAttachments && (
+              <span className="inline-flex items-center rounded-lg bg-accentsoft px-2 py-1 text-[12px] text-accent">
+                运行中不能追加附件 · 等这一轮结束再发
+              </span>
+            )}
           </div>
         )}
 
@@ -467,10 +480,13 @@ export function Composer({
               if (e.key === "Escape") setMenu(false);
             }}
             rows={1}
-            placeholder="给 Orka 发消息…"
+            placeholder={busy ? "运行中 · 发消息可以立即插入当前任务" : "给 Orka 发消息…"}
             className="block max-h-[200px] flex-1 resize-none bg-transparent px-1 py-2 text-[15px] outline-none placeholder:text-faint"
           />
-          {busy ? (
+          {/* Stop stays the action while the box is empty — that is what the
+              button is FOR during a run. As soon as there is something to say,
+              it becomes send, because the message goes into the running task. */}
+          {busy && !text.trim() ? (
             <button
               onClick={onKill}
               className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-ink text-bg hover:opacity-80 transition"
@@ -481,10 +497,10 @@ export function Composer({
           ) : (
             <button
               onClick={send}
-              disabled={(!text.trim() && attachments.length === 0) || uploading > 0}
+              disabled={(!text.trim() && attachments.length === 0) || uploading > 0 || holdForAttachments}
               className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-accent text-white hover:brightness-105 disabled:opacity-30 transition"
-              title="Send"
-              aria-label="发送"
+              title={holdForAttachments ? "运行中不能追加附件,等这一轮结束再发" : busy ? "插入当前任务" : "Send"}
+              aria-label={busy ? "插入当前任务" : "发送"}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                 <path d="M12 19V5M12 5l-6 6M12 5l6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />

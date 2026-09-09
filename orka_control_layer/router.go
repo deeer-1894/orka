@@ -61,6 +61,7 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/chat/run", a.ChatRun)
 	g.GET("/chat/attach", a.ChatAttach) // reconnect + replay missed SSE events
 	g.POST("/chat/kill", a.ChatKill)
+	g.POST("/chat/steer", a.ChatSteer) // a message typed while the run is still going
 	g.POST("/internal/chat/run", a.ChatRun)
 
 	g.POST("/file/upload", a.FileUpload)
