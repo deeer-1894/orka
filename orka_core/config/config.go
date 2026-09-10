@@ -5,6 +5,7 @@ package config
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -50,6 +51,28 @@ type LLMConfig struct {
 	// 82,903 characters composing a file inside its reasoning without ever
 	// calling a tool.
 	MaxTokens int `yaml:"max_tokens"`
+	// Reasoning is a raw passthrough merged into every chat request body, for
+	// controlling how much a reasoning model thinks before it acts.
+	//
+	// A passthrough rather than a modelled option because there is no agreed
+	// field. Endpoints that are otherwise OpenAI-compatible each spell it
+	// differently, and one deployment commonly serves several of them at once:
+	//
+	//	reasoning_effort: "low"          OpenAI o-series / gpt-5, the de-facto one
+	//	thinking: {type: "disabled"}     Volcengine Ark (doubao), Anthropic-compatible
+	//	reasoning: {effort: "low"}       OpenRouter's unified field
+	//	enable_thinking: false           Qwen / DashScope, vLLM
+	//
+	// Empty (the default) sends nothing and leaves today's behaviour untouched.
+	// This is the ONLY lever that actually shortens thinking: max_tokens caps
+	// output, and a reasoning model spends its reasoning tokens FIRST, so capping
+	// output truncates the answer after the thinking has already been paid for —
+	// which is exactly how a 693-second run ended mid-tag having called no tools.
+	Reasoning map[string]any `yaml:"reasoning"`
+	// ReasoningByModel overrides Reasoning per model name. One endpoint here
+	// serves nine models across three of the conventions above, so a single
+	// global setting cannot be right for all of them.
+	ReasoningByModel map[string]map[string]any `yaml:"reasoning_by_model"`
 	// Models the user may pick per conversation, beyond the main/mini pair.
 	// Providers that host many models behind one endpoint (Ark, OpenRouter…)
 	// serve any of them from the same client — only the model NAME changes — so
@@ -198,6 +221,7 @@ func (c *Config) applyEnv() {
 	}
 	envInt(&c.LLM.MaxRetries, "LLM_MAX_RETRIES")
 	envInt(&c.LLM.MaxTokens, "LLM_MAX_TOKENS")
+	envJSON(&c.LLM.Reasoning, "LLM_REASONING")
 	envStr(&c.Storage.MongoURI, "MONGO_URI")
 	envStr(&c.Storage.MongoDB, "MONGO_DB")
 	envStr(&c.Storage.RedisAddr, "REDIS_ADDR")
@@ -249,6 +273,20 @@ func envInt(dst *int, key string) {
 		if n, err := strconv.Atoi(v); err == nil {
 			*dst = n
 		}
+	}
+}
+
+// envJSON reads a JSON object from the environment. A malformed value is
+// ignored rather than fatal: it is a tuning knob, and a typo in it must not
+// stop the service from starting.
+func envJSON(dst *map[string]any, key string) {
+	v, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(v) == "" {
+		return
+	}
+	var m map[string]any
+	if json.Unmarshal([]byte(v), &m) == nil {
+		*dst = m
 	}
 }
 

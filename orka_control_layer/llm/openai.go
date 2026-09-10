@@ -29,6 +29,11 @@ type OpenAIClient struct {
 	// is the safe default: too low a cap truncates a genuinely large single
 	// deliverable, and a 40k-character SVG is a legitimate answer.
 	DefaultMaxTokens int
+	// Reasoning is merged into every request body; ReasoningByModel overrides it
+	// for a named model. See passthrough.go — there is no agreed field for
+	// reasoning control, and one endpoint often serves models that disagree.
+	Reasoning        map[string]any
+	ReasoningByModel map[string]map[string]any
 }
 
 // NewOpenAIClient builds a client. baseURL should include the /v1 suffix.
@@ -160,6 +165,11 @@ type wireResponse struct {
 	} `json:"error"`
 }
 
+// reasoning resolves this client's reasoning passthrough for a model.
+func (c *OpenAIClient) reasoning(model string) map[string]any {
+	return reasoningFor(model, c.Reasoning, c.ReasoningByModel)
+}
+
 // wireRequestFor builds the wire request, applying the client's default output
 // cap when the caller has not chosen one of its own.
 func (c *OpenAIClient) wireRequestFor(req Request) wireRequest {
@@ -208,7 +218,7 @@ func toWireRequest(req Request) wireRequest {
 func (c *OpenAIClient) Chat(ctx context.Context, req Request) (Response, error) {
 	wr := c.wireRequestFor(req)
 
-	body, err := json.Marshal(wr)
+	body, err := withExtra(wr, c.reasoning(req.Model))
 	if err != nil {
 		return Response{}, fmt.Errorf("marshal request: %w", err)
 	}
@@ -319,7 +329,7 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 	wr := c.wireRequestFor(req)
 	wr.Stream = true
 	wr.StreamOpts = &streamOpts{IncludeUsage: true} // ask the provider for a final usage chunk
-	body, err := json.Marshal(wr)
+	body, err := withExtra(wr, c.reasoning(req.Model))
 	if err != nil {
 		return Response{}, fmt.Errorf("marshal request: %w", err)
 	}

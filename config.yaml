@@ -13,6 +13,25 @@ llm:
   # API key is NOT stored here — set OPENAI_API_KEY in the environment.
   openai_base_url: "https://open.bigmodel.cn/api/paas/v4"
   openai_api_key: ""
+  # How much a reasoning model is allowed to think before it acts. This is the
+  # only setting that shortens thinking: max_tokens caps OUTPUT, and a reasoning
+  # model spends its reasoning tokens first, so capping output truncates the
+  # ANSWER after the thinking is already paid for.
+  #
+  # A raw passthrough, merged into every request body, because there is no
+  # agreed field — endpoints that are otherwise OpenAI-compatible each spell it
+  # differently, and one endpoint often serves several conventions at once:
+  #
+  #   reasoning: {reasoning_effort: "low"}          # OpenAI o-series / gpt-5
+  #   reasoning: {thinking: {type: "disabled"}}     # Volcengine Ark (doubao)
+  #   reasoning: {reasoning: {effort: "low"}}       # OpenRouter
+  #   reasoning: {enable_thinking: false}           # Qwen / DashScope, vLLM
+  #
+  # Empty sends nothing. Per-model overrides win over the global setting:
+  #   reasoning_by_model:
+  #     doubao-seed-2.1-turbo: {thinking: {type: "disabled"}}
+  #     kimi-k3: {reasoning_effort: "low"}
+  reasoning: {}
   # main drives the orchestrator loop; mini backs summarization/sub-agents and is
   # the failover target for main.
   #

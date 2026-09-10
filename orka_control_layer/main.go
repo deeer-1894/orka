@@ -42,6 +42,15 @@ func waitReady(url string, timeout time.Duration, logger *slog.Logger) {
 	logger.Warn("tools_server not ready within timeout; continuing", "url", url)
 }
 
+// newLLMClient builds the provider client from config: the output cap plus the
+// reasoning passthrough (global, and per model where they disagree).
+func newLLMClient(cfg *config.Config) *llm.OpenAIClient {
+	c := llm.NewOpenAIClientCapped(cfg.LLM.OpenAIBaseURL, cfg.LLM.OpenAIAPIKey, cfg.LLM.MaxTokens)
+	c.Reasoning = cfg.LLM.Reasoning
+	c.ReasoningByModel = cfg.LLM.ReasoningByModel
+	return c
+}
+
 func main() {
 	cfgPath := os.Getenv("CONFIG_PATH")
 	if cfgPath == "" {
@@ -102,7 +111,7 @@ func main() {
 	// exchange alone, so queue time is the difference between a call's observed
 	// spacing and its logged duration rather than being folded into it.
 	mainLLM = llm.NewLimiterFromEnv(llm.NewMetered(llm.NewRetry(
-		llm.NewOpenAIClientCapped(cfg.LLM.OpenAIBaseURL, cfg.LLM.OpenAIAPIKey, cfg.LLM.MaxTokens),
+		newLLMClient(cfg),
 		llm.RetryConfig{
 			MaxAttempts: cfg.LLM.MaxRetries,
 			OnRetry: func(attempt int, delay time.Duration, err error) {
