@@ -699,7 +699,7 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 		if instruction == "" {
 			instruction = OrchestratorPrompt
 		}
-		miniModel := s.Cfg.LLM.MiniModel
+		miniModel := s.Cfg.LLM.DefaultModel()
 		if miniModel == "" {
 			miniModel = model
 		}
@@ -715,7 +715,7 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 		var sum []adk.ChatModelAgentMiddleware
 		if !s.DisableSummary {
 			// Auxiliary history compression runs on the fast mini model.
-			sumClient, sumModel := s.Mini, s.Cfg.LLM.MiniModel
+			sumClient, sumModel := s.Mini, s.Cfg.LLM.DefaultModel()
 			if sumClient == nil {
 				sumClient, sumModel = client, model
 			}
@@ -729,7 +729,7 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 		}
 		// Fail over to the other model tier when the primary exhausts its retries.
 		ag, err = BuildEinoAgent(ctx, client, model, instruction, tools, einoMaxIters,
-			backupModel(s.Mini, s.Cfg.LLM.MiniModel, model), sum...)
+			backupModel(s.Mini, s.Cfg.LLM.DefaultModel(), model), sum...)
 	}
 	if err != nil {
 		return err

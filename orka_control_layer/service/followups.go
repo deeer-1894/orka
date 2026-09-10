@@ -16,10 +16,7 @@ func (s *ChatService) SuggestFollowups(ctx context.Context, prompt, answer strin
 	if s.Mini == nil || strings.TrimSpace(answer) == "" {
 		return nil
 	}
-	model := s.Cfg.LLM.MiniModel
-	if model == "" {
-		model = s.Cfg.LLM.Model
-	}
+	model := s.Cfg.LLM.DefaultModel()
 	// Keep this minimal: an elaborate prompt makes a reasoning mini model think
 	// (and stall) longer. Short instruction + a token cap keeps it a few seconds.
 	sys := "Return ONLY a JSON array of 3 short follow-up questions (each under 18 words, same language as the question). No prose, no markdown."

@@ -135,6 +135,18 @@ function Workbench({
   // Gate side-effecting tools (terminal/browser/network/code) behind approval.
   const [confirmRisky, setConfirmRisky] = useState(() => localStorage.getItem("orka.confirmRisky") !== "0");
   const toggleConfirm = useCallback(() => setConfirmRisky((v) => { localStorage.setItem("orka.confirmRisky", v ? "0" : "1"); return !v; }), []);
+  // Deep thinking, per task. Sent as INTENT ("on"/"off"), never as a provider
+  // field: which field a model understands differs per model (glm takes
+  // `thinking`, OpenAI `reasoning_effort`, Qwen `enable_thinking`), and the
+  // model is picked from the dropdown right next to this switch — a switch that
+  // sent the field would silently stop working on the next model.
+  //
+  // Off by default, which is what the deployment configures. Measured on one
+  // question: reducing it cut reasoning tokens 62% and latency 37%. It is worth
+  // turning ON for genuinely hard reasoning, which is why it is a switch and
+  // not a constant.
+  const [deepThinking, setDeepThinking] = useState(() => localStorage.getItem("orka.deepThinking") === "1");
+  const toggleThinking = useCallback(() => setDeepThinking((v) => { localStorage.setItem("orka.deepThinking", v ? "0" : "1"); return !v; }), []);
 
   useEffect(() => {
     api.models().then((m) => m.length && setModels(m)).catch(() => {});
@@ -331,12 +343,12 @@ function Workbench({
       const enabledTools = toolGroups.size ? [...toolGroups] : [];
       // fire-and-forget: do NOT await, so other conversations stay interactive
       // while this one streams. The backend runs each conversation concurrently.
-      run({ message: msg, conversationID: id, userEmail: user.email, enabledTools, selectedVersion: version, activeSkill: activeSkill ?? "", fileIDs, confirmRisky }).then(() => {
+      run({ message: msg, conversationID: id, userEmail: user.email, enabledTools, selectedVersion: version, activeSkill: activeSkill ?? "", fileIDs, confirmRisky, deepThinking: deepThinking ? "on" : "off" }).then(() => {
         refreshConversations(); // pick up the auto-generated title
       });
       refreshTasks();
     },
-    [ensureConversation, run, statusOf, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill, confirmRisky],
+    [ensureConversation, run, statusOf, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill, confirmRisky, deepThinking],
   );
 
   // Re-send the last user message after a failure (network drop, sandbox down…).
@@ -507,6 +519,24 @@ function Workbench({
           >
             <Icon name="shield" size={13} />
             <span className="hidden sm:inline">{confirmRisky ? "需确认" : "不确认"}</span>
+          </button>
+          {/* Same place for the same reason: it answers "how will this behave
+              when I send", and it belongs next to the model it applies to. */}
+          <button
+            onClick={toggleThinking}
+            aria-pressed={deepThinking}
+            title={deepThinking
+              ? "深度思考已开:模型会先充分推理再动手,适合难题,但更慢更贵"
+              : "深度思考已关:压低模型的推理量,更快更省;遇到难题可以打开"}
+            className={
+              "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] transition " +
+              (deepThinking
+                ? "border-accent/40 bg-accentsoft text-accent"
+                : "border-border text-faint hover:bg-surface2")
+            }
+          >
+            <Icon name="sparkle" size={13} />
+            <span className="hidden sm:inline">{deepThinking ? "深度思考" : "快速"}</span>
           </button>
           {totalTokens > 0 && (
             <span className="inline-flex items-center gap-1 text-[11px] text-faint" title="本进程累计 token 用量">

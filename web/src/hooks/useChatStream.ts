@@ -17,6 +17,9 @@ export interface RunParams {
   resumeKey?: string;
   selectedVersion?: string; // "" = main model, "mini" = the cheaper/faster model
   activeSkill?: string; // user-locked skill mode (researcher / writer / …)
+  // "on" | "off": how much the model should reason before acting. Intent only —
+  // the server maps it to whatever field the chosen model understands.
+  deepThinking?: string;
   fileIDs?: string[]; // uploaded attachment paths (text injected; images → VLM)
   confirmRisky?: boolean; // gate side-effecting tools behind user approval
   // attachOnly listens to an ALREADY-running conversation instead of starting a
@@ -221,6 +224,7 @@ export function useChatStreams() {
             resume_key: p.resumeKey ?? "",
             selected_version: p.selectedVersion ?? "",
             active_skill: p.activeSkill ?? "",
+            deep_thinking: p.deepThinking ?? "",
             file_ids: p.fileIDs ?? [],
             confirm_risky: p.confirmRisky ?? false,
           }),

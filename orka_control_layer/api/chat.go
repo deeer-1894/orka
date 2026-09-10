@@ -206,27 +206,32 @@ func (a *API) Followups(ctx context.Context, c *app.RequestContext) {
 }
 
 func (a *API) ListModels(_ context.Context, c *app.RequestContext) {
-	llm := a.Chat.Cfg.LLM
+	cfg := a.Chat.Cfg.LLM
+	models := cfg.SelectableModels()
 	var out []map[string]string
-	// Automatic routing first, and only when there is something to route
-	// between: offering it with one configured model would be a lie.
-	if llm.MiniModel != "" && llm.MiniModel != llm.Model {
+	// `auto` first, and it is offered even on a single-model deployment now: it
+	// escalates the model's REASONING rather than swapping the model, so there
+	// is always something to escalate. It used to be hidden unless two tiers
+	// were configured, which is the same reason the tiers existed at all.
+	if len(models) > 0 {
 		out = append(out, map[string]string{
 			"version": service.ModelAuto, "label": "自动",
-			"hint": "先用快模型,复杂了自动升级",
+			"hint": "先浅思考,复杂了自动加深",
 		})
 	}
-	out = append(out, map[string]string{"version": "", "label": llm.Model, "hint": "主模型 · 更强"})
-	if llm.MiniModel != "" && llm.MiniModel != llm.Model {
-		out = append(out, map[string]string{"version": "mini", "label": llm.MiniModel, "hint": "更快 · 更省"})
-	}
-	// Any other model the deployment allows, selectable by name. Same endpoint,
-	// same client — only the model name changes.
-	for _, m := range llm.SelectableModels() {
-		if m == llm.Model || m == llm.MiniModel {
-			continue
+	// Then every model the deployment allows, by name, the first being the
+	// default. No "主模型 / 更快更省" tiers: there is one list, and which entry to
+	// use is the user's choice per conversation.
+	for i, m := range models {
+		hint := "手动指定"
+		if i == 0 {
+			hint = "默认"
 		}
-		out = append(out, map[string]string{"version": m, "label": m, "hint": "手动指定"})
+		version := m
+		if i == 0 {
+			version = "" // the default is addressed by the empty version, as before
+		}
+		out = append(out, map[string]string{"version": version, "label": m, "hint": hint})
 	}
 	ok(c, out)
 }

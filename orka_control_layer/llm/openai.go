@@ -165,8 +165,13 @@ type wireResponse struct {
 	} `json:"error"`
 }
 
-// reasoning resolves this client's reasoning passthrough for a model.
-func (c *OpenAIClient) reasoning(model string) map[string]any {
+// reasoning resolves this client's reasoning passthrough for a model, honouring
+// the caller's intent. ThinkingOn sends nothing, which is how a request asks for
+// the model's full reasoning even where the deployment reduces it by default.
+func (c *OpenAIClient) reasoning(ctx context.Context, model string) map[string]any {
+	if thinkingFrom(ctx) == ThinkingOn {
+		return nil
+	}
 	return reasoningFor(model, c.Reasoning, c.ReasoningByModel)
 }
 
@@ -218,7 +223,7 @@ func toWireRequest(req Request) wireRequest {
 func (c *OpenAIClient) Chat(ctx context.Context, req Request) (Response, error) {
 	wr := c.wireRequestFor(req)
 
-	body, err := withExtra(wr, c.reasoning(req.Model))
+	body, err := withExtra(wr, c.reasoning(ctx, req.Model))
 	if err != nil {
 		return Response{}, fmt.Errorf("marshal request: %w", err)
 	}
@@ -329,7 +334,7 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 	wr := c.wireRequestFor(req)
 	wr.Stream = true
 	wr.StreamOpts = &streamOpts{IncludeUsage: true} // ask the provider for a final usage chunk
-	body, err := withExtra(wr, c.reasoning(req.Model))
+	body, err := withExtra(wr, c.reasoning(ctx, req.Model))
 	if err != nil {
 		return Response{}, fmt.Errorf("marshal request: %w", err)
 	}

@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 )
@@ -50,6 +51,38 @@ func withExtra(v any, extra map[string]any) ([]byte, error) {
 	return json.Marshal(merged)
 }
 
+// Thinking is a caller's INTENT about reasoning, as opposed to the provider
+// field that expresses it. The two are separate on purpose: which field a model
+// understands is a property of the endpoint (glm takes `thinking`, OpenAI takes
+// `reasoning_effort`, Qwen takes `enable_thinking`, and this deployment's mini
+// model appears to take none of them), while whether the user wants deep
+// thinking for THIS task is a property of the request.
+//
+// Keeping them apart is what lets the UI offer a switch at all. A switch that
+// sent the provider field would silently stop working the moment someone picked
+// a different model from the same dropdown — the exact failure that took an
+// afternoon of A/B measurement to notice.
+const (
+	ThinkingDefault = ""    // whatever the deployment configured
+	ThinkingOn      = "on"  // let the model think: send no reduction
+	ThinkingOff     = "off" // send the configured reduction for this model
+)
+
+type thinkingKey struct{}
+
+// WithThinking records the caller's intent for calls made under ctx.
+func WithThinking(ctx context.Context, intent string) context.Context {
+	if intent == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, thinkingKey{}, intent)
+}
+
+func thinkingFrom(ctx context.Context) string {
+	v, _ := ctx.Value(thinkingKey{}).(string)
+	return v
+}
+
 // reasoningFor resolves the passthrough for one model: its own entry when it
 // has one, the global default otherwise. Per-model because a single endpoint
 // commonly fronts models that disagree about the field name.
@@ -59,3 +92,8 @@ func reasoningFor(model string, global map[string]any, byModel map[string]map[st
 	}
 	return global
 }
+
+// ThinkingIntentForTest exposes the intent stored on a context. Exported only
+// so another package's tests can assert what a middleware decided; the intent
+// itself is read by this package's client.
+func ThinkingIntentForTest(ctx context.Context) string { return thinkingFrom(ctx) }

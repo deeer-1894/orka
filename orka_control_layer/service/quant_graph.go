@@ -120,12 +120,12 @@ func (s *ChatService) scopedAgentRun(ctx context.Context, owner, instruction, ta
 	}
 	tools = filterByName(tools, toolNames)
 
-	client, model := s.Main, s.Cfg.LLM.Model
-	backup := backupModel(s.Mini, s.Cfg.LLM.MiniModel, model)
-	if useMini && s.Mini != nil && s.Cfg.LLM.MiniModel != "" {
-		client, model = s.Mini, s.Cfg.LLM.MiniModel
-		backup = backupModel(s.Main, s.Cfg.LLM.Model, model)
-	}
+	// One tier now: the pipeline runs on the deployment's default model. useMini
+	// used to pick the cheap tier for the mechanical stages; there is no cheap
+	// tier to pick, so the flag only survives as a hint that the stage is light.
+	client, model := s.Main, s.Cfg.LLM.DefaultModel()
+	backup := backupModel(s.Mini, model, model)
+	_ = useMini
 	ag, err := BuildEinoAgent(ctx, client, model, instruction, tools, 12, backup,
 		contextHandlers(ctx, s.Cfg.Storage.BaseStoragePath, owner, "quant-stage", tools, s.Cfg.Agent.SubAgents)...)
 	if err != nil {

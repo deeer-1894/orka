@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"github.com/cloudwego/eino/adk"
-	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/orka-oss/orka_control_layer/llm"
@@ -80,70 +79,6 @@ func routeStrongFirst(message string) bool {
 	return strings.Count(message, ")") >= 3 || strings.Count(message, "、") >= 4
 }
 
-// modelRouter serves the model for each call of one run, escalating from fast to
-// strong when the run turns out to need it.
-type modelRouter struct {
-	*adk.BaseChatModelAgentMiddleware
-	fast, strong         einomodel.BaseChatModel
-	fastName, strongName string
-
-	mu        sync.Mutex
-	strongNow bool
-	steps     int
-	escalated bool // strongNow was reached by escalation, not by the initial choice
-}
-
-// newModelRouter builds a router. strongFirst skips the cheap start. A nil fast
-// or strong model collapses the router to whichever one exists, so a
-// single-model deployment keeps working.
-func newModelRouter(fast einomodel.BaseChatModel, fastName string, strong einomodel.BaseChatModel, strongName string, strongFirst bool) *modelRouter {
-	r := &modelRouter{
-		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},
-		fast:                         fast, fastName: fastName,
-		strong: strong, strongName: strongName,
-		strongNow: strongFirst || fast == nil,
-	}
-	if strong == nil {
-		r.strongNow = false
-	}
-	return r
-}
-
-// BeforeModelRewriteState counts cycles and escalates once the run has shown it
-// is not a one-shot question.
-func (r *modelRouter) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
-	n := 0
-	for _, m := range state.Messages {
-		if m != nil && m.Role == schema.Assistant {
-			n++
-		}
-	}
-	r.mu.Lock()
-	r.steps = n
-	if !r.strongNow && r.strong != nil && n >= autoEscalateAfter {
-		r.strongNow, r.escalated = true, true
-	}
-	r.mu.Unlock()
-	return ctx, state, nil
-}
-
-// WrapModel substitutes the tier this call should run on. eino calls it per
-// model invocation, which is what makes a mid-run change possible at all.
-func (r *modelRouter) WrapModel(_ context.Context, m einomodel.BaseChatModel, _ *adk.ModelContext) (einomodel.BaseChatModel, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.strongNow {
-		if r.strong != nil {
-			return r.strong, nil
-		}
-		return m, nil
-	}
-	if r.fast != nil {
-		return r.fast, nil
-	}
-	return m, nil
-}
-
 // varModelRouter carries the run's router so finalizeRun can record which tier
 // actually served the work.
 const varModelRouter = "model_router"
@@ -155,11 +90,6 @@ func (s *ChatService) routerFor(rc *agent.RunContext, startModel string) *modelR
 	if rc == nil || rc.Meta.ModelVersion != ModelAuto {
 		return nil
 	}
-	fastClient, fastName := s.modelFor(ModelAuto)
-	strongClient, strongName := s.strongModelFor(ModelAuto)
-	if fastClient == nil || strongClient == nil || fastName == strongName {
-		return nil // nothing to route between
-	}
 	// The prompt is the last user message of this turn.
 	var prompt string
 	for i := len(rc.Messages) - 1; i >= 0; i-- {
@@ -168,23 +98,79 @@ func (s *ChatService) routerFor(rc *agent.RunContext, startModel string) *modelR
 			break
 		}
 	}
-	return newModelRouter(
-		llm.NewEinoModel(fastClient, fastName).ForAgent("router-fast"), fastName,
-		llm.NewEinoModel(strongClient, strongName).ForAgent("router-strong"), strongName,
-		routeStrongFirst(prompt),
-	)
+	return newModelRouter(startModel, routeStrongFirst(prompt))
 }
 
-// chosen reports the tier in use and whether it was reached by escalation, for
-// the run record and the UI.
+// modelRouter is `auto`: it starts the run cheap and escalates when the run
+// turns out to need it.
+//
+// It used to escalate by SWAPPING MODELS, which is why the deployment needed a
+// fast tier and a strong tier — two names for what was one client. It now
+// escalates the same model's REASONING instead: start with thinking reduced,
+// turn it on when the run stops looking like a one-shot question. Measured on
+// one question, the reduced end costs 62% fewer reasoning tokens and 37% less
+// latency, so there is a real cheap end to start from without a second model.
+//
+// That makes `auto` work on a single-model deployment, which the model-swapping
+// version could not do at all — `routerFor` used to give up with "nothing to
+// route between" whenever the two tiers resolved to the same name.
+type modelRouter struct {
+	*adk.BaseChatModelAgentMiddleware
+	model string
+
+	mu        sync.Mutex
+	deepNow   bool
+	steps     int
+	escalated bool // deepNow was reached by escalation, not by the initial choice
+}
+
+// newModelRouter builds a router. deepFirst skips the cheap start for a request
+// that is obviously too big to bother starting shallow.
+func newModelRouter(model string, deepFirst bool) *modelRouter {
+	return &modelRouter{
+		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},
+		model:                        model,
+		deepNow:                      deepFirst,
+	}
+}
+
+// BeforeModelRewriteState counts cycles, escalates once the run has shown it is
+// not a one-shot question, and puts the resulting intent on the context the
+// model call will run under.
+//
+// The context is the whole mechanism now: reasoning intent travels there
+// (llm.WithThinking), so escalating needs no second model instance and no
+// WrapModel substitution.
+func (r *modelRouter) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
+	n := 0
+	for _, m := range state.Messages {
+		if m != nil && m.Role == schema.Assistant {
+			n++
+		}
+	}
+	r.mu.Lock()
+	r.steps = n
+	if !r.deepNow && n >= autoEscalateAfter {
+		r.deepNow, r.escalated = true, true
+	}
+	deep := r.deepNow
+	r.mu.Unlock()
+
+	intent := llm.ThinkingOff
+	if deep {
+		intent = llm.ThinkingOn
+	}
+	return llm.WithThinking(ctx, intent), state, nil
+}
+
+// chosen reports what actually served the run, for the run record and the UI.
+// The model no longer changes, so the interesting part is whether the run had
+// to be escalated to deep thinking.
 func (r *modelRouter) chosen() (name string, escalated bool) {
 	if r == nil {
 		return "", false
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.strongNow {
-		return r.strongName, r.escalated
-	}
-	return r.fastName, false
+	return r.model, r.escalated
 }

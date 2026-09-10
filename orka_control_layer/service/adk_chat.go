@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/cloudwego/eino/adk"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,11 @@ type ChatRunRequest struct {
 	ActiveSkill     string   `json:"active_skill"`  // user-locked skill mode (deterministic prompt injection)
 	Trigger         string   `json:"trigger"`       // manual | schedule (audit: how the run was started)
 	ConfirmRisky    bool     `json:"confirm_risky"` // gate side-effecting tools behind user approval
+	// DeepThinking is the user's intent for THIS task: "on" lets the model think
+	// as much as it wants, "off" sends the configured reduction, "" follows the
+	// deployment default. Intent, not a provider field — which field a model
+	// understands is config's business (see llm.WithThinking).
+	DeepThinking string `json:"deep_thinking"`
 
 	// Internal (never bound from JSON): set when resuming an interrupted run.
 	resumeTarget string     // InterruptCtx.ID of the paused tool call
@@ -105,33 +111,26 @@ func NewChatService(cfg *config.Config, main, mini llm.Client, store checkpoint.
 // "" is the main tier and "mini" the fast one, as before. Anything else is
 // treated as an explicit model NAME: providers that host many models behind one
 // endpoint serve all of them from the same client, so picking one is a matter
-// of the name alone. Unknown names fall back to the main tier rather than being
+// of the name alone. Unknown names fall back to the default rather than being
 // forwarded — a request must not be able to bill an arbitrary model.
 //
-// ModelAuto is resolved by the router, not here; it starts on the fast tier and
-// this returns that, so a caller with no router still behaves sensibly.
+// There is one tier. "main" and "mini" are gone: they were two names for one
+// client (`miniLLM = mainLLM`) and two things to keep straight for an endpoint
+// that already fronts nine models. ModelAuto is not a model either — it runs on
+// the same one and escalates how hard it THINKS (see modelRouter), which is why
+// this can answer with a single name for every case.
+//
+// "mini" is still accepted so an in-flight request or a stored task that names
+// it keeps working; it resolves to the default like anything else.
 func (s *ChatService) modelFor(version string) (llm.Client, string) {
 	switch version {
-	case "":
-		return s.Main, s.Cfg.LLM.Model
-	case "mini", ModelAuto:
-		if s.Mini != nil {
-			return s.Mini, s.Cfg.LLM.MiniModel
-		}
-		return s.Main, s.Cfg.LLM.Model
+	case "", "mini", ModelAuto:
+		return s.Main, s.Cfg.LLM.DefaultModel()
 	}
 	if s.Cfg.LLM.AllowsModel(version) {
 		return s.Main, version
 	}
-	return s.Main, s.Cfg.LLM.Model
-}
-
-// strongModelFor is the tier the router escalates to for a given selection.
-func (s *ChatService) strongModelFor(version string) (llm.Client, string) {
-	if version != "" && version != "mini" && version != ModelAuto && s.Cfg.LLM.AllowsModel(version) {
-		return s.Main, version // an explicit pick is never overridden
-	}
-	return s.Main, s.Cfg.LLM.Model
+	return s.Main, s.Cfg.LLM.DefaultModel()
 }
 
 func (s *ChatService) register(id string, cancel context.CancelFunc) {
@@ -278,6 +277,9 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	s.registerSteer(runID, steer)
 	defer s.unregisterSteer(runID)
 	rc.Ctx = withSteerBox(rc.Ctx, steer)
+	// The user's reasoning intent for this task, resolved per model down in the
+	// provider client.
+	rc.Ctx = llm.WithThinking(rc.Ctx, req.DeepThinking)
 	// Record the shape of each model turn, so a run that stopped because it ran
 	// out of output room is distinguishable from one that finished speaking.
 	turns := newTurnTracker()
@@ -800,7 +802,19 @@ func taskFailed(meta messages.Meta, reason string) messages.Message {
 // titleAsync refines the conversation title using a mini LLM summary of the
 // first message. It runs in the background with its own short-lived context so
 // it neither blocks the chat run nor dies when the SSE connection closes.
+// titleAsync refines a conversation's snippet title with a short model call.
+//
+// Off by default now (ORKA_LLM_TITLES=1 turns it on). It is a cosmetic touch-up
+// on a label the sidebar already shows, and on a reasoning model it is not
+// cheap: measured here, 374 reasoning tokens and 3.3s for one chat title, and
+// 2 of 7 attempts spent the whole 15-second deadline and then failed —
+// burning the time and falling back to the snippet anyway. Across the log,
+// titles and suggested follow-ups accounted for 40% of ALL reasoning tokens
+// spent, for work that needs none.
 func (s *ChatService) titleAsync(convID, message string) {
+	if !titlePolishEnabled() {
+		return // the snippet title already set by the caller stands
+	}
 	model, modelName := s.modelFor("mini")
 	if model == nil || s.Msg == nil || s.Msg.Store == nil {
 		return
@@ -808,7 +822,8 @@ func (s *ChatService) titleAsync(convID, message string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		resp, err := model.Chat(llm.WithAgent(ctx, "title"), llm.Request{Model: modelName, Messages: []llm.ChatMessage{
+		// A title needs no deliberation; ask for none where the model honours it.
+		resp, err := model.Chat(llm.WithThinking(llm.WithAgent(ctx, "title"), llm.ThinkingOff), llm.Request{Model: modelName, Messages: []llm.ChatMessage{
 			{Role: llm.RoleSystem, Content: "You generate a very short chat title (max 6 words) summarizing the user's first message. Reply with ONLY the title — same language as the message, no quotes, no punctuation at the end, no prefixes."},
 			{Role: llm.RoleUser, Content: message},
 		}})
@@ -821,6 +836,12 @@ func (s *ChatService) titleAsync(convID, message string) {
 		}
 		_ = s.Msg.Store.UpdateConversationTitle(ctx, convID, title)
 	}()
+}
+
+// titlePolishEnabled reports whether the cosmetic title refinement runs.
+func titlePolishEnabled() bool {
+	v := os.Getenv("ORKA_LLM_TITLES")
+	return v == "1" || strings.EqualFold(v, "true")
 }
 
 // cleanTitle trims the model's title output to a safe single-line label.

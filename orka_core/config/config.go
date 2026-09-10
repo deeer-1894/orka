@@ -39,9 +39,19 @@ type ServerConfig struct {
 type LLMConfig struct {
 	OpenAIBaseURL string `yaml:"openai_base_url"`
 	OpenAIAPIKey  string `yaml:"openai_api_key"`
-	Model         string `yaml:"model"`
-	MiniModel     string `yaml:"mini_model"`
-	VLMModel      string `yaml:"vlm_model"`
+	// Model and MiniModel are LEGACY. There are no longer two tiers: a
+	// deployment has one ordered list of models, the user picks one per
+	// conversation, and `auto` escalates by letting the model think MORE rather
+	// than by swapping it for a bigger one (see modelRouter).
+	//
+	// Two tiers meant two names to keep straight for one endpoint that already
+	// serves nine models, and they were never two connections — the mini client
+	// was literally `miniLLM = mainLLM`, the same client with a different name.
+	// Kept only so an existing MODEL / MINI_MODEL still starts: both fold into
+	// the front of Models, first one winning as the default.
+	Model     string `yaml:"model"`
+	MiniModel string `yaml:"mini_model"`
+	VLMModel  string `yaml:"vlm_model"`
 	MaxRetries    int    `yaml:"max_retries"` // total LLM attempts incl. first on transient 429/5xx/network (default 3)
 	// MaxTokens caps a single turn's output. 0 (the default) leaves the
 	// provider's own ceiling in place: too low a cap truncates a legitimately
@@ -73,27 +83,36 @@ type LLMConfig struct {
 	// serves nine models across three of the conventions above, so a single
 	// global setting cannot be right for all of them.
 	ReasoningByModel map[string]map[string]any `yaml:"reasoning_by_model"`
-	// Models the user may pick per conversation, beyond the main/mini pair.
+	// Models is the ordered list a user may pick from, FIRST being the default.
 	// Providers that host many models behind one endpoint (Ark, OpenRouter…)
 	// serve any of them from the same client — only the model NAME changes — so
-	// this is an allow-list, not a set of connections. Model and MiniModel are
-	// always selectable whether or not they appear here.
+	// this is an allow-list, not a set of connections.
 	Models []string `yaml:"models"`
 }
 
-// SelectableModels returns the models a request may ask for: the configured
-// tiers first (they are the defaults everything else falls back to), then the
-// rest of the allow-list, de-duplicated and in a stable order.
+// SelectableModels returns the models a request may ask for, in order, the
+// first being the default. Legacy Model / MiniModel fold into the front so an
+// existing deployment keeps working without editing anything.
 func (c LLMConfig) SelectableModels() []string {
 	out := make([]string, 0, len(c.Models)+2)
 	seen := map[string]bool{}
 	for _, m := range append([]string{c.Model, c.MiniModel}, c.Models...) {
+		m = strings.TrimSpace(m)
 		if m != "" && !seen[m] {
 			seen[m] = true
 			out = append(out, m)
 		}
 	}
 	return out
+}
+
+// DefaultModel is what a request with no explicit choice runs on: the first
+// entry of the list. There is no second tier to fall back to any more.
+func (c LLMConfig) DefaultModel() string {
+	if ms := c.SelectableModels(); len(ms) > 0 {
+		return ms[0]
+	}
+	return ""
 }
 
 // AllowsModel reports whether a caller may run on the named model. An empty

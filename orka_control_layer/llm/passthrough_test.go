@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 )
@@ -99,5 +100,55 @@ func TestPerModelOverridesTheGlobalSetting(t *testing.T) {
 	}
 	if got := reasoningFor("anything", nil, nil); got != nil {
 		t.Errorf("nothing configured produced %v", got)
+	}
+}
+
+// The switch sends INTENT, and the mapping to a provider field stays here. A UI
+// that sent the field would break silently the moment someone picked a
+// different model from the same dropdown.
+func TestThinkingOnSendsNoReduction(t *testing.T) {
+	c := &OpenAIClient{Reasoning: map[string]any{"thinking": map[string]any{"type": "disabled"}}}
+	ctx := WithThinking(context.Background(), ThinkingOn)
+	if got := c.reasoning(ctx, "glm-5.3-flash"); got != nil {
+		t.Fatalf("deep thinking was requested but a reduction was still sent: %v", got)
+	}
+}
+
+func TestThinkingOffAndDefaultSendTheConfiguredReduction(t *testing.T) {
+	want := map[string]any{"thinking": map[string]any{"type": "disabled"}}
+	c := &OpenAIClient{Reasoning: want}
+	for _, intent := range []string{ThinkingOff, ThinkingDefault} {
+		ctx := WithThinking(context.Background(), intent)
+		if got := c.reasoning(ctx, "glm-5.3-flash"); got == nil {
+			t.Errorf("intent %q sent no reduction", intent)
+		}
+	}
+}
+
+// Same intent, two models, two different fields — which is the whole reason the
+// mapping is server-side.
+func TestOneIntentMapsToEachModelsOwnField(t *testing.T) {
+	c := &OpenAIClient{
+		Reasoning: map[string]any{"reasoning_effort": "low"},
+		ReasoningByModel: map[string]map[string]any{
+			"glm-5.3-flash": {"thinking": map[string]any{"type": "disabled"}},
+		},
+	}
+	ctx := WithThinking(context.Background(), ThinkingOff)
+	if got := c.reasoning(ctx, "glm-5.3-flash"); got["thinking"] == nil {
+		t.Errorf("glm got %v, want its own `thinking` field", got)
+	}
+	if got := c.reasoning(ctx, "gpt-5"); got["reasoning_effort"] != "low" {
+		t.Errorf("gpt-5 got %v, want reasoning_effort", got)
+	}
+}
+
+func TestNoIntentOnTheContextIsInert(t *testing.T) {
+	if got := thinkingFrom(context.Background()); got != ThinkingDefault {
+		t.Fatalf("bare context gave intent %q", got)
+	}
+	ctx := WithThinking(context.Background(), "")
+	if got := thinkingFrom(ctx); got != ThinkingDefault {
+		t.Fatalf("empty intent stored as %q", got)
 	}
 }
