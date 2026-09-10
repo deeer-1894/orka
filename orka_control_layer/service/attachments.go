@@ -67,7 +67,7 @@ func (s *ChatService) processAttachments(ctx context.Context, req ChatRunRequest
 // describeImages runs a single VLM call to extract everything relevant from the
 // attached images, given the user's request as guidance.
 func (s *ChatService) describeImages(ctx context.Context, userText string, urls []string) string {
-	vlm := s.Cfg.LLM.VLMModel
+	vlm := s.llmConf().VLMModel
 	if vlm == "" || s.Main == nil {
 		return "(未配置视觉模型，无法解析图片)"
 	}

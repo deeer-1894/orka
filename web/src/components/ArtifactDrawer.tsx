@@ -6,9 +6,10 @@ import { lineDiff, diffStats } from "../lib/diff";
 import { useResource, refreshResource } from "../lib/useResource";
 import { Icon, type IconName } from "./Icon";
 import { FilePreview } from "./FilePreview";
+import { ModelSettingsPanel } from "./ModelSettings";
 import { ArtifactGallery, ArtifactPane } from "./Artifacts";
 
-type Tab = "overview" | "artifacts" | "files" | "runs" | "tasks" | "flows" | "factors" | "integrations" | "metrics";
+type Tab = "overview" | "artifacts" | "files" | "runs" | "tasks" | "flows" | "factors" | "integrations" | "metrics" | "settings";
 
 // Each tab carries a one-line tip — the words 运行/流程/任务 are ambiguous on
 // their own (execution log? workflow definition? schedule?), so the tooltip
@@ -23,6 +24,7 @@ const TAB_META: Record<Tab, { label: string; tip: string }> = {
   factors: { label: "因子", tip: "量化因子库:研报 → 因子流水线的产出" },
   integrations: { label: "集成", tip: "外部工具 / MCP 连接器" },
   metrics: { label: "指标", tip: "用量与性能指标" },
+  settings: { label: "模型", tip: "接口地址、密钥与模型列表(写入 ~/.orka/orka.json,即时生效)" },
 };
 // Nine tabs is a back-office crammed into a chat sidebar. Collapse them into 4
 // semantic FACES; multi-tab faces (舞台/运营台) get an inline sub-nav. runs/flows/
@@ -32,11 +34,11 @@ const FACES: { id: Face; label: string; tip: string; icon: IconName; subs: Tab[]
   { id: "overview", label: "概览", tip: "工作区概览与近期活动", icon: "chart", subs: ["overview"] },
   { id: "stage", label: "页面", tip: "看 Orka 产出的可视化页面(Artifacts)", icon: "image", subs: ["artifacts"] },
   { id: "files", label: "文件", tip: "本会话的文件", icon: "folder", subs: ["files"] },
-  { id: "ops", label: "运营台", tip: "执行与可观测:运行 / 流程 / 任务 / 因子 / 集成 / 指标", icon: "gear", subs: ["runs", "flows", "tasks", "factors", "integrations", "metrics"] },
+  { id: "ops", label: "运营台", tip: "执行与可观测:运行 / 流程 / 任务 / 因子 / 集成 / 指标", icon: "gear", subs: ["runs", "flows", "tasks", "factors", "integrations", "metrics", "settings"] },
 ];
 // Icons for the 运营台 sub-tabs, so the dense sub-nav scans at a glance.
 const SUB_ICON: Partial<Record<Tab, IconName>> = {
-  runs: "play", flows: "share", tasks: "clock", factors: "table", integrations: "plug", metrics: "chart",
+  runs: "play", flows: "share", tasks: "clock", factors: "table", integrations: "plug", metrics: "chart", settings: "gear",
 };
 function faceOf(tab: Tab): Face {
   return (FACES.find((f) => f.subs.includes(tab)) || FACES[0]).id;
@@ -222,6 +224,7 @@ export function ArtifactDrawer({
           {tab === "overview" && <DashboardPanel conv={conv} onJumpToConversation={onJumpToConversation} goTab={setTab} onOpenArtifact={(id) => { setFocusArt(id); setTab("artifacts"); }} />}
           {tab === "artifacts" && (focusArt ? <ArtifactPane artifactId={focusArt} onBack={() => setFocusArt(null)} /> : <ArtifactGallery onOpen={setFocusArt} />)}
           {tab === "files" && <FilesPanel email={email} conv={conv} />}
+          {tab === "settings" && <ModelSettingsPanel />}
           {tab === "runs" && <RunsPanel onJumpToConversation={onJumpToConversation} />}
           {tab === "flows" && <WorkflowsPanel onJumpToConversation={onJumpToConversation} />}
           {tab === "integrations" && <ConnectorsPanel />}

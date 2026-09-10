@@ -20,7 +20,7 @@ import { useResource, refreshResource } from "./lib/useResource";
 import { loadTools, saveTools } from "./lib/toolGroups";
 import type { Conversation, Message, Notification } from "./types";
 
-type Tab = "overview" | "artifacts" | "files" | "runs" | "tasks" | "flows" | "factors" | "integrations" | "metrics";
+type Tab = "overview" | "artifacts" | "files" | "runs" | "tasks" | "flows" | "factors" | "integrations" | "metrics" | "settings";
 
 // Tools whose output the user watches in the 文件 face.
 const FILE_TOOLS = new Set([

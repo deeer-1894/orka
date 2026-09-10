@@ -254,6 +254,31 @@ export const api = {
       .catch(() => false),
 };
 
+export type LLMSettings = {
+  base_url?: string;
+  models?: string[];
+  max_tokens?: number;
+  reasoning?: Record<string, unknown>;
+  reasoning_by_model?: Record<string, Record<string, unknown>>;
+};
+
+export type SettingsView = {
+  saved: LLMSettings;
+  has_key: boolean;
+  effective: { base_url: string; models: string[]; max_tokens: number; has_key: boolean };
+  path: string;
+};
+
+// The endpoint, key and model list, editable without touching a file. The key
+// is write-only: it is never returned, and omitting it on save keeps the stored
+// one — so changing a URL never requires re-typing it.
+export const settings = {
+  get: () => get<SettingsView>("/settings"),
+  save: (patch: LLMSettings & { api_key?: string }) => post<SettingsView>("/settings", patch),
+  test: (patch: LLMSettings & { api_key?: string }) =>
+    post<{ ok: boolean; model: string; reply?: string; tokens?: number; error?: string }>("/settings/test", patch),
+};
+
 export type FileVersion = { ts: string; when: number; size: number; path: string };
 
 // Each conversation has its own file workspace, so every file call names one.

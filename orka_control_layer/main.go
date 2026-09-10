@@ -95,6 +95,15 @@ func main() {
 	}
 	cpStore := checkpoint.NewRedisStore(rdb, "orka:cp:")
 
+	// The user's own settings file wins over config.yaml and the environment.
+	// It is what the settings panel writes, and a panel whose saved value could
+	// be overridden by an env var left in a shell profile would read as broken.
+	if set, err := config.LoadSettings(config.SettingsPath()); err != nil {
+		logger.Warn("settings file unreadable; using config + env", "path", config.SettingsPath(), "err", err)
+	} else {
+		cfg.LLM = set.LLM.Apply(cfg.LLM)
+	}
+
 	// LLM: real OpenAI-compatible client only (no fake/demo fallback — the
 	// server always talks to the configured model).
 	if cfg.LLM.OpenAIAPIKey == "" {
@@ -110,8 +119,12 @@ func main() {
 	// Timed sits INSIDE the limiter on purpose: it then measures the provider
 	// exchange alone, so queue time is the difference between a call's observed
 	// spacing and its logged duration rather than being folded into it.
+	// The provider sits behind a swappable pointer at the BOTTOM of the stack, so
+	// the settings panel can change the endpoint without a restart and without
+	// resetting the limiter's accounting or the run-cost totals above it.
+	provider := llm.NewSwappable(newLLMClient(cfg))
 	mainLLM = llm.NewLimiterFromEnv(llm.NewMetered(llm.NewRetry(
-		newLLMClient(cfg),
+		provider,
 		llm.RetryConfig{
 			MaxAttempts: cfg.LLM.MaxRetries,
 			OnRetry: func(attempt int, delay time.Duration, err error) {
@@ -123,6 +136,7 @@ func main() {
 
 	msg := message_utils.New(store, cfg.Obs.PersistSampling, logger)
 	chat := service.NewChatService(cfg, mainLLM, miniLLM, cpStore, msg, metrics, logger)
+	chat.UseProvider(provider)
 	// Close out runs orphaned by the previous process before serving, then keep
 	// sweeping. A run's registry lives in memory and dies with the process, so
 	// without this the run log fills with executions that are "running" forever.

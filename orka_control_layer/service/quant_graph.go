@@ -123,7 +123,7 @@ func (s *ChatService) scopedAgentRun(ctx context.Context, owner, instruction, ta
 	// One tier now: the pipeline runs on the deployment's default model. useMini
 	// used to pick the cheap tier for the mechanical stages; there is no cheap
 	// tier to pick, so the flag only survives as a hint that the stage is light.
-	client, model := s.Main, s.Cfg.LLM.DefaultModel()
+	client, model := s.Main, s.llmConf().DefaultModel()
 	backup := backupModel(s.Mini, model, model)
 	_ = useMini
 	ag, err := BuildEinoAgent(ctx, client, model, instruction, tools, 12, backup,

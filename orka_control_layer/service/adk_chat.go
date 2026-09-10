@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/orka-oss/orka_core/agent"
@@ -87,6 +88,15 @@ type ChatService struct {
 	ckpt     adk.CheckPointStore // interrupt/resume checkpoints (nil = blocking gate)
 	ckptInit sync.Once
 
+	// llmLive is the EFFECTIVE llm config: config.yaml and the environment,
+	// overlaid with whatever the user last saved from the settings panel. An
+	// atomic pointer rather than a mutable field because model names are read on
+	// every turn of every in-flight run, and a settings save must not race them.
+	llmLive atomic.Pointer[config.LLMConfig]
+	// provider is the swappable bottom of the client stack, so changing the
+	// endpoint does not need a restart. Nil when main wired a plain client.
+	provider *llm.Swappable
+
 	mu   sync.Mutex
 	runs map[string]context.CancelFunc
 	// Mailboxes for messages typed while a run is in flight, keyed the same way
@@ -103,7 +113,50 @@ func NewChatService(cfg *config.Config, main, mini llm.Client, store checkpoint.
 		runs: map[string]context.CancelFunc{},
 	}
 	s.ToolsFor = LocalToolsProvider(cfg.Storage.BaseStoragePath)
+	if cfg != nil {
+		s.llmLive.Store(&cfg.LLM)
+	}
 	return s
+}
+
+// llmConf returns the effective llm config. Falls back to Cfg for the test and
+// embedding paths that build a ChatService by hand.
+func (s *ChatService) llmConf() config.LLMConfig {
+	if c := s.llmLive.Load(); c != nil {
+		return *c
+	}
+	if s.Cfg != nil {
+		return s.Cfg.LLM
+	}
+	return config.LLMConfig{}
+}
+
+// EffectiveLLM is the llm config now in force, for the settings API to report.
+func (s *ChatService) EffectiveLLM() config.LLMConfig { return s.llmConf() }
+
+// UseProvider registers the swappable client so settings changes can replace
+// the endpoint in place.
+func (s *ChatService) UseProvider(p *llm.Swappable) { s.provider = p }
+
+// ApplySettings makes the user's saved settings effective immediately: model
+// names and the reasoning passthrough swap atomically, and the endpoint is
+// rebuilt when its address or credentials changed.
+//
+// Returns the config now in force, so the caller can report what took effect
+// rather than echoing back what was asked for.
+func (s *ChatService) ApplySettings(set config.SettingsLLM) config.LLMConfig {
+	base := config.LLMConfig{}
+	if s.Cfg != nil {
+		base = s.Cfg.LLM
+	}
+	next := set.Apply(base)
+	s.llmLive.Store(&next)
+	if s.provider != nil {
+		c := llm.NewOpenAIClientCapped(next.OpenAIBaseURL, next.OpenAIAPIKey, next.MaxTokens)
+		c.Reasoning, c.ReasoningByModel = next.Reasoning, next.ReasoningByModel
+		s.provider.Set(c)
+	}
+	return next
 }
 
 // modelFor resolves a request's selected_version to a client and model name.
@@ -125,12 +178,12 @@ func NewChatService(cfg *config.Config, main, mini llm.Client, store checkpoint.
 func (s *ChatService) modelFor(version string) (llm.Client, string) {
 	switch version {
 	case "", "mini", ModelAuto:
-		return s.Main, s.Cfg.LLM.DefaultModel()
+		return s.Main, s.llmConf().DefaultModel()
 	}
-	if s.Cfg.LLM.AllowsModel(version) {
+	if s.llmConf().AllowsModel(version) {
 		return s.Main, version
 	}
-	return s.Main, s.Cfg.LLM.DefaultModel()
+	return s.Main, s.llmConf().DefaultModel()
 }
 
 func (s *ChatService) register(id string, cancel context.CancelFunc) {
