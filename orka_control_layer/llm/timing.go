@@ -157,6 +157,7 @@ func (t *Metered) log(ctx context.Context, req Request, resp Response, d time.Du
 		"seconds", d.Round(time.Millisecond / 10).Seconds(),
 		"streamed", streamed,
 		"max_tokens", req.MaxTokens,
+		"reasoning_effort", req.ReasoningEffort,
 		"finish_reason", resp.FinishReason,
 		"in", resp.Usage.PromptTokens,
 		"out", resp.Usage.CompletionTokens,

@@ -153,6 +153,11 @@ func validate(ctx context.Context, root *os.Root, p string, b []byte) error {
 			}
 			switch t := tok.(type) {
 			case xml.StartElement:
+				for _, attr := range t.Attr {
+					if (attr.Name.Local == "width" || attr.Name.Local == "height") && strings.Contains(attr.Value, "%%") {
+						return fmt.Errorf("invalid SVG percentage length %s=%q", attr.Name.Local, attr.Value)
+					}
+				}
 				if depth == 0 {
 					roots++
 					if t.Name.Local != "svg" || roots != 1 {

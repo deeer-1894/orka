@@ -214,9 +214,6 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// A checkpoint store lets an approval PAUSE the run (persisted, resumable)
 	// rather than park a goroutine; without one the gate blocks as before.
 	ckptStore := s.checkpointStore()
-	if req.ConfirmRisky && req.Trigger != "schedule" && req.Trigger != "workflow" {
-		tools = s.wrapConfirm(tools, ckptStore != nil && req.ConversationID != "")
-	}
 
 	// Multi-agent: the orchestrator (main model) gets the atomic tools PLUS native
 	// eino sub-agents (researcher/writer/browser/engineer, mini model) it can
@@ -268,6 +265,13 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	if req.resumeFrom != nil {
 		restoreCheckpoint(req.resumeFrom.Checkpoint, budget, plan, deliveryFrom(rc.Ctx))
 	}
+	restoreToolProgress(budget, req.resumeFrom)
+	tools = trackToolProgress(tools, budget)
+	// Count actual operations inside the approval gate, never a declined call.
+	if req.ConfirmRisky && req.Trigger != "schedule" && req.Trigger != "workflow" {
+		tools = s.wrapConfirm(tools, ckptStore != nil && req.ConversationID != "")
+	}
+	rc.Tools = tools
 	rc.Ctx = llm.WithUsageSink(withPlanTracker(withBudget(rc.Ctx, budget), plan), budget)
 	// Narrow the tool surface to what this run plausibly needs; find_tools opens
 	// the rest on demand. Per run, so one conversation unlocking the CSV tools
@@ -323,9 +327,8 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 
 	if req.ResumeKey != "" {
 		err = s.resume(ctx, rc, req, raw, deps, tools, model, modelName)
-		if err != nil {
-			return s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err()) // resume() already emitted the failure event
-		}
+		// All exits share finish/finalize/journal settlement, including call limits
+		// after a resumed tool has already produced useful work.
 	} else {
 		// Seed with prior turns (memory) + persist the new user message
 		// (raw=nil: persist only; the SSE echo is rendered optimistically).
@@ -430,32 +433,12 @@ func (s *ChatService) createRun(ctx context.Context, req ChatRunRequest, meta me
 // finalizeRun stamps a run's terminal state + execution stats. Uses a background
 // context since the request context may already be cancelled.
 func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt int64, req ChatRunRequest, runErr, ctxErr error) string {
-	status, errStr := db.RunDone, ""
-	switch {
-	case runErr == context.Canceled || ctxErr == context.Canceled:
-		status, errStr = db.RunFailed, "cancelled"
-	case runErr != nil:
-		status, errStr = db.RunFailed, runErr.Error()
-	case rc.Interrupt != nil:
-		status = db.RunPaused
+	outcome, published := rc.Vars[varPublishedCallLimitOutcome].(runOutcome)
+	if !published {
+		outcome = assessRunOutcome(rc, runErr, ctxErr)
 	}
-	// A run that reached the end of its rope is not a success, however confident
-	// its closing paragraph reads. Two independent signals demote it: it ran out
-	// of budget, or it never finished the checklist it published. Both are only
-	// meaningful for a run that otherwise completed — a failure is already worse.
-	var budgetHit string
-	var unfinished []string
-	if status == db.RunDone && rc.Ctx != nil {
-		budgetHit = budgetFrom(rc.Ctx).exhausted()
-		unfinished = planTrackerFrom(rc.Ctx).unfinished()
-		// Read the actual files again: a previous tool check can become stale.
-		checkCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		unfinished = append(unfinished, deliveryFrom(rc.Ctx).failures(checkCtx)...)
-		cancel()
-		if budgetHit != "" || len(unfinished) > 0 {
-			status = db.RunPartial
-		}
-	}
+	status, errStr := outcome.status, outcome.errorDetail
+	budgetHit, unfinished := outcome.budgetHit, outcome.unfinished
 	if runID == "" || s.Msg == nil || s.Msg.Store == nil {
 		return status
 	}
@@ -613,8 +596,25 @@ func (s *ChatService) resume(ctx context.Context, rc *agent.RunContext, req Chat
 // finish handles the terminal state: error, clarify interrupt, or done.
 func (s *ChatService) finish(ctx context.Context, rc *agent.RunContext, meta messages.Meta, req ChatRunRequest, raw func(messages.Message), err error) {
 	switch {
-	case err == context.Canceled || ctx.Err() == context.Canceled:
-		s.Msg.Deliver(rc, raw, taskFailed(meta, "cancelled"), true)
+	case errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled):
+		if llm.IsCallLimit(err) {
+			s.publishCallLimitOutcome(ctx, rc, meta, raw, assessRunOutcome(rc, err, context.Canceled))
+		} else {
+			s.Msg.Deliver(rc, raw, taskFailed(meta, "cancelled"), true)
+		}
+	case llm.IsCallLimit(err):
+		outcome := assessRunOutcome(rc, err, ctx.Err())
+		if outcome.errorDetail == "cancelled" || errors.Is(ctx.Err(), context.Canceled) {
+			s.publishCallLimitOutcome(ctx, rc, meta, raw, outcome)
+			return
+		}
+		notice := callLimitNotice(outcome)
+		middlewares.SetFinal(rc, notice)
+		if s.Log != nil {
+			s.Log.Warn("model call limit", "trace_id", meta.TraceID, "err", err, "status", outcome.status)
+		}
+		s.Msg.Deliver(rc, raw, messages.Chat(messages.RoleAssistant, notice, meta), true)
+		s.publishCallLimitOutcome(ctx, rc, meta, raw, outcome)
 	case err != nil:
 		if s.Log != nil {
 			s.Log.Error("chat run failed", "trace_id", meta.TraceID, "err", err)

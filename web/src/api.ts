@@ -208,6 +208,7 @@ export const api = {
   disableWebhook: (task_id: string) => post("/task/webhook/disable", { task_id }),
   listRuns: (filter: { conversation_id?: string; status?: string } = {}) =>
     post<{ runs: RunRecord[] }>("/run/list", { ...filter, size: 50 }),
+  getRun: (run_id: string) => post<RunRecord>("/run/get", { run_id }),
   rerunRun: (run_id: string) => post<{ status: string }>("/run/rerun", { run_id }),
   // Continue a run that died mid-flight from its surviving transcript, rather
   // than paying for the completed work a second time.
@@ -248,8 +249,8 @@ export const api = {
 export type FileVersion = { ts: string; when: number; size: number; path: string };
 
 export const files = {
-  list: (path: string) =>
-    post<{ name: string; dir: boolean; size: number }[]>("/file/list", { path }),
+  list: (path: string, silent = false) =>
+    post<{ name: string; dir: boolean; size: number }[]>("/file/list", { path }, silent),
   delete: (path: string) => post("/file/delete", { path }),
   versions: (path: string) => post<FileVersion[]>("/file/versions", { path }),
   restore: (path: string, ts: string) => post<{ restored: string }>("/file/restore", { path, ts }),

@@ -3,6 +3,8 @@ import type { RunStatus } from "../hooks/useChatStream";
 import type { BrowserPayload, ClarifyPayload, Message, ToolPayload, WeatherCardData } from "../types";
 import { api, chat as chatApi, files as fileApi } from "../api";
 import type { ConfirmPayload, PlanPayload } from "../types";
+import { useSessionFiles } from "../hooks/useSessionFiles";
+import { isIncompleteRun, type RecoverySnapshot } from "../lib/runRecovery";
 import { Markdown } from "./Markdown";
 import { FilePreview } from "./FilePreview";
 import { WeatherCard, parseWeatherCard } from "./WeatherCard";
@@ -20,13 +22,6 @@ const FILE_TOOLS = new Set([
   "file_write", "file_read", "doc_export", "doc_read", "chart", "qrcode",
   "csv_to_json", "csv_to_xlsx", "xlsx_to_csv", "csv_join", "sql_query", "pdf_extract", "slides",
 ]);
-// Tools that *create* a workspace file (subset of FILE_TOOLS minus read/list).
-// Only these — plus filenames the assistant explicitly names — seed the session
-// strip, so a `ls`/file_list/file_read dump doesn't pull in the whole workspace.
-const WRITE_TOOLS = new Set([
-  "file_write", "doc_export", "chart", "qrcode",
-  "csv_to_json", "csv_to_xlsx", "xlsx_to_csv", "csv_join", "slides",
-]);
 const FILE_RE = /[\w./-]+\.(?:png|jpe?g|gif|webp|svg|pdf|csv|tsv|xlsx?|docx?|md|markdown|txt|json|pptx|html?|py)\b/gi;
 function outputFile(p: ToolPayload): string | undefined {
   if (!FILE_TOOLS.has(p.tool || "")) return undefined;
@@ -35,85 +30,6 @@ function outputFile(p: ToolPayload): string | undefined {
   if (explicit) return explicit.replace(/^\.?\//, "");
   const m = stripCard(p.result || "").match(FILE_RE);
   return m ? m[m.length - 1] : undefined; // the produced file is usually last
-}
-
-// wsWalkDirs bounds the workspace scan. Deep enough for how agents actually
-// organise output (findings/, reports/, quant/factors/), shallow and capped so a
-// large workspace cannot turn one refresh into a burst of listings.
-const wsWalkDirs = 24;
-const wsWalkDepth = 2;
-
-// listWorkspace maps every way a file might be NAMED to the path that can
-// actually open it. A tool argument carries "findings/eino.md" while the
-// assistant's prose usually just says "eino.md", and the preview needs the full
-// path either way — a bare basename cannot be fetched once the file lives in a
-// subdirectory.
-async function listWorkspace(): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  let frontier = ["."];
-  let budget = wsWalkDirs;
-  for (let depth = 0; depth <= wsWalkDepth && frontier.length && budget > 0; depth++) {
-    const next: string[] = [];
-    for (const dir of frontier) {
-      if (budget-- <= 0) break;
-      let items: { name: string; dir: boolean }[];
-      try {
-        items = await fileApi.list(dir);
-      } catch {
-        continue; // a listing that fails just contributes nothing
-      }
-      for (const it of items) {
-        const rel = dir === "." ? it.name : `${dir}/${it.name}`;
-        if (it.dir) {
-          if (!it.name.startsWith(".")) next.push(rel); // skip .orka_offload and friends
-        } else {
-          out.set(rel, rel);
-          // Root files win a basename collision: an unqualified mention most
-          // likely means the one at the top level.
-          if (!out.has(it.name) || dir === ".") out.set(it.name, rel);
-        }
-      }
-    }
-    frontier = next;
-  }
-  return out;
-}
-
-// sessionFiles collects the workspace files this conversation produced — the
-// basis for the "本会话文件" strip. It scans tool results AND assistant text for
-// filename tokens, then keeps only those that actually exist in the workspace
-// (`exists` set). The intersection is what ties files to the session: it catches
-// shell/python-produced files (chart.png, report.pdf) that aren't in any tool's
-// args, while dropping filenames merely mentioned in prose but never created.
-function sessionFiles(messages: Message[], exists: Map<string, string>): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  const add = (raw: string) => {
-    const rel = raw.replace(/^\.?\//, "");
-    // Try the name as given, then its basename — prose rarely spells the folder.
-    const path = exists.get(rel) ?? exists.get(rel.split("/").pop() || "");
-    if (path && !seen.has(path)) {
-      seen.add(path);
-      out.push(path);
-    }
-  };
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    let text = "";
-    if (m.type === "tool") {
-      const p = m.payload as ToolPayload;
-      if (!WRITE_TOOLS.has(p.tool || "")) continue; // ignore read/list/shell dumps
-      const a = (p.args || {}) as Record<string, unknown>;
-      if (a.out != null) add(String(a.out));
-      if (a.path != null) add(String(a.path));
-      text = stripCard(p.result || "");
-    } else if ((m.type === "chat" || m.type === "stream") && m.role !== "user") {
-      text = m.content || ""; // the assistant naming its deliverables
-    } else continue;
-    const hits = text.match(FILE_RE);
-    if (hits) hits.forEach(add);
-  }
-  return out;
 }
 
 type Block =
@@ -191,7 +107,17 @@ export function Thread({
   onSchedule,
   onFork,
   fileConv,
+  conversationID,
+  ownerEmail,
+  recovery,
+  onContinue,
+  canRetry,
 }: {
+  conversationID: string;
+  ownerEmail: string;
+  recovery: RecoverySnapshot;
+  onContinue: () => void;
+  canRetry: boolean;
   messages: Message[];
   status: RunStatus;
   onResume: (key: string, answer: string) => void;
@@ -210,7 +136,7 @@ export function Thread({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [previewFile, setPreviewFile] = useState<{ name: string; history?: boolean } | null>(null);
   const openFile = (name: string, opts?: { history?: boolean }) => setPreviewFile({ name, history: opts?.history });
-  const [wsFiles, setWsFiles] = useState<Map<string, string>>(new Map());
+  const files = useSessionFiles(messages, { conversationID, ownerEmail }, status, !!fileConv);
   // Smart auto-scroll: only follow new content when the user is already near the
   // bottom, so scrolling up to read history isn't yanked back down.
   useEffect(() => {
@@ -222,28 +148,6 @@ export function Thread({
     // scrollbar and makes the thread feel like it won't settle at the bottom.
     if (nearBottom) el.scrollTop = el.scrollHeight;
   }, [messages.length, status]);
-  // Refresh the workspace listing on load and whenever a run settles, so files
-  // the agent just produced are recognized by the session strip.
-  useEffect(() => {
-    if (status === "streaming") return;
-    let cancelled = false;
-    // Walk into subdirectories, not just the root. Agents organise their output:
-    // a survey wrote all four of its findings into findings/, and because this
-    // only ever listed "." — then dropped directories and kept bare filenames —
-    // nothing it produced could match, and the strip stayed empty for a run that
-    // had written four files.
-    listWorkspace().then((found) => {
-      if (!cancelled) setWsFiles(found);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [status]);
-
-  // Grouping + filename-scan walk every message; memoize so a re-render that
-  // doesn't change the message list (hover, find typing, status flips) doesn't
-  // re-walk the whole conversation.
-  const files = useMemo(() => sessionFiles(messages, wsFiles), [messages, wsFiles]);
   const blocks = useMemo(() => group(messages), [messages]);
   const thinking =
     status === "streaming" &&
@@ -266,7 +170,8 @@ export function Thread({
   });
   const lastUserPrompt = [...blocks].reverse().find((b) => b.kind === "user")?.m.content || "";
   const hasPlan = blocks.some((b) => b.kind === "plan");
-  const canAct = status !== "streaming";
+  const canAct = status !== "streaming" && !recovery.busy;
+  const failed = isIncompleteRun({ conversationID, messages, status }, recovery.run);
 
   // In-thread find: scan the loaded conversation for a query and jump between
   // hits. Frontend-only — searches the user/assistant/reasoning text already in
@@ -350,7 +255,7 @@ export function Thread({
                 m={b.m}
                 live={status === "streaming" && i > lastUser}
                 suppressPlan={hasPlan}
-                onRegenerate={canAct && i === lastAssistant ? onRetry : undefined}
+                onRegenerate={canAct && canRetry && i === lastAssistant ? onRetry : undefined}
                 onSchedule={canAct && i === lastAssistant && lastUserPrompt ? () => onSchedule(lastUserPrompt) : undefined}
               />
             )}
@@ -364,25 +269,31 @@ export function Thread({
           );
         })}
         {thinking && <Thinking />}
-        {canAct && status !== "error" && lastAssistant >= 0 && lastUserPrompt && blocks[lastAssistant].kind === "assistant" && (
+        {canAct && !failed && lastAssistant >= 0 && lastUserPrompt && blocks[lastAssistant].kind === "assistant" && (
           <FollowUps
             prompt={lastUserPrompt}
             answer={(blocks[lastAssistant] as Extract<Block, { kind: "assistant" }>).m.content || ""}
             onPick={onPick}
           />
         )}
-        {status === "error" && (
-          <div className="mb-6 ml-[42px] flex items-center gap-3">
-            <button
-              onClick={onRetry}
-              className="flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accentsoft/50 px-3 py-1.5 text-[13px] text-accent hover:bg-accentsoft transition"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                <path d="M21 12a9 9 0 1 1-3-6.7M21 3v5h-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              重试
-            </button>
-            <span className="text-[12px] text-faint">出错了 — 可重试,或检查工具/沙箱服务是否在运行</span>
+        {failed && (
+          <div className="mb-6 ml-[42px] space-y-2" role="status">
+            <div className="flex flex-wrap items-center gap-3">
+              {(recovery.recoverable || recovery.busy) && (
+                <button onClick={onContinue} disabled={recovery.busy}
+                  className="rounded-lg border border-accent/40 bg-accentsoft/50 px-3 py-1.5 text-[13px] text-accent disabled:opacity-50">
+                  {recovery.busy ? "正在继续任务…" : "继续未完成任务"}
+                </button>
+              )}
+              <button onClick={onRetry} disabled={!canRetry || recovery.busy}
+                title="重新发送本会话上一条请求，开始一次新的执行"
+                className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-muted hover:text-accent disabled:opacity-40">
+                重新执行（从头开始）
+              </button>
+            </div>
+            <p className="text-[12px] text-faint">
+              {recovery.error || (recovery.busy ? "正在连接续跑，请稍候。" : recovery.recoverable ? "继续任务会保留已完成的进度。" : recovery.run?.budget_hit === "tokens" ? "本次任务预算已用尽，已有进度保留。重新执行会开始新的任务。" : recovery.checking ? "正在检查是否可以继续任务…" : "本次执行未完成。")}
+            </p>
           </div>
         )}
         {files.length > 0 && <SessionFiles files={files} onOpen={(n) => openFile(n)} />}

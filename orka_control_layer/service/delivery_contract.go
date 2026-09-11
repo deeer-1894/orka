@@ -12,9 +12,10 @@ import (
 // deliveryTracker owns additive file requirements independently of the mutable
 // execution checklist. It never accepts a model-supplied verification result.
 type deliveryTracker struct {
-	mu      sync.Mutex
-	root    string
-	outputs []string
+	mu        sync.Mutex
+	root      string
+	outputs   []string
+	inspected map[string]artifactRevision
 }
 
 func newDeliveryTracker(root string) *deliveryTracker { return &deliveryTracker{root: root} }

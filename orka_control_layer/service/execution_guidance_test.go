@@ -18,3 +18,18 @@ func TestExecutionGuidanceReservesDeliveryAndCountsResumeUsage(t *testing.T) {
 		t.Fatal("negative remaining budget")
 	}
 }
+
+func TestExecutionGuidanceRequiresVerificationThroughoutRun(t *testing.T) {
+	for _, spent := range []int{0, 300, 600, 800} {
+		b := newRunBudget(100, 1000, 0)
+		b.AddUsage(spent, 0)
+		for _, phrase := range []string{"original user requirements", "write and run", "conservation", "group", "boundary", "before charts and reports", "one small", "unchanged source", "not proof"} {
+			if !strings.Contains(executionGuidance(b), phrase) {
+				t.Errorf("spent %d missing %q: %s", spent, phrase, executionGuidance(b))
+			}
+		}
+	}
+	if !strings.Contains(executionGuidance(nil), "write and run") {
+		t.Error("verification guidance disappeared without token cap")
+	}
+}

@@ -19,6 +19,7 @@ export interface Meta {
   task_id: string;
   model_version?: string;
   trace_id: string;
+  run_id?: string; // execution identity; legacy messages may only have trace_id
   user_email?: string;
   agent_id?: string;
   parent_agent_id?: string;
@@ -57,6 +58,7 @@ export interface PlanStep {
 
 export interface PlanPayload {
   steps: PlanStep[];
+  outputs?: string[];
 }
 
 export interface ToolPayload {

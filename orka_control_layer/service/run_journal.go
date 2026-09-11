@@ -323,7 +323,7 @@ func (f *journalFile) recoverableSteps() int {
 		return 0
 	}
 	n := len(f.Messages) + len(f.Delegates) + max(0, len(f.Seed)-1)
-	if c := f.Checkpoint; c != nil && (c.SpentTokens > 0 || len(c.Plan) > 0 || len(c.Outputs) > 0) {
+	if c := f.Checkpoint; c != nil && (c.SuccessfulTools > 0 || c.SpentTokens > 0 || len(c.Plan) > 0 || len(c.Outputs) > 0) {
 		n = max(n, resumeWorthwhileSteps)
 	}
 	return n

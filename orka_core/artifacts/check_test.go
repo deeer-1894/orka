@@ -77,3 +77,21 @@ func TestCheckConfinesReadsAndBoundsArchives(t *testing.T) {
 		t.Fatal("ignored cancellation")
 	}
 }
+
+func TestSVGRejectsMalformedPercentageLengths(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name, body string
+		valid      bool
+	}{
+		{"invalid.svg", `<svg><rect width="100%%" height="100%%"/></svg>`, false},
+		{"valid.svg", `<svg width="100%" height="20"><text>100%% is a label</text></svg>`, true},
+	} {
+		if err := os.WriteFile(filepath.Join(root, tc.name), []byte(tc.body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if got := Check(context.Background(), root, []string{tc.name}); got.OK != tc.valid {
+			t.Fatalf("%s: %+v", tc.name, got)
+		}
+	}
+}

@@ -89,9 +89,9 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 	// an error — the model is simply told the result is unchanged, which from
 	// inside a loop it cannot tell: every attempt succeeds and looks fresh.
 	if note := loopDetectorFrom(ctx).observe(cacheKey, out); note != "" {
-		return out + note, nil
+		out += note
 	}
-	return out, nil
+	return out + deliveryFrom(ctx).inspectProduced(ctx, name), nil
 }
 
 // EinoTools adapts a slice of BaseTools.

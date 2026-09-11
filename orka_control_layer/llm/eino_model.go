@@ -159,6 +159,9 @@ func toChatMessages(msgs []*schema.Message) []ChatMessage {
 			Name:       m.Name,
 			ToolCallID: m.ToolCallID,
 		}
+		if m.Role == schema.Assistant {
+			cm.Reasoning = m.ReasoningContent
+		}
 		for _, tc := range m.ToolCalls {
 			cm.ToolCalls = append(cm.ToolCalls, ToolCall{
 				ID:        tc.ID,

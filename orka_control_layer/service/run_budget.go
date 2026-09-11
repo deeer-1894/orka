@@ -49,13 +49,15 @@ type runBudget struct {
 	// every other delegation's calls.
 	metered bool
 
-	mu            sync.Mutex
-	steps         int
-	tokens        int
-	usageReported bool   // even a zero-cost completed exchange is authoritative
-	carried       int    // tokens consumed by preceding attempts
-	spent         int    // billed tokens reported by AddUsage; metered budgets only
-	hit           string // "" until exhausted, then steps | tokens | time
+	successfulTools int    // acknowledged work, carried in checkpoints; not semantic validation
+	lastCallError   string // exact model limit error retained with the execution state
+	mu              sync.Mutex
+	steps           int
+	tokens          int
+	usageReported   bool   // even a zero-cost completed exchange is authoritative
+	carried         int    // tokens consumed by preceding attempts
+	spent           int    // billed tokens reported by AddUsage; metered budgets only
+	hit             string // "" until exhausted, then steps | tokens | time
 }
 
 // AddUsage books one completed model call. Implements llm.UsageSink.
@@ -194,6 +196,16 @@ func (b *runBudget) exhausted() string {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	// A rejected last call still incurred usage and elapsed time. There may be
+	// no next BeforeModel observation to latch these terminal limits.
+	if b.hit == "" {
+		switch {
+		case b.metered && b.maxTokens > 0 && b.carried+b.spent >= b.maxTokens:
+			b.hit = "tokens"
+		case !b.deadline.IsZero() && time.Now().After(b.deadline):
+			b.hit = "time"
+		}
+	}
 	return b.hit
 }
 

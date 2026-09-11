@@ -81,23 +81,25 @@ type wireTool struct {
 }
 
 type wireRequest struct {
-	Model       string           `json:"model"`
-	Messages    []wireReqMessage `json:"messages"`
-	Tools       []wireTool       `json:"tools,omitempty"`
-	Temperature *float32         `json:"temperature,omitempty"`
-	MaxTokens   int              `json:"max_tokens,omitempty"`
-	Stream      bool             `json:"stream,omitempty"`
-	StreamOpts  *streamOpts      `json:"stream_options,omitempty"`
+	Model           string           `json:"model"`
+	Messages        []wireReqMessage `json:"messages"`
+	Tools           []wireTool       `json:"tools,omitempty"`
+	Temperature     *float32         `json:"temperature,omitempty"`
+	MaxTokens       int              `json:"max_tokens,omitempty"`
+	ReasoningEffort string           `json:"reasoning_effort,omitempty"`
+	Stream          bool             `json:"stream,omitempty"`
+	StreamOpts      *streamOpts      `json:"stream_options,omitempty"`
 }
 
 // wireReqMessage is the OUTGOING message; Content is `any` so it can be a plain
 // string or a multimodal [{type:text},{type:image_url}] array (vision input).
 type wireReqMessage struct {
-	Role       string         `json:"role"`
-	Content    any            `json:"content"`
-	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string         `json:"tool_call_id,omitempty"`
-	Name       string         `json:"name,omitempty"`
+	Role             string         `json:"role"`
+	Content          any            `json:"content"`
+	ReasoningContent string         `json:"reasoning_content,omitempty"`
+	ToolCalls        []wireToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string         `json:"tool_call_id,omitempty"`
+	Name             string         `json:"name,omitempty"`
 }
 
 type wirePart struct {
@@ -144,13 +146,16 @@ type wireResponse struct {
 
 // toWireRequest maps the public Request to the OpenAI wire format.
 func toWireRequest(req Request) wireRequest {
-	wr := wireRequest{Model: req.Model, MaxTokens: req.MaxTokens}
+	wr := wireRequest{Model: req.Model, MaxTokens: req.MaxTokens, ReasoningEffort: req.ReasoningEffort}
 	if req.TemperatureSet || req.Temperature != 0 {
 		v := req.Temperature
 		wr.Temperature = &v
 	}
 	for _, m := range req.Messages {
 		wm := wireReqMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID, Name: m.Name}
+		if m.Role == RoleAssistant {
+			wm.ReasoningContent = m.Reasoning
+		}
 		if len(m.Images) > 0 {
 			// Multimodal: text part first, then one image_url part per image.
 			parts := make([]wirePart, 0, len(m.Images)+1)
@@ -203,26 +208,33 @@ func (c *OpenAIClient) Chat(ctx context.Context, req Request) (Response, error) 
 		return Response{}, fmt.Errorf("llm http: %w", err)
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, readErr := io.ReadAll(resp.Body)
 	if resp.StatusCode/100 != 2 {
 		return Response{}, &APIError{Status: resp.StatusCode, Body: string(raw)}
 	}
 
+	if readErr != nil {
+		return Response{}, fmt.Errorf("read response: %w", readErr)
+	}
 	var wresp wireResponse
 	if err := json.Unmarshal(raw, &wresp); err != nil {
 		return Response{}, fmt.Errorf("decode response: %w", err)
 	}
-	if wresp.Error != nil {
-		return Response{}, fmt.Errorf("llm error: %s", wresp.Error.Message)
-	}
-	if len(wresp.Choices) == 0 {
-		return Response{}, fmt.Errorf("llm returned no choices")
-	}
-	msg := wresp.Choices[0].Message
-	out := Response{Content: msg.Content, Reasoning: msg.ReasoningContent, FinishReason: wresp.Choices[0].FinishReason}
+	out := Response{}
 	if u := wresp.Usage; u != nil {
 		out.Usage = Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens, ReasoningTokens: u.reasoning()}
 	}
+	if wresp.Error != nil {
+		return out, fmt.Errorf("llm error: %s", wresp.Error.Message)
+	}
+	if len(wresp.Choices) == 0 {
+		return out, fmt.Errorf("llm returned no choices")
+	}
+	if wresp.Choices[0].FinishReason == "" {
+		return out, fmt.Errorf("response missing finish_reason: %w", io.ErrUnexpectedEOF)
+	}
+	msg := wresp.Choices[0].Message
+	out.Content, out.Reasoning, out.FinishReason = msg.Content, msg.ReasoningContent, wresp.Choices[0].FinishReason
 	for _, tc := range msg.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments})
 	}
@@ -331,8 +343,11 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 			break
 		}
 		var chunk wireStreamChunk
-		if json.Unmarshal([]byte(data), &chunk) != nil {
-			continue
+		if data == "" {
+			continue // empty SSE keepalive
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return Response{Usage: usage}, fmt.Errorf("decode stream chunk: %w", err)
 		}
 		if chunk.Error != nil {
 			return Response{}, fmt.Errorf("llm error: %s", chunk.Error.Message)
@@ -377,6 +392,10 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 	}
 	if err := sc.Err(); err != nil {
 		return Response{}, fmt.Errorf("stream read: %w", err)
+	}
+
+	if finish == "" {
+		return Response{Usage: usage}, fmt.Errorf("stream ended without finish_reason: %w", io.ErrUnexpectedEOF)
 	}
 
 	out := Response{Content: content.String(), Reasoning: reasoning.String(), FinishReason: finish, Usage: usage}

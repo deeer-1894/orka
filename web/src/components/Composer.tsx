@@ -36,6 +36,7 @@ export const SKILLS = [
 ];
 
 export function Composer({
+  blocked = false,
   status,
   onSend,
   onKill,
@@ -45,6 +46,7 @@ export function Composer({
   onPickSkill,
 }: {
   status: RunStatus;
+  blocked?: boolean;
   onSend: (msg: string, fileIDs?: string[]) => void;
   onKill: () => void;
   enabledTools: Set<string>;
@@ -217,6 +219,7 @@ export function Composer({
   };
 
   const send = () => {
+    if (blocked) return;
     if ((!text.trim() && attachments.length === 0) || busy || uploading > 0) return;
     onSend(text.trim(), attachments.map((a) => a.path));
     setText("");
@@ -481,7 +484,7 @@ export function Composer({
           ) : (
             <button
               onClick={send}
-              disabled={(!text.trim() && attachments.length === 0) || uploading > 0}
+              disabled={blocked || (!text.trim() && attachments.length === 0) || uploading > 0}
               className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-accent text-white hover:brightness-105 disabled:opacity-30 transition"
               title="Send"
               aria-label="发送"

@@ -14,6 +14,9 @@ type CallLimits struct {
 	FirstMaxTokens int
 	MaxTokens      int
 	Timeout        time.Duration
+	// ReasoningEffort resolves service policy against the actual requested model,
+	// including per-call overrides. Nil preserves the provider default.
+	ReasoningEffort func(model string) string
 	// OnLengthRetry clears transient presentation before a replacement attempt.
 	OnLengthRetry func(context.Context)
 }
@@ -38,9 +41,14 @@ func (m *EinoModel) WithCallLimits(limits CallLimits) *EinoModel {
 	cp.limits = limits
 	return &cp
 }
-func (l CallLimits) enabled() bool { return l.MaxTokens > 0 || l.FirstMaxTokens > 0 || l.Timeout > 0 }
+func (l CallLimits) enabled() bool {
+	return l.MaxTokens > 0 || l.FirstMaxTokens > 0 || l.Timeout > 0 || l.ReasoningEffort != nil
+}
 
 func (l CallLimits) apply(req Request) Request {
+	if req.ReasoningEffort == "" && l.ReasoningEffort != nil {
+		req.ReasoningEffort = l.ReasoningEffort(req.Model)
+	}
 	cap := l.MaxTokens
 	first := true
 	for _, msg := range req.Messages {

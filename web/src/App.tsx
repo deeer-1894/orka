@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, auth, setOnUnauthorized } from "./api";
 import { useChatStreams } from "./hooks/useChatStream";
+import { useRunRecovery } from "./hooks/useRunRecovery";
+import { lastUserPrompt } from "./lib/runRecovery";
 import { useEventStream } from "./hooks/useEventStream";
 import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
@@ -142,7 +144,8 @@ function Workbench({
   // conversation_ids that have a scheduled (cron) task → marked 🔁 in the sidebar.
   const [scheduledIds, setScheduledIds] = useState<Set<string>>(new Set());
 
-  const { run, kill, setConvMessages, messagesOf, statusOf, runningIds } = useChatStreams();
+  const { run, kill, hydrateMessages, messagesOf, statusOf, runningIds } = useChatStreams();
+  const [runRevision, setRunRevision] = useState(0);
   const messages = messagesOf(activeID);
   const status = statusOf(activeID);
   // Where the agent is working right now → the drawer follows it (Live Focus).
@@ -232,6 +235,7 @@ function Workbench({
     useCallback((kind: string) => {
       if (kind === "notification") refreshResource("notifications");
       if (kind === "run") {
+        setRunRevision(n => n + 1);
         refreshResource("runs:all");
         refreshResource("runs:failed");
         refreshResource("metrics");
@@ -264,12 +268,12 @@ function Workbench({
       seen.current.add(id);
       try {
         const rows = (await api.getMessages(id)) as (Message & { created_at?: number })[];
-        setConvMessages(id, rows.map((r) => ({ ...r, ts: r.ts || r.created_at || Date.now() })).sort((a, b) => a.ts - b.ts));
+        hydrateMessages(id, rows.map((r) => ({ ...r, ts: r.ts || r.created_at || Date.now() })).sort((a, b) => a.ts - b.ts));
       } catch {
-        setConvMessages(id, []);
+        seen.current.delete(id);
       }
     },
-    [setConvMessages],
+    [hydrateMessages],
   );
 
   // Load the saved tool-group selection whenever the active conversation changes.
@@ -296,9 +300,23 @@ function Workbench({
     return c.conversation_id;
   }, [activeID]);
 
+  // After approving a paused danger tool the backend resumes the checkpointed
+  // run, which streams on a NEW SSE this client isn't reading — re-attach so the
+  // continuation (and the final answer) actually lands in the thread.
+  const onResumed = useCallback(
+    (cid: string) => {
+      return run({ message: "", conversationID: cid, userEmail: user.email, enabledTools: [], attachOnly: true });
+    },
+    [run, user.email],
+  );
+
+  const recovery = useRunRecovery({ conversationID: activeID, messages, status, enabled: !isShared }, onResumed, runRevision);
+  const retryPrompt = lastUserPrompt(messages, activeID) || recovery.run?.prompt || "";
+
   const lastMsgRef = useRef("");
   const onSend = useCallback(
     async (msg: string, fileIDs: string[] = []) => {
+      if (recovery.isBusy(activeID)) return;
       lastMsgRef.current = msg;
       const id = await ensureConversation();
       seen.current.add(id);
@@ -312,13 +330,13 @@ function Workbench({
       });
       refreshTasks();
     },
-    [ensureConversation, run, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill, confirmRisky],
+    [ensureConversation, run, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill, confirmRisky, recovery.isBusy, activeID],
   );
 
   // Re-send the last user message after a failure (network drop, sandbox down…).
   const onRetry = useCallback(() => {
-    if (lastMsgRef.current) onSend(lastMsgRef.current);
-  }, [onSend]);
+    if (retryPrompt) onSend(retryPrompt);
+  }, [onSend, retryPrompt]);
 
   const onRename = useCallback(async (id: string, title: string) => {
     try {
@@ -351,16 +369,6 @@ function Workbench({
       refreshTasks();
     },
     [run, activeID, user.email, refreshTasks, version],
-  );
-
-  // After approving a paused danger tool the backend resumes the checkpointed
-  // run, which streams on a NEW SSE this client isn't reading — re-attach so the
-  // continuation (and the final answer) actually lands in the thread.
-  const onResumed = useCallback(
-    (cid: string) => {
-      run({ message: "", conversationID: cid, userEmail: user.email, enabledTools: [], attachOnly: true });
-    },
-    [run, user.email],
   );
 
   // Branch the active conversation at a turn: the backend copies history up to
@@ -512,7 +520,7 @@ function Workbench({
           </button>
         </header>
 
-        <Thread messages={messages} status={status} onResume={onResume} onResumed={onResumed} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} onFork={onFork} fileConv={isShared ? activeID : undefined} bottomInset={composerH} />
+        <Thread conversationID={activeID} ownerEmail={activeConv?.owner_email || user.email} recovery={recovery} onContinue={() => void recovery.resume()} canRetry={!readOnly && !!retryPrompt && recovery.run?.status !== "running"} messages={messages} status={status} onResume={onResume} onResumed={onResumed} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} onFork={onFork} fileConv={isShared ? activeID : undefined} bottomInset={composerH} />
         {/* The composer floats OVER the thread (its height is fed back as the
             thread's bottom padding), so the conversation scrolls clear of it
             instead of the last lines being clipped behind the tool row. */}
@@ -527,7 +535,7 @@ function Workbench({
                 </div>
               </div>
             ) : (
-              <Composer status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
+              <Composer blocked={recovery.busy} status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
             )}
           </div>
         </div>

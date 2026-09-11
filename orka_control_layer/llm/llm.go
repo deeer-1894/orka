@@ -34,6 +34,7 @@ type ToolCall struct {
 
 // ChatMessage is one entry in the model conversation.
 type ChatMessage struct {
+	Reasoning  string     `json:"reasoning_content,omitempty"`
 	Role       string     `json:"role"`
 	Content    string     `json:"content"`
 	Images     []string   `json:"-"` // data URLs sent alongside Content (vision models)
@@ -51,12 +52,13 @@ type ToolSpec struct {
 
 // Request is a chat-completions request.
 type Request struct {
-	Model          string
-	Messages       []ChatMessage
-	Tools          []ToolSpec
-	TemperatureSet bool // distinguishes an explicit zero from the provider default
-	Temperature    float32
-	MaxTokens      int // 0 = provider default; caps output (also bounds reasoning latency)
+	Model           string
+	Messages        []ChatMessage
+	Tools           []ToolSpec
+	TemperatureSet  bool // distinguishes an explicit zero from the provider default
+	Temperature     float32
+	MaxTokens       int    // 0 = provider default; caps output (also bounds reasoning latency)
+	ReasoningEffort string // empty omits the provider-specific optional parameter
 }
 
 // Usage reports token consumption for a call (when the provider returns it).

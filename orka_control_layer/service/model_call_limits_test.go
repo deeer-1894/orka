@@ -2,7 +2,11 @@ package service
 
 import (
 	"context"
+	"sync"
 	"testing"
+
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 
 	"github.com/orka-oss/orka_control_layer/llm"
 	"github.com/orka-oss/orka_core/agent"
@@ -83,5 +87,65 @@ func TestLengthRetryClearsDiscardedThinking(t *testing.T) {
 	}
 	if resets != 1 {
 		t.Fatalf("reasoning resets=%d want 1", resets)
+	}
+}
+
+func TestExecutionReasoningPolicyFollowsActualModel(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		override string
+		want     string
+	}{
+		{"deepseek-v4-pro", "", "low"}, {"deepseek-v4-flash", "", "low"},
+		{"unknown", "", ""}, {"deepseek-v4-pro", "unknown", ""},
+		{"unknown", "deepseek-v4-pro", "low"},
+	} {
+		t.Run(tc.name+"/"+tc.override, func(t *testing.T) {
+			mock := llm.NewMock(llm.Response{Content: "ok"})
+			m := newAgentModel(mock, tc.name, "test")
+			var opts []model.Option
+			if tc.override != "" {
+				opts = append(opts, model.WithModel(tc.override))
+			}
+			_, err := m.Generate(context.Background(), []*schema.Message{schema.UserMessage("one next action")}, opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := mock.Requests[0].ReasoningEffort; got != tc.want {
+				t.Fatalf("effort %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestExecutionReasoningPolicyIsolatedAcrossConcurrentOverrides(t *testing.T) {
+	mock := llm.NewMock(llm.Response{Content: "ok"})
+	m := newAgentModel(mock, "deepseek-v4-pro", "test")
+	var wg sync.WaitGroup
+	for _, name := range []string{"deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-pro-unknown", "unknown"} {
+		name := name
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := m.Generate(context.Background(), []*schema.Message{schema.UserMessage("task")}, model.WithModel(name)); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if _, err := m.Generate(context.Background(), []*schema.Message{schema.UserMessage("base model again")}); err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range mock.Requests {
+		want := ""
+		if req.Model == "deepseek-v4-pro" || req.Model == "deepseek-v4-flash" {
+			want = "low"
+		}
+		if req.ReasoningEffort != want {
+			t.Fatalf("model policy leaked: %+v", req)
+		}
+	}
+	if mock.Requests[len(mock.Requests)-1].Model != "deepseek-v4-pro" {
+		t.Fatal("model override leaked to base instance")
 	}
 }
