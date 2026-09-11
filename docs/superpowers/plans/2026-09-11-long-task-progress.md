@@ -47,9 +47,9 @@ Files: web/src/App.tsx, components/Thread.tsx, small pure helpers/tests (agent K
 
 - [x] Review independent diffs and run all appropriate module tests/vet/race plus frontend build.
 - [x] Build exact reviewed backend, preserve environment, restart only that backend, confirm health.
-- [ ] Submit F prompt with only G identity/new directory replacements via logged-in browser. Freeze production code while benchmark runs.
-- [ ] Capture terminal run and telemetry; compare every business field against existing independent oracle, audit required files, verify/reproduce isolated copies, inspect UI.
-- [ ] Record actual outcomes and unresolved limitations; commit reviewed changes only on current branch.
+- [x] Submit F prompt with only G identity/new directory replacements via logged-in browser. Freeze production code while benchmark runs.
+- [x] Capture terminal run and telemetry; compare every business field against existing independent oracle, audit required files, verify/reproduce isolated copies, inspect UI.
+- [x] Record actual outcomes and unresolved limitations; commit reviewed changes only on current branch.
 
 ## Review-driven integrity checks
 
@@ -57,3 +57,5 @@ Files: web/src/App.tsx, components/Thread.tsx, small pure helpers/tests (agent K
 - [x] Feed bounded structural diagnostics for changed declared JSON/CSV/SVG/HTML files into mutating tool observations; defer undisplayed failures instead of caching them.
 - [x] Cover malformed SVG dimensions, actual HTTP tool-roundtrip reasoning, concurrent model overrides and short response bodies.
 - [x] Close cancellation-during-final-check and decorated failed-tool checkpoint recovery review cases.
+
+G ended partial at cumulative token budget. Independent reproduction/package passed, business345 and visuals139 passed; verifier mutation resistance and source support did not. See docs/evaluations/2026-09-11-long-task-inventory-g.md. Post-run refusal receipt fix tested and committed separately as138915c.
