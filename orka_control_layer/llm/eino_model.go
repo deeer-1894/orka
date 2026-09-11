@@ -104,10 +104,21 @@ func (m *EinoModel) Stream(ctx context.Context, input []*schema.Message, opts ..
 // actually does, from a request-time model.WithTools OPTION — the latter wins.
 func (m *EinoModel) request(input []*schema.Message, opts []model.Option) Request {
 	tools := m.tools
-	if co := model.GetCommonOptions(&model.Options{}, opts...); len(co.Tools) > 0 {
+	co := model.GetCommonOptions(&model.Options{}, opts...)
+	if co.Tools != nil {
 		tools = co.Tools
 	}
 	req := Request{Model: m.model, Messages: toChatMessages(input)}
+	if co.Model != nil {
+		req.Model = *co.Model
+	}
+	if co.Temperature != nil {
+		req.Temperature = *co.Temperature
+		req.TemperatureSet = true
+	}
+	if co.MaxTokens != nil {
+		req.MaxTokens = *co.MaxTokens
+	}
 	for _, ti := range tools {
 		req.Tools = append(req.Tools, toToolSpec(ti))
 	}

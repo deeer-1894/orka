@@ -58,7 +58,7 @@ var coreTools = map[string]bool{
 	"file_read": true, "file_write": true, "file_list": true, "file_delete": true,
 	// control-plane affordances the agent needs to work well
 	"update_plan": true, "clarify": true, "apply_skill": true, "find_skills": true,
-	"artifact_publish": true,
+	"artifact_publish": true, "check_delivery": true,
 	// small, constantly used utilities
 	"current_time": true, "calculator": true,
 	// The general-purpose sub-agents ARE the delegation mechanism in multi-agent

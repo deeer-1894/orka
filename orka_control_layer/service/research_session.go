@@ -137,7 +137,7 @@ func (s *researchSession) atLimitLocked() bool {
 	}
 	// The run's immutable total limit is shared with the usage meter. Reserve
 	// half for synthesis/execution instead of letting retrieval consume it all.
-	return s.budget != nil && s.budget.maxTokens > 0 && s.budget.spentTokens() >= s.budget.maxTokens/2
+	return s.budget != nil && s.budget.maxTokens > 0 && s.budget.totalSpentTokens() >= s.budget.maxTokens/2
 }
 
 func (s *researchSession) status() string {

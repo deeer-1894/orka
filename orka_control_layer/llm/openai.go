@@ -84,7 +84,7 @@ type wireRequest struct {
 	Model       string           `json:"model"`
 	Messages    []wireReqMessage `json:"messages"`
 	Tools       []wireTool       `json:"tools,omitempty"`
-	Temperature float32          `json:"temperature,omitempty"`
+	Temperature *float32         `json:"temperature,omitempty"`
 	MaxTokens   int              `json:"max_tokens,omitempty"`
 	Stream      bool             `json:"stream,omitempty"`
 	StreamOpts  *streamOpts      `json:"stream_options,omitempty"`
@@ -144,7 +144,11 @@ type wireResponse struct {
 
 // toWireRequest maps the public Request to the OpenAI wire format.
 func toWireRequest(req Request) wireRequest {
-	wr := wireRequest{Model: req.Model, Temperature: req.Temperature, MaxTokens: req.MaxTokens}
+	wr := wireRequest{Model: req.Model, MaxTokens: req.MaxTokens}
+	if req.TemperatureSet || req.Temperature != 0 {
+		v := req.Temperature
+		wr.Temperature = &v
+	}
 	for _, m := range req.Messages {
 		wm := wireReqMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID, Name: m.Name}
 		if len(m.Images) > 0 {

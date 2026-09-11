@@ -39,8 +39,11 @@ func (g *researchGuidance) BeforeModelRewriteState(ctx context.Context, state *a
 		}
 		kept = append(kept, m)
 	}
-	text := "[Live execution state]\n" + g.session.status() + "\n" +
+	text := "[Live execution state]\n" + executionGuidance(g.session.budget) + "\n" + g.session.status() + "\n" +
 		"For documentation, use discover_docs to find real links and read_section for a specific question. Prefer search_evidence to repeated network reads. Save sourced findings as you collect them; once required evidence is sufficient, move to implementation and verification. Update only genuinely completed plan steps; do not declare missing deliverables done."
+	if outputs := deliveryFrom(ctx).snapshot(); len(outputs) > 0 {
+		text += "\nRequired outputs (check_delivery inspects these): " + trunc(strings.Join(outputs, "; "), 2400)
+	}
 	if pending := g.plan.unfinished(); len(pending) > 0 {
 		text += "\nOpen plan steps: " + trunc(strings.Join(pending, "; "), 1800)
 	}

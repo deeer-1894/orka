@@ -53,6 +53,7 @@ type runBudget struct {
 	steps         int
 	tokens        int
 	usageReported bool   // even a zero-cost completed exchange is authoritative
+	carried       int    // tokens consumed by preceding attempts
 	spent         int    // billed tokens reported by AddUsage; metered budgets only
 	hit           string // "" until exhausted, then steps | tokens | time
 }
@@ -90,6 +91,16 @@ func (b *runBudget) spentTokens() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.spent
+}
+
+// totalSpentTokens is the task allowance ledger; spentTokens is this attempt's bill.
+func (b *runBudget) totalSpentTokens() int {
+	if b == nil {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.carried + b.spent
 }
 
 func newRunBudget(maxSteps, maxTokens int, wall time.Duration) *runBudget {
@@ -157,7 +168,7 @@ func (b *runBudget) observe(msgs []*schema.Message) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.metered {
-		tokens = b.spent
+		tokens = b.carried + b.spent
 	}
 	b.steps, b.tokens = steps, tokens
 	if b.hit != "" && b.sticky {
@@ -219,8 +230,9 @@ func budgetNotice(reason string) *schema.Message {
 
 // ---- plan completion ----
 
-// planTracker keeps the latest checklist the agent published via update_plan, so
-// a run can be checked against what it said it would do. Without it "done" means
+// planTracker preserves every step published via update_plan, so
+// omitted steps cannot erase obligations. File requirements are checked separately.
+// Without a tracker "done" means
 // only "the model stopped calling tools", which is not a completion signal at
 // all — it is equally true of a finished run and an abandoned one.
 type planTracker struct {
@@ -233,8 +245,30 @@ func (p *planTracker) record(steps []messages.PlanStep) {
 		return
 	}
 	p.mu.Lock()
-	p.steps = append([]messages.PlanStep(nil), steps...)
+	// Omission is not completion. Keep stable titles when reporting progress;
+	// a renamed step is an addition, not permission to erase an old obligation.
+	index := make(map[string]int, len(p.steps))
+	for i, step := range p.steps {
+		index[step.Title] = i
+	}
+	for _, step := range steps {
+		if i, ok := index[step.Title]; ok {
+			p.steps[i] = step
+		} else {
+			index[step.Title] = len(p.steps)
+			p.steps = append(p.steps, step)
+		}
+	}
 	p.mu.Unlock()
+}
+
+func (p *planTracker) snapshot() []messages.PlanStep {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]messages.PlanStep(nil), p.steps...)
 }
 
 // same reports whether steps are identical to the plan already recorded, so a

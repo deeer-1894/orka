@@ -5,6 +5,7 @@ package checkpoint
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/orka-oss/orka_core/messages"
@@ -18,13 +19,14 @@ var (
 
 // Checkpoint is the serialized runtime state captured at an interrupt point.
 type Checkpoint struct {
-	Messages  []messages.Message `json:"messages"`   // full history
-	Cursor    int                `json:"cursor"`     // middleware position
-	Vars      map[string]any     `json:"vars"`       // intermediate variables
-	Meta      messages.Meta      `json:"meta"`       // session metadata
-	Version   int                `json:"version"`    // CAS guard against duplicate resume
-	CreatedAt int64              `json:"created_at"` // unix millis
-	TTLSec    int                `json:"ttl_sec"`    // human-delay tolerance
+	Runtime   json.RawMessage    `json:"runtime,omitempty"` // opaque control-layer execution obligations
+	Messages  []messages.Message `json:"messages"`          // full history
+	Cursor    int                `json:"cursor"`            // middleware position
+	Vars      map[string]any     `json:"vars"`              // intermediate variables
+	Meta      messages.Meta      `json:"meta"`              // session metadata
+	Version   int                `json:"version"`           // CAS guard against duplicate resume
+	CreatedAt int64              `json:"created_at"`        // unix millis
+	TTLSec    int                `json:"ttl_sec"`           // human-delay tolerance
 }
 
 // CheckpointStore persists checkpoints with CAS + TTL semantics.

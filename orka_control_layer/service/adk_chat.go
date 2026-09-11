@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/cloudwego/eino/adk"
 	"log/slog"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	cp "github.com/orka-oss/orka_core/checkpoint"
 	"github.com/orka-oss/orka_core/config"
 	"github.com/orka-oss/orka_core/messages"
+	"github.com/orka-oss/orka_core/pathsafe"
 	"github.com/orka-oss/orka_core/trace"
 
 	"github.com/orka-oss/orka_control_layer/checkpoint"
@@ -40,9 +42,10 @@ type ChatRunRequest struct {
 	ConfirmRisky    bool     `json:"confirm_risky"` // gate side-effecting tools behind user approval
 
 	// Internal (never bound from JSON): set when resuming an interrupted run.
-	resumeTarget string     // InterruptCtx.ID of the paused tool call
-	resumeData   any        // the user's decision, handed to that tool
-	resumeFrom   *runResume // recovered transcript of a run that died mid-flight
+	resumeCheckpoint *runCheckpoint
+	resumeTarget     string     // InterruptCtx.ID of the paused tool call
+	resumeData       any        // the user's decision, handed to that tool
+	resumeFrom       *runResume // recovered transcript of a run that died mid-flight
 }
 
 // ToolsProvider supplies the tool set for a request and an optional cleanup
@@ -256,6 +259,15 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// own checklist unfinished, must not be filed as a success.
 	budget := newRunBudget(einoMaxIters, runMaxTokens, runMaxWall)
 	plan := &planTracker{}
+	if s.Cfg.Storage.BaseStoragePath != "" {
+		rc.Ctx = withDelivery(rc.Ctx, newDeliveryTracker(pathsafe.UserRoot(s.Cfg.Storage.BaseStoragePath, req.UserEmail)))
+	}
+	if req.resumeCheckpoint != nil {
+		restoreCheckpoint(req.resumeCheckpoint, budget, plan, deliveryFrom(rc.Ctx))
+	}
+	if req.resumeFrom != nil {
+		restoreCheckpoint(req.resumeFrom.Checkpoint, budget, plan, deliveryFrom(rc.Ctx))
+	}
 	rc.Ctx = llm.WithUsageSink(withPlanTracker(withBudget(rc.Ctx, budget), plan), budget)
 	// Narrow the tool surface to what this run plausibly needs; find_tools opens
 	// the rest on demand. Per run, so one conversation unlocking the CSV tools
@@ -294,6 +306,17 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// run. On a resume, seed it with the recovered transcript.
 	journal := newRunJournal(s.Cfg.Storage.BaseStoragePath, runRecID, nil)
 	rc.Ctx = withRunID(withJournal(rc.Ctx, journal), runRecID)
+	journal.trackState(rc.Ctx)
+	if req.resumeFrom != nil {
+		journal.inherit(req.resumeFrom)
+		defer func() {
+			req.resumeFrom.Advanced = budget.spentTokens() > 0 || journal.steps() > 0
+			req.resumeFrom.Checkpoint = checkpointFrom(rc.Ctx)
+		}()
+	}
+	if req.resumeCheckpoint != nil {
+		rc.Ctx = withRunResume(rc.Ctx, &runResume{Checkpoint: req.resumeCheckpoint})
+	}
 	if req.resumeFrom != nil {
 		rc.Ctx = withRunResume(rc.Ctx, req.resumeFrom)
 	}
@@ -347,7 +370,11 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// only when both halves are true — the run ended badly AND it got far enough
 	// that resuming beats restarting — and delete it otherwise, so journals do
 	// not accumulate for every successful run.
-	s.settleJournal(runRecID, journal, status)
+	journal.trackState(rc.Ctx)
+	durable := s.settleJournal(runRecID, journal, status)
+	if req.resumeFrom != nil {
+		req.resumeFrom.SuccessorDurable = durable
+	}
 	return status
 }
 
@@ -421,6 +448,10 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 	if status == db.RunDone && rc.Ctx != nil {
 		budgetHit = budgetFrom(rc.Ctx).exhausted()
 		unfinished = planTrackerFrom(rc.Ctx).unfinished()
+		// Read the actual files again: a previous tool check can become stale.
+		checkCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		unfinished = append(unfinished, deliveryFrom(rc.Ctx).failures(checkCtx)...)
+		cancel()
 		if budgetHit != "" || len(unfinished) > 0 {
 			status = db.RunPartial
 		}
@@ -547,6 +578,14 @@ func (s *ChatService) resume(ctx context.Context, rc *agent.RunContext, req Chat
 	if s.Metrics != nil {
 		s.Metrics.Checkpoints.Add(-1)
 	}
+	if len(c.Runtime) > 0 {
+		var saved runCheckpoint
+		if err := json.Unmarshal(c.Runtime, &saved); err != nil {
+			return fmt.Errorf("invalid runtime checkpoint: %w", err)
+		}
+		restoreCheckpoint(&saved, budgetFrom(rc.Ctx), planTrackerFrom(rc.Ctx), deliveryFrom(rc.Ctx))
+		rc.Ctx = withRunResume(rc.Ctx, &runResume{Checkpoint: &saved})
+	}
 	rc.Messages = c.Messages
 	rc.Cursor = c.Cursor
 	if c.Vars != nil {
@@ -602,6 +641,7 @@ func (s *ChatService) persistPendingConfirm(rc *agent.RunContext, req ChatRunReq
 	}
 	req.resumeTarget, req.resumeData = "", nil // never persist a stale decision
 	p.Request = req
+	p.Checkpoint = checkpointFrom(rc.Ctx)
 	savePausedRun(s.Cfg.Storage.BaseStoragePath, p)
 }
 
@@ -623,9 +663,14 @@ func (s *ChatService) ResumeConfirm(ctx context.Context, convID string, approve,
 	if !found {
 		return false
 	}
+	if p.Checkpoint != nil && p.Checkpoint.SpentTokens >= runMaxTokens {
+		raw(messages.Chat(messages.RoleAssistant, "任务预算已用尽，确认记录已保留，当前不会自动追加额度。", messages.Meta{ConversationID: convID}))
+		return true
+	}
 	dropPausedRun(s.Cfg.Storage.BaseStoragePath, convID) // one decision per pause
 
 	req := p.Request
+	req.resumeCheckpoint = p.Checkpoint
 	req.ConversationID = convID
 	req.resumeTarget = p.Target
 	req.resumeData = confirmDecision{Approve: approve, Always: always}
@@ -645,7 +690,9 @@ func (s *ChatService) ResumeConfirm(ctx context.Context, convID string, approve,
 // persistClarify saves the checkpoint and emits the clarify question.
 func (s *ChatService) persistClarify(ctx context.Context, rc *agent.RunContext, meta messages.Meta, raw func(messages.Message)) {
 	key := "cp_" + messages.NewID()
+	runtimeState, _ := json.Marshal(checkpointFrom(rc.Ctx))
 	c := &cp.Checkpoint{
+		Runtime:   runtimeState,
 		Messages:  rc.Messages,
 		Cursor:    rc.Cursor,
 		Vars:      rc.Vars,

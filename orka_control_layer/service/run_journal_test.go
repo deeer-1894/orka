@@ -3,6 +3,7 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/schema"
@@ -24,7 +25,7 @@ func toolResultMsg(id string) *schema.Message {
 // transcript ends with an assistant turn whose tool_calls were never answered.
 // Providers reject that with a hard 400, which would make every resume fail —
 // and look like the resume feature is broken rather than its input.
-func TestResumeDropsUnansweredToolCall(t *testing.T) {
+func TestResumePreservesUncertainToolCall(t *testing.T) {
 	f := &journalFile{
 		Seed: []*schema.Message{schema.UserMessage("查一下")},
 		Messages: []*schema.Message{
@@ -33,12 +34,12 @@ func TestResumeDropsUnansweredToolCall(t *testing.T) {
 		},
 	}
 	got := resumeMessages(f)
-	if len(got) != 3 {
-		t.Fatalf("got %d messages, want 3 (the dangling tool call must be dropped)", len(got))
+	if len(got) != 5 {
+		t.Fatalf("got %d messages, want 5 including the uncertain call and receipt", len(got))
 	}
 	last := got[len(got)-1]
-	if last.Role != schema.Tool || last.ToolCallID != "a" {
-		t.Fatalf("transcript ends with %v/%q, want the answered tool result", last.Role, last.ToolCallID)
+	if last.Role != schema.Tool || last.ToolCallID != "b" || !strings.Contains(last.Content, "unknown") {
+		t.Fatalf("transcript ends with %v/%q, want the uncertain tool result", last.Role, last.ToolCallID)
 	}
 }
 
@@ -73,14 +74,14 @@ func TestResumeKeepsCompleteTranscript(t *testing.T) {
 	}
 }
 
-func TestResumeUnwindsMultipleDanglingTurns(t *testing.T) {
+func TestResumePreservesMultipleUncertainTurns(t *testing.T) {
 	f := &journalFile{
 		Seed:     []*schema.Message{schema.UserMessage("go")},
 		Messages: []*schema.Message{toolCallMsg("a"), nil, toolCallMsg("b")},
 	}
 	got := resumeMessages(f)
-	if len(got) != 1 || got[0].Role != schema.User {
-		t.Fatalf("got %d messages, want just the seed once every dangling turn unwinds", len(got))
+	if len(got) != 5 || got[0].Role != schema.User || !strings.Contains(got[2].Content, "unknown") || !strings.Contains(got[4].Content, "unknown") {
+		t.Fatalf("got %d messages, want coherent receipts for both uncertain calls", len(got))
 	}
 }
 

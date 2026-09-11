@@ -95,7 +95,10 @@ func summarizationTrigger() *summarization.TriggerCondition {
 
 func summarizationHandlers(ctx context.Context, client llm.Client, model string) []adk.ChatModelAgentMiddleware {
 	mw, err := summarization.New(ctx, &summarization.Config{
-		Model: llm.NewEinoModel(client, model).ForAgent("summarizer"),
+		Model:           llm.NewEinoModel(client, model).ForAgent("summarizer"),
+		ModelOptions:    []einomodel.Option{einomodel.WithMaxTokens(8192)},
+		UserInstruction: "Create a concise continuation checkpoint, targeting at most 1200 words. Preserve user requirements, exact file paths, completed and pending work, verified results, unresolved failures and source references. Do not reproduce scripts, raw tables or tool output; point to saved files instead. Never turn unverified claims into verified results.",
+		Finalize:        finalizeSummary,
 		// Reduction now trims oversized/stale tool output first, so summarization
 		// is the backstop for genuinely long dialogue — trigger it earlier than the
 		// old 80-message mark, which a long pipeline blew past on cost alone.
@@ -476,7 +479,7 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 	// earlier attempt that died. Resuming replays what was already established
 	// instead of paying for it again.
 	input := toEinoMessages(rc.Messages)
-	if rr := runResumeFrom(ctx); rr != nil {
+	if rr := runResumeFrom(ctx); rr != nil && len(rr.Messages) > 0 {
 		input = rr.Messages
 	}
 	journal := journalFrom(ctx)
@@ -577,11 +580,13 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 			tokens += m.ResponseMeta.Usage.TotalTokens
 		}
 
-		// Journal every authoritative message. This is the run's transcript, and
-		// the only thing that makes a mid-run failure recoverable rather than
-		// total. Sub-agent turns are journaled too: they are part of what the
-		// orchestrator has already established.
-		journal.append(m)
+		// The parent result contains the delegate's handoff. Keep the parent
+		// transcript coherent; delegate events remain in the event store.
+		if ev.AgentName == "" || ev.AgentName == einoOrchestratorName {
+			journal.append(m)
+		} else {
+			journal.appendDelegate(ev.AgentName, m)
+		}
 
 		switch m.Role {
 		case schema.Assistant:
@@ -619,11 +624,11 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 			}
 			toolCalls++
 			payload := map[string]any{"tool": name, "args": pc.args, "result": m.Content}
-			emit(messages.Tool("call", payload, eventMeta))
 			// Durability boundary: the work this result describes has already
 			// happened, so persist the transcript now. Tens of writes per run —
 			// nothing next to the model call that produced it.
 			journal.flush()
+			emit(messages.Tool("call", payload, eventMeta))
 		}
 	}
 	return nil
@@ -690,9 +695,16 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 		// A missing audit store must not pool independent executions' evidence.
 		evidenceDir = filepath.Join(evidenceDir, messages.NewID())
 	}
-	research := newResearchSession(newWorkspaceBackend(s.Cfg.Storage.BaseStoragePath, runUserEmail(rc)),
+	backend := newWorkspaceBackend(s.Cfg.Storage.BaseStoragePath, runUserEmail(rc))
+	exposeRecoveryArchive(ctx, backend, evidenceDir)
+	research := newResearchSession(backend,
 		filepath.Join(evidenceDir, "evidence"), budgetFrom(ctx), s.Cfg.Agent.ResearchMaxCalls)
+	if rr := runResumeFrom(ctx); rr != nil && rr.Checkpoint != nil {
+		research.calls = rr.Checkpoint.ResearchCalls
+	}
 	ctx = withResearchSession(ctx, research)
+	rc.Ctx = ctx
+	journalFrom(ctx).trackState(ctx)
 	tools = append(append([]agent.BaseTool(nil), tools...), evidenceSearchTool{research})
 	// Context-window management (truncate oversized tool output to a workspace
 	// file, clear stale tool results, repair dangling tool calls). Runs ahead of

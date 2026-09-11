@@ -81,11 +81,11 @@ func (s *ChatService) StartRunReaper(ctx context.Context) {
 		resumable := 0
 		for _, id := range ids {
 			f := loadJournal(s.Cfg.Storage.BaseStoragePath, id)
-			if f == nil || len(f.Messages) < resumeWorthwhileSteps {
+			if f.recoverableSteps() < resumeWorthwhileSteps {
 				dropJournal(s.Cfg.Storage.BaseStoragePath, id)
 				continue
 			}
-			if s.Msg.Store.SetRunResumable(c, id, len(f.Messages)) == nil {
+			if s.Msg.Store.SetRunResumable(c, id, f.recoverableSteps()) == nil {
 				resumable++
 			}
 		}
