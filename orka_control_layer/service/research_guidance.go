@@ -47,8 +47,8 @@ func (g *researchGuidance) BeforeModelRewriteState(ctx context.Context, state *a
 	if pending := g.plan.unfinished(); len(pending) > 0 {
 		text += "\nOpen plan steps: " + trunc(strings.Join(pending, "; "), 1800)
 	}
-	notice := schema.UserMessage(text)
-	notice.Extra = map[string]any{researchStateTag: true}
+	notice := runtimeUserMessage(text)
+	notice.Extra[researchStateTag] = true
 	state.Messages = append(kept, notice)
 	g.session.mu.Lock()
 	limited := g.session.atLimitLocked()

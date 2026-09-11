@@ -260,7 +260,7 @@ func resumeMessages(f *journalFile) []*schema.Message {
 				note.WriteString(tc.ID + " " + tc.Function.Name + " " + trunc(tc.Function.Arguments, 500) + "\n")
 			}
 		}
-		out = append(out, schema.UserMessage(note.String()))
+		out = append(out, runtimeUserMessage(note.String()))
 	}
 	return out
 }
@@ -279,7 +279,7 @@ func resumeNotice(reason string, steps int) *schema.Message {
 	case "interrupted":
 		why = "上一次运行因服务重启而中断"
 	}
-	return schema.UserMessage("[系统] " + why + "(已完成 " + itoa(steps) + " 步,记录见上文)。\n" +
+	return runtimeUserMessage("[系统] " + why + "(已完成 " + itoa(steps) + " 步,记录见上文)。\n" +
 		"请从中断处继续,不要从头重做已经完成的工作。先简短说明你将接着做什么,然后继续执行。")
 }
 

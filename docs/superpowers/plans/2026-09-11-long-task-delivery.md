@@ -16,9 +16,18 @@ Current branch only; no unrelated changes; same model and 800,000-token evaluati
 - [x] Plan and delivery: reproduce omitted pending steps; preserve original steps while accepting progress and additions. Add additive output requirements, bounded workspace-safe file validation, a visible check_delivery tool, and final fresh checks. Cover missing/empty files, duplicate CSV columns, malformed image references, invalid JSON/XML, ZIP corruption, symlink escape and changed files.
 - [x] Recovery: reproduce partial journal removal; persist and restore plan/output requirements/cumulative tokens; retain completed parallel tool results and insert explicit unknown-result receipts for interrupted branches. Test atomic concurrent flush, failed-write retry and no token-budget reset.
 - [x] Execution guidance: expose remaining allowance and timely generation/verification/packaging priorities. Test guidance after history replacement and enforce the existing retrieval cap.
-- [ ] Validate: run focused tests first, then `go test ./orka_core/... ./orka_control_layer/... ./orka_middleware/... ./tools_server/...`, affected race checks and vet. Inspect final diff before commit.
-- [ ] Evaluate: rebuild/restart only the backend, verify health, run the fixed long prompt with test ID D and a new output folder, archive events and telemetry, then run independent audits and record outcome and limitations.
+- [x] Validate: run focused tests first, then `go test ./orka_core/... ./orka_control_layer/... ./orka_middleware/... ./tools_server/...`, affected race checks and vet. Inspect final diff before commit.
+- [x] Evaluate: rebuild/restart only the backend, verify health, run the fixed long prompt with test ID D and a new output folder, archive events and telemetry, then run independent audits and record outcome and limitations.
 
 Regression implementation proceeds test-first at each seam. The prior three overlay probes provide the initial failing examples; permanent tests also cover the public tool/runtime paths and compatibility.
 
 Review expanded recovery coverage to clarification/confirmation, inherited crash state, full delegate archives, unknown tool outcomes and failed durable handoff. File/offer write failures fail closed; they must never restore an older spending allowance.
+
+
+## User-steered latency follow-up
+
+- [x] Reproduce unlimited first generation and false acceptance of truncation; add isolated call limits and one bounded retry; prevent partial tool execution and outer retry multiplication; preserve usage and reset transient thinking.
+- [x] Validate full suite, affected race/vet/build, and focused independent review; commit on the current branch and restart only the backend after D terminates.
+- [x] Run the unchanged E fixture, audit terminal products and compare first-action latency plus overall correctness/cost; report remaining failures without treating a fast start as complete delivery.
+
+- [x] Reproduce missing/replaced exact requests across repeated summaries; mark trustworthy human inputs, separate work summaries, preserve later corrections and legacy history, and prevent requirement-only compression loops. Validate 120 input steps / 5 summaries and an actual 90-tool Eino run / 3 summaries without external model calls.

@@ -220,7 +220,7 @@ func budgetNotice(reason string) *schema.Message {
 	if why == "" {
 		why = "已达到本轮预算上限"
 	}
-	return schema.UserMessage("[系统] " + why + ",工具已停用,这是最后一次回复。\n" +
+	return runtimeUserMessage("[系统] " + why + ",工具已停用,这是最后一次回复。\n" +
 		"不要编造未完成的结论。请如实汇报:\n" +
 		"1. 已经完成了什么(附已产出的文件/结果)\n" +
 		"2. 还剩什么没做\n" +

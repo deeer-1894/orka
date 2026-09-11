@@ -5,6 +5,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 	"github.com/orka-oss/orka_control_layer/llm"
+	"github.com/orka-oss/orka_core/messages"
 	"testing"
 )
 
@@ -15,7 +16,8 @@ func TestSummaryBoundsOutputAndPreservesHistoryOnTruncation(t *testing.T) {
 			mw := summarizationHandlers(context.Background(), client, "mini")[0]
 			state := &adk.ChatModelAgentState{}
 			for i := 0; i < 60; i++ {
-				state.Messages = append(state.Messages, schema.UserMessage("Keep the report and ZIP requirement."), schema.AssistantMessage("work", nil))
+				state.Messages = append(state.Messages, toEinoMessages([]messages.Message{humanChat("Keep the report and ZIP requirement.", messages.Meta{})})...)
+				state.Messages = append(state.Messages, schema.AssistantMessage("work", nil))
 			}
 			original := len(state.Messages)
 			_, got, err := mw.BeforeModelRewriteState(context.Background(), state, &adk.ModelContext{})

@@ -337,7 +337,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 			_ = s.Msg.Store.UpdateConversationTitle(ctx, req.ConversationID, titleSnippet(req.Message))
 			s.titleAsync(req.ConversationID, req.Message)
 		}
-		userMsg := messages.Chat(messages.RoleUser, req.Message, meta)
+		userMsg := humanChat(req.Message, meta)
 		// Fold any uploaded attachments (text inline; images via a VLM pre-pass)
 		// into the message the model sees — the optimistic UI echo keeps the
 		// user's original text, so this context is invisible in the bubble.
@@ -558,11 +558,17 @@ func (s *ChatService) loadChatHistory(ctx context.Context, convID string, meta m
 	// work and the reason follow-up questions used to hit an amnesiac agent.
 	if ds, derr := s.Msg.Store.GetRunDigests(ctx, convID); derr == nil {
 		if pre := digestPreamble(ds); pre != "" {
-			out = append(out, messages.Chat(messages.RoleUser, pre, meta))
+			memory := messages.Chat(messages.RoleUser, pre, meta)
+			memory.Action = runtimeContextAction
+			out = append(out, memory)
 		}
 	}
 	for i := len(rows) - 1; i >= 0; i-- { // newest-first; reverse to chronological
-		out = append(out, messages.Chat(rows[i].Role, rows[i].Content, meta))
+		m := messages.Chat(rows[i].Role, rows[i].Content, meta)
+		if rows[i].Role == messages.RoleUser {
+			m.Action = humanInputAction
+		}
+		out = append(out, m)
 	}
 	return out
 }
@@ -596,7 +602,7 @@ func (s *ChatService) resume(ctx context.Context, rc *agent.RunContext, req Chat
 	// agent over the augmented messages (the clarify question was already recorded
 	// into the checkpoint's history before the pause).
 	if req.Message != "" {
-		um := messages.Chat(messages.RoleUser, req.Message, rc.Meta)
+		um := humanChat(req.Message, rc.Meta)
 		rc.Messages = append(rc.Messages, um)
 		s.Msg.Deliver(rc, nil, um, true)
 	}

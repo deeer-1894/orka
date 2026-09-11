@@ -94,21 +94,27 @@ func summarizationTrigger() *summarization.TriggerCondition {
 }
 
 func summarizationHandlers(ctx context.Context, client llm.Client, model string) []adk.ChatModelAgentMiddleware {
+	trigger := summarizationTrigger()
+	trigger.ContextMessages = 0 // wrapper counts compressible work; native token accounting stays authoritative
 	mw, err := summarization.New(ctx, &summarization.Config{
 		Model:           llm.NewEinoModel(client, model).ForAgent("summarizer"),
 		ModelOptions:    []einomodel.Option{einomodel.WithMaxTokens(8192)},
-		UserInstruction: "Create a concise continuation checkpoint, targeting at most 1200 words. Preserve user requirements, exact file paths, completed and pending work, verified results, unresolved failures and source references. Do not reproduce scripts, raw tables or tool output; point to saved files instead. Never turn unverified claims into verified results.",
+		UserInstruction: "Create a concise continuation checkpoint, targeting at most 1200 words. Original human requests are retained verbatim by the runtime; do not rewrite their formulas or acceptance criteria. Preserve exact file paths, completed and pending work, verified results, unresolved failures and source references. Do not reproduce scripts, raw tables or tool output; point to saved files instead. Never turn unverified claims into verified results.",
 		Finalize:        finalizeSummary,
 		// Reduction now trims oversized/stale tool output first, so summarization
 		// is the backstop for genuinely long dialogue — trigger it earlier than the
 		// old 80-message mark, which a long pipeline blew past on cost alone.
 		//
-		Trigger: summarizationTrigger(),
+		Trigger: trigger,
 	})
 	if err != nil {
 		return nil // summarization is best-effort; never block agent construction
 	}
-	return []adk.ChatModelAgentMiddleware{bestEffort(mw)}
+	rewriter, ok := mw.(summaryRewriter)
+	if !ok {
+		return nil
+	}
+	return []adk.ChatModelAgentMiddleware{bestEffort(&requestAwareSummary{rewriter})}
 }
 
 // bestEffortMiddleware makes a context-management middleware unable to fail a
@@ -417,7 +423,8 @@ const einoMaxIters = 200
 // fan these events out to SSE instead of collapsing them.)
 func RunEinoOnce(ctx context.Context, ag adk.Agent, userMessage string) (string, error) {
 	runner := adk.NewRunner(ctx, adk.RunnerConfig{Agent: ag})
-	iter := runner.Query(ctx, userMessage)
+	input := toEinoMessages([]messages.Message{humanChat(userMessage, messages.Meta{})})
+	iter := runner.Run(ctx, input)
 	var final string
 	for {
 		ev, ok := iter.Next()
@@ -449,7 +456,14 @@ func toEinoMessages(msgs []messages.Message) []*schema.Message {
 		}
 		switch m.Role {
 		case messages.RoleUser:
-			out = append(out, schema.UserMessage(m.Content))
+			input := schema.UserMessage(m.Content)
+			switch m.Action {
+			case humanInputAction:
+				input.Extra = map[string]any{humanRequestTag: true, "orka_human_message_id": m.ID}
+			case runtimeContextAction:
+				input = runtimeUserMessage(m.Content)
+			}
+			out = append(out, input)
 		case messages.RoleAssistant:
 			out = append(out, schema.AssistantMessage(m.Content, nil))
 		}

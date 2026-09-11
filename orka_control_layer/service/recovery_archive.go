@@ -40,5 +40,5 @@ func exposeRecoveryArchive(ctx context.Context, backend filesystem.Backend, dir 
 	if backend.Write(ctx, &filesystem.WriteRequest{FilePath: p, Content: string(b)}) != nil {
 		return
 	}
-	r.Messages = append(r.Messages, schema.UserMessage("Complete prior delegate observations are retained at "+p+". Read relevant sections only; verify uncertain operations before retrying."))
+	r.Messages = append(r.Messages, runtimeUserMessage("Complete prior delegate observations are retained at "+p+". Read relevant sections only; verify uncertain operations before retrying."))
 }
