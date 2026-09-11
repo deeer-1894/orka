@@ -8,9 +8,9 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/orka-oss/orka_control_layer/llm"
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/messages"
-	"github.com/orka-oss/orka_control_layer/llm"
 )
 
 // eino_resilience.go — ADK-level retry + failover for model calls.
@@ -27,7 +27,7 @@ import (
 // failover switches model tier when retries are exhausted.
 
 const (
-	modelMaxRetries   = 2 // model-call retries per generation step (3 calls total)
+	modelMaxRetries    = 2 // model-call retries per generation step (3 calls total)
 	modelFailoverTries = 1 // then try the other model tier once
 )
 
@@ -68,7 +68,7 @@ func modelFailoverConfig(backup model.BaseChatModel) *adk.ModelFailoverConfig[*s
 	return &adk.ModelFailoverConfig[*schema.Message]{
 		MaxRetries: modelFailoverTries,
 		ShouldFailover: func(_ context.Context, _ *schema.Message, err error) bool {
-			return err != nil
+			return err != nil && !llm.IsCallLimit(err)
 		},
 		GetFailoverModel: func(ctx context.Context, _ *adk.FailoverContext[*schema.Message]) (
 			model.BaseModel[*schema.Message], []*schema.Message, error) {
@@ -84,7 +84,7 @@ func backupModel(client llm.Client, modelName, currentModel string) model.BaseCh
 	if client == nil || modelName == "" || modelName == currentModel {
 		return nil
 	}
-	return llm.NewEinoModel(client, modelName).ForAgent("failover")
+	return newAgentModel(client, modelName, "failover")
 }
 
 // emitStreamReset tells the UI to drop the transient streaming bubble, so a

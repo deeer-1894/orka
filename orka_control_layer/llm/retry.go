@@ -160,7 +160,7 @@ func IsTransient(ctx context.Context, err error) bool { return retryable(ctx, er
 // retryable reports whether err is a transient failure worth retrying. A
 // cancelled/expired context is never retried (the run is going away).
 func retryable(ctx context.Context, err error) bool {
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || IsCallLimit(err) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 	var ae *APIError

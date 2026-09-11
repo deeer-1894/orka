@@ -153,7 +153,7 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 		Name:        "orka",
 		Description: "Orka assistant",
 		Instruction: instruction,
-		Model:       llm.NewEinoModel(client, model).ForAgent("orka"),
+		Model:       newAgentModel(client, model, "orka"),
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(withFindTools(withPlan(withClarify(tools))))},
 			ReturnDirectly:  clarifyReturnDirectly(),
@@ -226,7 +226,7 @@ func BuildEinoSubAgents(ctx context.Context, mainClient llm.Client, mainModel st
 			Name:        sp.Name,
 			Description: sp.Description,
 			Instruction: prompt,
-			Model:       llm.NewEinoModel(client, model).ForAgent(sp.Name),
+			Model:       newAgentModel(client, model, sp.Name),
 			ToolsConfig: adk.ToolsConfig{
 				ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(scoped)},
 			},
@@ -307,7 +307,7 @@ func BuildEinoDeepOrchestrator(ctx context.Context, mainClient llm.Client, mainM
 	return deep.New(ctx, &deep.Config{
 		Name:        einoOrchestratorName,
 		Description: "Orka orchestrator",
-		ChatModel:   llm.NewEinoModel(mainClient, mainModel).ForAgent(einoOrchestratorName),
+		ChatModel:   newAgentModel(mainClient, mainModel, einoOrchestratorName),
 		Instruction: instruction,
 		SubAgents:   subs,
 		ToolsConfig: adk.ToolsConfig{
@@ -353,7 +353,7 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 		Name:        einoOrchestratorName,
 		Description: "Orka orchestrator",
 		Instruction: instruction,
-		Model:       llm.NewEinoModel(mainClient, mainModel).ForAgent(einoOrchestratorName),
+		Model:       newAgentModel(mainClient, mainModel, einoOrchestratorName),
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: allTools},
 			ReturnDirectly:     clarifyReturnDirectly(),

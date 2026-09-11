@@ -22,6 +22,6 @@ func executionGuidance(b *runBudget) string {
 	case spent >= b.maxTokens/4:
 		return text + "Produce runnable artifacts now, alongside only essential research. Independent data/code work need not wait for the research report. Preserve budget for verification and delivery."
 	default:
-		return text + "Declare required file paths with update_plan.outputs. Save findings incrementally and start independent data/code work early. Reserve the last quarter for verification and delivery."
+		return text + "Declare required file paths with update_plan.outputs. On the first turn, make a brief plan and perform one small action; do not prepare every script before the first tool call. Keep each generation focused on the next action and split large file writes across steps. Save findings incrementally and start independent data/code work early. Reserve the last quarter for verification and delivery."
 	}
 }

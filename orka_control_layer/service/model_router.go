@@ -9,7 +9,6 @@ import (
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/orka-oss/orka_control_layer/llm"
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/messages"
 )
@@ -169,8 +168,8 @@ func (s *ChatService) routerFor(rc *agent.RunContext, startModel string) *modelR
 		}
 	}
 	return newModelRouter(
-		llm.NewEinoModel(fastClient, fastName).ForAgent("router-fast"), fastName,
-		llm.NewEinoModel(strongClient, strongName).ForAgent("router-strong"), strongName,
+		newAgentModel(fastClient, fastName, "router-fast"), fastName,
+		newAgentModel(strongClient, strongName, "router-strong"), strongName,
 		routeStrongFirst(prompt),
 	)
 }

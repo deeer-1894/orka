@@ -16,6 +16,7 @@ import (
 // openai provider.
 type EinoModel struct {
 	client Client
+	limits CallLimits
 	model  string
 	tools  []*schema.ToolInfo // bound via WithTools; nil until bound
 	agent  string             // who this instance belongs to, for call attribution
@@ -50,7 +51,13 @@ func (m *EinoModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatMo
 
 // Generate runs a single completion.
 func (m *EinoModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
-	resp, err := m.client.Chat(withAgent(ctx, m.agent), m.request(input, opts))
+	var resp Response
+	var err error
+	if m.limits.enabled() {
+		resp, err = m.limitedResponse(ctx, m.request(input, opts), false)
+	} else {
+		resp, err = m.client.Chat(withAgent(ctx, m.agent), m.request(input, opts))
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -61,6 +68,19 @@ func (m *EinoModel) Generate(ctx context.Context, input []*schema.Message, opts 
 // we forward token deltas; otherwise we fall back to a single-chunk stream over
 // Generate (eino consumers treat both uniformly).
 func (m *EinoModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	if m.limits.enabled() {
+		sr, sw := schema.Pipe[*schema.Message](1)
+		go func() {
+			defer sw.Close()
+			resp, err := m.limitedResponse(ctx, m.request(input, opts), true)
+			if err != nil {
+				sw.Send(nil, err)
+				return
+			}
+			sw.Send(fromResponse(resp), nil)
+		}()
+		return sr, nil
+	}
 	sc, ok := m.client.(StreamingClient)
 	if !ok {
 		out, err := m.Generate(ctx, input, opts...)
