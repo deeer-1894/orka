@@ -38,6 +38,7 @@ storage:
   base_storage_path: "./data/storage"
 
 agent:
+  research_max_calls: 40 # external retrieval per run; RESEARCH_MAX_CALLS overrides
   checkpoint_ttl_sec: 86400 # 24h: tolerate human delay during clarify
   gui_agent_ws_url: "ws://localhost:8100/api/v1/exec/gui/ws"
   # Runtime: the chat path runs on the cloudwego/eino library by default.

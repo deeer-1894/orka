@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/cloudwego/eino/adk"
@@ -144,6 +145,7 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 	if maxIters <= 0 {
 		maxIters = 16
 	}
+	handlers = append(handlers, newResearchGuidance(ctx))
 	return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        "orka",
 		Description: "Orka assistant",
@@ -240,9 +242,12 @@ func BuildEinoSubAgents(ctx context.Context, mainClient llm.Client, mainModel st
 			// bound what it carries while spending it. Without the latter a
 			// delegate's own retrieval sat verbatim until the budget cut it off
 			// mid-work, which is the expensive way to learn a context is too big.
-			Handlers: append([]adk.ChatModelAgentMiddleware{
+			// Refresh shared research state after reduction. The delegate's own
+			// final budget notice comes last and retains its tool cutoff.
+			Handlers: append(subAgentContextHandlers(ctx, sp.Name, scoped),
+				newResearchGuidance(ctx),
 				newBudgetGuardFor(newDelegateBudget(iters, subAgentMaxTokens)),
-			}, subAgentContextHandlers(ctx, sp.Name, scoped)...),
+			),
 		})
 		if err != nil {
 			return nil, err
@@ -295,6 +300,7 @@ func BuildEinoDeepOrchestrator(ctx context.Context, mainClient llm.Client, mainM
 	if summarize {
 		handlers = append(handlers, summarizationHandlers(ctx, miniClient, miniModel)...)
 	}
+	handlers = append(handlers, newResearchGuidance(ctx))
 	return deep.New(ctx, &deep.Config{
 		Name:        einoOrchestratorName,
 		Description: "Orka orchestrator",
@@ -339,6 +345,7 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 		// step, not user-facing synthesis, so it doesn't need the strong model.
 		handlers = append(handlers, summarizationHandlers(ctx, miniClient, miniModel)...)
 	}
+	handlers = append(handlers, newResearchGuidance(ctx))
 	return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        einoOrchestratorName,
 		Description: "Orka orchestrator",
@@ -676,6 +683,17 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	// can see storage config; this is how they reach an offload backend of their
 	// own (see subAgentContextHandlers).
 	ctx = withOffloadRoot(ctx, s.Cfg.Storage.BaseStoragePath)
+	// One session spans the main agent and its delegates. HTTP tools remain
+	// unaware of run identity; the adapter applies this retrieval policy.
+	evidenceDir := offloadDirFor(ctx)
+	if runIDFrom(ctx) == "" {
+		// A missing audit store must not pool independent executions' evidence.
+		evidenceDir = filepath.Join(evidenceDir, messages.NewID())
+	}
+	research := newResearchSession(newWorkspaceBackend(s.Cfg.Storage.BaseStoragePath, runUserEmail(rc)),
+		filepath.Join(evidenceDir, "evidence"), budgetFrom(ctx), s.Cfg.Agent.ResearchMaxCalls)
+	ctx = withResearchSession(ctx, research)
+	tools = append(append([]agent.BaseTool(nil), tools...), evidenceSearchTool{research})
 	// Context-window management (truncate oversized tool output to a workspace
 	// file, clear stale tool results, repair dangling tool calls). Runs ahead of
 	// the summarization backstop.
@@ -725,13 +743,9 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	if err != nil {
 		return err
 	}
-	// Run with rc.Ctx (carries the emit sink + run meta), so tools invoked by the
-	// eino runner — e.g. the confirmation gate — can stream events into the SSE.
-	runCtx := ctx
-	if rc.Ctx != nil {
-		runCtx = rc.Ctx
-	}
-	return StreamEinoRun(runCtx, rc, ag, rc.Emit)
+	// ctx derives from rc.Ctx and also carries the research session/offload
+	// root. Construction and invocation must see the same execution state.
+	return StreamEinoRun(ctx, rc, ag, rc.Emit)
 }
 
 func parseJSONArgs(s string) map[string]any {

@@ -3,8 +3,6 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"sync"
-	"time"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -12,40 +10,6 @@ import (
 
 	"github.com/orka-oss/orka_core/agent"
 )
-
-// toolCacheable lists read-only tools whose result for identical args is stable
-// for a short window. Memoizing them dedupes the agent's repeated identical
-// lookups (common in long research runs) — same data in, same data out, so it
-// cannot change accuracy, only avoids re-paying slow network round-trips.
-var toolCacheable = map[string]bool{"web_search": true, "fetch_url": true}
-
-const toolCacheTTL = 5 * time.Minute
-
-type toolCacheEntry struct {
-	out string
-	at  time.Time
-}
-
-var (
-	toolCacheMu sync.Mutex
-	toolCache   = map[string]toolCacheEntry{}
-)
-
-func toolCacheGet(key string) (string, bool) {
-	toolCacheMu.Lock()
-	defer toolCacheMu.Unlock()
-	e, ok := toolCache[key]
-	if !ok || time.Since(e.at) > toolCacheTTL {
-		return "", false
-	}
-	return e.out, true
-}
-
-func toolCachePut(key, out string) {
-	toolCacheMu.Lock()
-	defer toolCacheMu.Unlock()
-	toolCache[key] = toolCacheEntry{out: out, at: time.Now()}
-}
 
 // einoTool adapts our agent.BaseTool to eino's tool.InvokableTool, so the
 // existing tool suite (local + MCP) can be handed to an eino ChatModelAgent
@@ -94,20 +58,17 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 			return "tool call failed: invalid arguments JSON: " + err.Error(), nil
 		}
 	}
-	// Short-TTL memoization for read-only tools: skip a redundant slow round-trip
-	// when the agent repeats an identical query.
 	name := t.base.Name()
-	cacheable := toolCacheable[name]
 	cacheKey := name + "\x00" + argumentsInJSON
-	if cacheable {
-		if cached, ok := toolCacheGet(cacheKey); ok {
-			return cached, nil
-		}
-	}
 	// Retry infrastructure failures before giving up. A dropped MCP socket is not
 	// a result the model should have to reason about, and it was the single
 	// biggest source of tool failures here.
-	out, err, retries := retryTransient(ctx, func() (string, error) { return t.base.Invoke(ctx, args) })
+	retries := 0
+	out, err := researchFrom(ctx).invoke(ctx, name, args, func() (string, error) {
+		result, callErr, n := retryTransient(ctx, func() (string, error) { return t.base.Invoke(ctx, args) })
+		retries = n
+		return result, callErr
+	})
 	if err != nil {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
@@ -123,9 +84,6 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 			return "", err
 		}
 		return toolErrorMessage(name, err, retries), nil
-	}
-	if cacheable && out != "" {
-		toolCachePut(cacheKey, out)
 	}
 	// Annotate a call the run has already made identically. Not blocked and not
 	// an error — the model is simply told the result is unchanged, which from

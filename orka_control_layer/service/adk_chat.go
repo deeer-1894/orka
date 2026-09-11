@@ -319,7 +319,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		// into the message the model sees — the optimistic UI echo keeps the
 		// user's original text, so this context is invisible in the bubble.
 		modelMsg := userMsg
-		if extra := s.processAttachments(ctx, req); extra != "" {
+		if extra := s.processAttachments(rc.Ctx, req); extra != "" {
 			modelMsg.Content += extra
 		}
 		rc.Messages = append(history, modelMsg)
@@ -330,7 +330,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		// and 2.6s/651 direct, and 28% of runs make no tool calls at all. The
 		// attempt is skipped unless a free heuristic likes the request, and the
 		// model can bail out to the agent if it turns out to need tools.
-		if !s.tryFastPath(ctx, rc, req, model, modelName, raw) {
+		if !s.tryFastPath(rc.Ctx, rc, req, model, modelName, raw) {
 			err = s.runEino(ctx, rc, deps, tools, model, modelName, raw)
 		}
 	}
@@ -418,12 +418,6 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 	// meaningful for a run that otherwise completed — a failure is already worse.
 	var budgetHit string
 	var unfinished []string
-	// With automatic routing the request no longer says which model ran, so the
-	// record has to.
-	servingModel, escalated := req.SelectedVersion, false
-	if mr, ok := rc.Vars[varModelRouter].(*modelRouter); ok {
-		servingModel, escalated = mr.chosen()
-	}
 	if status == db.RunDone && rc.Ctx != nil {
 		budgetHit = budgetFrom(rc.Ctx).exhausted()
 		unfinished = planTrackerFrom(rc.Ctx).unfinished()
@@ -436,15 +430,14 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 	}
 	now := time.Now().UnixMilli()
 	out := middlewares.Final(rc)
-	tokens := middlewares.RunTokens(rc)
-	toolCalls := middlewares.RunTools(rc)
+	stats := s.runAccounting(rc, req)
 	bg := context.Background()
 	_ = s.Msg.Store.FinalizeRun(bg, db.RunRecord{
 		RunID: runID, Status: status, Error: errStr,
-		Output: trunc(out, 400), Result: extractJSON(out), Tokens: tokens, ToolCalls: toolCalls,
+		Output: trunc(out, 400), Result: extractJSON(out), Tokens: stats.tokens, ToolCalls: stats.toolCalls,
 		FinishedAt: now, DurationMs: now - startedAt,
 		BudgetHit: budgetHit, Unfinished: unfinished,
-		Model: servingModel, Escalated: escalated,
+		Model: stats.model, Escalated: stats.escalated,
 	})
 	// Advance the scheduled-task circuit breaker. A partial run counts as a
 	// success for this purpose: it did work and stopped honestly, which is not

@@ -14,6 +14,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
+	"github.com/orka-oss/orka_core/toolargs"
 	"github.com/orka-oss/tools_server/identity"
 	"github.com/orka-oss/tools_server/util"
 )
@@ -33,6 +34,8 @@ func Registry() map[string]Meta {
 		"file_list":     {Group: "file", Scope: "file:read"},
 		"web_search":    {Group: "web", Scope: "web:search"},
 		"fetch_url":     {Group: "web", Scope: "web:search"},
+		"discover_docs": {Group: "web", Scope: "web:search"},
+		"read_section":  {Group: "web", Scope: "web:search"},
 		"weather":       {Group: "web", Scope: "web:search"},
 		"current_time":  {Group: "util", Scope: ""}, // always available
 		"calculator":    {Group: "util", Scope: ""},
@@ -105,9 +108,23 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 	), webSearch())
 
 	add(mcp.NewTool("fetch_url",
-		mcp.WithDescription("Fetch a web page and return its readable text. Use after web_search to read a result."),
+		mcp.WithDescription("Fetch readable page text (up to 20000 bytes), with resolved URL: and Title: source headers. Use discover_docs to find official documentation URLs and read_section to target content beyond this preview."),
 		mcp.WithString("url", mcp.Required(), mcp.Description("the page URL")),
 	), fetchURL())
+
+	add(mcp.NewTool("discover_docs",
+		mcp.WithDescription("Find documentation links on the supplied official origin. Probe the supplied directory (llms.txt, sitemap.xml, landing page) before host-root indexes; explicit index files are read directly. Expand recognized llms catalogs or sitemap children one level, preferring the input path language or English. A supplied HTML landing page with one same-origin directory link may expand once. Returns JSON index_source and results with title, url and kind (page or unexpanded index); pages rank first, then query relevance, then language preference and URL to break ties. At most 5 HTTP requests including redirects, 20 seconds, 512 KiB per response and 5000 candidate links; no arbitrary recursion or cross-origin traversal."),
+		mcp.WithString("url", mcp.Required(), mcp.Description("absolute HTTP(S) official site or index URL")),
+		mcp.WithString("query", mcp.Description("optional ranking terms, at most 512 bytes")),
+		mcp.WithNumber("limit", mcp.Description("max results, 1–20 (default 10)")),
+	), discoverDocs())
+
+	add(mcp.NewTool("read_section",
+		mcp.WithDescription("Read query-relevant sections from a page, including content beyond fetch_url's preview. Returns resolved URL: and Title: source headers followed by readable excerpts with section headings and code line breaks. Source headers are outside the excerpt budget. Downloads at most 2 MiB; does not execute JavaScript. Errors if no section matches."),
+		mcp.WithString("url", mcp.Required(), mcp.Description("absolute HTTP(S) page URL, preferably from discover_docs")),
+		mcp.WithString("query", mcp.Required(), mcp.Description("terms identifying the section or topic, at most 512 bytes")),
+		mcp.WithNumber("max_chars", mcp.Description("excerpt-only Unicode character budget, 1–20000 (default 4000); URL and Title headers are always returned separately")),
+	), readSection())
 
 	add(mcp.NewTool("weather",
 		mcp.WithDescription("Get current weather + today's forecast for a location (live, keyless)."),
@@ -382,30 +399,10 @@ func fileRead(base string) mcpserver.ToolHandlerFunc {
 	}
 }
 
-// pathArgAliases are the keys models actually reach for when they mean "path".
-//
-// Each one cost a real failure before it was added. {"file": ...} read as an
-// EMPTY path, resolved to the workspace root and failed with "is a directory" —
-// an error about the wrong thing, which the agent reported to the user as a
-// workspace problem. {"filename": ...} did the same later: a survey that had
-// already written three findings files correctly slipped to "filename" on the
-// fourth, got a bare `open /workspace/...` filesystem error that never mentioned
-// the argument, did not self-correct, and the run ended partial with the report
-// unwritten.
-//
-// Accepting the synonyms is the cheap half. The expensive half was the error: a
-// tool that rejects an argument has to say WHICH argument and what it expected,
-// or the model has nothing to correct from.
-var pathArgAliases = []string{"path", "file", "filename", "file_path", "filepath"}
-
-// pathArg pulls the relative path out of a call under any of its usual names.
+// pathArg shares compatibility with control-layer policies so alternate
+// spellings cannot address a different file in the two layers.
 func pathArg(req mcp.CallToolRequest) string {
-	for _, k := range pathArgAliases {
-		if v := strings.TrimSpace(req.GetString(k, "")); v != "" {
-			return v
-		}
-	}
-	return ""
+	return toolargs.Path(req.GetArguments())
 }
 
 // missingPathError names the expected argument and shows the keys that WERE

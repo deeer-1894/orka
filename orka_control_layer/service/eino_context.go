@@ -143,7 +143,7 @@ var durableArgPayload = map[string]struct{ payload, location string }{
 // protectedToolOutputs are results the reducer must never truncate or clear:
 // their output IS the state the next step consumes, so a placeholder breaks it.
 func protectedToolOutputs() []string {
-	return []string{"validate_factor", "factor_agreement", planToolName}
+	return []string{"validate_factor", "factor_agreement", planToolName, "task"}
 }
 
 // subAgentNames returns every delegate's tool name.

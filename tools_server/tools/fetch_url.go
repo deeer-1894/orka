@@ -2,8 +2,8 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -86,72 +86,30 @@ func probeLLMsTxt(ctx context.Context, u *url.URL) string {
 	return cand
 }
 
-// maxFetchBodyChars caps the extracted text of one page.
-//
-// It was 4,000, which is six times stricter than the caller's own limit: the
-// control layer truncates a tool result at 24k characters and offloads the rest
-// to a file the agent can read back. Capping here at 4k threw away content the
-// context layer would gladly have taken, and the agent noticed — needing more of
-// a documentation page than 4k, it switched to http_request, which returns the
-// RAW body, then shelled out to python to strip the markup itself. Measured on
-// one run: 29 of the orchestrator's 29 shell calls were `cd .orka_offload/... &&
-// python3 - <<EOF import re, html`, re-implementing this function's own job on
-// this function's own output.
-//
-// Sized just under the control layer's threshold so a long page arrives as
-// clean text and, if it is still too big, gets truncated by the layer that keeps
-// a head/tail preview and files the remainder — where what lands on disk is
-// readable text rather than HTML.
+// Keep the legacy 20,000-byte preview budget below the control layer's output
+// threshold. Truncate at a UTF-8 boundary; read_section can retrieve matching
+// content beyond this preview without returning an entire page.
 const maxFetchBodyChars = 20000
 
 // fetchURL downloads a page and returns its readable text. Pairs with
 // web_search: search to find a link, fetch_url to read it — no GUI needed.
 func fetchURL() mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		u := strings.TrimSpace(req.GetString("url", ""))
-		if u == "" {
-			return mcp.NewToolResultError("url is required"), nil
-		}
-		if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
-			u = "https://" + u
-		}
-		hreq, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-		hreq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; OrkaBot/0.1)")
-		resp, err := httpSearchC.Do(hreq)
+		parsed, err := parsePageURL(req.GetString("url", ""), true)
 		if err != nil {
-			return mcp.NewToolResultError("fetch failed: " + err.Error()), nil
+			return mcp.NewToolResultError(err.Error()), nil
 		}
-		defer resp.Body.Close()
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-		// A 404 body was being returned as if it were the page. The agent then saw
-		// a "result" whose text was "404: Not Found" and kept guessing neighbouring
-		// paths, because nothing had told it the fetch FAILED — four of a run's six
-		// fetch failures were guessed repository paths in a row. Say so, and hand
-		// back a lead instead of a dead end.
-		if resp.StatusCode/100 != 2 {
-			return mcp.NewToolResultError(fetchFailureHint(ctx, u, resp.StatusCode)), nil
+		page, err := loadPage(ctx, parsed, nil, maxPageBytes)
+		if err != nil {
+			var status *pageStatusError
+			if errors.As(err, &status) {
+				return mcp.NewToolResultError(fetchFailureHint(ctx, status.URL, status.Status)), nil
+			}
+			return mcp.NewToolResultError(err.Error()), nil
 		}
-		html := string(raw)
-
-		title := ""
-		if m := reTitle.FindStringSubmatch(html); len(m) > 1 {
-			title = clean(m[1])
-		}
-		body := reScript.ReplaceAllString(html, " ")
-		body = reStyle.ReplaceAllString(body, " ")
-		// After script/style so their contents cannot hide a chrome tag, and
-		// before clean() while the tags still exist. The title is read from the
-		// raw html above, so removing <header> cannot take it with it.
-		body = reChrome.ReplaceAllString(body, " ")
-		body = clean(body)
-		if len(body) > maxFetchBodyChars {
-			body = body[:maxFetchBodyChars] + "…"
-		}
-		out := "URL: " + u + "\n"
-		if title != "" {
-			out += "Title: " + title + "\n"
-		}
-		out += "\n" + body
+		readable := extractPage(page)
+		body := truncatePageBytes(readable.Text, maxFetchBodyChars)
+		out := formatPageText(page.URL.String(), readable.Title, body)
 		return mcp.NewToolResultText(out), nil
 	}
 }

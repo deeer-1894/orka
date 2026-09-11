@@ -51,6 +51,7 @@ import (
 var coreTools = map[string]bool{
 	// retrieval + the open web (77% of all calls between the first six)
 	"web_search": true, "fetch_url": true, "http_request": true,
+	"discover_docs": true, "read_section": true, "search_evidence": true,
 	// execution
 	"shell": true, "python": true, "run_agent": true,
 	// workspace
@@ -65,21 +66,25 @@ var coreTools = map[string]bool{
 	// (report_parser, factor_proposer, factor_reviewer) are deliberately absent —
 	// they matter only inside that pipeline, which asks for them by name.
 	"researcher": true, "writer": true, "browser": true, "engineer": true,
+	"task": true, // DeepAgent exposes delegation through this single tool.
 	// the gate's own escape hatch
 	findToolsName: true,
 }
 
 const findToolsName = "find_tools"
 
-// toolGate tracks which non-core tools this run has unlocked. One per run, on
-// the run context, so a find_tools call and the middleware see the same set.
+// toolGate owns one agent invocation's registered catalog. Scoped gates share
+// the run's unlock map and mutex, so activation carries across agents only for
+// tools actually registered in each catalog.
 type toolGate struct {
-	mu       sync.Mutex
+	mu       *sync.Mutex
 	all      []*schema.ToolInfo // every registered tool, captured on the first call
 	unlocked map[string]bool
 }
 
-func newToolGate() *toolGate { return &toolGate{unlocked: map[string]bool{}} }
+func newToolGate() *toolGate {
+	return &toolGate{mu: &sync.Mutex{}, unlocked: map[string]bool{}}
+}
 
 // remember captures the complete tool list the first time the model is called.
 // eino PERSISTS edits to state.ToolInfos across turns, so the full list is only
@@ -252,24 +257,46 @@ func newGateMiddleware(g *toolGate) *gateMiddleware {
 	return &gateMiddleware{BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{}, gate: g}
 }
 
-func (m *gateMiddleware) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
+// DeepAgent shares this middleware instance with its general-purpose worker.
+// Capture the raw registered tools per invocation, before ToolInfos is filtered,
+// and carry the scope to both model rewriting and activation tools.
+func (m *gateMiddleware) BeforeAgent(ctx context.Context, runCtx *adk.ChatModelAgentContext) (context.Context, *adk.ChatModelAgentContext, error) {
 	if m.gate == nil {
+		return ctx, runCtx, nil
+	}
+	scoped := &toolGate{mu: m.gate.mu, unlocked: m.gate.unlocked}
+	for _, t := range runCtx.Tools {
+		info, err := t.Info(ctx)
+		if err != nil {
+			return ctx, runCtx, err
+		}
+		scoped.all = append(scoped.all, info)
+	}
+	return withToolGate(ctx, scoped), runCtx, nil
+}
+
+func (m *gateMiddleware) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
+	g := toolGateFrom(ctx)
+	if g == nil {
+		g = m.gate // direct middleware callers without BeforeAgent
+	}
+	if g == nil {
 		return ctx, state, nil
 	}
-	m.gate.remember(state.ToolInfos)
+	g.remember(state.ToolInfos)
 	// The budget guard strips tools entirely on the final turn;;don't put them back.
 	if len(state.ToolInfos) == 0 {
 		return ctx, state, nil
 	}
 	before := len(state.ToolInfos)
-	state.ToolInfos = m.gate.visible()
+	state.ToolInfos = g.visible()
 	// What the gate is worth, in the same unit the context probe reports, so the
 	// tool table can be compared against the message history it rides alongside.
 	// Same switch as the probe: this is tuning data, not production logging.
 	if ctxProbeEnabled() {
 		slog.Default().Info("tool gate",
-			"registered", len(m.gate.allInfos()), "visible", len(state.ToolInfos), "state_before", before,
-			"schema_tok_all", schemaTokens(m.gate.allInfos()),
+			"registered", len(g.allInfos()), "visible", len(state.ToolInfos), "state_before", before,
+			"schema_tok_all", schemaTokens(g.allInfos()),
 			"schema_tok_visible", schemaTokens(state.ToolInfos),
 		)
 	}

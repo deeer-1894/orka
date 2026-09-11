@@ -58,6 +58,7 @@ func TestResearcherPromptAsksForAPointerNotTheText(t *testing.T) {
 // step with what the file tools are actually called.
 func TestSubAgentToolNamesAreReal(t *testing.T) {
 	known := map[string]bool{
+		"discover_docs": true, "read_section": true, "search_evidence": true,
 		"web_search": true, "fetch_url": true, "http_request": true, "current_time": true,
 		"file_write": true, "file_read": true, "file_list": true, "shell": true,
 		"run_agent": true, "pdf_extract": true, "validate_factor": true,

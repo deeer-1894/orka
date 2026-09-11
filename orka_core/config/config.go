@@ -85,6 +85,8 @@ type StorageConfig struct {
 }
 
 type AgentConfig struct {
+	// ResearchMaxCalls bounds external research per run; zero uses the built-in limit.
+	ResearchMaxCalls int              `yaml:"research_max_calls"`
 	CheckpointTTLSec int              `yaml:"checkpoint_ttl_sec"`
 	GUIAgentWSURL    string           `yaml:"gui_agent_ws_url"`
 	MultiAgent       bool             `yaml:"multi_agent"` // expose orchestrator sub-agents the model can delegate to
@@ -193,6 +195,7 @@ func (c *Config) applyEnv() {
 	envStr(&c.Storage.MongoDB, "MONGO_DB")
 	envStr(&c.Storage.RedisAddr, "REDIS_ADDR")
 	envStr(&c.Storage.BaseStoragePath, "BASE_STORAGE_PATH")
+	envInt(&c.Agent.ResearchMaxCalls, "RESEARCH_MAX_CALLS")
 	envInt(&c.Agent.CheckpointTTLSec, "CHECKPOINT_TTL_SEC")
 	envStr(&c.Agent.GUIAgentWSURL, "GUI_AGENT_WS_URL")
 	envStr(&c.Agent.SkillsDir, "SKILLS_DIR")

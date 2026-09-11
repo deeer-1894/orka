@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/pathsafe"
 	"github.com/orka-oss/orka_core/security"
-	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_middleware/local/filesystem"
 	mcpclient "github.com/orka-oss/orka_middleware/mcp"
 	"github.com/orka-oss/orka_middleware/toolsmanager"
@@ -391,7 +391,7 @@ func groupForName(name string) string {
 		return "gui_agent"
 	case name == "shell":
 		return "shell"
-	case name == "web_search" || name == "fetch_url" || name == "weather" || name == "http_request":
+	case name == "web_search" || name == "fetch_url" || name == "discover_docs" || name == "read_section" || name == "weather" || name == "http_request":
 		return "web"
 	case name == "current_time" || name == "calculator" || name == "unit_convert" ||
 		name == "base64" || name == "hash" || name == "uuid" || name == "json_format" ||

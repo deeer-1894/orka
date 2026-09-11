@@ -71,7 +71,7 @@ func DefaultSubAgents() []config.SubAgentConfig {
 			// file_write/file_read are what let the findings outlive the delegate:
 			// without them the reader physically cannot record anything, so every
 			// fact has to transit the orchestrator's context as prose or be lost.
-			Tools: []string{"web_search", "fetch_url", "http_request", "current_time", "file_write", "file_read"},
+			Tools: []string{"web_search", "fetch_url", "discover_docs", "read_section", "search_evidence", "http_request", "current_time", "file_write", "file_read"},
 			Model: "mini",
 		},
 		{

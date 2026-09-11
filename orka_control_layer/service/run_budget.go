@@ -49,11 +49,12 @@ type runBudget struct {
 	// every other delegation's calls.
 	metered bool
 
-	mu     sync.Mutex
-	steps  int
-	tokens int
-	spent  int    // billed tokens reported by AddUsage; metered budgets only
-	hit    string // "" until exhausted, then steps | tokens | time
+	mu            sync.Mutex
+	steps         int
+	tokens        int
+	usageReported bool   // even a zero-cost completed exchange is authoritative
+	spent         int    // billed tokens reported by AddUsage; metered budgets only
+	hit           string // "" until exhausted, then steps | tokens | time
 }
 
 // AddUsage books one completed model call. Implements llm.UsageSink.
@@ -67,7 +68,18 @@ func (b *runBudget) AddUsage(promptTokens, completionTokens int) {
 	}
 	b.mu.Lock()
 	b.spent += promptTokens + completionTokens
+	b.usageReported = true
 	b.mu.Unlock()
+}
+
+// usageRecorded distinguishes an unused meter from a reported zero-cost call.
+func (b *runBudget) usageRecorded() bool {
+	if b == nil {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.usageReported
 }
 
 // spentTokens reports what this budget has booked so far.
