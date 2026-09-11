@@ -23,11 +23,17 @@ export function normalizeWorkspacePath(raw: string, ownerEmail: string): string 
   return path && !raw.endsWith('/') ? path : undefined;
 }
 
+const SKIPPED_CONFIRMATIONS = new Set([
+  '用户拒绝了该操作,已跳过。',
+  '未收到确认结果,已跳过该操作。',
+  '等待用户确认超时,已跳过该操作。',
+]);
+
 function failedToolResult(p: ToolPayload): boolean {
   const flags = p as ToolPayload & { success?: boolean };
   if (flags.success === false || p.error || typeof p.result !== 'string' || !p.result.trim()) return true;
   const text = p.result.trim();
-  if (ERROR.test(text)) return true;
+  if (SKIPPED_CONFIRMATIONS.has(text) || ERROR.test(text)) return true;
   try {
     const result = JSON.parse(text);
     if (result && typeof result === 'object' && !Array.isArray(result)) {

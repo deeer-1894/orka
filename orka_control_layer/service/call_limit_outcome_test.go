@@ -209,3 +209,25 @@ func TestDeadlineCallLimitPreservesProgressWithoutCancellingParent(t *testing.T)
 		t.Fatalf("single-call timeout confused with task budget/cancellation: %+v", out)
 	}
 }
+
+func TestShellFailureReceiptsDoNotBecomeProgress(t *testing.T) {
+	for _, result := range []string{
+		"refused for safety: command matches a blocked dangerous pattern",
+		"command timed out after 30s; partial output:\nwrote file",
+		"command exited with error: exit status 1\n--- output ---\ncreated file",
+	} {
+		t.Run(strings.Split(result, ":")[0], func(t *testing.T) {
+			b := newRunBudget(100, 1000, 0)
+			wrapped := progressTool{BaseTool: retrievalFixture{"shell", func(context.Context, map[string]any) (string, error) { return result, nil }}, budget: b}
+			if _, err := wrapped.Invoke(context.Background(), nil); err != nil {
+				t.Fatal(err)
+			}
+			if got := b.toolProgress(); got != 0 {
+				t.Errorf("failure counted as %d successful operations", got)
+			}
+			if got := restoreProgressFixture(t, `{"spent_tokens":100}`, result+"\n[Produced file structure issues]\nbroken SVG"); got != 0 {
+				t.Errorf("legacy failure counted as %d", got)
+			}
+		})
+	}
+}

@@ -60,3 +60,12 @@ test('structured failures and refusal messages cannot claim an already existing 
   assert.deepEqual(sessionFileCandidates([tool('file_write', { path: 'good.md' }, '{"success":true,"error":null}')], ctx), ['good.md']);
   assert.deepEqual(sessionFileCandidates([tool('file_write', { path: 'report.md' }, 'saved', { success: false })], ctx), []);
 });
+
+test('actual confirmation refusal and skipped-operation receipts never claim an existing file', async () => {
+  for (const result of ['用户拒绝了该操作,已跳过。', '未收到确认结果,已跳过该操作。', '等待用户确认超时,已跳过该操作。']) {
+    const candidates = sessionFileCandidates([tool('file_write', { path: 'report.md' }, result)], ctx);
+    assert.deepEqual(candidates, [], result);
+    assert.deepEqual(await existingSessionFiles(candidates, async () => [{ name: 'report.md', dir: false }]), [], result);
+  }
+  assert.deepEqual(sessionFileCandidates([tool('file_write', { path: 'report.md' }, '已确认，saved successfully')], ctx), ['report.md']);
+});

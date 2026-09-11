@@ -51,8 +51,10 @@ func usefulToolResult(name, out string) bool {
 		return false
 	}
 	lower := strings.ToLower(strings.TrimSpace(out))
-	if strings.HasPrefix(lower, "tool call failed") || strings.HasPrefix(lower, "tool error (") || strings.HasPrefix(lower, "[recovery: outcome unknown]") {
-		return false
+	for _, prefix := range []string{"tool call failed", "tool error (", "[recovery: outcome unknown]", "refused for safety:", "command timed out after ", "command exited with error:"} {
+		if strings.HasPrefix(lower, prefix) {
+			return false
+		}
 	}
 	var result map[string]any
 	// Tool adapters append diagnostics to the original result. Decode its first
