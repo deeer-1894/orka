@@ -1,0 +1,134 @@
+{
+  "date": "2026-09-11",
+  "code_commit": "cde7938",
+  "branch": "codex/long-task-optimization",
+  "method": "Identical task prompt except test ID/output directory; each run in a new conversation. All runs single-agent. Final review fixes additionally verified by integration/race tests.",
+  "runs": {
+    "A": {
+      "run_id": "run_8a0607133532229463b0691a",
+      "duration_seconds": 652.881,
+      "status": "partial",
+      "budget_hit": "tokens",
+      "run_record_tokens": 733068,
+      "llm_logged_tokens": 808672,
+      "llm_by_model": {
+        "deepseek-v4-pro": {
+          "calls": 39,
+          "tokens": 733068
+        },
+        "deepseek-v4-flash": {
+          "calls": 4,
+          "tokens": 75604
+        }
+      },
+      "tool_record_count": 109,
+      "tool_event_counts": {
+        "update_plan": 1,
+        "current_time": 1,
+        "web_search": 29,
+        "shell": 6,
+        "fetch_url": 60,
+        "file_read": 8,
+        "file_write": 1,
+        "http_request": 2,
+        "file_list": 1
+      },
+      "fetch_calls": 60,
+      "unique_fetch_urls": 53,
+      "repeated_fetches": 7,
+      "successful_fetch_results": 47,
+      "recoverable_errors": 14,
+      "reduction_calls": 20,
+      "max_context_before": 43662,
+      "context_message_drops": 3
+    },
+    "B": {
+      "run_id": "run_378500e11c35aa6b06fd11a2",
+      "status": "partial",
+      "duration_seconds": 1158.266,
+      "budget_hit": "tokens",
+      "run_record_tokens": 834387,
+      "llm_logged_tokens": 834387,
+      "llm_by_model": {
+        "deepseek-v4-pro": {
+          "calls": 37,
+          "tokens": 735009
+        },
+        "deepseek-v4-flash": {
+          "calls": 3,
+          "tokens": 99378
+        }
+      },
+      "tool_record_count": 134,
+      "tool_event_counts": {
+        "update_plan": 5,
+        "shell": 4,
+        "discover_docs": 8,
+        "web_search": 9,
+        "fetch_url": 24,
+        "read_section": 1,
+        "file_list": 5,
+        "search_evidence": 5,
+        "file_read": 65,
+        "file_write": 6,
+        "python": 2
+      },
+      "fetch_calls": 24,
+      "unique_fetch_urls": 22,
+      "cache_hits": 2,
+      "recoverable_errors": 5,
+      "reduction_calls": 16,
+      "max_context_before": 51850,
+      "context_message_drops": 0
+    },
+    "C": {
+      "run_id": "run_705ea125da1b20e7764cb74b",
+      "status": "partial",
+      "duration_seconds": 980.248,
+      "budget_hit": "tokens",
+      "run_record_tokens": 830447,
+      "llm_logged_tokens": 830447,
+      "llm_by_model": {
+        "deepseek-v4-pro": {
+          "calls": 40,
+          "tokens": 734717
+        },
+        "deepseek-v4-flash": {
+          "calls": 3,
+          "tokens": 95730
+        }
+      },
+      "tool_record_count": 106,
+      "tool_event_counts": {
+        "update_plan": 7,
+        "current_time": 1,
+        "shell": 12,
+        "discover_docs": 6,
+        "web_search": 10,
+        "fetch_url": 24,
+        "file_list": 4,
+        "search_evidence": 2,
+        "file_read": 34,
+        "file_write": 6
+      },
+      "fetch_calls": 24,
+      "unique_fetch_urls": 24,
+      "cache_hits": 0,
+      "recoverable_errors": 8,
+      "reduction_calls": 14,
+      "max_context_before": 64477,
+      "context_message_drops": 0
+    }
+  },
+  "acceptance": {
+    "A": "incomplete",
+    "B": "incomplete_with_output_defects",
+    "C": "incomplete_with_output_defects"
+  },
+  "artifacts": {
+    "A": 1,
+    "B": 19,
+    "C": 21
+  },
+  "conclusion": "Retrieval limits, evidence preservation and complete token accounting work. These runs do not establish lower total cost or complete autonomous delivery."
+}
