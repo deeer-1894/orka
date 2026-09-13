@@ -366,12 +366,26 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 	}
 	toolAcc := map[int]*tcAcc{}
 	var order []int
+	toolChars := func() int {
+		n := 0
+		for _, a := range toolAcc {
+			n += a.args.Len()
+		}
+		return n
+	}
 	finish := ""
 	var usage Usage
+
+	// A long stream is otherwise a black box: usage arrives only in the final
+	// chunk, so a call cancelled after 811 seconds left `out=0 reasoning=0` and no
+	// way to tell whether it had been thinking, drafting in the open, or stalled.
+	// Report what has arrived as it arrives, and on the way out if it dies.
+	prog := newStreamProgress(ctx, req.Model)
 
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
+		prog.tick(reasoning.Len(), content.Len(), toolChars())
 		line := strings.TrimSpace(sc.Text())
 		if !strings.HasPrefix(line, "data:") {
 			continue
@@ -426,7 +440,11 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return Response{}, fmt.Errorf("stream read: %w", err)
+		prog.aborted(reasoning.Len(), content.Len(), toolChars(), len(order), err)
+		// Hand back what arrived. Callers ignore the value on error, but the
+		// metering layer above logs it, and a partial answer is evidence.
+		return Response{Content: content.String(), Reasoning: reasoning.String(), FinishReason: finish, Usage: usage},
+			fmt.Errorf("stream read: %w", err)
 	}
 
 	out := Response{Content: content.String(), Reasoning: reasoning.String(), FinishReason: finish, Usage: usage}

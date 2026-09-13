@@ -73,7 +73,23 @@ func (r *Retry) ChatStream(ctx context.Context, req Request, onDelta func(string
 	var lastErr error
 	for attempt := 1; attempt <= r.cfg.MaxAttempts; attempt++ {
 		started := false
-		resp, err := sc.ChatStream(ctx, req, func(d string) {
+		// Reasoning counts as output. It used not to: only content deltas marked
+		// a stream as started, so a call that spent ten minutes thinking and then
+		// lost its connection was judged "not yet begun" and sent again from the
+		// top — the model thought the whole thing over a second and third time,
+		// the user watched the same reasoning stream in twice, and the run looked
+		// like one impossibly long think. Transport errors are retryable, and
+		// MaxAttempts defaults to 3, so that is up to a tripling.
+		attemptCtx := ctx
+		if sink := ReasoningSinkFrom(ctx); sink != nil {
+			attemptCtx = WithReasoningSink(ctx, func(d string) {
+				started = true
+				sink(d)
+			})
+		} else {
+			attemptCtx = WithReasoningSink(ctx, func(string) { started = true })
+		}
+		resp, err := sc.ChatStream(attemptCtx, req, func(d string) {
 			started = true
 			onDelta(d)
 		})
