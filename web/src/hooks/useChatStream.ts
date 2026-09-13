@@ -26,6 +26,10 @@ export interface RunParams {
   // new turn. Used after approving a paused danger tool: the backend resumes the
   // checkpointed run, so there is a live stream to join but no message to send.
   attachOnly?: boolean;
+  // rejoin: attach to a run the server says is live right now (opened from a
+  // refresh, another tab, a schedule or the API). Unlike attachOnly — which waits
+  // for a resuming run to register — a 404 here means it already ended, so stop.
+  rejoin?: boolean;
 }
 
 interface ConvStream {
@@ -145,6 +149,11 @@ export function useChatStreams() {
             const dropReason = msg.type === "tool" || (msg.type === "chat" && msg.role === "assistant");
             let base = dropReason ? m.filter((x) => x.id !== REASON_ID) : m;
             base = msg.type === "chat" && msg.role === "assistant" ? base.filter((x) => x.id !== STREAM_ID) : base;
+            // Already have it: a rejoined stream replays frames the history load
+            // may already contain. The ids are the persisted ones, so skip the
+            // duplicate — but only after the transient bubbles were cleared above,
+            // which a replayed message still needs to do.
+            if (msg.id && base.some((x) => x.id === msg.id)) return base;
             return [...base, msg];
           });
           if (msg.type === "clarify") state.terminal = "paused";
@@ -191,7 +200,8 @@ export function useChatStreams() {
               signal: ctrl.signal,
             });
             if (ar.status === 404) {
-              if (p.attachOnly) continue; // the resumed run may not be registered yet
+              if (p.attachOnly && !p.rejoin) continue; // the resumed run may not be registered yet
+              state.terminal = "done"; // nothing live: it finished while we asked
               break;
             }
             await consume(ar);
@@ -206,7 +216,7 @@ export function useChatStreams() {
         if (p.attachOnly) {
           // Join the resumed run's stream from the beginning; the reconnect loop
           // below keeps retrying while the backend spins the run back up.
-          await attachLoop(8);
+          await attachLoop(p.rejoin ? 2 : 8);
           patch(cid, (c) => ({ ...c, status: state.terminal }));
           return;
         }

@@ -281,10 +281,29 @@ function Workbench({
     refreshConversations();
   }, [refreshConversations]);
 
+  // rejoinIfLive attaches to a run the server says is running for this
+  // conversation but this tab is not reading — a page refresh mid-run, a second
+  // tab or device, or a run a schedule, webhook or the API started. Without it
+  // the conversation opened as a frozen snapshot while the run carried on
+  // unseen: no live thinking, no new steps, no 运行中, so steering and stop were
+  // unavailable too. The replay this triggers is safe: frames whose id is
+  // already in the loaded history are skipped.
+  const rejoinIfLive = useCallback(
+    async (id: string) => {
+      if (!id || statusOf(id) === "streaming") return;
+      const { active } = await api.active(id);
+      if (active) run({ message: "", conversationID: id, userEmail: user.email, enabledTools: [], attachOnly: true, rejoin: true });
+    },
+    [run, statusOf, user.email],
+  );
+
   const selectConversation = useCallback(
     async (id: string) => {
       setActiveID(id);
-      if (seen.current.has(id)) return; // already loaded or has a live stream
+      if (seen.current.has(id)) {
+        void rejoinIfLive(id); // loaded before, but a run may have started since
+        return;
+      }
       seen.current.add(id);
       try {
         const rows = (await api.getMessages(id)) as (Message & { created_at?: number })[];
@@ -292,8 +311,11 @@ function Workbench({
       } catch {
         setConvMessages(id, []);
       }
+      // AFTER the history is in: loading it replaces the message list, which
+      // would wipe anything a rejoin had already streamed in.
+      void rejoinIfLive(id);
     },
-    [setConvMessages],
+    [setConvMessages, rejoinIfLive],
   );
 
   // Load the saved tool-group selection whenever the active conversation changes.

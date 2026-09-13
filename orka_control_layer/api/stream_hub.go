@@ -127,3 +127,15 @@ func (rs *runStream) subscribe(fromSeq int64) (ch chan seqFrame, replay []seqFra
 	}
 	return ch, replay, false, cancel
 }
+
+// active reports whether a run for id is still producing events, and the last
+// sequence number it has published.
+func (h *streamHub) active(id string) (bool, int64) {
+	rs := h.get(id)
+	if rs == nil {
+		return false, 0
+	}
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return !rs.done, rs.seq
+}

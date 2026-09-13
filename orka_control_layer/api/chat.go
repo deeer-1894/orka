@@ -9,8 +9,8 @@ import (
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 
-	"github.com/orka-oss/orka_core/messages"
 	"github.com/orka-oss/orka_control_layer/service"
+	"github.com/orka-oss/orka_core/messages"
 )
 
 // ChatRun handles POST /chat/run, streaming events as Server-Sent Events.
@@ -77,6 +77,35 @@ func (a *API) ChatAttach(ctx context.Context, c *app.RequestContext) {
 		from, _ = strconv.ParseInt(v, 10, 64)
 	}
 	a.streamRun(c, rs, from)
+}
+
+// ChatActive handles GET /chat/active?conversation_id=.. — whether a run is
+// live for the conversation right now.
+//
+// The UI used to join a running conversation's stream in exactly one case:
+// right after approving a paused danger tool. Anything else — refreshing the
+// page mid-run, opening the conversation in a second tab or on another device,
+// a run started by a schedule, a webhook or the API — showed a frozen snapshot
+// of the history while the run carried on unseen, although /chat/attach has
+// supported rejoining with replay all along. This is the cheap question the UI
+// asks when it opens a conversation, so it knows whether to rejoin.
+func (a *API) ChatActive(ctx context.Context, c *app.RequestContext) {
+	id := string(c.Query("conversation_id"))
+	if id == "" {
+		id = string(c.Query("task_id"))
+	}
+	if id == "" {
+		fail(c, consts.StatusBadRequest, "conversation_id or task_id required")
+		return
+	}
+	// Same authorisation as reading the conversation: a run's events are its
+	// transcript, and whether one is running is itself information.
+	if conv, err := a.Store.GetConversation(ctx, id); err == nil && conv.OwnerEmail != "" && !conv.CanRead(authEmail(c)) {
+		fail(c, consts.StatusNotFound, "not found")
+		return
+	}
+	live, seq := a.hub.active(id)
+	ok(c, map[string]any{"active": live, "seq": seq})
 }
 
 // streamRun writes SSE frames (with id: lines for reconnect) from a runStream,

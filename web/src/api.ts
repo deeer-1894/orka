@@ -243,6 +243,11 @@ export const api = {
     return (j.data ?? []) as { version: string; label: string; hint: string }[];
   },
   kill: (id: string) => post("/chat/kill", { conversation_id: id, task_id: id }),
+  // active: is a run live for this conversation right now? Asked on open, so a
+  // run this tab did not start (refresh, second tab, schedule, API) is rejoined
+  // instead of shown as a frozen snapshot.
+  active: (id: string) =>
+    get<{ active: boolean; seq: number }>(`/chat/active?conversation_id=${encodeURIComponent(id)}`).catch(() => ({ active: false, seq: 0 })),
   // steer hands a message to a run that is still going, to be injected before
   // its next model call. Resolves false when no live run took it — the run
   // ended in the moment between typing and sending — and the caller must then
