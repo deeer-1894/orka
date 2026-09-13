@@ -1289,13 +1289,35 @@ function Reasoning({ m }: { m: Message }) {
 // FollowUps shows 2–3 suggested next questions under the latest answer (Perplexity
 // style); clicking one sends it. Fetched lazily from the mini model once the turn
 // settles, keyed by the answer so it refreshes per turn.
+// followupCache holds one request per (prompt, answer). The `cancelled` flag in
+// the effect below only discards a RESULT — the request has already gone out —
+// so every mount paid for a model call: StrictMode's double-invoked effects made
+// each answer cost two (the log shows them back to back, 1.0s and 3.3s), and
+// switching away from a conversation and back cost another. Sharing the promise
+// makes it one per answer for the life of the page.
+const followupCache = new Map<string, Promise<string[]>>();
+
+function fetchFollowups(prompt: string, answer: string): Promise<string[]> {
+  const key = prompt + "\u0000" + answer;
+  let p = followupCache.get(key);
+  if (!p) {
+    p = api.followups(prompt, answer).then((r) => r.suggestions || []).catch(() => {
+      followupCache.delete(key); // a failure should not be remembered
+      return [];
+    });
+    followupCache.set(key, p);
+    if (followupCache.size > 50) followupCache.delete(followupCache.keys().next().value!);
+  }
+  return p;
+}
+
 function FollowUps({ prompt, answer, onPick }: { prompt: string; answer: string; onPick: (t: string) => void }) {
   const [items, setItems] = useState<string[]>([]);
   useEffect(() => {
     let cancelled = false;
     setItems([]);
     if (!answer.trim()) return;
-    api.followups(prompt, answer).then((r) => { if (!cancelled) setItems(r.suggestions || []); }).catch(() => {});
+    fetchFollowups(prompt, answer).then((qs) => { if (!cancelled) setItems(qs); });
     return () => { cancelled = true; };
   }, [prompt, answer]);
   if (items.length === 0) return null;
