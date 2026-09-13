@@ -695,6 +695,12 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	if box := steerBoxFrom(ctx); box != nil {
 		ctxMW = append([]adk.ChatModelAgentMiddleware{newSteerInjector(box)}, ctxMW...)
 	}
+	// Bound how long the orchestrator may reason before acting. Orchestrator
+	// only for now: it is the turn a run ends on, and the one measured doing the
+	// whole task in its head.
+	if mw := newReasoningBudget(s.llmConf().ReasoningBudgetRunes, einoOrchestratorName); mw != nil {
+		ctxMW = append(ctxMW, mw)
+	}
 	if s.Cfg.Agent.MultiAgent {
 		if instruction == "" {
 			instruction = OrchestratorPrompt

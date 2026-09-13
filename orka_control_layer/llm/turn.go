@@ -1,6 +1,9 @@
 package llm
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // turn.go — reporting the SHAPE of a completed model turn, not just its cost.
 //
@@ -36,10 +39,21 @@ type Turn struct {
 	// the user asked for.
 	ContentRunes   int
 	ReasoningRunes int
+	// Reasoning is kept only for a turn stopped by the reasoning budget: it is
+	// the plan the model had made, and handing it back is what stops the next
+	// turn from making the same plan again.
+	Reasoning string
 }
 
 // Truncated reports whether the provider cut the turn short.
 func (t Turn) Truncated() bool { return t.FinishReason == "length" }
+
+// FinishReasoningBudget marks a turn WE stopped: it had reasoned past its budget
+// without saying anything or calling a tool. Not a provider value.
+const FinishReasoningBudget = "reasoning_budget"
+
+// StoppedThinking reports whether the reasoning budget ended the turn.
+func (t Turn) StoppedThinking() bool { return t.FinishReason == FinishReasoningBudget }
 
 // TurnSink receives every completed turn of a run.
 type TurnSink interface {
@@ -75,5 +89,31 @@ func observeTurn(ctx context.Context, resp Response) {
 		ToolCalls:      len(resp.ToolCalls),
 		ContentRunes:   len([]rune(resp.Content)),
 		ReasoningRunes: len([]rune(resp.Reasoning)),
+		Reasoning:      planText(resp),
 	})
 }
+
+// planText returns the reasoning worth carrying forward, and only for a turn the
+// budget stopped — every other turn's reasoning has either become an answer or
+// served its purpose, and holding it would only cost memory.
+func planText(resp Response) string {
+	if resp.FinishReason != FinishReasoningBudget {
+		return ""
+	}
+	return resp.Reasoning
+}
+
+// ReportTurn records a turn that did not come back from the provider as one —
+// a call a middleware stopped on purpose. The metering layer reports only
+// successful exchanges, and a deliberately cancelled one would otherwise leave
+// no trace of why the run's last turn ended.
+func ReportTurn(ctx context.Context, t Turn) {
+	if s := turnSinkFrom(ctx); s != nil {
+		s.ObserveTurn(t)
+	}
+}
+
+// ErrReasoningBudget is the cancellation cause when a call is stopped for
+// thinking past its budget without acting. Distinguishes a deliberate stop from
+// a user cancel or a dropped connection in the logs.
+var ErrReasoningBudget = errors.New("reasoning budget reached before any output")

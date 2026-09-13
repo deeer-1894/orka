@@ -93,6 +93,11 @@ func reasoningFor(model string, global map[string]any, byModel map[string]map[st
 	return global
 }
 
+// ThinkingIntent reports the caller's reasoning intent on ctx, for policy that
+// lives outside this package — the reasoning budget stands down when the user
+// asked for deep thinking.
+func ThinkingIntent(ctx context.Context) string { return thinkingFrom(ctx) }
+
 // ThinkingIntentForTest exposes the intent stored on a context. Exported only
 // so another package's tests can assert what a middleware decided; the intent
 // itself is read by this package's client.

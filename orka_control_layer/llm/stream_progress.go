@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 )
@@ -47,6 +48,13 @@ func (p *streamProgress) tick(reasoningChars, contentChars, toolChars int) {
 // debugging is on: an aborted multi-minute call is rare and expensive, and the
 // breakdown is the only record of what the time was spent on.
 func (p *streamProgress) aborted(reasoningChars, contentChars, toolChars, toolCalls int, err error) {
+	if errors.Is(context.Cause(p.ctx), ErrReasoningBudget) {
+		// A stop we asked for, not a failure: say so, at the level it deserves.
+		slog.Default().Info("llm stream stopped: reasoning budget",
+			"model", p.model, "agent", AgentFromContext(p.ctx),
+			"elapsed_s", int(time.Since(p.start).Seconds()), "reasoning_chars", reasoningChars)
+		return
+	}
 	slog.Default().Warn("llm stream aborted",
 		"model", p.model, "agent", AgentFromContext(p.ctx),
 		"elapsed_s", int(time.Since(p.start).Seconds()),

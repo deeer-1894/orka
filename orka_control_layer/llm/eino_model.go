@@ -74,8 +74,27 @@ func (m *EinoModel) Stream(ctx context.Context, input []*schema.Message, opts ..
 	sr, sw := schema.Pipe[*schema.Message](8)
 	go func() {
 		defer sw.Close()
-		streamedContent := false
-		resp, err := sc.ChatStream(withAgent(ctx, m.agent), req, func(delta string) {
+		streamedContent, streamedReasoning := false, false
+		// Reasoning goes INTO the eino stream, as the ReasoningContent eino
+		// defines for it. It used to go only out-of-band, to the UI's sink, which
+		// left this stream empty for the whole of a long think: an eino
+		// middleware wrapping the model saw nothing at all for six minutes while
+		// the model produced 41,000 characters of reasoning. The UI's sink still
+		// receives every delta; history is unaffected, because toChatMessages
+		// sends only Content back to the provider.
+		callCtx := withAgent(ctx, m.agent)
+		uiSink := ReasoningSinkFrom(ctx)
+		callCtx = WithReasoningSink(callCtx, func(delta string) {
+			if delta == "" {
+				return
+			}
+			streamedReasoning = true
+			if uiSink != nil {
+				uiSink(delta)
+			}
+			sw.Send(&schema.Message{Role: schema.Assistant, ReasoningContent: delta}, nil)
+		})
+		resp, err := sc.ChatStream(callCtx, req, func(delta string) {
 			if delta != "" {
 				streamedContent = true
 				sw.Send(&schema.Message{Role: schema.Assistant, Content: delta}, nil)
@@ -93,6 +112,11 @@ func (m *EinoModel) Stream(ctx context.Context, input []*schema.Message, opts ..
 		final := fromResponse(resp)
 		if streamedContent {
 			final.Content = ""
+		}
+		// Same for reasoning: eino concatenates the chunks, so repeating it on the
+		// final chunk would double it in the assembled message.
+		if streamedReasoning {
+			final.ReasoningContent = ""
 		}
 		sw.Send(final, nil)
 	}()

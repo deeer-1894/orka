@@ -139,7 +139,13 @@ func continuationNudge(ctx context.Context) string {
 	if budgetFrom(ctx).exhausted() != "" {
 		return ""
 	}
-	if last := turnTrackerFrom(ctx).lastTurn(); last.Truncated() && last.ToolCalls == 0 {
+	last := turnTrackerFrom(ctx).lastTurn()
+	// A turn we stopped for over-thinking carries its plan; hand it back so the
+	// next turn acts on it instead of making it again.
+	if last.StoppedThinking() && last.ToolCalls == 0 {
+		return reasoningBudgetNudge(last.Reasoning)
+	}
+	if last.Truncated() && last.ToolCalls == 0 {
 		return truncatedNudge
 	}
 	if left := planTrackerFrom(ctx).unfinished(); len(left) > 0 {
@@ -162,7 +168,10 @@ func continuationNudge(ctx context.Context) string {
 // the decision is visible.
 func logContinuation(round int, reason string) {
 	kind := "unfinished-plan"
-	if strings.HasPrefix(reason, truncatedNudge[:12]) {
+	switch {
+	case strings.HasPrefix(reason, reasoningBudgetNudgePrefix[:40]):
+		kind = "reasoning-budget"
+	case strings.HasPrefix(reason, truncatedNudge[:12]):
 		kind = "truncated-turn"
 	}
 	slog.Info("run continued", "round", round+1, "reason", kind)

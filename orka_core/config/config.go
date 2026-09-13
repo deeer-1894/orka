@@ -83,6 +83,12 @@ type LLMConfig struct {
 	// serves nine models across three of the conventions above, so a single
 	// global setting cannot be right for all of them.
 	ReasoningByModel map[string]map[string]any `yaml:"reasoning_by_model"`
+	// ReasoningBudgetRunes bounds how much an agent turn may reason before it
+	// produces any output or tool call; past it, the turn is stopped and the
+	// reasoning handed back as the plan to act on. Enforced client-side because
+	// providers do not reliably honour Reasoning. 0 = off. Skipped when the user
+	// turns deep thinking on.
+	ReasoningBudgetRunes int `yaml:"reasoning_budget_runes"`
 	// Models is the ordered list a user may pick from, FIRST being the default.
 	// Providers that host many models behind one endpoint (Ark, OpenRouter…)
 	// serve any of them from the same client — only the model NAME changes — so
@@ -241,6 +247,7 @@ func (c *Config) applyEnv() {
 	envInt(&c.LLM.MaxRetries, "LLM_MAX_RETRIES")
 	envInt(&c.LLM.MaxTokens, "LLM_MAX_TOKENS")
 	envJSON(&c.LLM.Reasoning, "LLM_REASONING")
+	envInt(&c.LLM.ReasoningBudgetRunes, "LLM_REASONING_BUDGET_RUNES")
 	envStr(&c.Storage.MongoURI, "MONGO_URI")
 	envStr(&c.Storage.MongoDB, "MONGO_DB")
 	envStr(&c.Storage.RedisAddr, "REDIS_ADDR")
