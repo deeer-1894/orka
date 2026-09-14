@@ -31,7 +31,7 @@ func TestTruncatedCallsCannotExhaustADKRetriesOrFailover(t *testing.T) {
 	bad := llm.Response{Content: "incomplete", FinishReason: "length"}
 	client := llm.NewMock(bad, bad, bad, bad)
 	backup := llm.NewMock(llm.Response{Content: "should not run"})
-	ag, err := BuildEinoAgent(context.Background(), client, "m", "sys", nil, 4, backupModel(backup, "backup", "m"))
+	ag, err := BuildEinoAgent(context.Background(), client, "m", "sys", nil, 4, llm.NewEinoModel(backup, "backup"))
 	if err != nil {
 		t.Fatal(err)
 	}

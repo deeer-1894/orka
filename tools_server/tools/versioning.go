@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"github.com/orka-oss/orka_core/pathsafe"
 	"os"
 	"path/filepath"
 	"sort"
@@ -25,12 +26,12 @@ const stampFormat = "20060102-150405.000000000"
 // trash before it is overwritten. Best-effort: any failure returns false and
 // never blocks the write. Paths already under the trash are skipped so backups
 // never recurse on themselves.
-func backupBeforeWrite(base, user, rel string) bool {
+func backupBeforeWrite(base, user, rel string, conversationID ...string) bool {
 	clean := filepath.ToSlash(strings.TrimSpace(rel))
 	if clean == TrashDir || strings.HasPrefix(clean, TrashDir+"/") {
 		return false
 	}
-	src, err := util.ResolvePath(base, user, rel)
+	src, err := util.ResolvePath(base, user, rel, conversationID...)
 	if err != nil {
 		return false
 	}
@@ -39,17 +40,17 @@ func backupBeforeWrite(base, user, rel string) bool {
 		return false // nothing to back up (new file or unreadable)
 	}
 	ts := time.Now().Format(stampFormat)
-	dst, err := util.ResolvePath(base, user, filepath.Join(TrashDir, ts, rel))
+	dst, err := util.ResolvePath(base, user, filepath.Join(TrashDir, ts, rel), conversationID...)
 	if err != nil {
 		return false
 	}
-	if os.MkdirAll(filepath.Dir(dst), 0o755) != nil {
+	if os.MkdirAll(filepath.Dir(dst), pathsafe.WorkspaceDirMode) != nil {
 		return false
 	}
-	if os.WriteFile(dst, old, 0o644) != nil {
+	if os.WriteFile(dst, old, pathsafe.WorkspaceFileMode) != nil {
 		return false
 	}
-	pruneVersions(base, user, rel, maxVersionsPerFile)
+	pruneVersions(base, user, rel, maxVersionsPerFile, conversationID...)
 	return true
 }
 
@@ -57,8 +58,8 @@ func backupBeforeWrite(base, user, rel string) bool {
 const maxVersionsPerFile = 20
 
 // pruneVersions deletes the oldest snapshots of rel beyond keep (best-effort).
-func pruneVersions(base, user, rel string, keep int) {
-	trashRoot, err := util.ResolvePath(base, user, TrashDir)
+func pruneVersions(base, user, rel string, keep int, conversationID ...string) {
+	trashRoot, err := util.ResolvePath(base, user, TrashDir, conversationID...)
 	if err != nil {
 		return
 	}

@@ -131,11 +131,11 @@ func describeFact(name, rawArgs, result string) string {
 // digestAsync writes the model half and stores the finished digest. Detached on
 // purpose: the digest matters on the NEXT turn, so making the current one wait
 // for it would be paying latency for nobody.
-func (s *ChatService) digestAsync(convID string, d db.RunDigest, msgs []*schema.Message) {
+func (s *ChatService) digestAsync(parent context.Context, convID string, d db.RunDigest, msgs []*schema.Message) {
 	if s.Msg == nil || s.Msg.Store == nil || convID == "" {
 		return
 	}
-	model, modelName := s.modelFor("mini")
+	model, modelName := s.modelsForContext(parent).modelFor(ModelAuto)
 	source := digestSource(msgs)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)

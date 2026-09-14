@@ -4,6 +4,7 @@ import { useChatStreams } from "./hooks/useChatStream";
 import { useRunRecovery } from "./hooks/useRunRecovery";
 import { lastUserPrompt } from "./lib/runRecovery";
 import { useEventStream } from "./hooks/useEventStream";
+import { ModelSettings } from "./components/ModelSettings";
 import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
 import { Thread } from "./components/Thread";
@@ -50,9 +51,7 @@ function liveTabFromMessages(messages: Message[], streaming: boolean): Tab | nul
 interface ModelOption { version: string; label: string; hint: string }
 // Fallback until /models resolves (keeps the picker non-empty on first paint).
 const MODELS_FALLBACK: ModelOption[] = [
-  { version: "auto", label: "自动", hint: "先用快模型,复杂了自动升级" },
-  { version: "", label: "主模型", hint: "更强" },
-  { version: "mini", label: "mini", hint: "更快 · 更省" },
+  { version: "auto", label: "Auto", hint: "使用列表中的第一个模型" },
 ];
 
 export default function App() {
@@ -127,7 +126,8 @@ function Workbench({
   // Shared metrics resource (also feeds the 指标 panel) — one poll, paused when hidden.
   const metricsRes = useResource("metrics", api.metrics, { interval: 4000 });
   const totalTokens = metricsRes?.total_tokens ?? 0;
-  const [version, setVersion] = useState(""); // selected model version ("" main, "mini")
+  const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
+  const [version, setVersion] = useState("auto"); // Auto or an explicit model ID.
   const [theme, toggleTheme] = useTheme();
   // Per-conversation enabled tool groups (empty = all tools, the default).
   const [toolGroups, setToolGroups] = useState<Set<string>>(() => loadTools(""));
@@ -292,13 +292,29 @@ function Workbench({
     [activeID],
   );
 
-  const ensureConversation = useCallback(async (): Promise<string> => {
-    if (activeID) return activeID;
-    const c = await api.createConversation("New chat");
-    setConversations((cs) => [c, ...cs]);
-    setActiveID(c.conversation_id);
-    return c.conversation_id;
-  }, [activeID]);
+  const creatingConversation = useRef({ activeID, generation: 0, promise: null as Promise<string> | null });
+  if (creatingConversation.current.activeID !== activeID) {
+    creatingConversation.current.activeID = activeID;
+    creatingConversation.current.generation++;
+    creatingConversation.current.promise = null;
+  }
+  const ensureConversation = useCallback((): Promise<string> => {
+    const state = creatingConversation.current;
+    if (state.activeID) return Promise.resolve(state.activeID);
+    if (state.promise) return state.promise;
+    const generation = state.generation;
+    const promise = api.createConversation("New chat").then(c => {
+      setConversations(cs => cs.some(item => item.conversation_id === c.conversation_id) ? cs : [c, ...cs]);
+      // A late creation must not replace a conversation selected in the meantime.
+      if (state.generation === generation && !state.activeID) {
+        state.activeID = c.conversation_id;
+        setActiveID(c.conversation_id);
+      }
+      return c.conversation_id;
+    }).finally(() => { if (state.promise === promise) state.promise = null; });
+    state.promise = promise;
+    return promise;
+  }, []);
 
   // After approving a paused danger tool the backend resumes the checkpointed
   // run, which streams on a NEW SSE this client isn't reading — re-attach so the
@@ -472,6 +488,7 @@ function Workbench({
             {isShared && <span className="shrink-0 text-[11px] text-faint" title={`由 ${activeConv?.owner_email} 分享`}>· 共享</span>}
           </div>
           <ModelSelect value={version} onChange={setVersion} models={models} />
+          <button onClick={() => setModelSettingsOpen(true)} className="shrink-0 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:bg-surface2">模型配置</button>
           {/* Run-mode safety switch. It belongs beside the model picker rather
               than under the input: both answer "how will this behave when I
               send", both are persistent session state, and keeping it in the
@@ -535,13 +552,14 @@ function Workbench({
                 </div>
               </div>
             ) : (
-              <Composer blocked={recovery.busy} status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
+              <Composer conversationID={activeID} ensureConversation={ensureConversation} blocked={recovery.busy} status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
             )}
           </div>
         </div>
       </main>
 
       <ArtifactDrawer
+        conversationID={activeID}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         tab={drawerTab}
@@ -571,6 +589,7 @@ function Workbench({
         />
       )}
 
+      {modelSettingsOpen && <ModelSettings onClose={() => setModelSettingsOpen(false)} onSaved={() => { setVersion("auto"); api.models().then(setModels).catch(() => {}); }} />}
       {shareFor && (
         <ShareDialog
           conv={shareFor}
@@ -658,7 +677,7 @@ function ScheduleDialog({ prompt, onClose, onConfirm }: { prompt: string; onClos
 }
 
 // ModelSelect is the header model picker; it sets the per-run `selected_version`
-// the backend's modelFor() reads ("" → main model, "mini" → cheaper/faster).
+// the backend resolves ("auto" → list default; otherwise an explicit model ID).
 // NotificationBell surfaces unattended-run failures (the alerting half of run
 // history): a header bell with an unread badge + a dropdown that jumps to the
 // failed run's conversation.

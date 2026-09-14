@@ -8,8 +8,8 @@ import (
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	"go.mongodb.org/mongo-driver/bson"
 
-	"github.com/orka-oss/orka_core/messages"
 	"github.com/orka-oss/orka_control_layer/db"
+	"github.com/orka-oss/orka_core/messages"
 )
 
 type createTaskReq struct {
@@ -33,10 +33,12 @@ func (a *API) CreateTask(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "bad request: "+err.Error())
 		return
 	}
-	owner := authEmail(c)
-	if owner == "" {
-		owner = req.OwnerEmail
+	conv, err := a.authorizedConversation(ctx, c, req.ConversationID, true)
+	if err != nil {
+		workspaceFail(c, err)
+		return
 	}
+	owner := conv.OwnerEmail
 	t := &db.TaskMeta{
 		TaskID:            messages.NewID(),
 		InitialTemplateId: req.InitialTemplateId,
@@ -85,6 +87,12 @@ func (a *API) ScheduleTask(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "prompt required and interval_sec >= 30")
 		return
 	}
+	conv, err := a.authorizedConversation(ctx, c, req.ConversationID, true)
+	if err != nil {
+		workspaceFail(c, err)
+		return
+	}
+	owner = conv.OwnerEmail
 	now := time.Now().UnixMilli()
 	t := &db.TaskMeta{
 		TaskID:         messages.NewID(),

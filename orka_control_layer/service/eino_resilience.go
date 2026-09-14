@@ -5,15 +5,13 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/adk"
-	"github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/schema"
 
 	"github.com/orka-oss/orka_control_layer/llm"
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/messages"
 )
 
-// eino_resilience.go — ADK-level retry + failover for model calls.
+// eino_resilience.go — ADK-level retry for model calls.
 //
 // Why this exists on top of the transport retry in llm/retry.go: that wrapper
 // CANNOT retry a stream that already emitted a delta ("a partial stream can't be
@@ -23,13 +21,10 @@ import (
 // failure happened mid-stream — the run survives.
 //
 // Layering: transport retry still handles blips before the first byte (cheap,
-// no duplicate tokens); ADK retry is the backstop for mid-stream failures;
-// failover switches model tier when retries are exhausted.
+// no duplicate tokens); ADK retry is the backstop for mid-stream failures.
+// All attempts use the selected model.
 
-const (
-	modelMaxRetries    = 2 // model-call retries per generation step (3 calls total)
-	modelFailoverTries = 1 // then try the other model tier once
-)
+const modelMaxRetries = 2 // model-call retries per generation step (3 calls total)
 
 // modelRetryConfig retries transient model failures at the ADK level. It reuses
 // llm.IsTransient so the two layers agree on what is worth retrying, and emits a
@@ -56,35 +51,6 @@ func modelRetryConfig() *adk.ModelRetryConfig {
 			return d
 		},
 	}
-}
-
-// modelFailoverConfig switches to a backup model (the other tier) once retries
-// are exhausted, so one provider-side bad patch doesn't end a 15-minute run.
-// Returns nil when no distinct backup is available.
-func modelFailoverConfig(backup model.BaseChatModel) *adk.ModelFailoverConfig[*schema.Message] {
-	if backup == nil {
-		return nil
-	}
-	return &adk.ModelFailoverConfig[*schema.Message]{
-		MaxRetries: modelFailoverTries,
-		ShouldFailover: func(_ context.Context, _ *schema.Message, err error) bool {
-			return err != nil && !llm.IsCallLimit(err)
-		},
-		GetFailoverModel: func(ctx context.Context, _ *adk.FailoverContext[*schema.Message]) (
-			model.BaseModel[*schema.Message], []*schema.Message, error) {
-			emitStreamReset(ctx)
-			return backup, nil, nil // nil messages = reuse the original input
-		},
-	}
-}
-
-// backupModel returns a model on the other tier, or nil when both tiers resolve
-// to the same model (failover to yourself buys nothing).
-func backupModel(client llm.Client, modelName, currentModel string) model.BaseChatModel {
-	if client == nil || modelName == "" || modelName == currentModel {
-		return nil
-	}
-	return newAgentModel(client, modelName, "failover")
 }
 
 // emitStreamReset tells the UI to drop the transient streaming bubble, so a

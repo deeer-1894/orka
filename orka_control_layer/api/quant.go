@@ -20,8 +20,27 @@ func (a *API) RunFactorPipeline(ctx context.Context, c *app.RequestContext) {
 	// Discover up front so the caller learns how many reports will be processed,
 	// then run the (slow, multi-step) batch detached so the HTTP call returns
 	// immediately — observe progress in run history.
-	reports := a.Chat.DiscoverReports(me)
-	go a.Chat.RunFactorPipeline(context.Background(), me)
+	var req struct {
+		ConversationID string `json:"conversation_id"`
+	}
+	if err := bind(c, &req); err != nil {
+		fail(c, 400, "invalid request body")
+		return
+	}
+	if q := string(c.Query("conv")); q != "" {
+		if req.ConversationID != "" && req.ConversationID != q {
+			fail(c, 400, "conflicting conversation_id")
+			return
+		}
+		req.ConversationID = q
+	}
+	conv, err := a.authorizedConversation(ctx, c, req.ConversationID, true)
+	if err != nil {
+		workspaceFail(c, err)
+		return
+	}
+	reports := a.Chat.DiscoverReports(conv.OwnerEmail, conv.ConversationID)
+	go a.Chat.RunFactorPipeline(context.Background(), conv.OwnerEmail, conv.ConversationID)
 	ok(c, map[string]any{"started": len(reports), "reports": reports})
 }
 

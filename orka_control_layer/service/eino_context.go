@@ -201,7 +201,7 @@ func contextHandlers(ctx context.Context, baseStorage, userEmail, label string, 
 		out = append(out, mw)
 	}
 
-	backend := newWorkspaceBackend(baseStorage, userEmail)
+	backend := newWorkspaceBackend(baseStorage, userEmail, agent.MetaFrom(ctx).ConversationID)
 	// Never reduce the pipeline's own control tools: their output IS the state
 	// that flows to the next step, and a placeholder would break it.
 	protected := append(protectedToolOutputs(), subAgentNames(specs)...)
@@ -711,11 +711,15 @@ func offloadRootFrom(ctx context.Context) string {
 // are not used by the reduction middleware and report that plainly.
 type workspaceBackend struct{ root string }
 
-func newWorkspaceBackend(baseStorage, userEmail string) filesystem.Backend {
+func newWorkspaceBackend(baseStorage, userEmail, conversationID string) filesystem.Backend {
 	if baseStorage == "" {
 		return nil // no storage configured → truncation offload disabled
 	}
-	return &workspaceBackend{root: pathsafe.UserRoot(baseStorage, userEmail)}
+	root, err := pathsafe.EnsureSession(baseStorage, userEmail, conversationID)
+	if err != nil {
+		return nil
+	}
+	return &workspaceBackend{root: root}
 }
 
 // resolve keeps every path inside the user's workspace root (pathsafe rejects
@@ -744,10 +748,10 @@ func (w *workspaceBackend) Write(_ context.Context, req *filesystem.WriteRequest
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), pathsafe.WorkspaceDirMode); err != nil {
 		return err
 	}
-	return os.WriteFile(p, []byte(req.Content), 0o644)
+	return os.WriteFile(p, []byte(req.Content), pathsafe.WorkspaceFileMode)
 }
 
 func (w *workspaceBackend) Read(_ context.Context, req *filesystem.ReadRequest) (*filesystem.FileContent, error) {

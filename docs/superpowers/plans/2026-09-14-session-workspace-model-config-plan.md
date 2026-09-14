@@ -1,113 +1,51 @@
-# 会话工作区、文件预览与模型配置 Implementation Plan
+# 会话工作区、文件预览与模型配置实施记录
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+目标：建立会话级文件工作区与预览，增加用户模型服务配置，移除从头重新执行入口。所有修改仅在 `codex/long-task-optimization`。
 
-**Goal:** 建立会话级文件隔离与预览能力，增加多厂商模型配置，并清理旧数据和过时的重新执行入口。
+技术栈：Go/Hertz、MongoDB、React/TypeScript、现有 Radix UI 组件。
 
-**Architecture:** 后端以认证用户和 conversation ID 共同解析工作区，文件 API 不再依赖共享根目录；模型配置按用户保存并通过 OpenAI 兼容协议获取模型列表。前端以当前会话 ID请求文件，使用目录状态驱动浏览与预览，模型设置独立成表单面板。
+## 1. 会话工作区
 
-**Tech Stack:** Go、Gin、MongoDB、React/TypeScript、现有 UI 组件、现有路径安全工具。
+- [x] `pathsafe.SessionRoot`、`EnsureSession` 和 `CopySession` 统一解析与复制会话目录。
+- [x] 文件 API 使用已授权会话的持久化所有者；查询参数 `conv` 和请求体 `conversation_id` 必须一致。
+- [x] 上传、下载、删除、目录、版本、恢复通过 rooted handles 限制在会话目录。
+- [x] MCP 签名、连接池、本地工具、附件、输出检查、量化报告传递会话上下文。
+- [x] 测试覆盖路径越界、无会话、共享读写权限、会话复制与不同会话连接隔离。
 
-## Global Constraints
+主要实现：`orka_core/pathsafe`、`orka_control_layer/api/file*.go`、`orka_control_layer/service/tools_provider.go`、`tools_server`。详细边界见 `../reports/2026-09-14-backend-session-workspace-isolation.md`。Shell/Python 沿用工具容器既有挂载边界；没有新增独立 OS 沙箱。
 
-- 所有文件操作必须限制在当前用户当前会话工作区。
-- API Key 只能写入和脱敏读取，禁止出现在列表、日志和运行记录。
-- 保留已有用户文件；只清理 MongoDB 历史运行数据。
-- 不引入重量级前端依赖；CSV 与代码预览使用现有能力或轻量实现。
-- 所有改动只提交到 `codex/long-task-optimization`。
+## 2. 前端文件浏览
 
-### Task 1: 会话工作区和文件 API
+- [x] `ArtifactDrawer` 按当前会话列出文件，支持点击文件夹、面包屑和返回上级。
+- [x] `Composer` 上传与 @文件补全、`Thread` 输出文件链接、`FilePreview` 均携带会话上下文。
+- [x] 并发创建会话去重；切换会话后忽略旧上传、列表与预览的异步结果。
+- [x] CSV 引号/逗号/多行解析，字节、行列限制和截断提示；代码使用安全文本分词着色。
+- [x] 独立浏览器测试与前端单元测试验证。
 
-**Files:**
-- Modify: `orka_core/pathsafe/pathsafe.go`
-- Modify: `orka_control_layer/api/file.go`
-- Modify: `orka_control_layer/api/chat.go`
-- Modify: `orka_control_layer/router.go`
-- Test: `orka_control_layer/api/file_test.go`
+## 3. 模型配置与执行
 
-**Interfaces:**
-- Produce `SessionRoot(base, user, conversationID string) (string, error)`。
-- 文件列表、读取、下载、删除接口统一接受当前会话上下文。
+用户最终确认：删除主、次模型功能，只保留 Auto 和手动固定模型。Auto 使用有序列表首项，执行中不按复杂度升级。
 
-- [ ] 写跨会话读取、路径越界和会话目录创建的失败测试。
-- [ ] 运行 `go test ./orka_control_layer/api ./orka_core/pathsafe`，确认测试先失败。
-- [ ] 实现会话根目录解析和 API 上下文校验。
-- [ ] 重跑上述测试并补充已有用户根目录兼容行为。
-- [ ] 提交 `feat: isolate files by conversation workspace`。
+- [x] `modelsettings` 模块按用户持久化私有配置，在工作区挂载外保存密钥。
+- [x] `POST /api/v1/controller/model-settings/get`、`/save`、`/discover` 提供脱敏读取、保存和兼容 `/models` 获取。
+- [x] 前端顶部“模型配置”提供厂商预设、Base URL、API Key、有序列表手填和 JSON 导入导出。
+- [x] JSON 不包含密钥；老配置默认模型迁入列表，不恢复主次分级。
+- [x] 单次运行冻结用户配置和选定模型，主任务及辅助调用不切换模型。
+- [x] 删除旧自动升级路由；显式未知模型明确失败，不静默换成默认模型。
+- [x] 推荐问题请求携带原回答的模型选择。
 
-### Task 2: 前端文件浏览和预览
+兼容协议与配置示例见 `../../model-settings.md`。厂商预设不等于支持所有厂商的原生协议。
 
-**Files:**
-- Modify: `web/src/types.ts`
-- Modify: `web/src/api.ts`
-- Modify: `web/src/components/WorkspacePanel.tsx`
-- Create: `web/src/components/FilePreview.tsx`
-- Test: `web/src/components/WorkspacePanel.test.tsx`
+## 4. 清理及入口
 
-**Interfaces:**
-- `listFiles(conversationId, path)` 返回带 `kind`、`size`、`modifiedAt` 的条目。
-- `FilePreview` 根据扩展名渲染 CSV 表格或代码文本。
+- [x] 一次性清理历史 runs、messages、conversation_turns、conversation_events、conversation_runtime；保留用户、配置与既有文件。没有新增产品内常驻清空入口。
+- [x] 删除“重新执行（从头开始）”按钮及从头执行说明，保留小型重新生成动作。
+- [x] 注册并登录 `real@test.com` 测试账号。
+- [x] 实际两个会话验证文件上传/目录/下载、另一会话不可见以及路径越界拒绝。
 
-- [ ] 写目录点击、返回上级、CSV 表头/行限制和代码扩展名识别测试。
-- [ ] 运行前端测试确认失败。
-- [ ] 接入当前会话 ID并实现目录导航。
-- [ ] 实现 CSV 截断提示、代码等宽展示和安全文本渲染。
-- [ ] 运行 `cd web && npm run build` 与测试。
-- [ ] 提交 `feat: add session file navigation and previews`。
+## 5. 最终交付检查
 
-### Task 3: 模型配置后端
-
-**Files:**
-- Modify: `orka_core/config/config.go`
-- Modify: `orka_control_layer/db/model.go`
-- Create: `orka_control_layer/api/model_settings.go`
-- Modify: `orka_control_layer/router.go`
-- Test: `orka_control_layer/api/model_settings_test.go`
-
-**Interfaces:**
-- `GET/PUT /api/v1/settings/model` 返回脱敏配置。
-- `POST /api/v1/settings/model/models` 从配置的 Base URL 获取模型列表，失败时返回可编辑空列表和错误原因。
-
-- [ ] 写 API Key 脱敏、用户隔离、模型列表失败回退测试。
-- [ ] 运行 Go 测试确认失败。
-- [ ] 实现按用户保存、脱敏序列化和兼容 `/models` 请求。
-- [ ] 接入运行请求的模型选择校验。
-- [ ] 运行 API 测试、`go vet ./orka_control_layer/...`。
-- [ ] 提交 `feat: add per-user model settings`。
-
-### Task 4: 模型配置前端
-
-**Files:**
-- Modify: `web/src/api.ts`
-- Create: `web/src/components/ModelSettings.tsx`
-- Modify: `web/src/App.tsx`
-- Test: `web/src/components/ModelSettings.test.tsx`
-
-- [ ] 写厂商预设、自定义 Base URL、模型列表刷新、手填模型和脱敏显示测试。
-- [ ] 实现配置表单和保存反馈。
-- [ ] 将会话运行使用的模型选择接入新配置。
-- [ ] 运行前端测试和 `npm run build`。
-- [ ] 提交 `feat: add model provider settings UI`。
-
-### Task 5: 清理数据和移除过时入口
-
-**Files:**
-- Modify: `web/src/components/RunResult.tsx`
-- Modify: `web/src/components/ConversationView.tsx`
-- Create: `orka_control_layer/db/cleanup.go`
-- Test: `orka_control_layer/db/cleanup_test.go`
-
-- [ ] 写清理集合范围和幂等性测试。
-- [ ] 实现一次性清理 `runs/messages/checkpoints/events`，保留账号、配置和文件。
-- [ ] 删除“重新执行（从头开始）”按钮及提示，保留刷新/重新生成按钮。
-- [ ] 运行后端测试与前端构建。
-- [ ] 提交 `feat: remove restart-from-scratch action`。
-
-### Task 6: 注册与端到端验收
-
-- [ ] 启动当前分支前后端并确认健康检查。
-- [ ] 注册 `real@test.com` / `123456`，验证登录。
-- [ ] 创建两个会话，分别写入文件，验证互不可见。
-- [ ] 验证文件夹、CSV、代码预览和模型配置脱敏展示。
-- [ ] 执行数据库清理并确认账号、配置和文件仍存在。
-- [ ] 运行 `git diff --check`、Go 测试、前端构建，提交最终整合提交并推送当前分支。
+- [x] 完成最新 Auto/手动语义的全量 Go 测试、race、vet 与前端浏览器测试、构建。
+- [x] 重建工具镜像、重启当前分支前后端并验证健康状态。
+- [x] 实际兼容服务请求验证 Auto 与手动均到达指定模型，未知模型不调用服务；恢复临时测试覆盖配置。
+- [x] 交叉审查、差异检查通过；集成仅使用当前分支。

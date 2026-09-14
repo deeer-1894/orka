@@ -116,7 +116,7 @@ func TestGateActivationCannotFindAnotherAgentsTool(t *testing.T) {
 
 func TestSpecialistResearchGuidanceFollowsSharedAllowance(t *testing.T) {
 	b := newRunBudget(20, 1000, 0)
-	s := newResearchSession(newWorkspaceBackend(t.TempDir(), "reader"), ".orka_offload/specialist/evidence", b, 10)
+	s := newResearchSession(newWorkspaceBackend(t.TempDir(), "reader", "test-session"), ".orka_offload/specialist/evidence", b, 10)
 	ctx := withResearchSession(withBudget(context.Background(), b), s)
 	source := retrievalFixture{"fetch_url", func(context.Context, map[string]any) (string, error) {
 		b.AddUsage(500, 0)

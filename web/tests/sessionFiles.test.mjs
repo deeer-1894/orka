@@ -21,7 +21,7 @@ test('failed/incomplete writes and input filenames do not declare output', () =>
   assert.deepEqual(sessionFileCandidates([tool('file_write', { path: 'F/a.md' }, '', { error: 'denied' }), tool('file_write', { path: 'F/b.md' }, 'Error: permission denied'), msg('tool', { tool: 'file_write', args: { path: 'F/c.md' } }), tool('csv_to_json', { path: 'B/input.csv', out: 'F/result.json' })], ctx), ['F/result.json']);
 });
 test('explicit shell output paths and current plan outputs are checked even in deep directories', async () => {
-  const candidates = sessionFileCandidates([tool('update_plan', { outputs: ['F/deep/nested/manifest.json', 'F/delivery.zip'] }), tool('shell', { command: 'python3 make.py' }, 'Generated: F/deep/nested/chart.svg\nSaved: /home/aibox/.orka/storage/me@example.com/F/dashboard.html')], ctx);
+  const candidates = sessionFileCandidates([tool('update_plan', { outputs: ['F/deep/nested/manifest.json', 'F/delivery.zip'] }), tool('shell', { command: 'python3 make.py' }, 'Generated: F/deep/nested/chart.svg\nSaved: /home/aibox/.orka/storage/me@example.com/sessions/f/F/dashboard.html')], ctx);
   assert.deepEqual(new Set(candidates), new Set(['F/deep/nested/manifest.json', 'F/delivery.zip', 'F/deep/nested/chart.svg', 'F/dashboard.html']));
   const found = await existingSessionFiles(candidates, async dir => dir === 'F/deep/nested' ? [{ name: 'chart.svg', dir: false }, { name: 'manifest.json', dir: false }] : [{ name: 'dashboard.html', dir: false }, { name: 'delivery.zip', dir: true }]);
   assert.deepEqual(new Set(found), new Set(['F/deep/nested/chart.svg','F/deep/nested/manifest.json','F/dashboard.html']));
@@ -39,7 +39,7 @@ test('finished explicit deliverable links are accepted but generic link mentions
 });
 
 test('successful script output may explicitly return a full artifact path without a prose label', () => {
-  assert.deepEqual(sessionFileCandidates([tool('shell', { command: 'python3 generate.py' }, '/home/aibox/.orka/storage/me@example.com/F/result.csv')], ctx), ['F/result.csv']);
+  assert.deepEqual(sessionFileCandidates([tool('shell', { command: 'python3 generate.py' }, '/home/aibox/.orka/storage/me@example.com/sessions/f/F/result.csv')], ctx), ['F/result.csv']);
 });
 test('listing failure, duplicate declarations and directories never invent artifacts', async () => {
   const candidates = sessionFileCandidates([tool('update_plan', { outputs: ['F/a.md', 'F/a.md', 'G/a.md'] })], ctx);
@@ -68,4 +68,13 @@ test('actual confirmation refusal and skipped-operation receipts never claim an 
     assert.deepEqual(await existingSessionFiles(candidates, async () => [{ name: 'report.md', dir: false }]), [], result);
   }
   assert.deepEqual(sessionFileCandidates([tool('file_write', { path: 'report.md' }, '已确认，saved successfully')], ctx), ['report.md']);
+});
+
+
+test('absolute session paths strip only the current session root and reject a foreign session', () => {
+  const normalize = p => normalizeWorkspacePath(p, ctx.ownerEmail, ctx.conversationID);
+  assert.equal(normalize('/home/aibox/.orka/storage/me@example.com/sessions/f/deep/report.csv'), 'deep/report.csv');
+  assert.equal(normalize('/home/aibox/.orka/storage/me@example.com/sessions/e/deep/report.csv'), undefined);
+  assert.equal(normalize('/home/aibox/.orka/storage/me@example.com/report.csv'), undefined);
+  assert.equal(normalize('deep/report.csv'), 'deep/report.csv');
 });

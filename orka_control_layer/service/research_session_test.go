@@ -42,7 +42,7 @@ func TestRetrievalCacheDoesNotCrossIndependentRuns(t *testing.T) {
 
 func TestResearchSessionCachesNormalizedRequestsAndPersistsEvidence(t *testing.T) {
 	base := t.TempDir()
-	s := newResearchSession(newWorkspaceBackend(base, "reader"), ".orka_offload/run-test/evidence", nil, 10)
+	s := newResearchSession(newWorkspaceBackend(base, "reader", "test-session"), ".orka_offload/run-test/evidence", nil, 10)
 	ctx := withResearchSession(context.Background(), s)
 	calls := 0
 	tool := EinoTool(retrievalFixture{"fetch_url", func(context.Context, map[string]any) (string, error) {
@@ -64,7 +64,7 @@ func TestResearchSessionCachesNormalizedRequestsAndPersistsEvidence(t *testing.T
 	if err != nil || !strings.Contains(got, "Persistent checkpoints") || !strings.Contains(got, "https://example.test/docs") {
 		t.Fatalf("search=%q err=%v", got, err)
 	}
-	files, _ := filepath.Glob(filepath.Join(base, "reader", ".orka_offload/run-test/evidence/*.txt"))
+	files, _ := filepath.Glob(filepath.Join(base, "reader", "sessions", "test-session", ".orka_offload/run-test/evidence/*.txt"))
 	if len(files) != 1 {
 		t.Fatalf("evidence files=%v", files)
 	}
@@ -172,7 +172,7 @@ func TestGateShowsDocumentationEvidenceAndDeepTask(t *testing.T) {
 
 func TestEvidenceIDsResolveAndCatalogSnapshotsStayReadable(t *testing.T) {
 	base := t.TempDir()
-	s := newResearchSession(newWorkspaceBackend(base, "reader"), ".orka_offload/run-test/evidence", nil, 10)
+	s := newResearchSession(newWorkspaceBackend(base, "reader", "test-session"), ".orka_offload/run-test/evidence", nil, 10)
 	ctx := withResearchSession(context.Background(), s)
 	tool := EinoTool(retrievalFixture{"fetch_url", func(_ context.Context, args map[string]any) (string, error) {
 		return "URL: " + args["url"].(string) + "\nTitle: durable evidence\nbody", nil
@@ -188,13 +188,13 @@ func TestEvidenceIDsResolveAndCatalogSnapshotsStayReadable(t *testing.T) {
 		t.Errorf("ID lookup=%s", byID)
 	}
 	originalPath := s.evidence.indexPath
-	original, _ := os.ReadFile(filepath.Join(base, "reader", originalPath))
+	original, _ := os.ReadFile(filepath.Join(base, "reader", "sessions", "test-session", originalPath))
 	_, _ = tool.InvokableRun(ctx, `{"url":"https://example.test/two"}`)
-	after, _ := os.ReadFile(filepath.Join(base, "reader", originalPath))
+	after, _ := os.ReadFile(filepath.Join(base, "reader", "sessions", "test-session", originalPath))
 	if string(original) != string(after) {
 		t.Error("previously advertised catalog was overwritten")
 	}
-	latest, err := os.ReadFile(filepath.Join(base, "reader", s.evidence.indexPath))
+	latest, err := os.ReadFile(filepath.Join(base, "reader", "sessions", "test-session", s.evidence.indexPath))
 	if err != nil || !strings.Contains(string(latest), "https://example.test/two") {
 		t.Fatalf("latest catalog=%s: %v", latest, err)
 	}
@@ -222,7 +222,7 @@ func TestDocumentationToolsStayInWebScope(t *testing.T) {
 }
 
 func TestResearchSessionWiredThroughEinoRunner(t *testing.T) {
-	s := newResearchSession(newWorkspaceBackend(t.TempDir(), "reader"), ".orka_offload/integration/evidence", nil, 10)
+	s := newResearchSession(newWorkspaceBackend(t.TempDir(), "reader", "test-session"), ".orka_offload/integration/evidence", nil, 10)
 	ctx := withToolGate(withResearchSession(context.Background(), s), newToolGate())
 	calls := 0
 	source := retrievalFixture{"fetch_url", func(context.Context, map[string]any) (string, error) {
@@ -266,7 +266,7 @@ func TestEvidenceKeepsResolvedSourceMetadata(t *testing.T) {
 }
 
 func TestReadOnlyHTTPRequestUsesResearchBudgetAndEvidenceCache(t *testing.T) {
-	s := newResearchSession(newWorkspaceBackend(t.TempDir(), "reader"), ".orka_offload/http", nil, 1)
+	s := newResearchSession(newWorkspaceBackend(t.TempDir(), "reader", "test-session"), ".orka_offload/http", nil, 1)
 	ctx := withResearchSession(context.Background(), s)
 	calls := 0
 	tool := EinoTool(retrievalFixture{"http_request", func(context.Context, map[string]any) (string, error) {

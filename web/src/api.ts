@@ -228,7 +228,7 @@ export const api = {
   createWorkflow: (name: string, steps: WorkflowStep[]) => post<Workflow>("/workflow/create", { name, steps }),
   deleteWorkflow: (workflow_id: string) => post("/workflow/delete", { workflow_id }),
   runWorkflow: (workflow_id: string) => post<{ conversation_id: string }>("/workflow/run", { workflow_id }),
-  followups: (prompt: string, answer: string) => post<{ suggestions: string[] }>("/chat/followups", { prompt, answer }),
+  followups: (prompt: string, answer: string, selectedVersion = "auto", modelProfile = "") => post<{ suggestions: string[] }>("/chat/followups", { prompt, answer, selected_version: selectedVersion, model_profile: modelProfile }),
   listSkills: () => post<{ skills: { name: string; description: string }[] }>("/skill/list", {}),
   getSkill: (name: string) => post<{ name: string; description: string; prompt: string }>("/skill/get", { name }),
   installSkill: (url: string) => post<{ name: string }>("/skill/install", { url }),
@@ -248,27 +248,39 @@ export const api = {
 
 export type FileVersion = { ts: string; when: number; size: number; path: string };
 
+export type FileEntry = { name: string; dir: boolean; size: number; mtime?: number };
+function fileScope(conversationID: string) {
+  if (!conversationID.trim()) throw new Error("请选择会话后再操作文件");
+  return { conversation_id: conversationID, conv: conversationID };
+}
+function fileQuery(conversationID: string) {
+  return "&" + new URLSearchParams(fileScope(conversationID)).toString();
+}
+
 export const files = {
-  list: (path: string, silent = false) =>
-    post<{ name: string; dir: boolean; size: number }[]>("/file/list", { path }, silent),
-  delete: (path: string) => post("/file/delete", { path }),
-  versions: (path: string) => post<FileVersion[]>("/file/versions", { path }),
-  restore: (path: string, ts: string) => post<{ restored: string }>("/file/restore", { path, ts }),
-  // conv (optional) reads the file from a shared conversation's OWNER workspace.
-  downloadURL: (path: string, conv?: string) =>
-    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}${conv ? "&conv=" + encodeURIComponent(conv) : ""}`,
+  list: (path: string, conversationID: string, silent = false) =>
+    post<FileEntry[]>("/file/list", { path, ...fileScope(conversationID) }, silent),
+  scopedList: (path: string, conversation_id: string, silent = false) =>
+    post<FileEntry[]>("/file/list", { path, ...fileScope(conversation_id) }, silent),
+  delete: (path: string, conversation_id: string) => post("/file/delete", { path, ...fileScope(conversation_id) }),
+  versions: (path: string, conversation_id: string) => post<FileVersion[]>("/file/versions", { path, ...fileScope(conversation_id) }),
+  restore: (path: string, ts: string, conversation_id: string) => post<{ restored: string }>("/file/restore", { path, ts, ...fileScope(conversation_id) }),
+  // Every file URL is scoped to the selected conversation, including owner views.
+  downloadURL: (path: string, conv: string) =>
+    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}${fileQuery(conv)}`,
   // previewURL serves the same bytes with Content-Disposition: inline so the
   // browser renders them in-page (PDF in an <iframe>) instead of downloading.
-  previewURL: (path: string, conv?: string) =>
-    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}&inline=1${conv ? "&conv=" + encodeURIComponent(conv) : ""}`,
-  upload: async (file: File, dir: string, onProgress?: (pct: number) => void) => {
+  previewURL: (path: string, conv: string) =>
+    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}&inline=1${fileQuery(conv)}`,
+  upload: async (file: File, dir: string, onProgress: ((pct: number) => void) | undefined, conversation_id: string) => {
+    fileScope(conversation_id);
     const CHUNK = 256 * 1024;
     const total = Math.max(1, Math.ceil(file.size / CHUNK));
     const uploadID = crypto.randomUUID();
     const filename = (dir ? dir.replace(/\/$/, "") + "/" : "") + file.name;
     for (let i = 0; i < total; i++) {
       const b64 = await blobToB64(file.slice(i * CHUNK, (i + 1) * CHUNK));
-      await post("/file/upload-chunk", { upload_id: uploadID, filename, index: i, total, data: b64 });
+      await post("/file/upload-chunk", { upload_id: uploadID, filename, index: i, total, data: b64, ...fileScope(conversation_id) });
       onProgress?.(Math.round(((i + 1) / total) * 100));
     }
     return filename;
@@ -283,3 +295,18 @@ function blobToB64(b: Blob): Promise<string> {
     r.readAsDataURL(b);
   });
 }
+
+export interface ModelSettingsData {
+  provider: string;
+  base_url: string;
+  api_key_set: boolean;
+  models: string[];
+  enabled: boolean;
+}
+export type ModelSettingsInput = Omit<ModelSettingsData, "api_key_set"> & { api_key?: string };
+export const modelSettings = {
+  get: () => post<ModelSettingsData>("/model-settings/get", {}),
+  save: (data: ModelSettingsInput) => post<ModelSettingsData>("/model-settings/save", data),
+  discover: (data: { provider: string; base_url: string; api_key?: string }) =>
+    post<{ models: string[] }>("/model-settings/discover", data, true),
+};

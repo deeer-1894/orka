@@ -18,6 +18,7 @@ export interface Meta {
   conversation_id: string;
   task_id: string;
   model_version?: string;
+  model_profile?: string; // opaque provider configuration revision for auxiliary requests
   trace_id: string;
   run_id?: string; // execution identity; legacy messages may only have trace_id
   user_email?: string;

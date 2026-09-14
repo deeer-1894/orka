@@ -22,7 +22,7 @@ const SKILL_ICON: Record<string, { icon: string; label: string }> = {
   translator: { icon: "🌐", label: "翻译" },
 };
 
-interface Attachment { name: string; path: string; image: boolean }
+interface Attachment { name: string; path: string; image: boolean; conversationID: string }
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
 
 // Mirrors the built-in skills registered in the control layer (skills_registry.go).
@@ -44,6 +44,8 @@ export function Composer({
   onSetTools,
   activeSkill,
   onPickSkill,
+  conversationID,
+  ensureConversation,
 }: {
   status: RunStatus;
   blocked?: boolean;
@@ -53,6 +55,8 @@ export function Composer({
   onSetTools: (next: Set<string>) => void;
   activeSkill: string | null;
   onPickSkill: (name: string | null) => void;
+  conversationID: string;
+  ensureConversation: () => Promise<string>;
 }) {
   const [text, setText] = useState("");
   const [menu, setMenu] = useState(false);
@@ -73,7 +77,18 @@ export function Composer({
   const [atOpen, setAtOpen] = useState(false);
   const [atQuery, setAtQuery] = useState("");
   const [atSel, setAtSel] = useState(0);
-  const [atFiles, setAtFiles] = useState<{ name: string; dir: boolean; size: number }[]>([]);
+  const [atListing, setAtListing] = useState<{ conversationID: string; items: { name: string; dir: boolean; size: number }[] }>({ conversationID: "", items: [] });
+  const atFiles = atListing.conversationID === conversationID ? atListing.items : [];
+  const uploadScope = useRef({ conversationID, generation: 0, creating: null as Promise<string> | null, createdID: "" });
+  if (uploadScope.current.conversationID !== conversationID) {
+    const scope = uploadScope.current;
+    // Creating the initial conversation belongs to this upload batch. Other
+    // navigation invalidates its attachment callbacks immediately.
+    if (!(scope.conversationID === "" && conversationID === scope.createdID)) {
+      scope.generation++; scope.creating = null; scope.createdID = "";
+    }
+    scope.conversationID = conversationID;
+  }
 
   const togglePreview = async (name: string) => {
     if (previewName === name) { setPreviewName(null); return; }
@@ -137,7 +152,12 @@ export function Composer({
       setDeleting(null);
     }
   };
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [allAttachments, setAttachments] = useState<Attachment[]>([]);
+  const attachments = allAttachments.filter(a => a.conversationID === conversationID);
+  useEffect(() => {
+    setAttachments(a => a.filter(item => item.conversationID === conversationID));
+    setAtListing({ conversationID, items: [] }); setAtSel(0);
+  }, [conversationID]);
   const [uploading, setUploading] = useState(0);
   const [dragging, setDragging] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -155,18 +175,31 @@ export function Composer({
 
   const onFiles = async (list: FileList | null) => {
     if (!list?.length) return;
-    setUploading((n) => n + list.length);
-    for (const f of Array.from(list)) {
-      try {
-        const path = await fileApi.upload(f, "");
-        setAttachments((a) => [...a, { name: f.name, path, image: IMAGE_RE.test(f.name) }]);
-      } catch {
-        toastError("上传失败：" + f.name);
-      } finally {
-        setUploading((n) => n - 1);
+    const batch = Array.from(list);
+    const generation = uploadScope.current.generation;
+    setUploading(n => n + batch.length);
+    try {
+      let cid = conversationID;
+      if (!cid) {
+        const scope = uploadScope.current;
+        if (!scope.creating) scope.creating = ensureConversation().then(id => {
+          if (scope.generation === generation) scope.createdID = id;
+          return id;
+        }).finally(() => { if (scope.generation === generation) scope.creating = null; });
+        cid = await scope.creating;
       }
+      for (const f of batch) {
+        if (uploadScope.current.generation !== generation) break;
+        try {
+          const path = await fileApi.upload(f, "", undefined, cid);
+          if (uploadScope.current.generation === generation) setAttachments(a => [...a, { name: f.name, path, image: IMAGE_RE.test(f.name), conversationID: cid }]);
+        } catch { toastError("上传失败：" + f.name); }
+      }
+    } catch { toastError("无法创建上传文件的会话"); }
+    finally {
+      setUploading(n => n - batch.length);
+      if (fileRef.current) fileRef.current.value = "";
     }
-    if (fileRef.current) fileRef.current.value = "";
   };
 
   // Paste an image straight from the clipboard (e.g. a screenshot) → upload it.
@@ -192,10 +225,15 @@ export function Composer({
     if (text === "/") setMenu(true);
   }, [text]);
 
-  // Lazy-load workspace files the first time an @-mention opens.
+  // Reload on each picker opening and conversation change; ignore late results.
   useEffect(() => {
-    if (atOpen && atFiles.length === 0) fileApi.list(".").then(setAtFiles).catch(() => {});
-  }, [atOpen, atFiles.length]);
+    let current = true;
+    if (!atOpen || !conversationID) return;
+    fileApi.scopedList(".", conversationID, true)
+      .then(items => { if (current) setAtListing({ conversationID, items }); })
+      .catch(() => { if (current) setAtListing({ conversationID, items: [] }); });
+    return () => { current = false; };
+  }, [atOpen, conversationID]);
 
   // Detect an `@token` being typed at the cursor → open the file picker.
   const syncAt = (value: string, cursor: number | null) => {
@@ -214,7 +252,7 @@ export function Composer({
     const before = text.slice(0, cursor).replace(/(^|\s)@([^\s@]*)$/, (_full, pre) => pre);
     setText(before + text.slice(cursor));
     setAtOpen(false);
-    setAttachments((a) => (a.some((x) => x.path === name) ? a : [...a, { name, path: name, image: IMAGE_RE.test(name) }]));
+    setAttachments((a) => (a.some((x) => x.path === name && x.conversationID === conversationID) ? a : [...a, { name, path: name, image: IMAGE_RE.test(name), conversationID }]));
     requestAnimationFrame(() => ta?.focus());
   };
 
@@ -367,11 +405,11 @@ export function Composer({
 
         {(attachments.length > 0 || uploading > 0) && (
           <div className="mb-2 flex flex-wrap gap-1.5">
-            {attachments.map((a, i) => (
+            {attachments.map((a) => (
               <span key={a.path} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface2/60 px-2 py-1 text-[12px] text-ink">
                 <span>{a.image ? "🖼️" : "📄"}</span>
                 <span className="max-w-[160px] truncate">{a.name}</span>
-                <button onClick={() => setAttachments((xs) => xs.filter((_, j) => j !== i))} aria-label={"移除 " + a.name} className="text-faint hover:text-accent"><Icon name="close" size={12} /></button>
+                <button onClick={() => setAttachments(xs => xs.filter(item => item !== a))} aria-label={"移除 " + a.name} className="text-faint hover:text-accent"><Icon name="close" size={12} /></button>
               </span>
             ))}
             {uploading > 0 && <span className="rounded-lg bg-surface2/60 px-2 py-1 text-[12px] text-faint">上传中 {uploading}…</span>}

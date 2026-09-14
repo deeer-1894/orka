@@ -16,10 +16,10 @@ import (
 func savedReadFixture(t *testing.T) (*researchSession, string, string, func() (string, error)) {
 	t.Helper()
 	base := t.TempDir()
-	s := newResearchSession(newWorkspaceBackend(base, "reader"), ".orka_offload/reread/evidence", nil, 40)
+	s := newResearchSession(newWorkspaceBackend(base, "reader", "test-session"), ".orka_offload/reread/evidence", nil, 40)
 	s.evidence.capture(context.Background(), "one", "fetch_url", map[string]any{"url": "https://example.test/source"}, strings.Repeat("Original evidence. ", 250)+"ORIGINAL_TAIL")
 	path := s.evidence.records[0].Path
-	diskPath := filepath.Join(base, "reader", path)
+	diskPath := filepath.Join(base, "reader", "sessions", "test-session", path)
 	read := func() (string, error) { b, err := os.ReadFile(diskPath); return string(b), err }
 	return s, path, diskPath, read
 }

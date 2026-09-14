@@ -22,9 +22,10 @@ var (
 
 // ContextToken is the signed identity + capability claim.
 type ContextToken struct {
-	UserEmail string   `json:"user_email"`
-	Scopes    []string `json:"scopes"` // capability allowlist (RBAC)
-	Exp       int64    `json:"exp"`    // unix seconds; 0 = no expiry
+	ConversationID string   `json:"conversation_id,omitempty"`
+	UserEmail      string   `json:"user_email"`
+	Scopes         []string `json:"scopes"` // capability allowlist (RBAC)
+	Exp            int64    `json:"exp"`    // unix seconds; 0 = no expiry
 }
 
 // NewToken builds a token valid for ttl from now.

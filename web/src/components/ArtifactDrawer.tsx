@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, artifacts as artifactApi, files as fileApi } from "../api";
+import { api, artifacts as artifactApi, files as fileApi, type FileEntry } from "../api";
 import type { Artifact, Connector, Factor, MetricsSnapshot, RunRecord, TaskMeta, WeightedPortfolio, Workflow } from "../types";
 import { toast } from "../lib/toast";
 import { lineDiff, diffStats } from "../lib/diff";
@@ -49,6 +49,7 @@ export function ArtifactDrawer({
   setTab,
   liveTab,
   email,
+  conversationID,
   onJumpToConversation,
   focusArtifact,
   onClearArtifact,
@@ -59,6 +60,7 @@ export function ArtifactDrawer({
   setTab: (t: Tab) => void;
   liveTab: Tab | null; // where the agent is working now (Live Focus)
   email: string;
+  conversationID: string;
   onJumpToConversation: (cid: string) => void;
   focusArtifact: string | null; // artifact to open inline (from the in-chat card)
   onClearArtifact: () => void;
@@ -100,12 +102,16 @@ export function ArtifactDrawer({
   const [newTabs, setNewTabs] = useState<Set<Tab>>(new Set());
   const seen = useRef<{ artifacts: number; files: number }>({ artifacts: -1, files: -1 });
   useEffect(() => {
+    seen.current.files = -1;
+    setNewTabs(prev => { const next = new Set(prev); next.delete("files"); return next; });
+  }, [conversationID]);
+  useEffect(() => {
     if (!open) return;
     let alive = true;
     const tick = async () => {
       const [a, f] = await Promise.all([
         artifactApi.list().then((r) => (r.artifacts || []).length).catch(() => -1),
-        fileApi.list(".").then((items) => items.filter((x) => !x.dir && !x.name.startsWith(".")).length).catch(() => -1),
+        (conversationID ? fileApi.scopedList(".", conversationID, true).then((items) => items.filter((x) => !x.dir && !x.name.startsWith(".")).length) : Promise.resolve(0)).catch(() => -1),
       ]);
       if (!alive) return;
       setNewTabs((prev) => {
@@ -119,7 +125,7 @@ export function ArtifactDrawer({
     tick();
     const id = setInterval(tick, 5000);
     return () => { alive = false; clearInterval(id); };
-  }, [open, tab]);
+  }, [open, tab, conversationID]);
   // Clear a tab's badge once it's viewed.
   useEffect(() => {
     setNewTabs((prev) => { if (!prev.has(tab)) return prev; const n = new Set(prev); n.delete(tab); return n; });
@@ -217,9 +223,9 @@ export function ArtifactDrawer({
           </div>
         )}
         <div className="flex-1 overflow-y-auto">
-          {tab === "overview" && <DashboardPanel onJumpToConversation={onJumpToConversation} goTab={setTab} onOpenArtifact={(id) => { setFocusArt(id); setTab("artifacts"); }} />}
+          {tab === "overview" && <DashboardPanel key={conversationID} conversationID={conversationID} onJumpToConversation={onJumpToConversation} goTab={setTab} onOpenArtifact={(id) => { setFocusArt(id); setTab("artifacts"); }} />}
           {tab === "artifacts" && (focusArt ? <ArtifactPane artifactId={focusArt} onBack={() => setFocusArt(null)} /> : <ArtifactGallery onOpen={setFocusArt} />)}
-          {tab === "files" && <FilesPanel email={email} />}
+          {tab === "files" && <FilesPanel key={email + ":" + conversationID} email={email} conversationID={conversationID} />}
           {tab === "runs" && <RunsPanel onJumpToConversation={onJumpToConversation} />}
           {tab === "flows" && <WorkflowsPanel onJumpToConversation={onJumpToConversation} />}
           {tab === "integrations" && <ConnectorsPanel />}
@@ -239,7 +245,7 @@ const ARTKIND_ICON: Record<string, string> = {
   pr_review: "🔀", architecture: "🗺️", incident: "🚨", checklist: "✅", audit: "🔍", custom: "📊",
 };
 
-function DashboardPanel({ onJumpToConversation, goTab, onOpenArtifact }: { onJumpToConversation: (cid: string) => void; goTab: (t: Tab) => void; onOpenArtifact: (id: string) => void }) {
+function DashboardPanel({ conversationID, onJumpToConversation, goTab, onOpenArtifact }: { conversationID: string; onJumpToConversation: (cid: string) => void; goTab: (t: Tab) => void; onOpenArtifact: (id: string) => void }) {
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [metrics, setMetrics] = useState<MetricsSnapshot | null>(null);
   const [arts, setArts] = useState<Artifact[]>([]);
@@ -247,16 +253,18 @@ function DashboardPanel({ onJumpToConversation, goTab, onOpenArtifact }: { onJum
   const [taskCount, setTaskCount] = useState(0);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
+    let alive = true;
     Promise.all([
       api.listRuns({}).catch(() => ({ runs: [] })),
       api.metrics().catch(() => null),
       artifactApi.list().then((r) => r.artifacts || []).catch(() => []),
-      fileApi.list(".").then((items) => items.filter((i) => !i.dir && !i.name.startsWith(".")).length).catch(() => 0),
+      (conversationID ? fileApi.scopedList(".", conversationID, true).then((items) => items.filter((i) => !i.dir && !i.name.startsWith(".")).length) : Promise.resolve(0)).catch(() => 0),
       api.getTasks().then((r) => (r.tasks || []).filter((t) => t.cron_status === "on").length).catch(() => 0),
     ])
-      .then(([r, m, a, fc, tc]) => { setRuns(r.runs || []); setMetrics(m); setArts(a); setFileCount(fc); setTaskCount(tc); })
-      .finally(() => setLoading(false));
-  }, []);
+      .then(([r, m, a, fc, tc]) => { if (!alive) return; setRuns(r.runs || []); setMetrics(m); setArts(a); setFileCount(fc); setTaskCount(tc); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [conversationID]);
 
   if (loading) return <Blank>加载中…</Blank>;
 
@@ -435,7 +443,7 @@ function dupKey(name: string, dir: boolean): string {
   return s;
 }
 
-type FileItem = { name: string; dir: boolean; size: number; mtime?: number };
+type FileItem = FileEntry;
 type SortKey = "name" | "time" | "size";
 
 // Runtime junk the sandbox leaves in the workspace (HOME=root → caches, python
@@ -445,28 +453,50 @@ function isHidden(name: string): boolean {
   return name.startsWith(".") || JUNK.has(name);
 }
 
-function FilesPanel({ email }: { email: string }) {
+function FilesPanel({ email, conversationID }: { email: string; conversationID: string }) {
   const [items, setItems] = useState<FileItem[]>([]);
   const [pct, setPct] = useState<number | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [showHidden, setShowHidden] = useState(false);
   const [sort, setSort] = useState<SortKey>("name");
+  const [dir, setDir] = useState(".");
   const inputRef = useRef<HTMLInputElement>(null);
-  const refresh = () => fileApi.list(".").then(setItems).catch(() => setItems([]));
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [revision, setRevision] = useState(0);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
-    refresh(); /* eslint-disable-next-line */
-  }, [email]);
+    let current = true;
+    setItems([]); setError(""); setLoading(!!conversationID);
+    if (conversationID) fileApi.scopedList(dir, conversationID, true)
+      .then(items => { if (current) setItems(items); })
+      .catch(e => { if (current) setError(String(e)); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [conversationID, dir, revision]);
+  const navigate = (path: string) => { setItems([]); setQuery(""); setPreview(null); setDir(path); };
+  const fullPath = (name: string) => dir === "." ? name : `${dir}/${name}`;
   const onUpload = async (f: File) => {
+    if (!conversationID || pct !== null) return;
     setPct(0);
     try {
-      await fileApi.upload(f, "", setPct);
-      await refresh();
+      await fileApi.upload(f, dir === "." ? "" : dir, n => { if (alive.current) setPct(n); }, conversationID);
+      if (alive.current) setRevision(n => n + 1);
+    } catch (e) {
+      if (alive.current) setError(String(e));
     } finally {
-      setPct(null);
+      if (alive.current) { setPct(null); if (inputRef.current) inputRef.current.value = ""; }
     }
   };
-  const del = (name: string) => fileApi.delete(name).then(refresh);
+  const del = async (name: string) => {
+    if (!conversationID) return;
+    try {
+      await fileApi.delete(fullPath(name), conversationID);
+      if (alive.current) setRevision(n => n + 1);
+    } catch (e) { if (alive.current) setError(String(e)); }
+  };
 
   const q = query.trim().toLowerCase();
   const hiddenCount = items.filter((it) => isHidden(it.name)).length;
@@ -504,9 +534,9 @@ function FilesPanel({ email }: { email: string }) {
     <div key={it.name} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface2">
       <span className={meta.color}>{meta.icon}</span>
       {it.dir ? (
-        <span className="flex-1 truncate text-[14px] text-ink">{it.name}</span>
+        <button onClick={() => navigate(fullPath(it.name))} className="flex-1 truncate text-left text-[14px] text-ink hover:text-accent">{it.name}</button>
       ) : (
-        <button onClick={() => setPreview(it.name)} className="flex-1 truncate text-left text-[14px] text-ink hover:text-accent" title="预览">
+        <button onClick={() => setPreview(fullPath(it.name))} className="flex-1 truncate text-left text-[14px] text-ink hover:text-accent" title="预览">
           {it.name}
         </button>
       )}
@@ -515,7 +545,7 @@ function FilesPanel({ email }: { email: string }) {
       )}
       <span className="text-[11px] text-faint">{fmtBytes(it.size)}</span>
       {!it.dir && (
-        <a href={fileApi.downloadURL(it.name)} className="text-accent opacity-0 group-hover:opacity-100" aria-label={"下载 " + it.name}>
+        <a href={fileApi.downloadURL(fullPath(it.name), conversationID)} className="text-accent opacity-0 group-hover:opacity-100" aria-label={"下载 " + it.name}>
           <Icon name="download" size={13} />
         </a>
       )}
@@ -529,15 +559,23 @@ function FilesPanel({ email }: { email: string }) {
   return (
     <div className="p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="inline-flex items-center gap-1.5 truncate text-[12px] text-faint" title={email}><Icon name="folder" size={13} /> 我的文件</span>
+        <nav aria-label="文件夹路径" className="flex min-w-0 flex-wrap items-center gap-1 text-[12px] text-faint" title={email}>
+          <Icon name="folder" size={13} />
+          <button onClick={() => navigate(".")} className="hover:text-accent">本会话文件</button>
+          {dir !== "." && dir.split("/").map((part, i, parts) => <span key={i} className="inline-flex min-w-0 items-center gap-1"> / <button className="truncate hover:text-accent" onClick={() => navigate(parts.slice(0, i + 1).join("/"))}>{part}</button></span>)}
+        </nav>
         <button
           onClick={() => inputRef.current?.click()}
+          disabled={!conversationID || pct !== null}
           className="shrink-0 rounded-lg border border-border px-2.5 py-1 text-[12px] text-muted hover:border-accent/40"
         >
-          Upload
+          上传
         </button>
         <input ref={inputRef} type="file" hidden onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])} />
       </div>
+      {dir !== "." && <button onClick={() => navigate(dir.includes("/") ? dir.slice(0, dir.lastIndexOf("/")) : ".")} className="mb-2 text-[12px] text-muted hover:text-accent">← 返回上级</button>}
+      {error && <div role="alert" className="mb-2 text-[12px] text-accent">无法读取文件：{error} <button onClick={() => setRevision(n => n + 1)} className="underline">重试</button></div>}
+      {loading && <p role="status" className="py-4 text-[13px] text-faint">加载中…</p>}
       {items.length > 6 && (
         <div className="mb-2 flex items-center gap-1.5">
           <input
@@ -572,8 +610,8 @@ function FilesPanel({ email }: { email: string }) {
           <div className="h-full bg-accent transition-all" style={{ width: pct + "%" }} />
         </div>
       )}
-      {filtered.length === 0 && (
-        items.length === 0
+      {!loading && !error && filtered.length === 0 && (
+        !conversationID ? <Blank icon="folder" title="请选择会话">选择或创建会话后查看文件。</Blank> : items.length === 0
           ? <Blank icon="folder" title="工作区还是空的">Orka 产出的文件(报告、图表、脚本、导出的文档)都会落在这里,你也可以直接上传文件让它读取。</Blank>
           : <Blank icon="search" title="没有匹配的文件">换个关键词试试,或清空搜索框查看全部。</Blank>
       )}
@@ -585,7 +623,7 @@ function FilesPanel({ email }: { email: string }) {
           <div className="space-y-0.5">{g.files.map(Row)}</div>
         </div>
       ))}
-      {preview && <FilePreview name={preview} onClose={() => setPreview(null)} />}
+      {preview && <FilePreview name={preview} conv={conversationID} onClose={() => setPreview(null)} />}
     </div>
   );
 }

@@ -57,7 +57,11 @@ type stageFn func(context.Context, *PipelineState) error
 // RunFactorGraph executes the typed pipeline for one report and returns the
 // final state. Emitted plan events keep the UI's execution timeline live.
 func (s *ChatService) RunFactorGraph(ctx context.Context, owner, reportPath string) (*PipelineState, error) {
-	seedQuantAssets(s.Cfg.Storage.BaseStoragePath, owner)
+	ctx, settingsErr := s.withUserModels(ctx, owner)
+	if settingsErr != nil {
+		return nil, settingsErr
+	}
+	seedQuantAssets(s.Cfg.Storage.BaseStoragePath, owner, agent.MetaFrom(ctx).ConversationID)
 	st := &PipelineState{ReportPath: reportPath}
 
 	stages := []struct {
@@ -110,8 +114,13 @@ func (s *ChatService) RunFactorGraph(ctx context.Context, owner, reportPath stri
 // scopedAgentRun builds a single-purpose agent with ONLY the tools this stage
 // needs and runs it once. Scoping is what keeps a stage's prompt (and its tool
 // table) small — the old design handed every stage the entire tool set.
-func (s *ChatService) scopedAgentRun(ctx context.Context, owner, instruction, task string, toolNames []string, useMini bool) (string, error) {
-	tools, cleanup, err := s.ToolsFor(ctx, ChatRunRequest{UserEmail: owner, EnabledTools: toolNames})
+func (s *ChatService) scopedAgentRun(ctx context.Context, owner, instruction, task string, toolNames []string) (string, error) {
+	ctx, settingsErr := s.withUserModels(ctx, owner)
+	if settingsErr != nil {
+		return "", settingsErr
+	}
+	models := s.modelsForContext(ctx)
+	tools, cleanup, err := s.ToolsFor(ctx, ChatRunRequest{UserEmail: owner, ConversationID: agent.MetaFrom(ctx).ConversationID, EnabledTools: toolNames})
 	if err != nil && len(tools) == 0 {
 		return "", err
 	}
@@ -120,13 +129,8 @@ func (s *ChatService) scopedAgentRun(ctx context.Context, owner, instruction, ta
 	}
 	tools = filterByName(tools, toolNames)
 
-	client, model := s.Main, s.Cfg.LLM.Model
-	backup := backupModel(s.Mini, s.Cfg.LLM.MiniModel, model)
-	if useMini && s.Mini != nil && s.Cfg.LLM.MiniModel != "" {
-		client, model = s.Mini, s.Cfg.LLM.MiniModel
-		backup = backupModel(s.Main, s.Cfg.LLM.Model, model)
-	}
-	ag, err := BuildEinoAgent(ctx, client, model, instruction, tools, 12, backup,
+	client, model := models.main, models.cfg.Model
+	ag, err := BuildEinoAgent(ctx, client, model, instruction, tools, 12, nil,
 		contextHandlers(ctx, s.Cfg.Storage.BaseStoragePath, owner, "quant-stage", tools, s.Cfg.Agent.SubAgents)...)
 	if err != nil {
 		return "", err
@@ -156,7 +160,7 @@ func filterByName(tools []agent.BaseTool, names []string) []agent.BaseTool {
 func (s *ChatService) stageParse(ctx context.Context, st *PipelineState) error {
 	out, err := s.scopedAgentRun(ctx, ownerOf(ctx), reportParserPrompt,
 		"解析研报文件 `"+st.ReportPath+"`,提取其中的自然语言投资逻辑。只输出编号清单,每条一句话,保留原文措辞。",
-		[]string{"pdf_extract", "fetch_url", "file_read", "file_list"}, true)
+		[]string{"pdf_extract", "fetch_url", "file_read", "file_list"})
 	if err != nil {
 		return err
 	}
@@ -174,7 +178,7 @@ func (s *ChatService) stagePropose(ctx context.Context, st *PipelineState) error
 	theses := "投资逻辑:\n" + strings.Join(st.Theses, "\n")
 	run := func(nudge string) ([]Factor, error) {
 		out, err := s.scopedAgentRun(ctx, owner, factorProposerPrompt, nudge+"\n"+theses,
-			[]string{"file_read", "validate_factor", "recall_similar_factors"}, false)
+			[]string{"file_read", "validate_factor", "recall_similar_factors"})
 		if err != nil {
 			return nil, err
 		}
@@ -184,7 +188,10 @@ func (s *ChatService) stagePropose(ctx context.Context, st *PipelineState) error
 	var wg sync.WaitGroup
 	var errA, errB error
 	wg.Add(2)
-	go func() { defer wg.Done(); st.SetA, errA = run("把下面每条投资逻辑转成一个已通过 validate_factor 校验的因子,只输出 JSON 数组:") }()
+	go func() {
+		defer wg.Done()
+		st.SetA, errA = run("把下面每条投资逻辑转成一个已通过 validate_factor 校验的因子,只输出 JSON 数组:")
+	}()
 	go func() {
 		defer wg.Done()
 		st.SetB, errB = run("独立思考(不要照抄任何既有答案),把下面每条投资逻辑转成一个已通过 validate_factor 校验的因子,只输出 JSON 数组:")
@@ -205,7 +212,7 @@ func (s *ChatService) stageReview(ctx context.Context, st *PipelineState) error 
 	rows, _ := json.Marshal(st.Final)
 	out, err := s.scopedAgentRun(ctx, ownerOf(ctx), factorReviewerPrompt,
 		"基于以下因子及其回测指标,生成一张简明的人审推荐表(名称/方向/IC/Sharpe/换手/一致性/建议):\n"+string(rows),
-		[]string{"file_read"}, true)
+		[]string{"file_read"})
 	if err != nil {
 		st.Review = "人审单生成失败: " + err.Error() // non-fatal: ingestion still proceeds
 		return nil

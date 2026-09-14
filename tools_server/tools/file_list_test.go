@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/orka-oss/tools_server/identity"
 )
 
 func listIn(t *testing.T, dir string) string {
@@ -16,7 +17,7 @@ func listIn(t *testing.T, dir string) string {
 	req := mcp.CallToolRequest{}
 	req.Params.Name = "file_list"
 	req.Params.Arguments = map[string]any{"path": "."}
-	res, err := fileList(dir)(context.Background(), req)
+	res, err := fileList(dir)(identity.With(context.Background(), identity.Identity{Email: "reader", ConversationID: "test-session"}), req)
 	if err != nil {
 		t.Fatalf("file_list: %v", err)
 	}
@@ -34,7 +35,7 @@ func listIn(t *testing.T, dir string) string {
 // tokens — an archive directory that had grown to 303 entries across runs.
 func TestFileListCapsLongDirectories(t *testing.T) {
 	base := t.TempDir()
-	root := filepath.Join(base, "_anonymous")
+	root := filepath.Join(base, "reader", "sessions", "test-session")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +59,7 @@ func TestFileListCapsLongDirectories(t *testing.T) {
 // still works, which is all the offload placeholder ever asks for.
 func TestFileListHidesInternalDirectories(t *testing.T) {
 	base := t.TempDir()
-	root := filepath.Join(base, "_anonymous")
+	root := filepath.Join(base, "reader", "sessions", "test-session")
 	for _, d := range []string{offloadDirName, trashDirName, "notes"} {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
 			t.Fatal(err)
@@ -82,7 +83,7 @@ func TestFileListHidesInternalDirectories(t *testing.T) {
 // An ordinary workspace must read exactly as before.
 func TestFileListUnchangedForSmallDirectories(t *testing.T) {
 	base := t.TempDir()
-	root := filepath.Join(base, "_anonymous")
+	root := filepath.Join(base, "reader", "sessions", "test-session")
 	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}

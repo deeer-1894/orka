@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"embed"
 	"os"
-	"path/filepath"
 
 	"github.com/orka-oss/orka_core/pathsafe"
 )
@@ -21,9 +20,16 @@ var quantAssetFiles = []string{"backtest_runner.py", "gp_evolve.py", "factor_sch
 
 // seedQuantAssets writes the embedded harness into <workspaceRoot>/quant/ for
 // any file that doesn't already exist (never clobbers user edits). Best-effort.
-func seedQuantAssets(baseStorage, email string) {
-	dir := filepath.Join(pathsafe.UserRoot(baseStorage, email), "quant")
-	if os.MkdirAll(dir, 0o755) != nil {
+func seedQuantAssets(baseStorage, email string, conversationID string) {
+	root, err := pathsafe.EnsureSession(baseStorage, email, conversationID)
+	if err != nil {
+		return
+	}
+	dir, err := pathsafe.Resolve(root, "quant")
+	if err != nil {
+		return
+	}
+	if os.MkdirAll(dir, pathsafe.WorkspaceDirMode) != nil {
 		return
 	}
 	for _, name := range quantAssetFiles {
@@ -31,7 +37,10 @@ func seedQuantAssets(baseStorage, email string) {
 		if err != nil {
 			continue
 		}
-		dst := filepath.Join(dir, name)
+		dst, err := pathsafe.Resolve(dir, name)
+		if err != nil {
+			continue
+		}
 		// These are OUR harness files (not user data), so overwrite when the
 		// embedded version changes — otherwise a workspace seeded once would be
 		// stuck on an old harness. Skip the rewrite only when identical (avoids
@@ -39,6 +48,6 @@ func seedQuantAssets(baseStorage, email string) {
 		if cur, err := os.ReadFile(dst); err == nil && bytes.Equal(cur, data) {
 			continue
 		}
-		_ = os.WriteFile(dst, data, 0o644)
+		_ = os.WriteFile(dst, data, pathsafe.WorkspaceFileMode)
 	}
 }

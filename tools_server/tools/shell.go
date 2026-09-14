@@ -22,10 +22,10 @@ import (
 // isolation, run the tools gateway inside a container/VM (see shellExec docs).
 var shellDenylist = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\brm\s+-[a-zA-Z]*\s*(/|~|\$HOME|/\*|\.\.)`), // rm -rf targeting / ~ .. etc.
-	regexp.MustCompile(`(?i)\b(sudo|doas)\b`),                          // privilege escalation
+	regexp.MustCompile(`(?i)\b(sudo|doas)\b`),                           // privilege escalation
 	regexp.MustCompile(`(?i)\b(shutdown|reboot|halt|poweroff|init\s+0)\b`),
-	regexp.MustCompile(`(?i)\bmkfs|\bdd\s+if=|\bfdisk\b`),                 // disk wipe
-	regexp.MustCompile(`:\s*\(\s*\)\s*\{.*\}\s*;`),                        // fork bomb
+	regexp.MustCompile(`(?i)\bmkfs|\bdd\s+if=|\bfdisk\b`),                                     // disk wipe
+	regexp.MustCompile(`:\s*\(\s*\)\s*\{.*\}\s*;`),                                            // fork bomb
 	regexp.MustCompile(`(?i)\b(curl|wget|fetch)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh|python3?)`), // pipe-to-shell RCE
 	regexp.MustCompile(`(?i)(id_rsa|id_ed25519|\.ssh/|\.aws/credentials|\.config/gcloud)`),    // credential theft
 }
@@ -46,7 +46,7 @@ func unsafeShell(cmd string) string {
 // processing, or code it just wrote (e.g. `python3 script.py`).
 //
 // It is intentionally powerful, so it is fenced:
-//   - cwd is locked to the per-user workspace root (base/<email>); HOME points there too
+//   - cwd and HOME start at the session workspace (base/<email>/sessions/<conversation>)
 //   - a hard timeout caps runaway commands (default 30s, max 120s)
 //   - combined stdout+stderr is size-capped
 //   - a non-zero exit or timeout is returned as a tool OBSERVATION (not a fatal
@@ -62,12 +62,15 @@ func shellExec(base string) mcpserver.ToolHandlerFunc {
 		}
 		if reason := unsafeShell(command); reason != "" {
 			return mcp.NewToolResultText("refused for safety: " + reason +
-				". The shell is confined to your workspace and blocks host-destructive commands. " +
+				". The shell runs in the tools container and blocks host-destructive commands. " +
 				"If you genuinely need this, run it yourself in a sandbox."), nil
 		}
 
-		root := pathsafe.UserRoot(base, identity.From(ctx).Email)
-		if err := os.MkdirAll(root, 0o755); err != nil {
+		root, rootErr := pathsafe.EnsureSession(base, identity.From(ctx).Email, identity.From(ctx).ConversationID)
+		if rootErr != nil {
+			return mcp.NewToolResultError(rootErr.Error()), nil
+		}
+		if err := os.MkdirAll(root, pathsafe.WorkspaceDirMode); err != nil {
 			return mcp.NewToolResultError("workspace unavailable: " + err.Error()), nil
 		}
 

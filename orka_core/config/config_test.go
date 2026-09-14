@@ -71,3 +71,29 @@ func TestEnvOverride(t *testing.T) {
 		t.Fatalf("cors hosts = %v", c.Server.CORSAllowedHosts)
 	}
 }
+
+func TestModelListHasNoImplicitMiniTier(t *testing.T) {
+	c := LLMConfig{Model: " first ", MiniModel: "hidden", Models: []string{"other", "first", "mini"}}
+	got := c.SelectableModels()
+	if len(got) != 3 || got[0] != "first" || got[1] != "other" || got[2] != "mini" || c.AllowsModel("hidden") {
+		t.Fatal(got)
+	}
+}
+
+func TestModelDefaultsUseOrderedList(t *testing.T) {
+	for _, tc := range []struct {
+		legacy string
+		models []string
+		want   string
+	}{
+		{models: []string{"listed", "other"}, want: "listed"},
+		{legacy: "old", models: []string{"listed", "old"}, want: "old"},
+		{want: "gpt-4o-mini"},
+	} {
+		c := Config{LLM: LLMConfig{Model: tc.legacy, MiniModel: "ignored", Models: tc.models}}
+		c.applyDefaults()
+		if c.LLM.Model != tc.want || c.LLM.MiniModel != tc.want || c.LLM.Models[0] != tc.want || c.LLM.AllowsModel("ignored") {
+			t.Fatalf("default=%s alias=%s list=%v", c.LLM.Model, c.LLM.MiniModel, c.LLM.Models)
+		}
+	}
+}

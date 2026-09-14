@@ -147,11 +147,9 @@ func (b *bestEffortMiddleware) BeforeModelRewriteState(ctx context.Context, stat
 }
 
 // BuildEinoAgent constructs an eino ReAct ChatModelAgent over our model + tools.
-// backup is an optional other-tier model to fail over to when retries are
-// exhausted (nil = no failover). handlers are optional middlewares (e.g.
-// summarization) the production path supplies; the minimal/test path passes none
-// for deterministic behavior.
-func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction string, tools []agent.BaseTool, maxIters int, backup einomodel.BaseChatModel, handlers ...adk.ChatModelAgentMiddleware) (adk.Agent, error) {
+// The legacy backup argument is ignored for source compatibility. Retries keep
+// the selected model. Handlers supply optional context management middleware.
+func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction string, tools []agent.BaseTool, maxIters int, _ einomodel.BaseChatModel, handlers ...adk.ChatModelAgentMiddleware) (adk.Agent, error) {
 	if maxIters <= 0 {
 		maxIters = 16
 	}
@@ -167,12 +165,15 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 		},
 		MaxIterations: maxIters,
 		// Survive transient/mid-stream model failures instead of failing the run.
-		ModelRetryConfig:    modelRetryConfig(),
-		ModelFailoverConfig: modelFailoverConfig(backup),
-		Handlers:            append([]adk.ChatModelAgentMiddleware{newBudgetGuardFor(agentBudget(ctx, maxIters)), newGateMiddleware(toolGateFrom(ctx))}, handlers...),
+		ModelRetryConfig: modelRetryConfig(),
+
+		Handlers: append([]adk.ChatModelAgentMiddleware{newBudgetGuardFor(agentBudget(ctx, maxIters)), newGateMiddleware(toolGateFrom(ctx))}, handlers...),
 	})
 }
 
+// Legacy miniClient/miniModel arguments on these builders are deprecated and
+// ignored. Every delegate and auxiliary call inherits mainClient/mainModel,
+// which represent the selected model for the run.
 // BuildEinoSubAgentTools exposes the delegates as one tool each, which is how
 // the AgentTool orchestrator consumes them.
 func BuildEinoSubAgentTools(ctx context.Context, mainClient llm.Client, mainModel string, miniClient llm.Client, miniModel string, atomic []agent.BaseTool, specs []config.SubAgentConfig) ([]tool.BaseTool, error) {
@@ -215,10 +216,7 @@ func BuildEinoSubAgents(ctx context.Context, mainClient llm.Client, mainModel st
 		if len(scoped) == 0 {
 			continue // none of this agent's tools available; don't expose a dead agent
 		}
-		client, model := miniClient, miniModel
-		if sp.Model == "main" {
-			client, model = mainClient, mainModel
-		}
+		client, model := mainClient, mainModel // legacy per-role selection is ignored
 		prompt := sp.Prompt
 		if prompt == "" {
 			prompt = needInput
@@ -240,8 +238,8 @@ func BuildEinoSubAgents(ctx context.Context, mainClient llm.Client, mainModel st
 			MaxIterations: iters,
 			// Same resilience as the orchestrator: a delegated worker that dies on a
 			// transient blip still fails the parent step.
-			ModelRetryConfig:    modelRetryConfig(),
-			ModelFailoverConfig: modelFailoverConfig(backupModel(mainClient, mainModel, model)),
+			ModelRetryConfig: modelRetryConfig(),
+
 			// A token budget as well as a step budget. MaxIterations bounds model
 			// CYCLES, and once the prompt encourages batching one cycle can emit
 			// several tool calls — so a researcher told to use "~6, at most ~10"
@@ -308,7 +306,7 @@ func BuildEinoDeepOrchestrator(ctx context.Context, mainClient llm.Client, mainM
 		newGateMiddleware(toolGateFrom(ctx)),
 	}, extra...)
 	if summarize {
-		handlers = append(handlers, summarizationHandlers(ctx, miniClient, miniModel)...)
+		handlers = append(handlers, summarizationHandlers(ctx, mainClient, mainModel)...)
 	}
 	handlers = append(handlers, newResearchGuidance(ctx))
 	return deep.New(ctx, &deep.Config{
@@ -331,7 +329,6 @@ func BuildEinoDeepOrchestrator(ctx context.Context, mainClient llm.Client, mainM
 		WithoutGeneralSubAgent: false,
 		Handlers:               handlers,
 		ModelRetryConfig:       modelRetryConfig(),
-		ModelFailoverConfig:    modelFailoverConfig(backupModel(miniClient, miniModel, mainModel)),
 	})
 }
 
@@ -351,9 +348,8 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 	allTools := append(EinoTools(withFindTools(withPlan(withClarify(atomic)))), subTools...)
 	handlers := append([]adk.ChatModelAgentMiddleware{newBudgetGuardFor(agentBudget(ctx, maxIters)), newGateMiddleware(toolGateFrom(ctx))}, extra...)
 	if summarize {
-		// Summarize history compression on the FAST mini model — it's an auxiliary
-		// step, not user-facing synthesis, so it doesn't need the strong model.
-		handlers = append(handlers, summarizationHandlers(ctx, miniClient, miniModel)...)
+		// Compression uses the same selected model as the rest of the run.
+		handlers = append(handlers, summarizationHandlers(ctx, mainClient, mainModel)...)
 	}
 	handlers = append(handlers, newResearchGuidance(ctx))
 	return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
@@ -367,11 +363,11 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 			EmitInternalEvents: true, // stream sub-agent events up for lane rendering
 		},
 		MaxIterations: maxIters,
-		// A long orchestrated run makes many model calls; one transient blip must
-		// not end it. Retry mid-stream failures, then fail over to the mini tier.
-		ModelRetryConfig:    modelRetryConfig(),
-		ModelFailoverConfig: modelFailoverConfig(backupModel(miniClient, miniModel, mainModel)),
-		Handlers:            handlers,
+		// A long orchestrated run makes many model calls; retry transient errors
+		// without switching to a different model.
+		ModelRetryConfig: modelRetryConfig(),
+
+		Handlers: handlers,
 	})
 }
 
@@ -710,7 +706,7 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 		// A missing audit store must not pool independent executions' evidence.
 		evidenceDir = filepath.Join(evidenceDir, messages.NewID())
 	}
-	backend := newWorkspaceBackend(s.Cfg.Storage.BaseStoragePath, runUserEmail(rc))
+	backend := newWorkspaceBackend(s.Cfg.Storage.BaseStoragePath, runUserEmail(rc), rc.Meta.ConversationID)
 	exposeRecoveryArchive(ctx, backend, evidenceDir)
 	research := newResearchSession(backend,
 		filepath.Join(evidenceDir, "evidence"), budgetFrom(ctx), s.Cfg.Agent.ResearchMaxCalls)
@@ -725,47 +721,30 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	// file, clear stale tool results, repair dangling tool calls). Runs ahead of
 	// the summarization backstop.
 	ctxMW := contextHandlers(ctx, s.Cfg.Storage.BaseStoragePath, runUserEmail(rc), einoOrchestratorName, tools, s.Cfg.Agent.SubAgents)
-	// Automatic tier selection, when asked for. Prepended so it decides before
-	// the other middlewares see the call.
-	if r := s.routerFor(rc, model); r != nil {
-		ctxMW = append([]adk.ChatModelAgentMiddleware{r}, ctxMW...)
-		rc.Put(varModelRouter, r)
-	}
 	if s.Cfg.Agent.MultiAgent {
 		if instruction == "" {
 			instruction = OrchestratorPrompt
-		}
-		miniModel := s.Cfg.LLM.MiniModel
-		if miniModel == "" {
-			miniModel = model
 		}
 		// einoMaxIters, not a literal: this is eino's own hard cycle cliff, and the
 		// run budget is built from the same constant. Drifting apart means either
 		// the guard never fires (and eino errors out instead of reporting) or it
 		// fires far too early.
-		ag, err = BuildEinoDeepOrchestrator(ctx, client, model, s.Mini, miniModel, instruction, tools, s.Cfg.Agent.SubAgents, einoMaxIters, !s.DisableSummary, ctxMW...)
+		ag, err = BuildEinoDeepOrchestrator(ctx, client, model, client, model, instruction, tools, s.Cfg.Agent.SubAgents, einoMaxIters, !s.DisableSummary, ctxMW...)
 	} else {
 		if instruction == "" {
 			instruction = middlewares.DefaultSystemPrompt
 		}
 		var sum []adk.ChatModelAgentMiddleware
 		if !s.DisableSummary {
-			// Auxiliary history compression runs on the fast mini model.
-			sumClient, sumModel := s.Mini, s.Cfg.LLM.MiniModel
-			if sumClient == nil {
-				sumClient, sumModel = client, model
-			}
-			if sumModel == "" {
-				sumModel = model
-			}
-			sum = summarizationHandlers(ctx, sumClient, sumModel)
+			// Auxiliary history compression uses the run's selected model.
+			sum = summarizationHandlers(ctx, client, model)
 		}
 		if len(ctxMW) > 0 {
 			sum = append(append([]adk.ChatModelAgentMiddleware{}, ctxMW...), sum...)
 		}
-		// Fail over to the other model tier when the primary exhausts its retries.
+		// Retry the selected model without switching to another tier.
 		ag, err = BuildEinoAgent(ctx, client, model, instruction, tools, einoMaxIters,
-			backupModel(s.Mini, s.Cfg.LLM.MiniModel, model), sum...)
+			nil, sum...)
 	}
 	if err != nil {
 		return err

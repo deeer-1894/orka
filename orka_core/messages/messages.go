@@ -37,12 +37,13 @@ const (
 
 // Meta is carried on every message for routing, persistence and tracing.
 type Meta struct {
+	ModelProfile   string `json:"model_profile,omitempty" bson:"model_profile,omitempty"` // opaque configuration revision; never a credential
 	ConversationID string `json:"conversation_id" bson:"conversation_id"`
 	TaskID         string `json:"task_id" bson:"task_id"`
 	ModelVersion   string `json:"model_version,omitempty" bson:"model_version,omitempty"`
-	TraceID        string `json:"trace_id" bson:"trace_id"`                             // links one request end-to-end
-	UserEmail      string `json:"user_email,omitempty" bson:"user_email,omitempty"`     // identity for trace/isolation
-	AgentID        string `json:"agent_id,omitempty" bson:"agent_id,omitempty"`         // which (sub-)agent emitted this; "" = orchestrator
+	TraceID        string `json:"trace_id" bson:"trace_id"`                                   // links one request end-to-end
+	UserEmail      string `json:"user_email,omitempty" bson:"user_email,omitempty"`           // identity for trace/isolation
+	AgentID        string `json:"agent_id,omitempty" bson:"agent_id,omitempty"`               // which (sub-)agent emitted this; "" = orchestrator
 	ParentAgentID  string `json:"parent_agent_id,omitempty" bson:"parent_agent_id,omitempty"` // the agent that delegated to AgentID
 }
 
@@ -113,7 +114,6 @@ func ReasoningDelta(content string, meta Meta) Message {
 	m.Content = content
 	return m
 }
-
 
 // Tool builds a tool-event message.
 func Tool(action string, payload any, meta Meta) Message {

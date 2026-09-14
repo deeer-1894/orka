@@ -32,7 +32,10 @@ func runInWorkspace(ctx context.Context, root, name string, args []string, extra
 // docExport converts a workspace Markdown file to HTML / DOCX / PDF via pandoc.
 func docExport(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		root := pathsafe.UserRoot(base, identity.From(ctx).Email)
+		root, rootErr := pathsafe.EnsureSession(base, identity.From(ctx).Email, identity.From(ctx).ConversationID)
+		if rootErr != nil {
+			return mcp.NewToolResultError(rootErr.Error()), nil
+		}
 		in := filepath.Base(strings.TrimSpace(req.GetString("path", "")))
 		if in == "" || in == "." {
 			return mcp.NewToolResultError("path (a workspace .md file) is required"), nil
@@ -96,7 +99,10 @@ func humanBytes(n int64) string {
 // chartGenerate renders a workspace CSV into a bar/line/pie PNG via matplotlib.
 func chartGenerate(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		root := pathsafe.UserRoot(base, identity.From(ctx).Email)
+		root, rootErr := pathsafe.EnsureSession(base, identity.From(ctx).Email, identity.From(ctx).ConversationID)
+		if rootErr != nil {
+			return mcp.NewToolResultError(rootErr.Error()), nil
+		}
 		data := filepath.Base(strings.TrimSpace(req.GetString("data", "")))
 		if data == "" || data == "." {
 			return mcp.NewToolResultError("data (a workspace .csv file) is required"), nil

@@ -2,14 +2,16 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 
-	"github.com/orka-oss/orka_core/messages"
 	"github.com/orka-oss/orka_control_layer/db"
+	"github.com/orka-oss/orka_core/messages"
+	"github.com/orka-oss/orka_core/pathsafe"
 )
 
 type createConvReq struct {
@@ -68,8 +70,9 @@ func (a *API) ForkConversation(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	email := authEmail(c)
-	if conv, err := a.Store.GetConversation(ctx, req.ConversationID); err != nil || !conv.CanRead(email) {
-		fail(c, consts.StatusNotFound, "not found")
+	source, err := a.authorizedConversation(ctx, c, req.ConversationID, false)
+	if err != nil {
+		workspaceFail(c, err)
 		return
 	}
 	branch, err := a.Store.ForkConversation(ctx, req.ConversationID, req.MessageID, email)
@@ -77,6 +80,15 @@ func (a *API) ForkConversation(ctx context.Context, c *app.RequestContext) {
 		a.Log.Error("fork conversation", "err", err)
 		fail(c, consts.StatusInternalServerError, "fork failed")
 		return
+	}
+	skipped, err := pathsafe.CopySession(a.BaseStorage, source.OwnerEmail, source.ConversationID, branch.OwnerEmail, branch.ConversationID)
+	if err != nil {
+		_ = a.Store.DeleteConversation(ctx, branch.ConversationID)
+		fail(c, 500, "fork workspace copy failed")
+		return
+	}
+	if len(skipped) > 0 {
+		c.Response.Header.Set("X-Orka-Skipped-Files", fmt.Sprint(len(skipped)))
 	}
 	ok(c, branch)
 }
@@ -98,6 +110,10 @@ func (a *API) CreateConversation(ctx context.Context, c *app.RequestContext) {
 		Title:          title,
 		TaskIds:        []string{},
 		CreatedAt:      time.Now().UnixMilli(),
+	}
+	if _, err := pathsafe.EnsureSession(a.BaseStorage, conv.OwnerEmail, conv.ConversationID); err != nil {
+		workspaceFail(c, err)
+		return
 	}
 	if err := a.Store.CreateConversation(ctx, conv); err != nil {
 		a.Log.Error("create conversation", "err", err)

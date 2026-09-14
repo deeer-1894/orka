@@ -16,7 +16,7 @@ export interface RunParams {
   userEmail: string;
   enabledTools: string[];
   resumeKey?: string;
-  selectedVersion?: string; // "" = main model, "mini" = the cheaper/faster model
+  selectedVersion?: string; // "auto" or an explicit model ID
   activeSkill?: string; // user-locked skill mode (researcher / writer / …)
   fileIDs?: string[]; // uploaded attachment paths (text injected; images → VLM)
   confirmRisky?: boolean; // gate side-effecting tools behind user approval

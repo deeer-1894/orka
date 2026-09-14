@@ -38,8 +38,8 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/conversation/rename", a.RenameConversation)
 	g.POST("/conversation/delete", a.DeleteConversation)
 	g.POST("/conversation/prune-empty", a.PruneConversations)
-	g.POST("/conversation/share", a.ShareConversation)       // owner grants/revokes access
-	g.POST("/conversation/shared-with-me", a.SharedWithMe)   // conversations others shared with me
+	g.POST("/conversation/share", a.ShareConversation)     // owner grants/revokes access
+	g.POST("/conversation/shared-with-me", a.SharedWithMe) // conversations others shared with me
 
 	// live artifacts — shareable, auto-updating visualization pages
 	g.POST("/artifact/list", a.ListArtifacts)
@@ -69,19 +69,22 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/file/get-file-url", a.GetFileURL)
 	g.GET("/file/download", a.FileDownload)
 	g.POST("/file/list", a.FileList)
-	g.POST("/file/delete", a.FileDelete) // POST to match the client + the other /*/delete endpoints
+	g.POST("/file/delete", a.FileDelete)     // POST to match the client + the other /*/delete endpoints
 	g.POST("/file/versions", a.FileVersions) // overwrite history of a file
 	g.POST("/file/restore", a.FileRestore)   // roll a file back to a version
 
 	g.GET("/events", a.Events) // per-user SSE bus: push UI-invalidation signals
 	g.GET("/metrics", a.MetricsSnapshot)
 	g.GET("/models", a.ListModels)
-	g.GET("/tools/catalog", a.ToolsCatalog) // available tools + descriptions for the picker
+	g.POST("/model-settings/get", a.GetModelSettings)
+	g.POST("/model-settings/save", a.SaveModelSettings)
+	g.POST("/model-settings/discover", a.DiscoverModels)
+	g.GET("/tools/catalog", a.ToolsCatalog)  // available tools + descriptions for the picker
 	g.POST("/chat/confirm", a.ConfirmAction) // approve/reject a paused risky tool call
 	g.POST("/chat/resume_run", a.ResumeRun)  // continue a run that died mid-flight
-	g.POST("/chat/followups", a.Followups) // suggested next questions for a Q&A turn
+	g.POST("/chat/followups", a.Followups)   // suggested next questions for a Q&A turn
 
-	g.POST("/run/list", a.ListRuns)   // execution history (run records)
+	g.POST("/run/list", a.ListRuns) // execution history (run records)
 	g.POST("/run/get", a.GetRun)
 	g.POST("/run/rerun", a.RerunRun)
 
@@ -102,8 +105,8 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/quant/portfolios", a.ListPortfolios)      // weighted portfolios
 	g.POST("/quant/factor/status", a.SetFactorStatus)  // human review: approve / reject a factor
 
-	g.POST("/skill/list", a.ListSkills)       // catalog (builtin + installed)
-	g.POST("/skill/get", a.GetSkill)          // one skill's full content (for preview)
-	g.POST("/skill/install", a.InstallSkill)  // download + register a SKILL.md from a URL
-	g.POST("/skill/delete", a.DeleteSkill)    // remove a non-builtin (installed/custom) skill
+	g.POST("/skill/list", a.ListSkills)      // catalog (builtin + installed)
+	g.POST("/skill/get", a.GetSkill)         // one skill's full content (for preview)
+	g.POST("/skill/install", a.InstallSkill) // download + register a SKILL.md from a URL
+	g.POST("/skill/delete", a.DeleteSkill)   // remove a non-builtin (installed/custom) skill
 }

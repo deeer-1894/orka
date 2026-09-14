@@ -5,7 +5,7 @@ const WRITERS = new Set(['file_write', 'doc_export', 'chart', 'qrcode', 'csv_to_
 const ERROR = /^(?:error\b|failed\b|failure\b|refused\b|denied\b|permission denied\b|access denied\b|拒绝|操作被拒绝|tool\s+[\'"][^\'"]+[\'"]\s+error\b|command (?:exited with error|timed out)|错误|失败)/i;
 const OUTPUT_LINE = /^(?:generated|created|saved|written|wrote|output(?: file)?|已生成|已保存|已写入|产物)\s*(?::|：|->|→|to)?\s*(.+)$/i;
 
-export function normalizeWorkspacePath(raw: string, ownerEmail: string): string | undefined {
+export function normalizeWorkspacePath(raw: string, ownerEmail: string, conversationID?: string): string | undefined {
   let path = raw.trim();
   if (!path || /[\\\u0000-\u001f]/.test(path) || /^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith('//')) return undefined;
   if (path.startsWith('/')) {
@@ -16,6 +16,11 @@ export function normalizeWorkspacePath(raw: string, ownerEmail: string): string 
     const at = owner ? path.indexOf(marker) : -1;
     if (at < 0) return undefined;
     path = path.slice(at + marker.length);
+    if (conversationID) {
+      const session = `sessions/${conversationID}/`;
+      if (!path.startsWith(session)) return undefined;
+      path = path.slice(session.length);
+    }
   }
   const parts = path.split('/');
   if (parts.includes('..')) return undefined;
@@ -62,7 +67,7 @@ export function sessionFileCandidates(messages: Message[], context: FileContext)
   const out = new Set<string>(), planned = new Set<string>();
   const add = (raw: unknown, target = out) => {
     if (typeof raw !== 'string') return;
-    const path = normalizeWorkspacePath(raw, context.ownerEmail);
+    const path = normalizeWorkspacePath(raw, context.ownerEmail, context.conversationID);
     if (path) target.add(path);
   };
   for (const m of messages) {

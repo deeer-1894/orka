@@ -14,6 +14,7 @@ import (
 
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/config"
+	"github.com/orka-oss/orka_core/messages"
 	filesystem2 "github.com/orka-oss/orka_middleware/local/filesystem"
 )
 
@@ -24,7 +25,7 @@ import (
 func TestWorkspaceBackendOffload(t *testing.T) {
 	base := t.TempDir()
 	email := "ctx@test.com"
-	be := newWorkspaceBackend(base, email)
+	be := newWorkspaceBackend(base, email, "test-session")
 	if be == nil {
 		t.Fatal("expected a backend when storage is configured")
 	}
@@ -36,7 +37,7 @@ func TestWorkspaceBackendOffload(t *testing.T) {
 	}
 
 	// It must be a real file inside the user's workspace, under the offload dir.
-	onDisk := filepath.Join(base, email, offloadDir, "call-123")
+	onDisk := filepath.Join(base, email, "sessions", "test-session", offloadDir, "call-123")
 	if _, err := os.Stat(onDisk); err != nil {
 		t.Fatalf("offloaded content is not in the user's workspace: %v", err)
 	}
@@ -72,7 +73,7 @@ func TestWorkspaceBackendConfinement(t *testing.T) {
 // TestContextHandlersBuild asserts the P1 chain actually constructs (a silent
 // build failure would leave runs with no context management at all).
 func TestContextHandlersBuild(t *testing.T) {
-	mw := contextHandlers(context.Background(), t.TempDir(), "ctx@test.com", "test", nil, nil)
+	mw := contextHandlers(agent.WithMeta(context.Background(), messages.Meta{UserEmail: "ctx@test.com", ConversationID: "test-session"}), t.TempDir(), "ctx@test.com", "test", nil, nil)
 	if len(mw) < 2 {
 		t.Fatalf("expected patchtoolcalls + reduction handlers, got %d", len(mw))
 	}
@@ -128,7 +129,7 @@ func TestCustomSubAgentsAreProtected(t *testing.T) {
 // (fetch_url averages 3k chars here, http_request 14k, over as many as 15 calls)
 // accumulated verbatim until the budget cut it off mid-work.
 func TestSubAgentsGetContextHandlers(t *testing.T) {
-	ctx := withOffloadRoot(context.Background(), t.TempDir())
+	ctx := withOffloadRoot(agent.WithMeta(context.Background(), messages.Meta{UserEmail: "ctx@test.com", ConversationID: "test-session"}), t.TempDir())
 	tools := []agent.BaseTool{gateStubTool{name: "fetch_url"}, gateStubTool{name: "web_search"}}
 
 	mw := subAgentContextHandlers(ctx, "researcher", tools)
@@ -168,8 +169,8 @@ func TestOffloadRootRoundTrips(t *testing.T) {
 // offloaded result was unreachable.
 func TestOffloadPathIsReadableByFileRead(t *testing.T) {
 	base, email := t.TempDir(), "ctx@test.com"
-	be := newWorkspaceBackend(base, email)
-	root := filepath.Join(base, email)
+	be := newWorkspaceBackend(base, email, "test-session")
+	root := filepath.Join(base, email, "sessions", "test-session")
 
 	gen := offloadPathFor(context.Background(), "clear")
 	advertised, err := gen(context.Background(), &reduction.ToolDetail{

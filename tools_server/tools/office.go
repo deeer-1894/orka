@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"github.com/orka-oss/orka_core/pathsafe"
 	"io"
 	"net/http"
 	"os"
@@ -122,11 +123,11 @@ func qrGenerate(base string) mcpserver.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError("qr encode failed: " + err.Error()), nil
 		}
-		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel)
+		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel, identity.From(ctx).ConversationID)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		if err := os.WriteFile(p, png, 0o644); err != nil {
+		if err := os.WriteFile(p, png, pathsafe.WorkspaceFileMode); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		return mcp.NewToolResultText(fmt.Sprintf("QR code (%dx%d) for %q saved to %s", size, size, trunc(text, 60), rel)), nil
@@ -135,8 +136,8 @@ func qrGenerate(base string) mcpserver.ToolHandlerFunc {
 
 // ---- CSV / table tools ----
 
-func readCSV(base, email, rel string) ([][]string, error) {
-	p, err := util.ResolvePath(base, email, rel)
+func readCSV(base, email, rel string, conversationID ...string) ([][]string, error) {
+	p, err := util.ResolvePath(base, email, rel, conversationID...)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +166,7 @@ func colIndex(header []string, name string) int {
 // csvQuery filters a workspace CSV by `col=value` and selects columns.
 func csvQuery(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		rows, err := readCSV(base, identity.From(ctx).Email, req.GetString("path", ""))
+		rows, err := readCSV(base, identity.From(ctx).Email, req.GetString("path", ""), identity.From(ctx).ConversationID)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -224,7 +225,7 @@ func csvQuery(base string) mcpserver.ToolHandlerFunc {
 // csvStats computes count/sum/avg/min/max on a numeric column, optionally grouped.
 func csvStats(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		rows, err := readCSV(base, identity.From(ctx).Email, req.GetString("path", ""))
+		rows, err := readCSV(base, identity.From(ctx).Email, req.GetString("path", ""), identity.From(ctx).ConversationID)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -238,7 +239,10 @@ func csvStats(base string) mcpserver.ToolHandlerFunc {
 		}
 		gCol := colIndex(header, req.GetString("group_by", ""))
 
-		type agg struct{ n int; sum, min, max float64 }
+		type agg struct {
+			n             int
+			sum, min, max float64
+		}
 		groups := map[string]*agg{}
 		order := []string{}
 		for _, row := range rows[1:] {
@@ -288,7 +292,7 @@ func csvStats(base string) mcpserver.ToolHandlerFunc {
 // csvToJSON converts a workspace CSV to a JSON array of objects.
 func csvToJSON(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		rows, err := readCSV(base, identity.From(ctx).Email, req.GetString("path", ""))
+		rows, err := readCSV(base, identity.From(ctx).Email, req.GetString("path", ""), identity.From(ctx).ConversationID)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

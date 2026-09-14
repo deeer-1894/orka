@@ -12,11 +12,11 @@ import (
 
 func TestEvidenceCatalogStaysBelowToolPreviewForFortySources(t *testing.T) {
 	base := t.TempDir()
-	s := newResearchSession(newWorkspaceBackend(base, "reader"), ".orka_offload/run-test/evidence", nil, 40)
+	s := newResearchSession(newWorkspaceBackend(base, "reader", "test-session"), ".orka_offload/run-test/evidence", nil, 40)
 	for i := 0; i < 40; i++ {
 		s.evidence.capture(context.Background(), fmt.Sprint(i), "fetch_url", map[string]any{"url": fmt.Sprintf("https://example.test/docs/source-%02d", i)}, "Title: Checkpoint persistence\n\n"+strings.Repeat("A lengthy readable source body. ", 70))
 	}
-	raw, err := os.ReadFile(filepath.Join(base, "reader", s.evidence.indexPath))
+	raw, err := os.ReadFile(filepath.Join(base, "reader", "sessions", "test-session", s.evidence.indexPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,11 +39,11 @@ func TestEvidenceCatalogStaysBelowToolPreviewForFortySources(t *testing.T) {
 
 func TestRepeatedEvidenceReadsKeepFreshFileSemanticsAndBoundContext(t *testing.T) {
 	base := t.TempDir()
-	s := newResearchSession(newWorkspaceBackend(base, "reader"), ".orka_offload/run-test/evidence", nil, 40)
+	s := newResearchSession(newWorkspaceBackend(base, "reader", "test-session"), ".orka_offload/run-test/evidence", nil, 40)
 	body := strings.Repeat("Checkpoint persistence. ", 1000)
 	s.evidence.capture(context.Background(), "one", "fetch_url", map[string]any{"url": "https://example.test/recovery"}, body)
 	path := s.evidence.records[0].Path
-	persisted, err := os.ReadFile(filepath.Join(base, "reader", path))
+	persisted, err := os.ReadFile(filepath.Join(base, "reader", "sessions", "test-session", path))
 	if err != nil {
 		t.Fatal(err)
 	}

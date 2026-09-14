@@ -11,6 +11,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/orka-oss/orka_core/agent"
+	"github.com/orka-oss/orka_core/messages"
 )
 
 // The end-to-end check f053952 left open. Its unit tests cover
@@ -68,12 +69,12 @@ func runReduction(t *testing.T, msgs []*schema.Message) []*schema.Message {
 	t.Helper()
 	base := t.TempDir()
 	tools := []agent.BaseTool{namedTool{"file_write"}, namedTool{"file_read"}}
-	handlers := contextHandlers(context.Background(), base, "u@x.com", "test", tools, nil)
+	ctx := agent.WithMeta(context.Background(), messages.Meta{UserEmail: "u@x.com", ConversationID: "reduction-test"})
+	handlers := contextHandlers(ctx, base, "u@x.com", "test", tools, nil)
 	if len(handlers) == 0 {
 		t.Fatal("no context middlewares were constructed")
 	}
 	state := &adk.ChatModelAgentState{Messages: msgs}
-	ctx := context.Background()
 	for _, h := range handlers {
 		newCtx, newState, err := h.BeforeModelRewriteState(ctx, state, nil)
 		if err != nil {

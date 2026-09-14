@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"github.com/orka-oss/orka_core/pathsafe"
 	"os"
 	"path/filepath"
 	"sort"
@@ -220,7 +221,7 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 	), httpRequest())
 
 	// The shell/terminal is powerful, so it is opt-in via SHELL_TOOL=1 and is
-	// confined to the per-user workspace (see shellExec). Run the gateway inside a
+	// started in the per-conversation workspace (see shellExec). Run the gateway inside a
 	// container/VM for hard isolation when exposing it to untrusted workloads.
 	if os.Getenv("SHELL_TOOL") == "1" {
 		add(mcp.NewTool("shell",
@@ -387,7 +388,7 @@ func fileRead(base string) mcpserver.ToolHandlerFunc {
 		if rel == "" {
 			return missingPathError(req, "{\"path\": \"notes/summary.md\"}"), nil
 		}
-		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel)
+		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel, identity.From(ctx).ConversationID)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -429,17 +430,17 @@ func fileWrite(base string) mcpserver.ToolHandlerFunc {
 		if rel == "" {
 			return missingPathError(req, "{\"path\": \"notes/summary.md\", \"content\": \"...\"}"), nil
 		}
-		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel)
+		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel, identity.From(ctx).ConversationID)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(p), pathsafe.WorkspaceDirMode); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		// Back up the prior version before overwriting (recoverable + diffable).
-		backed := backupBeforeWrite(base, identity.From(ctx).Email, rel)
+		backed := backupBeforeWrite(base, identity.From(ctx).Email, rel, identity.From(ctx).ConversationID)
 		content := req.GetString("content", "")
-		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(p, []byte(content), pathsafe.WorkspaceFileMode); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		msg := fmt.Sprintf("wrote %d bytes to %s", len(content), rel)
@@ -466,7 +467,7 @@ func fileList(base string) mcpserver.ToolHandlerFunc {
 		if rel == "" {
 			rel = "."
 		}
-		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel)
+		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel, identity.From(ctx).ConversationID)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

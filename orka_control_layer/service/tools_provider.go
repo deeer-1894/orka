@@ -25,10 +25,13 @@ type ConnectorSource func(ctx context.Context, email string) ([]db.Connector, er
 var GUITool agent.BaseTool = guiMockTool{}
 
 // LocalToolsProvider serves the real local filesystem tools (confined to the
-// per-user storage root) plus the GUI tool. No remote dependency.
+// per-conversation storage root) plus the GUI tool. No remote dependency.
 func LocalToolsProvider(baseStorage string) ToolsProvider {
 	return func(_ context.Context, req ChatRunRequest) ([]agent.BaseTool, func(), error) {
-		root := pathsafe.UserRoot(baseStorage, req.UserEmail)
+		root, rootErr := pathsafe.EnsureSession(baseStorage, req.UserEmail, req.ConversationID)
+		if rootErr != nil {
+			return nil, nil, rootErr
+		}
 		tools := append(filesystem.New(root), GUITool)
 		tools = filterEnabled(tools, req.EnabledTools)
 		// skill mgmt + artifact publishing + quant pipeline are always available
@@ -38,11 +41,10 @@ func LocalToolsProvider(baseStorage string) ToolsProvider {
 	}
 }
 
-// mcpPool reuses one MCP connection per user across chat requests instead of
-// dialing + handshaking on every message. Entries are keyed by user email
-// because the signed context token (and thus the gateway's per-user identity +
-// RBAC) is baked into the client's headers. Entries are refreshed before the
-// token expires so the gateway never sees a stale token.
+// mcpPool leases connections per owner and conversation. Each connection signs
+// fresh tokens bound to that immutable pair; concurrent sessions never reuse
+// another session's gateway context. Connector invalidation retires all of the
+// owner's entries without closing connections held by in-progress runs.
 type mcpPool struct {
 	baseStorage string
 	mcpURL      string
@@ -87,17 +89,25 @@ type mcpEntry struct {
 // the janitor saw a 40-minute run as 40 minutes idle and evicted it mid-flight.
 // Every historical occurrence of this failure was a run longer than the eviction
 // window (183, 176, 143 and 36 minutes), and none was shorter.
-func (p *mcpPool) get(ctx context.Context, email string) ([]agent.BaseTool, func(), error) {
+func (p *mcpPool) get(ctx context.Context, email string, conversationID ...string) ([]agent.BaseTool, func(), error) {
+	conv := ""
+	if len(conversationID) > 0 {
+		conv = conversationID[0]
+	}
+	key := email
+	if conv != "" {
+		key += "\x00" + conv
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if e := p.entries[email]; e != nil && time.Since(e.created) < p.maxAge {
+	if e := p.entries[key]; e != nil && time.Since(e.created) < p.maxAge {
 		e.lastUsed = time.Now()
 		e.refs++
 		return e.tools, p.releaser(e), nil
 	}
-	if e := p.entries[email]; e != nil { // stale → rebuild
-		p.retire(email, e)
+	if e := p.entries[key]; e != nil { // stale → rebuild
+		p.retire(key, e)
 	}
 
 	// Sign a FRESH token per request rather than baking one into the client.
@@ -115,7 +125,9 @@ func (p *mcpPool) get(ctx context.Context, email string) ([]agent.BaseTool, func
 	// work. A signing failure yields no header, which the gateway rejects as
 	// unauthenticated rather than silently unscoped.
 	headers := func(context.Context) map[string]string {
-		tok, err := security.Sign(security.NewToken(email, p.scopes, p.tokenTTL), []byte(p.secret))
+		claims := security.NewToken(email, p.scopes, p.tokenTTL)
+		claims.ConversationID = conv
+		tok, err := security.Sign(claims, []byte(p.secret))
 		if err != nil {
 			return nil
 		}
@@ -155,7 +167,7 @@ func (p *mcpPool) get(ctx context.Context, email string) ([]agent.BaseTool, func
 	}
 	now := time.Now()
 	e := &mcpEntry{clients: clients, tools: tools, created: now, lastUsed: now, refs: 1}
-	p.entries[email] = e
+	p.entries[key] = e
 	return tools, p.releaser(e), nil
 }
 
@@ -193,10 +205,13 @@ func (p *mcpPool) retire(email string, e *mcpEntry) {
 func (p *mcpPool) invalidate(email string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if e := p.entries[email]; e != nil {
+	for key, e := range p.entries {
+		if key != email && !strings.HasPrefix(key, email+"\x00") {
+			continue
+		}
 		// Retire rather than close: a run in progress keeps working with the tool
 		// set it started with, and the next run picks up the new connectors.
-		p.retire(email, e)
+		p.retire(key, e)
 	}
 }
 
@@ -306,9 +321,12 @@ func MCPToolsProviderPooled(baseStorage, mcpURL, secret string, tokenTTL time.Du
 	}
 	go pool.janitor(context.Background()) // evict idle connections for process lifetime
 	provider := func(ctx context.Context, req ChatRunRequest) ([]agent.BaseTool, func(), error) {
-		tools, release, err := pool.get(ctx, req.UserEmail)
+		tools, release, err := pool.get(ctx, req.UserEmail, req.ConversationID)
 		if err != nil {
-			root := pathsafe.UserRoot(baseStorage, req.UserEmail)
+			root, rootErr := pathsafe.EnsureSession(baseStorage, req.UserEmail, req.ConversationID)
+			if rootErr != nil {
+				return nil, nil, rootErr
+			}
 			fallback := append(filesystem.New(root), GUITool)
 			local := append(append(SkillTools(), ArtifactTools...), QuantTools...)
 			return append(filterEnabled(fallback, req.EnabledTools), local...), nil, err

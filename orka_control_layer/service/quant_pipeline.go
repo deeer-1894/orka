@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_core/agent"
@@ -94,8 +95,8 @@ func FactorPipelineWorkflow(owner, reportPath string) db.Workflow {
 // recover() means one crash/bad-PDF doesn't abort the batch. Returns the
 // conversation ids started.
 // DiscoverReports lists the report files the pipeline would process for owner.
-func (s *ChatService) DiscoverReports(owner string) []string {
-	return discoverReports(s.Cfg.Storage.BaseStoragePath, owner)
+func (s *ChatService) DiscoverReports(owner, conversationID string) []string {
+	return discoverReports(s.Cfg.Storage.BaseStoragePath, owner, conversationID)
 }
 
 // ListFactors returns the owner's factor library (optionally filtered by status).
@@ -124,9 +125,8 @@ func (s *ChatService) SetFactorStatus(owner, factorID, status string) error {
 // this only needs to keep the queue from growing unboundedly.
 const pipelineConcurrency = 2
 
-func (s *ChatService) RunFactorPipeline(ctx context.Context, owner string) []string {
-	seedQuantAssets(s.Cfg.Storage.BaseStoragePath, owner) // ensure the harness is in the workspace
-	reports := discoverReports(s.Cfg.Storage.BaseStoragePath, owner)
+func (s *ChatService) RunFactorPipeline(ctx context.Context, owner, conversationID string) []string {
+	reports := discoverReports(s.Cfg.Storage.BaseStoragePath, owner, conversationID)
 
 	// Assign conversation ids up front (stable order), then process reports with
 	// bounded concurrency. One bad report can't sink the batch (per-report
@@ -146,6 +146,12 @@ func (s *ChatService) RunFactorPipeline(ctx context.Context, owner string) []str
 		go func(i int, rp string) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			if err := s.copyPipelineReport(ctx, owner, conversationID, convs[i], rp); err != nil {
+				if s.Log != nil {
+					s.Log.Error("copy report to session", "err", err)
+				}
+				return
+			}
 			s.runOneReport(ctx, owner, rp, convs[i])
 		}(i, rp)
 	}
@@ -180,8 +186,15 @@ func (s *ChatService) runOneReport(ctx context.Context, owner, reportPath, convI
 
 // discoverReports lists candidate report files under <workspace>/reports/
 // (pdf/html/htm/md/markdown/txt), newest first.
-func discoverReports(baseStorage, owner string) []string {
-	dir := filepath.Join(pathsafe.UserRoot(baseStorage, owner), "reports")
+func discoverReports(baseStorage, owner, conversationID string) []string {
+	root, err := pathsafe.SessionRoot(baseStorage, owner, conversationID)
+	if err != nil {
+		return nil
+	}
+	dir, err := pathsafe.Resolve(root, "reports")
+	if err != nil {
+		return nil
+	}
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
@@ -192,7 +205,7 @@ func discoverReports(baseStorage, owner string) []string {
 	}
 	var reps []rep
 	for _, e := range ents {
-		if e.IsDir() || !isReportFile(e.Name()) {
+		if !e.Type().IsRegular() || !isReportFile(e.Name()) {
 			continue
 		}
 		info, err := e.Info()
@@ -216,4 +229,42 @@ func isReportFile(name string) bool {
 		return true
 	}
 	return false
+}
+
+// copyPipelineReport imports only the selected source report into the new run.
+// The user's factor library remains global, while report inputs and compute
+// caches belong to the new conversation.
+func (s *ChatService) copyPipelineReport(ctx context.Context, owner, sourceID, targetID, report string) error {
+	source, err := pathsafe.SessionRoot(s.Cfg.Storage.BaseStoragePath, owner, sourceID)
+	if err != nil {
+		return err
+	}
+	target, err := pathsafe.EnsureSession(s.Cfg.Storage.BaseStoragePath, owner, targetID)
+	if err != nil {
+		return err
+	}
+	src, err := os.OpenRoot(source)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dst, err := os.OpenRoot(target)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+	data, err := src.ReadFile(report)
+	if err != nil {
+		return err
+	}
+	if err := dst.MkdirAll(filepath.Dir(report), pathsafe.WorkspaceDirMode); err != nil {
+		return err
+	}
+	if err := dst.WriteFile(report, data, pathsafe.WorkspaceFileMode); err != nil {
+		return err
+	}
+	if s.Msg != nil && s.Msg.Store != nil {
+		return s.Msg.Store.CreateConversation(ctx, &db.ConversationTable{ConversationID: targetID, OwnerEmail: owner, Title: "研报 · " + filepath.Base(report), CreatedAt: time.Now().UnixMilli()})
+	}
+	return nil
 }

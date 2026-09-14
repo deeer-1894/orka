@@ -22,6 +22,7 @@ import (
 	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_control_layer/llm"
 	"github.com/orka-oss/orka_control_layer/message_utils"
+	"github.com/orka-oss/orka_control_layer/modelsettings"
 	"github.com/orka-oss/orka_control_layer/obs"
 	"github.com/orka-oss/orka_control_layer/service/middlewares"
 )
@@ -54,14 +55,16 @@ type ToolsProvider func(ctx context.Context, req ChatRunRequest) (tools []agent.
 
 // ChatService runs the end-to-end chat path.
 type ChatService struct {
-	Cfg      *config.Config
-	Main     llm.Client
-	Mini     llm.Client
-	CP       checkpoint.Store
-	Msg      *message_utils.Messenger
-	Metrics  *obs.Metrics
-	Log      *slog.Logger
-	ToolsFor ToolsProvider
+	ModelSettings *modelsettings.Store
+	modelClients  modelClientPool
+	Cfg           *config.Config
+	Main          llm.Client
+	Mini          llm.Client
+	CP            checkpoint.Store
+	Msg           *message_utils.Messenger
+	Metrics       *obs.Metrics
+	Log           *slog.Logger
+	ToolsFor      ToolsProvider
 	// InvalidateTools busts a user's cached tool connections (e.g. after they
 	// add/remove an MCP connector). Set by main when the pooled provider is wired.
 	InvalidateTools func(email string)
@@ -91,47 +94,22 @@ type ChatService struct {
 // NewChatService builds a ChatService with sane defaults. By default it serves
 // the real local filesystem tools (per-user root) plus the GUI mock; callers may
 // override ToolsFor to add MCP tools from tools_server.
-func NewChatService(cfg *config.Config, main, mini llm.Client, store checkpoint.Store, msg *message_utils.Messenger, metrics *obs.Metrics, log *slog.Logger) *ChatService {
+func NewChatService(cfg *config.Config, main, _ llm.Client, store checkpoint.Store, msg *message_utils.Messenger, metrics *obs.Metrics, log *slog.Logger) *ChatService {
 	s := &ChatService{
-		Cfg: cfg, Main: main, Mini: mini, CP: store, Msg: msg, Metrics: metrics, Log: log,
+		Cfg: cfg, Main: main, Mini: main, ModelSettings: modelsettings.New(cfg.Storage.BaseStoragePath), CP: store, Msg: msg, Metrics: metrics, Log: log,
 		runs: map[string]context.CancelFunc{},
+	}
+	if cfg.Storage.BaseStoragePath == "" {
+		s.ModelSettings = nil
 	}
 	s.ToolsFor = LocalToolsProvider(cfg.Storage.BaseStoragePath)
 	return s
 }
 
-// modelFor resolves a request's selected_version to a client and model name.
-//
-// "" is the main tier and "mini" the fast one, as before. Anything else is
-// treated as an explicit model NAME: providers that host many models behind one
-// endpoint serve all of them from the same client, so picking one is a matter
-// of the name alone. Unknown names fall back to the main tier rather than being
-// forwarded — a request must not be able to bill an arbitrary model.
-//
-// ModelAuto is resolved by the router, not here; it starts on the fast tier and
-// this returns that, so a caller with no router still behaves sensibly.
+// modelFor resolves Auto/empty to the first deployment model and explicit
+// allowed names to themselves. Unknown legacy selections use the default.
 func (s *ChatService) modelFor(version string) (llm.Client, string) {
-	switch version {
-	case "":
-		return s.Main, s.Cfg.LLM.Model
-	case "mini", ModelAuto:
-		if s.Mini != nil {
-			return s.Mini, s.Cfg.LLM.MiniModel
-		}
-		return s.Main, s.Cfg.LLM.Model
-	}
-	if s.Cfg.LLM.AllowsModel(version) {
-		return s.Main, version
-	}
-	return s.Main, s.Cfg.LLM.Model
-}
-
-// strongModelFor is the tier the router escalates to for a given selection.
-func (s *ChatService) strongModelFor(version string) (llm.Client, string) {
-	if version != "" && version != "mini" && version != ModelAuto && s.Cfg.LLM.AllowsModel(version) {
-		return s.Main, version // an explicit pick is never overridden
-	}
-	return s.Main, s.Cfg.LLM.Model
+	return s.defaultModels().modelFor(version)
 }
 
 func (s *ChatService) register(id string, cancel context.CancelFunc) {
@@ -186,7 +164,18 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	defer hbCancel()
 	go s.heartbeat(hbCtx, meta, raw)
 
-	model, modelName := s.modelFor(req.SelectedVersion)
+	ctx, settingsErr := s.withUserModels(ctx, req.UserEmail)
+	if settingsErr != nil {
+		raw(taskFailed(meta, "模型配置无法读取，请检查模型设置。"))
+		return db.RunFailed
+	}
+	if err := s.modelsForContext(ctx).validateSelection(req.SelectedVersion); err != nil {
+		raw(taskFailed(meta, err.Error()))
+		return db.RunFailed
+	}
+	meta.ModelProfile = s.modelsForContext(ctx).profile
+	ctx = s.withSelectedModel(ctx, req.SelectedVersion)
+	model, modelName := s.modelsForContext(ctx).modelFor(req.SelectedVersion)
 
 	// Root trace span for the whole run; tool spans (in tools-mid) nest under it.
 	spanCtx, endSpan := trace.StartSpan(trace.WithTraceID(ctx, traceID), "chat.run", map[string]string{
@@ -202,10 +191,13 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 
 	deps := PipelineDeps{LLM: model, Model: modelName, Metrics: s.Metrics}
 
-	tools, cleanup, err := s.ToolsFor(ctx, req)
-	if err != nil && s.Log != nil {
-		s.Log.Warn("tools provider degraded", "trace_id", traceID, "err", err)
+	tools, cleanup, toolsErr := s.ToolsFor(ctx, req)
+	if toolsErr != nil && s.Log != nil {
+		s.Log.Warn("tools provider degraded", "trace_id", traceID, "err", toolsErr)
 	}
+	// Tool discovery may degrade independently of execution. In particular,
+	// a successful tool-free answer must not inherit the provider's error.
+	var err error
 	if cleanup != nil {
 		defer cleanup()
 	}
@@ -215,8 +207,8 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// rather than park a goroutine; without one the gate blocks as before.
 	ckptStore := s.checkpointStore()
 
-	// Multi-agent: the orchestrator (main model) gets the atomic tools PLUS native
-	// eino sub-agents (researcher/writer/browser/engineer, mini model) it can
+	// Multi-agent: the orchestrator gets the atomic tools PLUS native
+	// eino sub-agents (researcher/writer/browser/engineer, same selected model) it can
 	// delegate to. The sub-agents are built inside runEino from the atomic tool set.
 	if s.Cfg.Agent.MultiAgent {
 		deps.SystemPrompt = OrchestratorPrompt
@@ -257,7 +249,10 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	budget := newRunBudget(einoMaxIters, runMaxTokens, runMaxWall)
 	plan := &planTracker{}
 	if s.Cfg.Storage.BaseStoragePath != "" {
-		rc.Ctx = withDelivery(rc.Ctx, newDeliveryTracker(pathsafe.UserRoot(s.Cfg.Storage.BaseStoragePath, req.UserEmail)))
+		root, err := pathsafe.EnsureSession(s.Cfg.Storage.BaseStoragePath, req.UserEmail, req.ConversationID)
+		if err == nil {
+			rc.Ctx = withDelivery(rc.Ctx, newDeliveryTracker(root))
+		}
 	}
 	if req.resumeCheckpoint != nil {
 		restoreCheckpoint(req.resumeCheckpoint, budget, plan, deliveryFrom(rc.Ctx))
@@ -338,7 +333,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		// asynchronously (does not block the run, survives SSE disconnect).
 		if len(history) == 0 && req.ConversationID != "" && s.Msg != nil && s.Msg.Store != nil {
 			_ = s.Msg.Store.UpdateConversationTitle(ctx, req.ConversationID, titleSnippet(req.Message))
-			s.titleAsync(req.ConversationID, req.Message)
+			s.titleAsync(ctx, req.ConversationID, req.Message)
 		}
 		userMsg := humanChat(req.Message, meta)
 		// Fold any uploaded attachments (text inline; images via a VLM pre-pass)
@@ -367,7 +362,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// journal is settled — the transcript is the only place the tool work exists,
 	// and a successful run is about to delete it.
 	if t := journal.transcript(); len(t) > 0 {
-		s.digestAsync(req.ConversationID, buildDigest(runRecID, req.Message, t), t)
+		s.digestAsync(rc.Ctx, req.ConversationID, buildDigest(runRecID, req.Message, t), t)
 	}
 	// The journal exists to rescue a run that died with work behind it. Keep it
 	// only when both halves are true — the run ended badly AND it got far enough
@@ -774,11 +769,11 @@ func taskFailed(meta messages.Meta, reason string) messages.Message {
 	return m
 }
 
-// titleAsync refines the conversation title using a mini LLM summary of the
+// titleAsync refines the conversation title using the selected model to summarize of the
 // first message. It runs in the background with its own short-lived context so
 // it neither blocks the chat run nor dies when the SSE connection closes.
-func (s *ChatService) titleAsync(convID, message string) {
-	model, modelName := s.modelFor("mini")
+func (s *ChatService) titleAsync(parent context.Context, convID, message string) {
+	model, modelName := s.modelsForContext(parent).modelFor(ModelAuto)
 	if model == nil || s.Msg == nil || s.Msg.Store == nil {
 		return
 	}

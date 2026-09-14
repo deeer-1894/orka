@@ -48,14 +48,15 @@ func New(cfg Config) *mcpserver.MCPServer {
 }
 
 // ContextFunc verifies the signed context token from the X-Orka-Token header
-// and injects the caller identity. An X-User-Email header (without a valid
-// token) yields an identity with NO scopes, so scoped tools are denied.
+// and injects the caller identity and conversation. Missing/invalid tokens
+// fail authentication even for tools without a capability scope. Raw identity
+// or conversation headers are never trusted.
 func ContextFunc(secret []byte) mcpserver.HTTPContextFunc {
 	return func(ctx context.Context, r *http.Request) context.Context {
 		if tok := r.Header.Get("X-Orka-Token"); tok != "" {
 			ct, err := security.Verify(tok, secret)
 			if err == nil {
-				return identity.With(ctx, identity.Identity{Email: ct.UserEmail, Scopes: ct.Scopes})
+				return identity.With(ctx, identity.Identity{Email: ct.UserEmail, ConversationID: ct.ConversationID, Scopes: ct.Scopes})
 			}
 			// A token that was PRESENTED and rejected is an authentication
 			// failure, and must not fall through to the unauthenticated branch.
@@ -65,10 +66,7 @@ func ContextFunc(secret []byte) mcpserver.HTTPContextFunc {
 			// a permissions problem that did not exist.
 			return identity.With(ctx, identity.Identity{AuthErr: err})
 		}
-		if email := r.Header.Get("X-User-Email"); email != "" {
-			return identity.With(ctx, identity.Identity{Email: email}) // untrusted: no scopes
-		}
-		return ctx
+		return identity.With(ctx, identity.Identity{AuthErr: security.ErrInvalidToken})
 	}
 }
 

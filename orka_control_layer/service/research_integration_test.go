@@ -35,7 +35,7 @@ func TestChatRunSharesResearchSessionWithToolInvocations(t *testing.T) {
 	svc.ToolsFor = func(context.Context, ChatRunRequest) ([]agent.BaseTool, func(), error) {
 		return []agent.BaseTool{source}, nil, nil
 	}
-	status := svc.Run(context.Background(), ChatRunRequest{Message: "Research checkpoints", UserEmail: "reader"}, func(messages.Message) {})
+	status := svc.Run(context.Background(), ChatRunRequest{Message: "Research checkpoints", UserEmail: "reader", ConversationID: "test-session"}, func(messages.Message) {})
 	if status != db.RunDone {
 		t.Fatalf("status = %q, want done", status)
 	}
@@ -64,7 +64,7 @@ func TestChatRunSharesResearchSessionWithToolInvocations(t *testing.T) {
 	if records[0].Path == "" {
 		t.Fatal("evidence has no persisted path")
 	}
-	body, err := os.ReadFile(filepath.Join(base, "reader", records[0].Path))
+	body, err := os.ReadFile(filepath.Join(base, "reader", "sessions", "test-session", records[0].Path))
 	if err != nil || !strings.Contains(string(body), "Persistent checkpoints survive restarts.") {
 		t.Fatalf("advertised evidence file = %q, err=%v", body, err)
 	}
@@ -88,7 +88,7 @@ func TestChatRunWithoutMongoKeepsEvidenceSeparateBetweenExecutions(t *testing.T)
 		svc.ToolsFor = func(context.Context, ChatRunRequest) ([]agent.BaseTool, func(), error) {
 			return []agent.BaseTool{source}, nil, nil
 		}
-		status := svc.Run(context.Background(), ChatRunRequest{Message: "Research checkpoints", UserEmail: "reader"}, func(messages.Message) {})
+		status := svc.Run(context.Background(), ChatRunRequest{Message: "Research checkpoints", UserEmail: "reader", ConversationID: "test-session"}, func(messages.Message) {})
 		if status != db.RunDone || model.Calls() != 3 {
 			t.Fatalf("run status=%q model calls=%d, want done/3", status, model.Calls())
 		}
@@ -110,8 +110,8 @@ func TestChatRunWithoutMongoKeepsEvidenceSeparateBetweenExecutions(t *testing.T)
 		if len(records) != 1 || records[0].Path == "" || catalog == "" {
 			t.Fatalf("missing evidence/catalog: records=%+v catalog=%q", records, catalog)
 		}
-		paths = append(paths, filepath.Join(base, "reader", records[0].Path))
-		catalogs = append(catalogs, filepath.Join(base, "reader", catalog))
+		paths = append(paths, filepath.Join(base, "reader", "sessions", "test-session", records[0].Path))
+		catalogs = append(catalogs, filepath.Join(base, "reader", "sessions", "test-session", catalog))
 		stored, err := os.ReadFile(paths[len(paths)-1])
 		if err != nil || !strings.Contains(string(stored), body) {
 			t.Fatalf("this execution's evidence=%q err=%v, want %q", stored, err, body)

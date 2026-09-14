@@ -40,27 +40,14 @@ func TestRunAccountingLegacyEvents(t *testing.T) {
 	}
 }
 
-func TestRunAccountingRouterOverridesRequest(t *testing.T) {
-	for _, tc := range []struct {
-		name        string
-		strongFirst bool
-		cycles      int
-		model       string
-		escalated   bool
-	}{
-		{"fast", false, 0, "fast", false},
-		{"strong first", true, 0, "strong", false},
-		{"escalated", false, autoEscalateAfter, "strong", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			router := newTestRouter(tc.strongFirst)
-			step(t, router, tc.cycles)
-			rc := &agent.RunContext{Vars: map[string]any{varModelRouter: router}}
-			got := (&ChatService{}).runAccounting(rc, ChatRunRequest{SelectedVersion: ModelAuto})
-			if got.model != tc.model || got.escalated != tc.escalated {
-				t.Fatalf("accounting model = %q/%v, want %q/%v", got.model, got.escalated, tc.model, tc.escalated)
-			}
-		})
+func TestRunAccountingAutoAndManualSelection(t *testing.T) {
+	svc := &ChatService{Cfg: &config.Config{LLM: config.LLMConfig{Model: "first", MiniModel: "obsolete", Models: []string{"manual"}}}}
+	for _, tc := range []struct{ selection, want string }{{"auto", "first"}, {"", "first"}, {"manual", "manual"}, {"mini", "first"}} {
+		rc := &agent.RunContext{Ctx: context.Background(), Vars: map[string]any{}}
+		got := svc.runAccounting(rc, ChatRunRequest{SelectedVersion: tc.selection})
+		if got.model != tc.want || got.escalated {
+			t.Errorf("%s: model=%s escalated=%v", tc.selection, got.model, got.escalated)
+		}
 	}
 }
 
@@ -124,6 +111,7 @@ func TestRunAccountingMeteringAvailability(t *testing.T) {
 func TestRunAccountingDefaultModel(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.LLM.Model = "configured-main"
+	cfg.LLM.Models = []string{"explicit"}
 	svc := &ChatService{Cfg: cfg}
 	rc := &agent.RunContext{}
 	got := svc.runAccounting(rc, ChatRunRequest{})
@@ -171,9 +159,11 @@ func TestRunAccountingFastPathUsesSharedBudget(t *testing.T) {
 			client := &accountingContextClient{Client: mock}
 			svc, _ := testService(t, llm.NewMetered(client, nil))
 			svc.DisableFastPath = false
+			svc.Cfg.Storage.BaseStoragePath = t.TempDir()
+			svc.ToolsFor = LocalToolsProvider(svc.Cfg.Storage.BaseStoragePath)
 			type parentKey struct{}
 			parent := context.WithValue(context.Background(), parentKey{}, "parent")
-			status := svc.Run(parent, ChatRunRequest{Message: "1+1"}, func(messages.Message) {})
+			status := svc.Run(parent, ChatRunRequest{Message: "1+1", UserEmail: "accounting@test.com", ConversationID: "fast-accounting"}, func(messages.Message) {})
 			if status != db.RunDone {
 				t.Fatalf("status = %q, want done", status)
 			}
@@ -215,7 +205,7 @@ func TestRunAccountingAttachmentPrepassUsesSharedBudget(t *testing.T) {
 	svc, _ := testService(t, llm.NewMetered(client, nil))
 	svc.Cfg.LLM.VLMModel = "fixture-vision"
 	svc.Cfg.Storage.BaseStoragePath = t.TempDir()
-	root := filepath.Join(svc.Cfg.Storage.BaseStoragePath, "attachment-test")
+	root := filepath.Join(svc.Cfg.Storage.BaseStoragePath, "attachment-test", "sessions", "test-session")
 	if err := os.MkdirAll(root, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +218,7 @@ func TestRunAccountingAttachmentPrepassUsesSharedBudget(t *testing.T) {
 	}
 	type parentKey struct{}
 	parent := context.WithValue(context.Background(), parentKey{}, "parent")
-	req := ChatRunRequest{Message: "Read the attached image", UserEmail: "attachment-test", FileIDs: []string{"fixture.png"}}
+	req := ChatRunRequest{Message: "Read the attached image", UserEmail: "attachment-test", ConversationID: "test-session", FileIDs: []string{"fixture.png"}}
 	if status := svc.Run(parent, req, func(messages.Message) {}); status != db.RunDone {
 		t.Fatalf("status = %q, want done", status)
 	}
@@ -236,7 +226,7 @@ func TestRunAccountingAttachmentPrepassUsesSharedBudget(t *testing.T) {
 		t.Fatalf("calls = %d, want prepass and answer", mock.Calls())
 	}
 	prepass := mock.Requests[0]
-	if prepass.Model != "fixture-vision" || len(prepass.Messages) != 1 || len(prepass.Messages[0].Images) != 1 {
+	if prepass.Model != svc.Cfg.LLM.Model || len(prepass.Messages) != 1 || len(prepass.Messages[0].Images) != 1 {
 		t.Fatalf("missing image prepass: %+v", prepass)
 	}
 	if prepass.Messages[0].Images[0] != "data:image/png;base64,"+base64.StdEncoding.EncodeToString(png) {

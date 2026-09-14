@@ -3,6 +3,7 @@ import type { RunStatus } from "../hooks/useChatStream";
 import type { BrowserPayload, ClarifyPayload, Message, ToolPayload, WeatherCardData } from "../types";
 import { api, chat as chatApi, files as fileApi } from "../api";
 import type { ConfirmPayload, PlanPayload } from "../types";
+import { normalizeWorkspacePath } from "../lib/sessionFiles";
 import { useSessionFiles } from "../hooks/useSessionFiles";
 import { isIncompleteRun, type RecoverySnapshot } from "../lib/runRecovery";
 import { Markdown } from "./Markdown";
@@ -14,6 +15,7 @@ import { toast, toastError } from "../lib/toast";
 
 // Opening a workspace file is shared down the step tree (Steps → Step, AgentLane)
 // via context so a filename is clickable wherever it appears without prop drilling.
+const FileScopeCtx = createContext({ conversationID: "", ownerEmail: "", readOnly: true });
 const OpenFileCtx = createContext<(name: string, opts?: { history?: boolean }) => void>(() => {});
 
 // File-producing tools and how to find the file they touched: prefer the explicit
@@ -27,7 +29,7 @@ function outputFile(p: ToolPayload): string | undefined {
   if (!FILE_TOOLS.has(p.tool || "")) return undefined;
   const a = (p.args || {}) as Record<string, unknown>;
   const explicit = (a.out ?? a.path) == null ? "" : String(a.out ?? a.path).trim();
-  if (explicit) return explicit.replace(/^\.?\//, "");
+  if (explicit) return explicit;
   const m = stripCard(p.result || "").match(FILE_RE);
   return m ? m[m.length - 1] : undefined; // the produced file is usually last
 }
@@ -106,7 +108,7 @@ export function Thread({
   onRetry,
   onSchedule,
   onFork,
-  fileConv,
+  fileConv: sharedFileConv,
   conversationID,
   ownerEmail,
   recovery,
@@ -134,9 +136,15 @@ export function Thread({
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [previewFile, setPreviewFile] = useState<{ name: string; history?: boolean } | null>(null);
-  const openFile = (name: string, opts?: { history?: boolean }) => setPreviewFile({ name, history: opts?.history });
-  const files = useSessionFiles(messages, { conversationID, ownerEmail }, status, !!fileConv);
+  const [previewFile, setPreviewFile] = useState<{ name: string; conversationID: string; history?: boolean } | null>(null);
+  const fileConv = conversationID;
+  const readOnlyFiles = !!sharedFileConv;
+  const openFile = (raw: string, opts?: { history?: boolean }) => {
+    const name = normalizeWorkspacePath(raw, ownerEmail, fileConv);
+    if (name && fileConv) setPreviewFile({ name, conversationID: fileConv, history: opts?.history });
+  };
+  useEffect(() => { setPreviewFile(null); }, [conversationID]);
+  const files = useSessionFiles(messages, { conversationID: fileConv, ownerEmail }, status);
   // Smart auto-scroll: only follow new content when the user is already near the
   // bottom, so scrolling up to read history isn't yanked back down.
   useEffect(() => {
@@ -220,6 +228,7 @@ export function Thread({
   if (messages.length === 0) return <Empty onPick={onPick} />;
 
   return (
+    <FileScopeCtx.Provider value={{ conversationID: fileConv, ownerEmail, readOnly: readOnlyFiles }}>
     <OpenFileCtx.Provider value={openFile}>
     <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto">
       <ThreadOutline turns={turns} />
@@ -273,6 +282,8 @@ export function Thread({
           <FollowUps
             prompt={lastUserPrompt}
             answer={(blocks[lastAssistant] as Extract<Block, { kind: "assistant" }>).m.content || ""}
+            selectedVersion={(blocks[lastAssistant] as Extract<Block, { kind: "assistant" }>).m.meta.model_version || "auto"}
+            modelProfile={(blocks[lastAssistant] as Extract<Block, { kind: "assistant" }>).m.meta.model_profile || ""}
             onPick={onPick}
           />
         )}
@@ -285,23 +296,19 @@ export function Thread({
                   {recovery.busy ? "正在继续任务…" : "继续未完成任务"}
                 </button>
               )}
-              <button onClick={onRetry} disabled={!canRetry || recovery.busy}
-                title="重新发送本会话上一条请求，开始一次新的执行"
-                className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-muted hover:text-accent disabled:opacity-40">
-                重新执行（从头开始）
-              </button>
             </div>
             <p className="text-[12px] text-faint">
-              {recovery.error || (recovery.busy ? "正在连接续跑，请稍候。" : recovery.recoverable ? "继续任务会保留已完成的进度。" : recovery.run?.budget_hit === "tokens" ? "本次任务预算已用尽，已有进度保留。重新执行会开始新的任务。" : recovery.checking ? "正在检查是否可以继续任务…" : "本次执行未完成。")}
+              {recovery.error || (recovery.busy ? "正在连接续跑，请稍候。" : recovery.recoverable ? "继续任务会保留已完成的进度。" : recovery.run?.budget_hit === "tokens" ? "本次任务预算已用尽，已有进度保留。" : recovery.checking ? "正在检查是否可以继续任务…" : "本次执行未完成。")}
             </p>
           </div>
         )}
         {files.length > 0 && <SessionFiles files={files} onOpen={(n) => openFile(n)} />}
         <div ref={endRef} className="h-2" />
       </div>
-      {previewFile && <FilePreview name={previewFile.name} conv={fileConv} initialHistory={previewFile.history} onClose={() => setPreviewFile(null)} />}
+      {previewFile && previewFile.conversationID === fileConv && <FilePreview key={fileConv + ":" + previewFile.name} name={previewFile.name} conv={fileConv} readOnly={readOnlyFiles} initialHistory={previewFile.history} onClose={() => setPreviewFile(null)} />}
     </div>
     </OpenFileCtx.Provider>
+    </FileScopeCtx.Provider>
   );
 }
 
@@ -942,20 +949,24 @@ function toolReceipt(p: ToolPayload): { icon: IconName; label: string; detail: s
 // to the version saved right before this write (one-click undo). The undo button
 // only appears once we confirm a prior version exists (i.e. the write actually
 // OVERWROTE something) — a brand-new file has nothing to undo.
-function FileWriteActions({ file, onOpenDiff }: { file: string; onOpenDiff: () => void }) {
+function FileWriteActions({ file: rawFile, onOpenDiff }: { file: string; onOpenDiff: () => void }) {
+  const { conversationID, ownerEmail, readOnly } = useContext(FileScopeCtx);
+  const file = normalizeWorkspacePath(rawFile, ownerEmail, conversationID) || "";
   const [hadPrior, setHadPrior] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [undone, setUndone] = useState(false);
   // Lazily check whether a backup exists for this file (cheap, one call).
   useEffect(() => {
     let on = true;
-    fileApi.versions(file).then((vs) => on && setHadPrior((vs?.length ?? 0) > 0)).catch(() => on && setHadPrior(false));
+    setHadPrior(null); setUndone(false);
+    if (!conversationID || !file || readOnly) return;
+    fileApi.versions(file, conversationID).then((vs) => on && setHadPrior((vs?.length ?? 0) > 0)).catch(() => on && setHadPrior(false));
     return () => { on = false; };
-  }, [file]);
+  }, [file, conversationID, readOnly]);
 
   const undo = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (busy || undone) return;
+    if (busy || undone || readOnly || !conversationID || !file) return;
     const ok = await confirmDialog({
       title: `撤销对 ${file} 的改动?`,
       body: "会把文件恢复到这次写入之前的内容。此操作本身也可在版本历史里再次撤销。",
@@ -965,9 +976,9 @@ function FileWriteActions({ file, onOpenDiff }: { file: string; onOpenDiff: () =
     if (!ok) return;
     setBusy(true);
     try {
-      const vs = await fileApi.versions(file);
+      const vs = await fileApi.versions(file, conversationID);
       if (!vs?.length) { toastError("没有可恢复的历史版本"); return; }
-      await fileApi.restore(file, vs[0].ts); // newest backup = the pre-write state
+      await fileApi.restore(file, vs[0].ts, conversationID); // newest backup = the pre-write state
       setUndone(true);
       toast(`已撤销 ${file} 的改动`);
     } catch {
@@ -977,6 +988,7 @@ function FileWriteActions({ file, onOpenDiff }: { file: string; onOpenDiff: () =
     }
   };
 
+  if (readOnly || !conversationID || !file) return null;
   return (
     <span className="ml-1.5 inline-flex items-center gap-1.5 align-middle">
       <button onClick={(e) => { e.stopPropagation(); onOpenDiff(); }} className="text-[12px] text-faint hover:text-accent" title="查看这次写入的改动">查看改动</button>
@@ -1186,17 +1198,17 @@ function Reasoning({ m }: { m: Message }) {
 }
 
 // FollowUps shows 2–3 suggested next questions under the latest answer (Perplexity
-// style); clicking one sends it. Fetched lazily from the mini model once the turn
+// style); clicking one sends it. Fetched lazily from the configured model once the turn
 // settles, keyed by the answer so it refreshes per turn.
-function FollowUps({ prompt, answer, onPick }: { prompt: string; answer: string; onPick: (t: string) => void }) {
+function FollowUps({ prompt, answer, selectedVersion, modelProfile, onPick }: { prompt: string; answer: string; selectedVersion: string; modelProfile: string; onPick: (t: string) => void }) {
   const [items, setItems] = useState<string[]>([]);
   useEffect(() => {
     let cancelled = false;
     setItems([]);
-    if (!answer.trim()) return;
-    api.followups(prompt, answer).then((r) => { if (!cancelled) setItems(r.suggestions || []); }).catch(() => {});
+    if (!answer.trim() || !modelProfile) return;
+    api.followups(prompt, answer, selectedVersion, modelProfile).then((r) => { if (!cancelled) setItems(r.suggestions || []); }).catch(() => {});
     return () => { cancelled = true; };
-  }, [prompt, answer]);
+  }, [prompt, answer, selectedVersion, modelProfile]);
   if (items.length === 0) return null;
   return (
     <div className="rise mb-6 ml-[42px]">

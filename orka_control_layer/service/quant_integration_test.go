@@ -16,8 +16,8 @@ func TestQuantToolChain(t *testing.T) {
 	t.Setenv("ORKA_BACKTEST_OFFLINE", "1") // deterministic, no akshare/network in tests
 	base := t.TempDir()
 	email := "chain@test.com"
-	ctx := agent.WithMeta(context.Background(), messages.Meta{UserEmail: email})
-	seedQuantAssets(base, email)
+	ctx := agent.WithMeta(context.Background(), messages.Meta{UserEmail: email, ConversationID: "quant-test"})
+	seedQuantAssets(base, email, "quant-test")
 
 	bt := backtestTool{baseStorage: base}
 	ingest := ingestFactorTool{baseStorage: base}

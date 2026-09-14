@@ -39,24 +39,21 @@ type LLMConfig struct {
 	OpenAIBaseURL string `yaml:"openai_base_url"`
 	OpenAIAPIKey  string `yaml:"openai_api_key"`
 	Model         string `yaml:"model"`
-	MiniModel     string `yaml:"mini_model"`
+	MiniModel     string `yaml:"mini_model"` // Deprecated: compatibility alias of Model; never a separate selection
 	VLMModel      string `yaml:"vlm_model"`
 	MaxRetries    int    `yaml:"max_retries"` // total LLM attempts incl. first on transient 429/5xx/network (default 3)
-	// Models the user may pick per conversation, beyond the main/mini pair.
-	// Providers that host many models behind one endpoint (Ark, OpenRouter…)
-	// serve any of them from the same client — only the model NAME changes — so
-	// this is an allow-list, not a set of connections. Model and MiniModel are
-	// always selectable whether or not they appear here.
+	// Ordered model choices. The first is the default for Auto.
+	// Legacy Model is prepended when loading older deployment configuration.
 	Models []string `yaml:"models"`
 }
 
-// SelectableModels returns the models a request may ask for: the configured
-// tiers first (they are the defaults everything else falls back to), then the
-// rest of the allow-list, de-duplicated and in a stable order.
+// SelectableModels returns the legacy default followed by the ordered list,
+// with whitespace/duplicates removed. MiniModel never adds an implicit choice.
 func (c LLMConfig) SelectableModels() []string {
 	out := make([]string, 0, len(c.Models)+2)
 	seen := map[string]bool{}
-	for _, m := range append([]string{c.Model, c.MiniModel}, c.Models...) {
+	for _, m := range append([]string{c.Model}, c.Models...) {
+		m = strings.TrimSpace(m)
 		if m != "" && !seen[m] {
 			seen[m] = true
 			out = append(out, m)
@@ -66,7 +63,7 @@ func (c LLMConfig) SelectableModels() []string {
 }
 
 // AllowsModel reports whether a caller may run on the named model. An empty
-// allow-list means only the configured tiers are reachable, so a request cannot
+// allow-list means only the configured default is reachable, so a request cannot
 // invent a model name and have it forwarded to the provider.
 func (c LLMConfig) AllowsModel(name string) bool {
 	for _, m := range c.SelectableModels() {
@@ -100,14 +97,14 @@ type AgentConfig struct {
 
 // SubAgentConfig declares one orchestrator-facing sub-agent. The Name+Description
 // drive the model's delegation decision (the sub-agent appears as a tool); Tools
-// scopes which atomic tools it may use; Model picks "main" or "mini"; MaxIters
+// scopes which atomic tools it may use; MaxIters
 // caps its per-delegation tool-iteration budget.
 type SubAgentConfig struct {
 	Name        string   `yaml:"name"`
 	Description string   `yaml:"description"`
 	Prompt      string   `yaml:"prompt"`    // system prompt (a NEED_USER_INPUT hint is always appended)
 	Tools       []string `yaml:"tools"`     // atomic tool names this agent may call
-	Model       string   `yaml:"model"`     // "main" | "mini" (default "mini")
+	Model       string   `yaml:"model"`     // Deprecated: ignored; delegates inherit the run's selected model
 	MaxIters    int      `yaml:"max_iters"` // tool-iteration cap (default 12)
 }
 
@@ -223,8 +220,12 @@ func (c *Config) applyDefaults() {
 	setDefault(&c.Storage.BaseStoragePath, "./data/storage")
 	setDefault(&c.Agent.SkillsDir, "./skills")
 	setDefaultInt(&c.Agent.CheckpointTTLSec, 86400)
-	setDefault(&c.LLM.Model, "gpt-4o-mini")
-	setDefault(&c.LLM.MiniModel, c.LLM.Model)
+	c.LLM.Models = c.LLM.SelectableModels()
+	if len(c.LLM.Models) == 0 {
+		c.LLM.Models = []string{"gpt-4o-mini"}
+	}
+	c.LLM.Model = c.LLM.Models[0]
+	c.LLM.MiniModel = c.LLM.Model                   // old fields remain readable as aliases only
 	setDefaultInt(&c.Security.CtxTokenTTLSec, 1800) // cover long agentic runs (the MCP client binds its token at run start)
 	setDefault(&c.Obs.LogLevel, "info")
 	if c.Obs.PersistSampling == 0 {

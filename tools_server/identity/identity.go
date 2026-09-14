@@ -11,8 +11,9 @@ const idKey ctxKey = iota
 
 // Identity is the verified caller: email plus granted capability scopes.
 type Identity struct {
-	Email  string
-	Scopes []string
+	ConversationID string
+	Email          string
+	Scopes         []string
 	// AuthErr records why a PRESENTED token was rejected (expired, tampered).
 	// It is what separates "this caller may not do that" from "we could not tell
 	// who this caller is" — two states that used to look identical downstream,

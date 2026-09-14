@@ -73,9 +73,12 @@ func (h *confirmHub) isAllowed(conv, tool string) bool {
 
 // resolve fulfills a pending confirmation; when approve+always, the tool becomes
 // pre-approved for that conversation. Returns false if the id is unknown.
-func (h *confirmHub) resolve(id string, approve, always bool) bool {
+func (h *confirmHub) resolve(id string, approve, always bool, conversationID ...string) bool {
 	h.mu.Lock()
 	p, ok := h.pending[id]
+	if ok && len(conversationID) > 0 && p.conv != conversationID[0] {
+		ok = false
+	}
 	if ok {
 		delete(h.pending, id)
 		if approve && always && p.conv != "" {
@@ -157,6 +160,14 @@ func (h *confirmHub) persist() {
 // always = approve for the rest of this conversation.
 func (s *ChatService) ResolveConfirm(id string, approve, always bool) bool {
 	return s.confirmReady().resolve(id, approve, always)
+}
+
+// ResolveConfirmInConversation only resolves an action in the authorized session.
+func (s *ChatService) ResolveConfirmInConversation(id, conv string, approve, always bool) bool {
+	if conv == "" {
+		return false
+	}
+	return s.confirmReady().resolve(id, approve, always, conv)
 }
 
 // confirmTimeout bounds how long a tool call waits for the user before it is

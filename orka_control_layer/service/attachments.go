@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/orka-oss/orka_core/pathsafe"
 	"github.com/orka-oss/orka_control_layer/llm"
+	"github.com/orka-oss/orka_core/pathsafe"
 )
 
 // Attachments are processed into TEXT that augments the user's message, so they
@@ -33,7 +33,10 @@ func (s *ChatService) processAttachments(ctx context.Context, req ChatRunRequest
 	if len(req.FileIDs) == 0 {
 		return ""
 	}
-	root := pathsafe.UserRoot(s.Cfg.Storage.BaseStoragePath, req.UserEmail)
+	root, err := pathsafe.SessionRoot(s.Cfg.Storage.BaseStoragePath, req.UserEmail, req.ConversationID)
+	if err != nil {
+		return ""
+	}
 	var out strings.Builder
 	var imgURLs, imgNames []string
 	for _, f := range req.FileIDs {
@@ -67,13 +70,14 @@ func (s *ChatService) processAttachments(ctx context.Context, req ChatRunRequest
 // describeImages runs a single VLM call to extract everything relevant from the
 // attached images, given the user's request as guidance.
 func (s *ChatService) describeImages(ctx context.Context, userText string, urls []string) string {
-	vlm := s.Cfg.LLM.VLMModel
-	if vlm == "" || s.Main == nil {
+	models := s.modelsForContext(ctx)
+	vlm := models.cfg.VLMModel
+	if vlm == "" || models.main == nil {
 		return "(未配置视觉模型，无法解析图片)"
 	}
 	prompt := "Describe the attached image(s) in detail and extract ALL text, data, and elements relevant to the user's request. " +
 		"Be thorough and literal — this description is the only way a downstream text-only agent can 'see' the image.\n\nUser's request: " + userText
-	resp, err := s.Main.Chat(llm.WithAgent(ctx, "attachment-vlm"), llm.Request{
+	resp, err := models.main.Chat(llm.WithAgent(ctx, "attachment-vlm"), llm.Request{
 		Model:    vlm,
 		Messages: []llm.ChatMessage{{Role: llm.RoleUser, Content: prompt, Images: urls}},
 	})

@@ -28,12 +28,8 @@ func (s *ChatService) runAccounting(rc *agent.RunContext, req ChatRunRequest) ru
 			stats.tokens = b.spentTokens()
 		}
 	}
-	if stats.model == "" && s.Cfg != nil {
-		stats.model = s.Cfg.LLM.Model
-	}
-	// With automatic routing the request no longer says which model ran.
-	if mr, ok := rc.Vars[varModelRouter].(*modelRouter); ok {
-		stats.model, stats.escalated = mr.chosen()
+	if s.Cfg != nil {
+		_, stats.model = s.modelsForContext(rc.Ctx).modelFor(req.SelectedVersion)
 	}
 	return stats
 }

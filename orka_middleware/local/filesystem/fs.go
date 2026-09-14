@@ -50,8 +50,10 @@ func (t readTool) Invoke(_ context.Context, args map[string]any) (string, error)
 
 type writeTool struct{ root string }
 
-func (writeTool) Name() string        { return "file_write" }
-func (writeTool) Description() string { return "Write a UTF-8 text file (creates dirs). Args: {path, content}." }
+func (writeTool) Name() string { return "file_write" }
+func (writeTool) Description() string {
+	return "Write a UTF-8 text file (creates dirs). Args: {path, content}."
+}
 func (writeTool) Schema() map[string]any {
 	return objSchema(map[string]any{
 		"path":    strProp("relative file path"),
@@ -69,10 +71,10 @@ func (t writeTool) Invoke(_ context.Context, args map[string]any) (string, error
 	if old, rerr := os.ReadFile(p); rerr == nil {
 		backed = backupOverwrite(t.root, rel, old)
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), pathsafe.WorkspaceDirMode); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)
 	}
-	if err := os.WriteFile(p, []byte(asString(args["content"])), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(asString(args["content"])), pathsafe.WorkspaceFileMode); err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
 	msg := fmt.Sprintf("wrote %d bytes to %s", len(asString(args["content"])), rel)
@@ -94,10 +96,10 @@ func backupOverwrite(root, rel string, content []byte) bool {
 	if err != nil {
 		return false
 	}
-	if os.MkdirAll(filepath.Dir(dst), 0o755) != nil {
+	if os.MkdirAll(filepath.Dir(dst), pathsafe.WorkspaceDirMode) != nil {
 		return false
 	}
-	return os.WriteFile(dst, content, 0o644) == nil
+	return os.WriteFile(dst, content, pathsafe.WorkspaceFileMode) == nil
 }
 
 type listTool struct{ root string }

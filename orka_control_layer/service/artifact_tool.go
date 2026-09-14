@@ -6,12 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/orka-oss/orka_core/artifacts"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
 
-	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_control_layer/db"
+	"github.com/orka-oss/orka_core/agent"
 )
 
 // runInfo carries the active conversation + owner down to local tools, which
@@ -74,6 +76,9 @@ func (t *artifactPublishTool) Invoke(ctx context.Context, args map[string]any) (
 		return "", fmt.Errorf("artifact_publish: %w", err)
 	}
 
+	if err := scopeArtifactResources(blocks, conv); err != nil {
+		return "", err
+	}
 	art, err := t.store.GetArtifactByConversation(ctx, conv)
 	if err == db.ErrNotFound {
 		art = &db.Artifact{
@@ -92,6 +97,8 @@ func (t *artifactPublishTool) Invoke(ctx context.Context, args map[string]any) (
 		}
 	} else if err != nil {
 		return "", fmt.Errorf("artifact_publish: %w", err)
+	} else if art.OwnerEmail != owner || art.ConversationID != conv {
+		return "", fmt.Errorf("artifact_publish: artifact does not belong to the active conversation owner")
 	} else {
 		art.Title = title // keep title in sync with the latest publish
 		_ = t.store.UpdateArtifactTitle(ctx, art.ArtifactID, title)
@@ -117,7 +124,7 @@ func (*artifactGetTool) Schema() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
 func (t *artifactGetTool) Invoke(ctx context.Context, _ map[string]any) (string, error) {
-	conv, _ := runInfoFrom(ctx)
+	conv, owner := runInfoFrom(ctx)
 	if conv == "" {
 		return "", fmt.Errorf("artifact_get: no active conversation context")
 	}
@@ -127,6 +134,9 @@ func (t *artifactGetTool) Invoke(ctx context.Context, _ map[string]any) (string,
 	}
 	if err != nil {
 		return "", err
+	}
+	if art.OwnerEmail != owner || art.ConversationID != conv {
+		return "", fmt.Errorf("artifact_get: artifact owner mismatch")
 	}
 	ver, err := t.store.GetArtifactVersion(ctx, art.ArtifactID, 0)
 	if err != nil {
@@ -150,7 +160,7 @@ const artifactBlocksDoc = `Block types and their data: ` +
 	`service topology, or data-flow; derive it from real import/call relationships); ` +
 	`html {src, height} (free-form static HTML for a custom layout/mockup; runs ` +
 	`sandboxed with no network — use only when the typed blocks don't fit). ` +
-	`Recipes by kind: pr_review → diff + checklist(tests) + metric(coverage); ` +
+	`Local Markdown file links are resolved in this conversation and require conversation access even on public artifacts. HTML must be self-contained (no local/external resources). Recipes by kind: pr_review → diff + checklist(tests) + metric(coverage); ` +
 	`architecture → mermaid + markdown; incident → timeline + chart(error rate) + ` +
 	`code(suspect commit); checklist → checklist + metric; audit → table + badge.`
 
@@ -200,4 +210,57 @@ func randHex(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// Local Markdown destinations remain authenticated session downloads. Publishing
+// or sharing the artifact never publishes workspace bytes or grants file access.
+// HTML blocks remain self-contained: the renderer blocks external resources.
+var artifactLinkRE = regexp.MustCompile(`(!?\[[^\]]*\]\()([^\s)]+)(\))`)
+
+func scopeArtifactResources(blocks []db.ArtifactBlock, conv string) error {
+	for i := range blocks {
+		if blocks[i].Type != "markdown" {
+			continue
+		}
+		value, ok := blocks[i].Data["text"].(string)
+		if !ok {
+			continue
+		}
+		var linkErr error
+		value = artifactLinkRE.ReplaceAllStringFunc(value, func(match string) string {
+			parts := artifactLinkRE.FindStringSubmatch(match)
+			raw := parts[2]
+			u, err := url.Parse(raw)
+			if err != nil {
+				linkErr = err
+				return match
+			}
+			if u.IsAbs() || u.Host != "" || strings.HasPrefix(raw, "#") {
+				return match
+			}
+			rel := u.Path
+			if u.Path == "/api/v1/controller/file/download" {
+				q := u.Query()
+				if other := q.Get("conv"); other != "" && other != conv {
+					linkErr = fmt.Errorf("artifact link targets another conversation")
+					return match
+				}
+				rel = q.Get("path")
+			}
+			if !artifacts.ValidPath(rel) {
+				linkErr = fmt.Errorf("artifact link requires a workspace-relative path: %q", rel)
+				return match
+			}
+			q := url.Values{"conv": {conv}, "path": {rel}}
+			if strings.HasPrefix(parts[1], "!") {
+				q.Set("inline", "1")
+			}
+			return parts[1] + "/api/v1/controller/file/download?" + q.Encode() + parts[3]
+		})
+		if linkErr != nil {
+			return linkErr
+		}
+		blocks[i].Data["text"] = value
+	}
+	return nil
 }

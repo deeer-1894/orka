@@ -6,7 +6,7 @@ import (
 )
 
 // This file defines the registry of sub-agents the eino orchestrator can delegate
-// to. Each spec (name, description, scoped tools, model) is turned into a native
+// to. Each spec (name, description, scoped tools) is turned into a native
 // eino sub-agent inside runEino; the orchestrator sees each as a named tool.
 
 // needInput is appended to every sub-agent prompt (built-in or user-supplied) so
@@ -72,49 +72,42 @@ func DefaultSubAgents() []config.SubAgentConfig {
 			// without them the reader physically cannot record anything, so every
 			// fact has to transit the orchestrator's context as prose or be lost.
 			Tools: []string{"web_search", "fetch_url", "discover_docs", "read_section", "search_evidence", "http_request", "current_time", "file_write", "file_read"},
-			Model: "mini",
 		},
 		{
 			Name:        "writer",
 			Description: "Delegate producing and saving a long document (report, summary, notes). Input: a brief of what to write, the desired filename and any source material. Returns a confirmation.",
 			Prompt:      writerPrompt,
 			Tools:       []string{"file_write", "file_read", "file_list"},
-			Model:       "main",
 		},
 		{
 			Name:        "browser",
 			Description: "Delegate a multi-step browser task (log in, click, fill forms, read a JS-heavy/dynamic page) — also the fallback when web_search/fetch_url are blocked or return nothing and the info must be obtained by browsing. Input: a self-contained instruction including the URL. Returns what was observed.",
 			Prompt:      browserPrompt,
 			Tools:       []string{"run_agent"},
-			Model:       "mini",
 		},
 		{
 			Name:        "engineer",
 			Description: "Delegate a coding/build task that needs running code in the terminal or spans multiple files: write a script and run it, scaffold a small project, process data with code, run tests, or use git. Input: a self-contained engineering brief including any filenames. Returns the files built, commands run, and final output.",
 			Prompt:      engineerPrompt,
 			Tools:       []string{"shell", "file_write", "file_read", "file_list"},
-			Model:       "main",
 		},
 		{
 			Name:        "report_parser",
 			Description: "Delegate parsing a financial research report (PDF/HTML/MD) into its natural-language investment theses. Input: the report filename/URL. Returns a numbered list of distinct, testable investment claims.",
 			Prompt:      reportParserPrompt,
 			Tools:       []string{"pdf_extract", "fetch_url", "file_read", "file_list"},
-			Model:       "mini",
 		},
 		{
 			Name:        "factor_proposer",
 			Description: "Delegate turning investment theses into validated, backtestable quant factor specs (JSON). Input: the theses (and report id). Returns a JSON array of schema-valid factors. Self-validates with validate_factor.",
 			Prompt:      factorProposerPrompt,
 			Tools:       []string{"file_read", "validate_factor", "recall_similar_factors"},
-			Model:       "main",
 		},
 		{
 			Name:        "factor_reviewer",
 			Description: "Delegate preparing a human review sheet for proposed factors and their backtest metrics. Input: the factors + metrics. Returns a concise recommendation table (does NOT ingest).",
 			Prompt:      factorReviewerPrompt,
 			Tools:       []string{"file_read", "sql_query"},
-			Model:       "mini",
 		},
 	}
 }
