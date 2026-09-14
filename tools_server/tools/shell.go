@@ -82,12 +82,16 @@ func shellExec(base string) mcpserver.ToolHandlerFunc {
 		defer cancel()
 
 		c := exec.CommandContext(cctx, "sh", "-c", command)
+		configureShellProcess(c)
+		// Retain CommandContext's direct-process fallback if the command moves
+		// out of its original group. Captured pipes are managed separately.
+		c.WaitDelay = 250 * time.Millisecond
 		c.Dir = root
 		// Confine writes/config to the workspace by pointing HOME there; keep the
 		// inherited PATH so common tools (git, python3, node, …) resolve.
 		c.Env = append(os.Environ(), "HOME="+root)
 
-		out, err := c.CombinedOutput()
+		out, err := shellOutput(cctx, c)
 		text := string(out)
 		const maxOut = 16 * 1024
 		if len(text) > maxOut {
@@ -97,6 +101,8 @@ func shellExec(base string) mcpserver.ToolHandlerFunc {
 		switch {
 		case cctx.Err() == context.DeadlineExceeded:
 			return mcp.NewToolResultText("command timed out after " + timeout.String() + "; partial output:\n" + text), nil
+		case cctx.Err() == context.Canceled:
+			return mcp.NewToolResultText("command canceled; partial output:\n" + text), nil
 		case err != nil:
 			return mcp.NewToolResultText("command exited with error: " + err.Error() + "\n--- output ---\n" + text), nil
 		case strings.TrimSpace(text) == "":
