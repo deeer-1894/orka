@@ -130,3 +130,13 @@ export async function existingSessionFiles(candidates: string[], list: (dir: str
     return parents.get(slash < 0 ? '.' : path.slice(0, slash))?.has(path.slice(slash + 1));
   });
 }
+
+// Markdown encodes filenames as URL references. Decode only the path, then use
+// the same conversation containment rules as file chips; never attach our
+// credentials to an external URL, application route or another session's path.
+export function workspaceLinkPath(href: string, context: FileContext): string | undefined {
+  if (!context.conversationID || !href || href.startsWith('#') || href.startsWith('?')) return undefined;
+  const path = href.split(/[?#]/, 1)[0];
+  try { return normalizeWorkspacePath(decodeURIComponent(path), context.ownerEmail, context.conversationID); }
+  catch { return undefined; }
+}

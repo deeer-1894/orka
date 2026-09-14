@@ -2,12 +2,13 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 )
 
-// CallLimits bounds one generation and its single length-recovery attempt.
+// CallLimits bounds one generation and its single response-recovery attempt.
 // The service chooses policy; the adapter owns transport and response integrity.
 // A zero policy preserves the adapter's original streaming behavior.
 type CallLimits struct {
@@ -17,8 +18,8 @@ type CallLimits struct {
 	// ReasoningEffort resolves service policy against the actual requested model,
 	// including per-call overrides. Nil preserves the provider default.
 	ReasoningEffort func(model string) string
-	// OnLengthRetry clears transient presentation before a replacement attempt.
-	OnLengthRetry func(context.Context)
+	// OnResponseRetry clears transient presentation before a replacement attempt.
+	OnResponseRetry func(context.Context)
 }
 
 type callLimitError struct {
@@ -96,18 +97,33 @@ func (m *EinoModel) limitedResponse(ctx context.Context, req Request, stream boo
 		if err != nil {
 			return Response{}, err
 		}
-		if resp.FinishReason != "length" {
+		issue := responseIntegrityIssue(resp)
+		if issue == "" {
 			return resp, nil
 		}
 		if attempt == 1 {
-			return Response{}, &callLimitError{reason: "output truncated twice"}
+			return Response{}, &callLimitError{reason: issue + " twice"}
 		}
-		if m.limits.OnLengthRetry != nil {
-			m.limits.OnLengthRetry(ctx)
+		if m.limits.OnResponseRetry != nil {
+			m.limits.OnResponseRetry(ctx)
 		}
 		messages := make([]ChatMessage, len(req.Messages), len(req.Messages)+1)
 		copy(messages, req.Messages)
-		req.Messages = append(messages, ChatMessage{Role: RoleUser, Content: "Your previous generation exceeded the per-call output limit and was discarded. No tool calls from it were executed. Return one small next action with complete arguments, or a concise answer. Do not draft the entire project in one response; split large files across steps."})
+		req.Messages = append(messages, ChatMessage{Role: RoleUser, Content: "Your previous generation was discarded: " + issue + ". No tool calls from it were executed. Return one small next action with complete JSON arguments, or a concise answer. Keep reasoning brief; do not draft the entire project in one response; split large files across steps."})
 	}
 	panic("unreachable")
+}
+
+// Providers may report tool_calls or stop even when the output cap cut off
+// arguments. Validate the whole batch before exposing any call to the runtime.
+func responseIntegrityIssue(resp Response) string {
+	if resp.FinishReason == "length" {
+		return "output truncated"
+	}
+	for _, call := range resp.ToolCalls {
+		if !json.Valid([]byte(call.Arguments)) {
+			return "incomplete or invalid tool arguments"
+		}
+	}
+	return ""
 }

@@ -24,6 +24,7 @@ function normalizeMath(s: string): string {
 export const Markdown = memo(function Markdown({
   children,
   resolveImage,
+  resolveLink,
 }: {
   children: string;
   // Optional rewriter for image sources. Markdown image paths are usually
@@ -31,6 +32,7 @@ export const Markdown = memo(function Markdown({
   // against the page origin and 404. FilePreview passes a resolver that maps
   // them to the workspace file API.
   resolveImage?: (src: string) => string;
+  resolveLink?: (href: string) => string;
 }) {
   return (
     <div className="md">
@@ -38,7 +40,7 @@ export const Markdown = memo(function Markdown({
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[[rehypeKatex, { throwOnError: false, errorColor: "var(--color-accent)" }]]}
         components={{
-          a: (props) => <a {...props} target="_blank" rel="noreferrer" />,
+          a: ({ href, ...props }) => <a {...props} href={resolveLink && typeof href === "string" ? resolveLink(href) : href} target="_blank" rel="noreferrer" />,
           img: ({ src, ...props }) => (
             <img {...props} src={resolveImage && typeof src === "string" ? resolveImage(src) : src} />
           ),

@@ -1,9 +1,9 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
 import type { BrowserPayload, ClarifyPayload, Message, ToolPayload, WeatherCardData } from "../types";
 import { api, chat as chatApi, files as fileApi } from "../api";
 import type { ConfirmPayload, PlanPayload } from "../types";
-import { normalizeWorkspacePath } from "../lib/sessionFiles";
+import { normalizeWorkspacePath, workspaceLinkPath } from "../lib/sessionFiles";
 import { useSessionFiles } from "../hooks/useSessionFiles";
 import { isIncompleteRun, type RecoverySnapshot } from "../lib/runRecovery";
 import { Markdown } from "./Markdown";
@@ -647,6 +647,11 @@ function Citations({ text }: { text: string }) {
 }
 
 function Assistant({ m, live, onRegenerate, onSchedule, suppressPlan }: { m: Message; live?: boolean; onRegenerate?: () => void; onSchedule?: () => void; suppressPlan?: boolean }) {
+  const scope = useContext(FileScopeCtx);
+  const resolveLink = useCallback((href: string) => {
+    const path = workspaceLinkPath(href, scope);
+    return path ? fileApi.downloadURL(path, scope.conversationID) : href;
+  }, [scope.conversationID, scope.ownerEmail]);
   // When the agent emitted a structured plan event, don't also regex a prose
   // plan out of the answer — the StructuredPlan block already shows it.
   const plan = suppressPlan ? null : parsePlan(m.content ?? "");
@@ -658,12 +663,12 @@ function Assistant({ m, live, onRegenerate, onSchedule, suppressPlan }: { m: Mes
       <div className="min-w-0 flex-1 pt-0.5">
         {plan ? (
           <>
-            {plan.lead && <Markdown>{plan.lead}</Markdown>}
+            {plan.lead && <Markdown resolveLink={resolveLink}>{plan.lead}</Markdown>}
             <PlanChecklist steps={plan.steps} live={!!live} />
-            {plan.tail && <Markdown>{plan.tail}</Markdown>}
+            {plan.tail && <Markdown resolveLink={resolveLink}>{plan.tail}</Markdown>}
           </>
         ) : (
-          <Markdown>{m.content ?? ""}</Markdown>
+          <Markdown resolveLink={resolveLink}>{m.content ?? ""}</Markdown>
         )}
         {!live && <Citations text={m.content ?? ""} />}
         <div className="mt-1 flex gap-1 opacity-0 transition group-hover:opacity-100">

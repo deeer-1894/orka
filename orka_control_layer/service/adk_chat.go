@@ -336,14 +336,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 			s.titleAsync(ctx, req.ConversationID, req.Message)
 		}
 		userMsg := humanChat(req.Message, meta)
-		// Fold any uploaded attachments (text inline; images via a VLM pre-pass)
-		// into the message the model sees — the optimistic UI echo keeps the
-		// user's original text, so this context is invisible in the bubble.
-		modelMsg := userMsg
-		if extra := s.processAttachments(rc.Ctx, req); extra != "" {
-			modelMsg.Content += extra
-		}
-		rc.Messages = append(history, modelMsg)
+		rc.Messages = s.withAttachments(rc.Ctx, append(history, userMsg), req, meta)
 		s.Msg.Deliver(rc, nil, userMsg, true)
 		s.Msg.Deliver(rc, raw, messages.Task("start", meta), true)
 		// A question that needs no tools does not need an agent: measured here,
@@ -428,7 +421,7 @@ func (s *ChatService) createRun(ctx context.Context, req ChatRunRequest, meta me
 // finalizeRun stamps a run's terminal state + execution stats. Uses a background
 // context since the request context may already be cancelled.
 func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt int64, req ChatRunRequest, runErr, ctxErr error) string {
-	outcome, published := rc.Vars[varPublishedCallLimitOutcome].(runOutcome)
+	outcome, published := rc.Vars[varPublishedRunOutcome].(runOutcome)
 	if !published {
 		outcome = assessRunOutcome(rc, runErr, ctxErr)
 	}
@@ -592,15 +585,11 @@ func (s *ChatService) resume(ctx context.Context, rc *agent.RunContext, req Chat
 func (s *ChatService) finish(ctx context.Context, rc *agent.RunContext, meta messages.Meta, req ChatRunRequest, raw func(messages.Message), err error) {
 	switch {
 	case errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled):
-		if llm.IsCallLimit(err) {
-			s.publishCallLimitOutcome(ctx, rc, meta, raw, assessRunOutcome(rc, err, context.Canceled))
-		} else {
-			s.Msg.Deliver(rc, raw, taskFailed(meta, "cancelled"), true)
-		}
+		s.publishRunOutcome(ctx, rc, meta, raw, assessRunOutcome(rc, err, context.Canceled))
 	case llm.IsCallLimit(err):
 		outcome := assessRunOutcome(rc, err, ctx.Err())
 		if outcome.errorDetail == "cancelled" || errors.Is(ctx.Err(), context.Canceled) {
-			s.publishCallLimitOutcome(ctx, rc, meta, raw, outcome)
+			s.publishRunOutcome(ctx, rc, meta, raw, outcome)
 			return
 		}
 		notice := callLimitNotice(outcome)
@@ -609,14 +598,14 @@ func (s *ChatService) finish(ctx context.Context, rc *agent.RunContext, meta mes
 			s.Log.Warn("model call limit", "trace_id", meta.TraceID, "err", err, "status", outcome.status)
 		}
 		s.Msg.Deliver(rc, raw, messages.Chat(messages.RoleAssistant, notice, meta), true)
-		s.publishCallLimitOutcome(ctx, rc, meta, raw, outcome)
+		s.publishRunOutcome(ctx, rc, meta, raw, outcome)
 	case err != nil:
 		if s.Log != nil {
 			s.Log.Error("chat run failed", "trace_id", meta.TraceID, "err", err)
 		}
 		// Surface a friendly assistant message (not the raw upstream error).
 		s.Msg.Deliver(rc, raw, messages.Chat(messages.RoleAssistant, friendlyErr(err), meta), true)
-		s.Msg.Deliver(rc, raw, taskFailed(meta, err.Error()), true)
+		s.publishRunOutcome(ctx, rc, meta, raw, assessRunOutcome(rc, err, ctx.Err()))
 	case rc.Interrupt != nil && rc.Interrupt.Clarify != nil:
 		s.persistClarify(ctx, rc, meta, raw)
 	case rc.Interrupt != nil && rc.Interrupt.Reason == "confirm":
@@ -626,7 +615,13 @@ func (s *ChatService) finish(ctx context.Context, rc *agent.RunContext, meta mes
 		// pending, not finished.
 		s.persistPendingConfirm(rc, req)
 	default:
-		s.Msg.Deliver(rc, raw, messages.Task("done", meta), true)
+		outcome := assessRunOutcome(rc, nil, ctx.Err())
+		if outcome.status == db.RunPartial {
+			notice := partialRunNotice(outcome)
+			middlewares.SetFinal(rc, notice)
+			s.Msg.Deliver(rc, raw, messages.Chat(messages.RoleAssistant, notice, meta), true)
+		}
+		s.publishRunOutcome(ctx, rc, meta, raw, outcome)
 	}
 }
 

@@ -12,7 +12,8 @@ function Fixture() {
   const [creates, setCreates] = useState(0);
   useEffect(() => { (window as any).fileTest = { set: (next: any) => setState((s: any) => ({ ...s, ...next })) }; }, []);
   const noop = () => {};
-  const messages = [{ id: "write", ts: 1, role: "assistant", type: "tool", meta: { conversation_id: state.conversationID }, payload: { tool: "file_write", args: { path: "a/b/sample.csv" }, result: "saved successfully" } }];
+  const messages: any[] = [{ id: "write", ts: 1, role: "assistant", type: "tool", meta: { conversation_id: state.conversationID }, payload: { tool: "file_write", args: { path: "a/b/sample.csv" }, result: "saved successfully" } }];
+  if (state.markdown) messages.push({ id: "answer", ts: 2, role: "assistant", type: "chat", meta: { conversation_id: state.conversationID }, content: state.markdown });
   return <div className="h-screen bg-bg text-ink">
     <output data-testid="creates">{creates}</output>
     {state.mode === "drawer" && <ArtifactDrawer open onClose={noop} tab={state.tab} setTab={tab => setState((s: any) => ({ ...s, tab }))} liveTab={null} email="me@example.com" conversationID={state.conversationID} onJumpToConversation={noop} focusArtifact={null} onClearArtifact={noop} />}

@@ -151,3 +151,54 @@ func TestCallLimitsRespectParentCancellation(t *testing.T) {
 		t.Fatalf("parent cancellation was reclassified: %v", e)
 	}
 }
+
+func TestCallLimitsRejectMalformedBatchWithSuccessFinishReason(t *testing.T) {
+	for _, finish := range []string{"tool_calls", "stop"} {
+		t.Run(finish, func(t *testing.T) {
+			rejected := Response{FinishReason: finish, Content: "partial narration", ToolCalls: []ToolCall{
+				{ID: "valid-but-discarded", Name: "write", Arguments: `{"path":"first"}`},
+				{ID: "truncated", Name: "write", Arguments: `{"path":"second","content":"unfinished`},
+			}}
+			mock := NewMock(rejected, Response{FinishReason: "tool_calls", ToolCalls: []ToolCall{{ID: "replacement", Name: "write", Arguments: `{"path":"small"}`}}})
+			resets := 0
+			m := NewEinoModel(limitStreamClient{mock}, "m").WithCallLimits(CallLimits{MaxTokens: 32, Timeout: time.Second, OnResponseRetry: func(context.Context) { resets++ }})
+			sr, err := m.Stream(context.Background(), []*schema.Message{schema.UserMessage("task")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer sr.Close()
+			var calls []schema.ToolCall
+			for {
+				msg, err := sr.Recv()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(msg.Content, "partial narration") {
+					t.Fatal("discarded content leaked")
+				}
+				calls = append(calls, msg.ToolCalls...)
+			}
+			if len(calls) != 1 || calls[0].ID != "replacement" || mock.Calls() != 2 || resets != 1 {
+				t.Fatalf("calls=%+v requests=%d resets=%d", calls, mock.Calls(), resets)
+			}
+			for _, message := range mock.Requests[1].Messages {
+				if len(message.ToolCalls) > 0 || strings.Contains(message.Content, "unfinished") {
+					t.Fatal("malformed arguments entered retry context")
+				}
+			}
+		})
+	}
+}
+
+func TestCallLimitsMalformedRetryIsBounded(t *testing.T) {
+	bad := Response{FinishReason: "tool_calls", ToolCalls: []ToolCall{{Name: "write", Arguments: `{"x":`}}}
+	mock := NewMock(bad, bad, Response{Content: "should never run"})
+	m := NewEinoModel(mock, "m").WithCallLimits(CallLimits{MaxTokens: 32, Timeout: time.Second})
+	result, err := m.Generate(context.Background(), nil)
+	if result != nil || !IsCallLimit(err) || mock.Calls() != 2 {
+		t.Fatalf("result=%+v err=%v calls=%d", result, err, mock.Calls())
+	}
+}

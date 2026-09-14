@@ -52,7 +52,7 @@ func (g *researchGuidance) BeforeModelRewriteState(ctx context.Context, state *a
 	}
 	text := "[Live execution state]\n" + executionGuidance(budget)
 	if g.session != nil {
-		text += "\n" + g.session.status() + "\nFor documentation, use discover_docs to find real links and read_section for a specific unresolved question. Prefer search_evidence and saved findings to rereading unchanged sources. Once the original user's evidence requirements are met, stop research and execute the next required verification or delivery step."
+		text += "\n" + g.session.status() + "\nFor a known documentation page URL, fetch_url directly; use discover_docs only when you need to find unknown page links from an index, and read_section for a specific unresolved question. Record version, endpoint, authentication scope and inclusive/exclusive boundaries with API claims; do not generalize them beyond the retrieved evidence. Prefer search_evidence and saved findings to rereading unchanged sources. Once the original user's evidence requirements are met, stop research and execute the next required verification or delivery step."
 	}
 	text += "\nUpdate only genuinely completed plan steps; record actual verifier commands and failures. Do not mark missing or unverified deliverables done."
 	if outputs := deliveryFrom(ctx).snapshot(); len(outputs) > 0 {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/orka-oss/orka_core/agent"
@@ -12,18 +13,16 @@ import (
 // structured state (an EventPlan), instead of the UI having to regex a numbered
 // list out of the prose. The agent calls it once up front with every step
 // "pending", then calls it again as work progresses to flip a step to "active"
-// (currently working) or "done". Each call is an idempotent snapshot of the
-// whole plan; the UI renders the latest one as a live progress checklist.
-//
-// It is a pure UI side-channel tool: it emits a plan event and returns, never
-// touching the workspace, so it is not a danger tool and is not gated.
+// (currently working) or "done". Updates merge by exact title: omitted steps
+// remain obligations. Both the model response and UI show the merged plan.
+// It never touches the workspace, so it is not a danger tool and is not gated.
 type planTool struct{}
 
 const planToolName = "update_plan"
 
 func (planTool) Name() string { return planToolName }
 func (planTool) Description() string {
-	return "Maintain the task checklist. For multi-step work declare all pending steps and all required output file paths up front. Keep step titles stable and update actual progress with pending/active/done; omitted steps remain outstanding. Output requirements are additive and cannot be removed by rewriting the plan. Only mark a step done after its work and relevant checks succeed. For file deliveries call check_delivery and task-specific tests before finishing. Include plan updates with actual work when possible; do not repeat unchanged plans. Research and unrelated computation can progress independently: generate working artifacts early and reserve time and tokens for verification, report, README and packaging."
+	return "Maintain the task checklist. For multi-step work declare all pending steps and all required output file paths up front. Keep step titles stable and update actual progress with pending/active/done; omitted steps remain outstanding. Renaming or splitting a step adds new steps and does not close the original. Read the returned canonical steps, unfinished and omitted_unfinished fields. After verifying the original work, explicitly update its original title; never mark it done merely to clear the checklist. Output requirements are additive and cannot be removed by rewriting the plan. Only mark a step done after its work and relevant checks succeed. For file deliveries call check_delivery and task-specific tests before finishing. Include plan updates with actual work when possible; do not repeat unchanged plans. Research and unrelated computation can progress independently: generate working artifacts early and reserve time and tokens for verification, report, README and packaging."
 
 }
 func (planTool) Schema() map[string]any {
@@ -48,8 +47,8 @@ func (planTool) Schema() map[string]any {
 	}
 }
 
-// Invoke parses the steps, emits an EventPlan snapshot to the UI side-channel,
-// and returns a short acknowledgement so the agent keeps going.
+// Invoke publishes and returns the same authoritative plan. Returning only an
+// acknowledgement hid omitted originals from the model after a rename or split.
 func (planTool) Invoke(ctx context.Context, args map[string]any) (string, error) {
 	plan := planFromArgs(args)
 	var outputs []string
@@ -63,28 +62,47 @@ func (planTool) Invoke(ctx context.Context, args map[string]any) (string, error)
 	if err := deliveryFrom(ctx).declare(outputs); err != nil {
 		return "", err
 	}
-	if len(plan.Steps) == 0 {
-		return "计划为空,已忽略。", nil
+	tracker := planTrackerFrom(ctx)
+	submitted := plan.Steps
+	changed := len(submitted) > 0 && !tracker.same(submitted)
+	note := "已更新任务清单。仅在实际工作及相关验证完成后将对应原始步骤标记为 done。"
+	if changed {
+		tracker.record(submitted)
+	} else {
+		note = "计划未变化。不要重复提交相同清单；继续实际工作，并核对下面保留的未完成步骤。"
 	}
-	// A re-post of the identical checklist carries no information, and the model
-	// does it: consecutive update_plan calls 41-80 seconds apart were measured
-	// here, each one a whole model round-trip that moved no work forward. Say so
-	// rather than acknowledging it, so the feedback lands where the decision is
-	// made. The event is still suppressed, not the record — an unchanged plan is
-	// by definition already recorded.
-	if planTrackerFrom(ctx).same(plan.Steps) {
-		return "计划与上次完全相同,未做改动。不要为了汇报进度单独调用本工具 —— " +
-			"只在计划真正变化时调用,并把它和这一轮的实际工作放在同一批工具调用里。", nil
-	}
-	planTrackerFrom(ctx).record(plan.Steps)
-	if tracker := planTrackerFrom(ctx); tracker != nil {
+	if tracker != nil {
 		plan.Steps = tracker.snapshot()
 	}
-	if emit := agent.EmitFrom(ctx); emit != nil {
-		emit(messages.Plan(plan, agent.MetaFrom(ctx)))
+	if changed {
+		if emit := agent.EmitFrom(ctx); emit != nil {
+			emit(messages.Plan(plan, agent.MetaFrom(ctx)))
+		}
 	}
-
-	return "已更新任务清单。", nil
+	submittedTitles := make(map[string]bool, len(submitted))
+	for _, step := range submitted {
+		submittedTitles[step.Title] = true
+	}
+	unfinished, omitted := []string{}, []string{}
+	for _, step := range plan.Steps {
+		if step.Status != "done" {
+			unfinished = append(unfinished, step.Title)
+			if !submittedTitles[step.Title] {
+				omitted = append(omitted, step.Title)
+			}
+		}
+	}
+	if len(omitted) > 0 {
+		note += " 本次遗漏的原始步骤仍未完成；改名或拆分不会替代它们。请核对原始要求与实际证据，再按原始标题更新状态，不要直接清空或批量勾选。"
+	}
+	b, err := json.Marshal(struct {
+		Changed           bool                `json:"changed"`
+		Steps             []messages.PlanStep `json:"steps"`
+		Unfinished        []string            `json:"unfinished"`
+		OmittedUnfinished []string            `json:"omitted_unfinished"`
+		Note              string              `json:"note"`
+	}{changed, plan.Steps, unfinished, omitted, note})
+	return string(b), err
 }
 
 // planFromArgs normalizes the loosely-typed tool args into a PlanUpdate.

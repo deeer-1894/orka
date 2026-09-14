@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
-const { sessionFileCandidates, existingSessionFiles, normalizeWorkspacePath } = createRequire(import.meta.url)(join(process.env.ORKA_TEST_BUILD, 'lib/sessionFiles.js'));
+const { workspaceLinkPath, sessionFileCandidates, existingSessionFiles, normalizeWorkspacePath } = createRequire(import.meta.url)(join(process.env.ORKA_TEST_BUILD, 'lib/sessionFiles.js'));
 const ctx = { conversationID: 'f', ownerEmail: 'me@example.com' };
 const msg = (type, payload, extra = {}) => ({ id: '1', type, role: 'assistant', payload, ts: 1, meta: { conversation_id: 'f' }, ...extra });
 const tool = (name, args, result = 'saved successfully', extra = {}) => msg('tool', { tool: name, args, result, ...extra });
@@ -77,4 +77,14 @@ test('absolute session paths strip only the current session root and reject a fo
   assert.equal(normalize('/home/aibox/.orka/storage/me@example.com/sessions/e/deep/report.csv'), undefined);
   assert.equal(normalize('/home/aibox/.orka/storage/me@example.com/report.csv'), undefined);
   assert.equal(normalize('deep/report.csv'), 'deep/report.csv');
+});
+
+test('Markdown file links decode paths and remain scoped to the current conversation', () => {
+  assert.equal(workspaceLinkPath('outputs/report.md', ctx), 'outputs/report.md');
+  assert.equal(workspaceLinkPath('./outputs/%E6%8A%A5%E5%91%8A%20a%23b.csv#details', ctx), 'outputs/报告 a#b.csv');
+  assert.equal(workspaceLinkPath('/storage/me@example.com/sessions/f/outputs/a.py', ctx), 'outputs/a.py');
+  for (const href of ['https://docs.github.com/a.md', '//other.test/a.md', 'mailto:a@example.com', '#section', '?page=1', '../other.csv', '%2e%2e/other.csv', '/api/v1/controller/health', '/storage/me@example.com/sessions/foreign/a.csv', 'bad%ZZ.csv']) {
+    assert.equal(workspaceLinkPath(href, ctx), undefined, href);
+  }
+  assert.equal(workspaceLinkPath('outputs/a.csv', { ...ctx, conversationID: '' }), undefined);
 });

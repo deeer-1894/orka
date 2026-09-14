@@ -44,29 +44,36 @@ func TestTruncatedCallsCannotExhaustADKRetriesOrFailover(t *testing.T) {
 }
 
 func TestTruncatedToolBatchNeverExecutes(t *testing.T) {
-	calls := 0
-	client := llm.NewMock(
-		llm.Response{FinishReason: "length", ToolCalls: []llm.ToolCall{{ID: "bad", Name: "echo", Arguments: `{"text":"rejected action"}`}}},
-		llm.Response{FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{{ID: "good", Name: "echo", Arguments: `{"text":"accepted action"}`}}},
-		llm.Response{FinishReason: "stop", Content: "done"},
-	)
-	ag, err := BuildEinoAgent(context.Background(), client, "m", "sys", []agent.BaseTool{echoTool{calls: &calls}}, 4, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := RunEinoOnce(context.Background(), ag, "hi"); err != nil {
-		t.Fatal(err)
-	}
-	if calls != 1 || client.Calls() != 3 {
-		t.Fatalf("executed %d tools in %d calls, want 1 in 3", calls, client.Calls())
-	}
-	for _, msg := range client.Requests[2].Messages {
-		if msg.ToolCallID == "bad" {
-			t.Fatal("discarded action entered tool history")
-		}
-	}
-	if client.Requests[2].MaxTokens != 8192 {
-		t.Fatalf("later action cap = %d", client.Requests[2].MaxTokens)
+	for _, rejected := range []llm.Response{
+		{FinishReason: "length", ToolCalls: []llm.ToolCall{{ID: "bad", Name: "echo", Arguments: `{"text":"rejected action"}`}}},
+		{FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{{ID: "bad", Name: "echo", Arguments: `{"text":"rejected action"}`}, {ID: "broken", Name: "echo", Arguments: `{"text":"cut off`}}},
+	} {
+		t.Run(rejected.FinishReason, func(t *testing.T) {
+			calls := 0
+			client := llm.NewMock(
+				rejected,
+				llm.Response{FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{{ID: "good", Name: "echo", Arguments: `{"text":"accepted action"}`}}},
+				llm.Response{FinishReason: "stop", Content: "done"},
+			)
+			ag, err := BuildEinoAgent(context.Background(), client, "m", "sys", []agent.BaseTool{echoTool{calls: &calls}}, 4, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := RunEinoOnce(context.Background(), ag, "hi"); err != nil {
+				t.Fatal(err)
+			}
+			if calls != 1 || client.Calls() != 3 {
+				t.Fatalf("executed %d tools in %d calls, want 1 in 3", calls, client.Calls())
+			}
+			for _, msg := range client.Requests[2].Messages {
+				if msg.ToolCallID == "bad" {
+					t.Fatal("discarded action entered tool history")
+				}
+			}
+			if client.Requests[2].MaxTokens != 8192 {
+				t.Fatalf("later action cap = %d", client.Requests[2].MaxTokens)
+			}
+		})
 	}
 }
 

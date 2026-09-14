@@ -11,7 +11,7 @@ import (
 func newAgentModel(client llm.Client, modelName, agentName string) *llm.EinoModel {
 	return llm.NewEinoModel(client, modelName).ForAgent(agentName).WithCallLimits(llm.CallLimits{
 		FirstMaxTokens: 4096, MaxTokens: 8192, Timeout: 180 * time.Second,
-		OnLengthRetry:   emitStreamReset,
+		OnResponseRetry: emitStreamReset,
 		ReasoningEffort: executionReasoningEffort,
 	})
 }

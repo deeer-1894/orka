@@ -11,9 +11,7 @@ import (
 
 	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_control_layer/llm"
-	"github.com/orka-oss/orka_control_layer/service/middlewares"
 	"github.com/orka-oss/orka_core/agent"
-	"github.com/orka-oss/orka_core/messages"
 )
 
 // Progress is an acknowledged tool operation, not a model claim, a plan update,
@@ -188,20 +186,4 @@ func acknowledgedTools(msgs []*schema.Message) int {
 		}
 	}
 	return count
-}
-
-const varPublishedCallLimitOutcome = "published_call_limit_outcome"
-
-// This is the terminal decision boundary. Cancellation wins until publication;
-// after publication finalization persists this same snapshot rather than
-// reclassifying an already terminal run because a late cancellation arrived.
-func (s *ChatService) publishCallLimitOutcome(ctx context.Context, rc *agent.RunContext, meta messages.Meta, raw func(messages.Message), out runOutcome) {
-	if out.errorDetail == "cancelled" || errors.Is(ctx.Err(), context.Canceled) || (rc.Ctx != nil && errors.Is(rc.Ctx.Err(), context.Canceled)) {
-		out.status, out.errorDetail = db.RunFailed, "cancelled"
-		middlewares.SetFinal(rc, "本轮已由用户取消；已有成果不代表已完成验收。")
-	}
-	rc.Put(varPublishedCallLimitOutcome, out)
-	event := messages.Task(out.status, meta)
-	event.Content = out.errorDetail
-	s.Msg.Deliver(rc, raw, event, true)
 }

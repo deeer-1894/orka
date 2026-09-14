@@ -4,17 +4,19 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/orka-oss/orka_control_layer/llm"
+	"github.com/orka-oss/orka_core/messages"
 	"github.com/orka-oss/orka_core/pathsafe"
 )
 
-// Attachments are processed into TEXT that augments the user's message, so they
+// Attachments are processed into separate, compressible runtime context, so they
 // flow through the normal (text) agent loop on either runtime:
-//   - text/code files: their content is injected inline.
+//   - text/code files: bounded previews point to the complete session files.
 //   - images: a one-shot VLM "describe + extract" pre-pass turns them into text
 //     (real vision via VLM_MODEL) which is then injected. This avoids threading
 //     multimodal messages through the whole tool loop while still letting the
@@ -25,10 +27,24 @@ var imageExts = map[string]string{
 	".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
 }
 
-const maxAttachText = 20000 // cap injected text-file size to protect the context
+const (
+	maxAttachText     = 20000 // shared content budget across all text attachments
+	maxTabularPreview = 2048  // sample only; calculations must read the complete file
+)
+
+// withAttachments preserves the authenticated human request verbatim. Attachment
+// previews can be summarized without turning file contents into permanent rules.
+func (s *ChatService) withAttachments(ctx context.Context, input []messages.Message, req ChatRunRequest, meta messages.Meta) []messages.Message {
+	if extra := s.processAttachments(ctx, req); extra != "" {
+		m := messages.Chat(messages.RoleUser, extra, meta)
+		m.Action = runtimeContextAction
+		input = append(input, m)
+	}
+	return input
+}
 
 // processAttachments resolves req.FileIDs under the user's workspace and returns
-// extra context to append to the user message ("" if none/unavailable).
+// separate runtime context ("" if none/unavailable).
 func (s *ChatService) processAttachments(ctx context.Context, req ChatRunRequest) string {
 	if len(req.FileIDs) == 0 {
 		return ""
@@ -37,6 +53,7 @@ func (s *ChatService) processAttachments(ctx context.Context, req ChatRunRequest
 	if err != nil {
 		return ""
 	}
+	remaining := maxAttachText
 	var out strings.Builder
 	var imgURLs, imgNames []string
 	for _, f := range req.FileIDs {
@@ -44,20 +61,33 @@ func (s *ChatService) processAttachments(ctx context.Context, req ChatRunRequest
 		if err != nil {
 			continue
 		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		if mime, ok := imageExts[strings.ToLower(filepath.Ext(f))]; ok {
+		ext := strings.ToLower(filepath.Ext(f))
+		if mime, ok := imageExts[ext]; ok {
+			b, err := os.ReadFile(p)
+			if err != nil {
+				continue
+			}
 			imgURLs = append(imgURLs, "data:"+mime+";base64,"+base64.StdEncoding.EncodeToString(b))
 			imgNames = append(imgNames, f)
 			continue
 		}
-		content := string(b)
-		if len(content) > maxAttachText {
-			content = content[:maxAttachText] + "\n…(truncated)"
+		tabular := ext == ".csv" || ext == ".tsv"
+		limit := remaining
+		if tabular && limit > maxTabularPreview {
+			limit = maxTabularPreview
 		}
-		fmt.Fprintf(&out, "\n\n[附件 %s]\n```\n%s\n```", f, content)
+		content, truncated, err := attachmentPreview(p, limit)
+		if err != nil {
+			continue
+		}
+		remaining -= len(content)
+		fmt.Fprintf(&out, "\n\n[附件 %s；完整文件位于当前会话工作区的此相对路径]\n```\n%s\n```", f, content)
+		if tabular {
+			out.WriteString("\n使用脚本读取完整表格并计算、验证；不要在思考中逐行手算，或仅为查看数据而把整张表反复载入模型上下文。")
+		}
+		if truncated {
+			out.WriteString("\n（仅预览，内容已截断；分析和计算必须读取完整文件，不能用样例代替全量数据。）")
+		}
 	}
 	if len(imgURLs) > 0 {
 		if desc := s.describeImages(ctx, req.Message, imgURLs); desc != "" {
@@ -65,6 +95,25 @@ func (s *ChatService) processAttachments(ctx context.Context, req ChatRunRequest
 		}
 	}
 	return out.String()
+}
+
+// attachmentPreview reads at most limit+1 bytes even for very large files.
+func attachmentPreview(path string, limit int) (string, bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, int64(limit)+1))
+	if err != nil {
+		return "", false, err
+	}
+	truncated := len(b) > limit
+	if truncated {
+		b = b[:limit]
+	}
+	// Drop invalid bytes, including a partial final rune, without expanding the budget.
+	return strings.ToValidUTF8(string(b), ""), truncated, nil
 }
 
 // describeImages runs a single VLM call to extract everything relevant from the

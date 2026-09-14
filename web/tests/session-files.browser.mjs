@@ -133,6 +133,20 @@ test('session file UI: folder navigation, safe previews, scoped requests and asy
     await page.getByRole('button', { name: /sample.csv/ }).last().click();
     await dialog.waitFor();
     assert.equal(await dialog.getByTitle('版本历史').count(), 0);
+    // Actual assistant Markdown links must download from its current session.
+    await set({ mode: 'thread', conversationID: 'A', shared: false, markdown: '下载：[审计](outputs/audit.py) · [中文](outputs/%E6%8A%A5%E5%91%8A%20a.csv) · [官网](https://docs.github.com/en/rest)' });
+    const auditLink = page.getByRole('link', { name: '审计', exact: true });
+    const linkURL = () => auditLink.getAttribute('href').then(href => new URL(href, page.url()));
+    let resolved = await linkURL();
+    assert.equal(resolved.pathname, '/api/v1/controller/file/download');
+    assert.equal(resolved.searchParams.get('conv'), 'A');
+    assert.equal(resolved.searchParams.get('path'), 'outputs/audit.py');
+    assert.equal(new URL(await page.getByRole('link', { name: '中文', exact: true }).getAttribute('href'), page.url()).searchParams.get('path'), 'outputs/报告 a.csv');
+    assert.equal(await page.getByRole('link', { name: '官网', exact: true }).getAttribute('href'), 'https://docs.github.com/en/rest');
+    await set({ conversationID: 'B' });
+    resolved = await linkURL();
+    assert.equal(resolved.searchParams.get('conv'), 'B', 'memoized Markdown must not retain the previous session');
+    await set({ markdown: '' });
     await set({ mode: 'composer', conversationID: 'A' });
     await page.locator('textarea').fill('@');
     await page.locator('textarea').press('ArrowRight');
