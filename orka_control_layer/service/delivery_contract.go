@@ -12,14 +12,22 @@ import (
 // deliveryTracker owns additive file requirements independently of the mutable
 // execution checklist. It never accepts a model-supplied verification result.
 type deliveryTracker struct {
-	mu        sync.Mutex
-	root      string
-	outputs   []string
-	inspected map[string]artifactRevision
+	mu            sync.Mutex
+	root          string
+	outputs       []string
+	finalResponse string
+	inspected     map[string]artifactRevision
 }
 
-func newDeliveryTracker(root string) *deliveryTracker { return &deliveryTracker{root: root} }
-func (d *deliveryTracker) declare(paths []string) error {
+func newDeliveryTracker(root string) *deliveryTracker   { return &deliveryTracker{root: root} }
+func (d *deliveryTracker) declare(paths []string) error { return d.configure(paths, "") }
+
+// configure updates validated requirements and response mode atomically.
+// Missing mode preserves the current choice; old checkpoints default to answer.
+func (d *deliveryTracker) configure(paths []string, mode string) error {
+	if mode != "" && mode != "answer" && mode != "file_receipt" {
+		return fmt.Errorf("invalid final_response %q", mode)
+	}
 	if d == nil {
 		return nil
 	}
@@ -43,8 +51,23 @@ func (d *deliveryTracker) declare(paths []string) error {
 		return fmt.Errorf("at most %d required output files", artifacts.MaxFiles)
 	}
 	d.outputs = next
+	if mode != "" {
+		d.finalResponse = mode
+	}
 	return nil
 }
+func (d *deliveryTracker) responseMode() string {
+	if d == nil {
+		return "answer"
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.finalResponse == "" {
+		return "answer"
+	}
+	return d.finalResponse
+}
+
 func (d *deliveryTracker) snapshot() []string {
 	if d == nil {
 		return nil

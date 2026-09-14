@@ -782,7 +782,7 @@ func (s *ChatService) titleAsync(parent context.Context, convID, message string)
 		if err != nil {
 			return // keep the snippet title
 		}
-		title := cleanTitle(resp.Content)
+		title := titleFromResponse(resp)
 		if title == "" {
 			return
 		}

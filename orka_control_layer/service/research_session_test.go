@@ -91,7 +91,7 @@ func TestResearchSessionRetriesErrorsAndReservesDeliveryBudget(t *testing.T) {
 	if calls != 2 || !strings.Contains(got, "a valid page") {
 		t.Fatalf("failed response cached: %d %q", calls, got)
 	}
-	budget.AddUsage(500, 0)
+	budget.AddUsage(750, 0)
 	got, _ = tool.InvokableRun(ctx, `{"url":"https://example.test/new"}`)
 	if calls != 2 || !strings.Contains(got, "retrieval budget") {
 		t.Fatalf("retrieval not limited: %d %q", calls, got)
@@ -141,7 +141,7 @@ func TestResearchGuidanceSurvivesHistoryReplacement(t *testing.T) {
 	p.record([]messages.PlanStep{{Title: "Research", Status: "done"}, {Title: "Generate and verify data", Status: "active"}})
 	ctx := withPlanTracker(withResearchSession(context.Background(), s), p)
 	g := newResearchGuidance(ctx)
-	b.AddUsage(500, 0)
+	b.AddUsage(750, 0)
 	state := &adk.ChatModelAgentState{Messages: []*schema.Message{schema.SystemMessage("instruction"), schema.UserMessage("summary replaced the full history")}, ToolInfos: infos("fetch_url", "web_search", "search_evidence", "file_write", "shell")}
 	for i := 0; i < 2; i++ {
 		_, state, _ = g.BeforeModelRewriteState(ctx, state, nil)

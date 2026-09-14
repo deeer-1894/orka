@@ -14,6 +14,7 @@ type runCheckpoint struct {
 	successfulToolsRecorded bool                // distinguish an authoritative zero from a legacy absent field
 	LastCallError           string              `json:"last_call_error,omitempty"`
 	Plan                    []messages.PlanStep `json:"plan,omitempty"`
+	FinalResponse           string              `json:"final_response,omitempty"`
 	Outputs                 []string            `json:"outputs,omitempty"`
 	SpentTokens             int                 `json:"spent_tokens"`
 	ResearchCalls           int                 `json:"research_calls,omitempty"`
@@ -37,7 +38,7 @@ func (c *runCheckpoint) UnmarshalJSON(data []byte) error {
 }
 
 func checkpointFrom(ctx context.Context) *runCheckpoint {
-	c := &runCheckpoint{successfulToolsRecorded: true, Plan: planTrackerFrom(ctx).snapshot(), Outputs: deliveryFrom(ctx).snapshot(), SpentTokens: budgetFrom(ctx).totalSpentTokens()}
+	c := &runCheckpoint{successfulToolsRecorded: true, Plan: planTrackerFrom(ctx).snapshot(), Outputs: deliveryFrom(ctx).snapshot(), FinalResponse: deliveryFrom(ctx).responseMode(), SpentTokens: budgetFrom(ctx).totalSpentTokens()}
 	if b := budgetFrom(ctx); b != nil {
 		b.mu.Lock()
 		c.SuccessfulTools, c.LastCallError = b.successfulTools, b.lastCallError
@@ -63,7 +64,7 @@ func restoreCheckpoint(c *runCheckpoint, b *runBudget, p *planTracker, d *delive
 	}
 	p.record(c.Plan)
 	// Checkpoints only contain paths validated when first declared.
-	_ = d.declare(c.Outputs)
+	_ = d.configure(c.Outputs, c.FinalResponse)
 }
 func (j *runJournal) trackState(ctx context.Context) {
 	if j == nil {

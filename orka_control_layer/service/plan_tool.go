@@ -29,7 +29,8 @@ func (planTool) Schema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"outputs": map[string]any{"type": "array", "maxItems": 128, "description": "All required workspace-relative output file paths, including reports, README, manifest and archive when requested. Additive across updates.", "items": map[string]any{"type": "string"}},
+			"final_response": map[string]any{"type": "string", "enum": []string{"answer", "file_receipt"}, "description": "Default answer preserves the normal chat answer. Choose file_receipt only when the user requests files plus download links and brief acceptance, with substantive findings and ALL limitations in the files, and does not require a separate substantive chat answer. Once files pass checks and all original steps are done, the runtime publishes file links and structural check scope; do not regenerate statistics in chat. Omission preserves the previous mode."},
+			"outputs":        map[string]any{"type": "array", "maxItems": 128, "description": "All required workspace-relative output file paths, including reports, README, manifest and archive when requested. Additive across updates.", "items": map[string]any{"type": "string"}},
 			"steps": map[string]any{
 				"type":        "array",
 				"description": "the full ordered checklist",
@@ -59,7 +60,8 @@ func (planTool) Invoke(ctx context.Context, args map[string]any) (string, error)
 			}
 		}
 	}
-	if err := deliveryFrom(ctx).declare(outputs); err != nil {
+	mode, _ := args["final_response"].(string)
+	if err := deliveryFrom(ctx).configure(outputs, mode); err != nil {
 		return "", err
 	}
 	tracker := planTrackerFrom(ctx)

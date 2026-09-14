@@ -115,46 +115,54 @@ func TestGateActivationCannotFindAnotherAgentsTool(t *testing.T) {
 }
 
 func TestSpecialistResearchGuidanceFollowsSharedAllowance(t *testing.T) {
-	b := newRunBudget(20, 1000, 0)
-	s := newResearchSession(newWorkspaceBackend(t.TempDir(), "reader", "test-session"), ".orka_offload/specialist/evidence", b, 10)
-	ctx := withResearchSession(withBudget(context.Background(), b), s)
-	source := retrievalFixture{"fetch_url", func(context.Context, map[string]any) (string, error) {
-		b.AddUsage(500, 0)
-		return "URL: https://fixture.test/docs\nTitle: Checkpoints\n\nDurable checkpoints.", nil
-	}}
-	model := llm.NewMock(gateCall("fetch", "fetch_url", `{"url":"https://fixture.test/docs"}`), gateCall("lookup", "search_evidence", `{"query":"checkpoints"}`), llm.Response{Content: "done"})
-	subs, err := BuildEinoSubAgents(ctx, model, "main", model, "mini", []agent.BaseTool{source, evidenceSearchTool{s}, gateStubTool{name: "file_write"}}, []config.SubAgentConfig{{Name: "researcher", Tools: []string{"fetch_url", "search_evidence", "file_write"}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := RunEinoOnce(ctx, subs[0], "research and write"); err != nil {
-		t.Fatal(err)
-	}
-	if len(model.Requests) != 3 {
-		t.Fatalf("model requests=%d", len(model.Requests))
-	}
-	if !gateRequestHas(model.Requests[0], "fetch_url") {
-		t.Fatal("retrieval hidden before reserve")
-	}
-	for _, req := range model.Requests[1:] {
-		if gateRequestHas(req, "fetch_url") {
-			t.Error("specialist advertises retrieval after reserve")
-		}
-		if !gateRequestHas(req, "search_evidence") || !gateRequestHas(req, "file_write") {
-			t.Error("evidence/delivery tools were removed")
-		}
-		live := 0
-		for _, msg := range req.Messages {
-			if strings.Contains(msg.Content, "[Live execution state]") {
-				live++
-				if !strings.Contains(msg.Content, "retrieval budget") || !strings.Contains(msg.Content, "Source catalog") {
-					t.Error("guidance lost allowance or evidence catalog")
+	for _, tc := range []struct {
+		name    string
+		spent   int
+		limited bool
+	}{{"50_percent_still_research", 500, false}, {"just_before_75_percent", 749, false}, {"75_percent_delivery", 750, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newRunBudget(20, 1000, 0)
+			s := newResearchSession(newWorkspaceBackend(t.TempDir(), "reader", "test-session"), ".orka_offload/specialist/evidence", b, 10)
+			ctx := withResearchSession(withBudget(context.Background(), b), s)
+			source := retrievalFixture{"fetch_url", func(context.Context, map[string]any) (string, error) {
+				b.AddUsage(tc.spent, 0)
+				return "URL: https://fixture.test/docs\nTitle: Checkpoints\n\nDurable checkpoints.", nil
+			}}
+			model := llm.NewMock(gateCall("fetch", "fetch_url", `{"url":"https://fixture.test/docs"}`), gateCall("lookup", "search_evidence", `{"query":"checkpoints"}`), llm.Response{Content: "done"})
+			subs, err := BuildEinoSubAgents(ctx, model, "main", model, "mini", []agent.BaseTool{source, evidenceSearchTool{s}, gateStubTool{name: "file_write"}}, []config.SubAgentConfig{{Name: "researcher", Tools: []string{"fetch_url", "search_evidence", "file_write"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := RunEinoOnce(ctx, subs[0], "research and write"); err != nil {
+				t.Fatal(err)
+			}
+			if len(model.Requests) != 3 {
+				t.Fatalf("model requests=%d", len(model.Requests))
+			}
+			if !gateRequestHas(model.Requests[0], "fetch_url") {
+				t.Fatal("retrieval hidden before reserve")
+			}
+			for _, req := range model.Requests[1:] {
+				if gateRequestHas(req, "fetch_url") == tc.limited {
+					t.Errorf("specialist tool visibility disagrees with 75%% reserve at %d tokens", tc.spent)
+				}
+				if !gateRequestHas(req, "search_evidence") || !gateRequestHas(req, "file_write") {
+					t.Error("evidence/delivery tools were removed")
+				}
+				live := 0
+				for _, msg := range req.Messages {
+					if strings.Contains(msg.Content, "[Live execution state]") {
+						live++
+						if strings.Contains(msg.Content, "retrieval budget") != tc.limited || !strings.Contains(msg.Content, "Source catalog") {
+							t.Errorf("guidance and actual retrieval reserve disagree at %d tokens", tc.spent)
+						}
+					}
+				}
+				if live != 1 {
+					t.Errorf("live state messages=%d, want one", live)
 				}
 			}
-		}
-		if live != 1 {
-			t.Errorf("live state messages=%d, want one", live)
-		}
+		})
 	}
 }
 

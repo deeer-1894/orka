@@ -160,7 +160,7 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 		Instruction: instruction,
 		Model:       newAgentModel(client, model, "orka"),
 		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(withFindTools(withPlan(withClarify(tools))))},
+			ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(withFindTools(withPlan(withClarify(tools))))},
 			ReturnDirectly:  clarifyReturnDirectly(),
 		},
 		MaxIterations: maxIters,
@@ -233,7 +233,7 @@ func BuildEinoSubAgents(ctx context.Context, mainClient llm.Client, mainModel st
 			Instruction: prompt,
 			Model:       newAgentModel(client, model, sp.Name),
 			ToolsConfig: adk.ToolsConfig{
-				ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(scoped)},
+				ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(scoped)},
 			},
 			MaxIterations: iters,
 			// Same resilience as the orchestrator: a delegated worker that dies on a
@@ -316,7 +316,7 @@ func BuildEinoDeepOrchestrator(ctx context.Context, mainClient llm.Client, mainM
 		Instruction: instruction,
 		SubAgents:   subs,
 		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(withFindTools(withPlan(withClarify(atomic))))},
+			ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(withFindTools(withPlan(withClarify(atomic))))},
 			ReturnDirectly:  clarifyReturnDirectly(),
 			// Stream delegate events up so the UI keeps its per-agent lanes.
 			EmitInternalEvents: true,
@@ -358,7 +358,7 @@ func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel
 		Instruction: instruction,
 		Model:       newAgentModel(mainClient, mainModel, einoOrchestratorName),
 		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: allTools},
+			ToolsNodeConfig:    compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: allTools},
 			ReturnDirectly:     clarifyReturnDirectly(),
 			EmitInternalEvents: true, // stream sub-agent events up for lane rendering
 		},
@@ -575,7 +575,11 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 
 		var m *schema.Message
 		if mv.IsStreaming {
-			full, err := drainEinoStream(mv.MessageStream, mv.Role, eventMeta, emit)
+			streamEmit := emit
+			if bufferDeliveryContent(ctx, eventMeta.AgentID) {
+				streamEmit = func(messages.Message) {}
+			}
+			full, err := drainEinoStream(mv.MessageStream, mv.Role, eventMeta, streamEmit)
 			if err != nil {
 				return err
 			}
@@ -589,6 +593,10 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 
 		if m.ResponseMeta != nil && m.ResponseMeta.Usage != nil {
 			tokens += m.ResponseMeta.Usage.TotalTokens
+		}
+
+		if eventMeta.AgentID == "" {
+			m = deliveryResponse(ctx, m)
 		}
 
 		// The parent result contains the delegate's handoff. Keep the parent

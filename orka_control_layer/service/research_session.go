@@ -158,9 +158,9 @@ func (s *researchSession) atLimitLocked() bool {
 	if s.calls >= s.maxCalls {
 		return true
 	}
-	// The run's immutable total limit is shared with the usage meter. Reserve
-	// half for synthesis/execution instead of letting retrieval consume it all.
-	return s.budget != nil && s.budget.maxTokens > 0 && s.budget.totalSpentTokens() >= s.budget.maxTokens/2
+	// Match the delivery tool phase. Cache and in-flight lookups happen before
+	// this check, so the reserve blocks new remote calls, not collected evidence.
+	return deliveryPhaseReached(s.budget)
 }
 
 func (s *researchSession) status() string {

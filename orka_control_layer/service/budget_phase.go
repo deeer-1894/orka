@@ -19,8 +19,16 @@ func deliveryPhaseTools(in []*schema.ToolInfo) []*schema.ToolInfo {
 	return out
 }
 
+// deliveryPhaseReached is the single token boundary for both tool visibility
+// and admission of new external reads. Reserve the last quarter for delivery;
+// earlier computation must not consume a separate, smaller research allowance.
+// The cumulative ledger includes usage carried through checkpoint recovery.
+func deliveryPhaseReached(b *runBudget) bool {
+	return b != nil && b.maxTokens > 0 && b.totalSpentTokens() >= b.maxTokens*3/4
+}
+
 func applyDeliveryPhase(b *runBudget, state *adk.ChatModelAgentState) {
-	if b == nil || state == nil || b.maxTokens <= 0 || b.totalSpentTokens() < b.maxTokens*3/4 {
+	if state == nil || !deliveryPhaseReached(b) {
 		return
 	}
 	state.ToolInfos = deliveryPhaseTools(state.ToolInfos)

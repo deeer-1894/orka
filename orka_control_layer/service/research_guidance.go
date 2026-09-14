@@ -58,6 +58,9 @@ func (g *researchGuidance) BeforeModelRewriteState(ctx context.Context, state *a
 	if outputs := deliveryFrom(ctx).snapshot(); len(outputs) > 0 {
 		text += "\nRequired outputs (check_delivery inspects these): " + trunc(strings.Join(outputs, "; "), 2400)
 	}
+	if deliveryFrom(ctx).responseMode() == "file_receipt" {
+		text += "\nFinal response mode: file_receipt. Put substantive conclusions, actual verification results and ALL unresolved limitations in the declared report. Once all required files are checked and original plan steps are genuinely complete, end with a brief confirmation; runtime will publish scoped file links and file-check results. Do not spend a generation rewriting statistics. If the user requires a separate substantive chat answer, switch update_plan.final_response back to answer."
+	}
 	if pending := g.plan.unfinished(); len(pending) > 0 {
 		text += "\nOpen plan steps: " + trunc(strings.Join(pending, "; "), 1800)
 	}
