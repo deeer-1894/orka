@@ -55,6 +55,7 @@ func newBudgetGuardFor(b *runBudget) *budgetGuard {
 }
 
 func (g *budgetGuard) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
+	applyDeliveryPhase(g.budget, state)
 	if !g.budget.observe(state.Messages) {
 		return ctx, state, nil
 	}

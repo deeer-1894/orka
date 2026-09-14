@@ -40,10 +40,10 @@ func newResearchSession(backend filesystem.Backend, dir string, budget *runBudge
 }
 
 func isResearchTool(name string, args map[string]any) bool {
-	switch name {
-	case "web_search", "fetch_url", "discover_docs", "read_section":
+	if isResearchToolName(name) {
 		return true
-	case "http_request":
+	}
+	if name == "http_request" {
 		method, _ := args["method"].(string)
 		if method == "" {
 			method = "GET"
@@ -51,6 +51,14 @@ func isResearchTool(name string, args map[string]any) bool {
 		method = strings.ToUpper(strings.TrimSpace(method))
 		_, hasURL := args["url"].(string)
 		return hasURL && (method == "GET" || method == "HEAD")
+	}
+	return false
+}
+
+func isResearchToolName(name string) bool {
+	switch name {
+	case "web_search", "fetch_url", "discover_docs", "read_section", "http_request":
+		return true
 	}
 	return false
 }
