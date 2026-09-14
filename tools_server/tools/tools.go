@@ -54,24 +54,25 @@ func Registry() map[string]Meta {
 		"http_request":  {Group: "web", Scope: "web:search"},  // network egress → gated
 		"shell":         {Group: "shell", Scope: ""},          // env-gated (SHELL_TOOL=1); confined to the workspace
 		// Office / productivity tools.
-		"currency":    {Group: "office", Scope: ""},
-		"timezone":    {Group: "office", Scope: ""},
-		"qrcode":      {Group: "office", Scope: "file:write"},
-		"csv_query":   {Group: "office", Scope: "file:read"},
-		"csv_stats":   {Group: "office", Scope: "file:read"},
-		"csv_to_json": {Group: "office", Scope: "file:read"},
-		"doc_export":  {Group: "office", Scope: "file:write"},
-		"chart":       {Group: "office", Scope: "file:write"},
-		"xlsx_to_csv": {Group: "office", Scope: "file:write"},
-		"csv_to_xlsx": {Group: "office", Scope: "file:write"},
-		"pdf_extract": {Group: "office", Scope: "file:read"},
-		"doc_read":    {Group: "office", Scope: "file:read"},
-		"sql_query":   {Group: "office", Scope: "file:read"},
-		"csv_join":    {Group: "office", Scope: "file:write"},
-		"slides":      {Group: "office", Scope: "file:write"},
-		"python":      {Group: "code", Scope: ""}, // confined to the workspace container, like shell
-		"lark_whoami": {Group: "lark", Scope: "lark:read"},
-		"aio_echo":    {Group: "aio", Scope: "aio:read"},
+		"currency":      {Group: "office", Scope: ""},
+		"timezone":      {Group: "office", Scope: ""},
+		"qrcode":        {Group: "office", Scope: "file:write"},
+		"csv_query":     {Group: "office", Scope: "file:read"},
+		"csv_stats":     {Group: "office", Scope: "file:read"},
+		"csv_to_json":   {Group: "office", Scope: "file:read"},
+		"render_report": {Group: "office", Scope: "file:write"},
+		"doc_export":    {Group: "office", Scope: "file:write"},
+		"chart":         {Group: "office", Scope: "file:write"},
+		"xlsx_to_csv":   {Group: "office", Scope: "file:write"},
+		"csv_to_xlsx":   {Group: "office", Scope: "file:write"},
+		"pdf_extract":   {Group: "office", Scope: "file:read"},
+		"doc_read":      {Group: "office", Scope: "file:read"},
+		"sql_query":     {Group: "office", Scope: "file:read"},
+		"csv_join":      {Group: "office", Scope: "file:write"},
+		"slides":        {Group: "office", Scope: "file:write"},
+		"python":        {Group: "code", Scope: ""}, // confined to the workspace container, like shell
+		"lark_whoami":   {Group: "lark", Scope: "lark:read"},
+		"aio_echo":      {Group: "aio", Scope: "aio:read"},
 	}
 }
 
@@ -96,6 +97,11 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 		mcp.WithString("path", mcp.Required(), mcp.Description("relative file path")),
 		mcp.WithString("content", mcp.Required(), mcp.Description("file content")),
 	), fileWrite(baseStorage))
+
+	add(mcp.NewTool("render_report",
+		mcp.WithDescription(`Render Markdown numeric claims directly from CSV aggregates, without copying numbers manually. First write a *.report.json spec: {"kind":"orka.report/v1","output":"outputs/report.md","template":"Each group has {{lo}}–{{hi}} orders.","bindings":{"lo":{"csv":"outputs/summary.csv","column":"orders","op":"min"},"hi":{"csv":"outputs/summary.csv","column":"orders","op":"max"}}}. Ops: min/max/sum require a decimal numeric column; count counts rows and omits column. Optional where is an exact string column/value filter. All paths are relative to the current conversation root. Calculations are exact decimals. Use bindings for ALL supported numeric claims; literal prose is not verified. Declare the spec AND output with update_plan.outputs; check_delivery recomputes and rejects stale reports. After data edits rerender, then refresh manifest hashes. No expressions, loops or external resources.`),
+		mcp.WithString("path", mcp.Required(), mcp.Description("workspace-relative *.report.json specification path")),
+	), renderReport(baseStorage))
 
 	add(mcp.NewTool("file_list",
 		mcp.WithDescription("List directory entries in your storage."),

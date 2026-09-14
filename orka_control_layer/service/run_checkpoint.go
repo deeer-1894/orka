@@ -18,6 +18,7 @@ type runCheckpoint struct {
 	Outputs                 []string            `json:"outputs,omitempty"`
 	SpentTokens             int                 `json:"spent_tokens"`
 	ResearchCalls           int                 `json:"research_calls,omitempty"`
+	Evidence                *evidenceCheckpoint `json:"evidence,omitempty"`
 }
 
 // New snapshots always serialize successful_tools, including zero. Legacy
@@ -47,6 +48,7 @@ func checkpointFrom(ctx context.Context) *runCheckpoint {
 	if r := researchFrom(ctx); r != nil {
 		r.mu.Lock()
 		c.ResearchCalls = r.calls
+		c.Evidence = r.evidence.checkpoint()
 		r.mu.Unlock()
 	}
 	return c

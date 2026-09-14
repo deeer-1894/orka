@@ -12,24 +12,40 @@ import (
 	"time"
 )
 
-// Discover never follows redirects or returns provider error bodies. Localhost
-// and private-network endpoints are intentionally supported for local providers.
+// DiscoverResult identifies whether models were returned by the configured
+// provider or are unverified preset candidates for a known subscription endpoint.
+type DiscoverResult struct {
+	Models []string `json:"models"`
+	Source string   `json:"source"`
+	Notice string   `json:"notice"`
+}
+
+// Discover preserves the list-only interface for existing callers. Callers that
+// display discovery results should use DiscoverWithMetadata to disclose presets.
 func (s *Store) Discover(ctx context.Context, owner, base, key string) ([]string, error) {
+	result, err := s.DiscoverWithMetadata(ctx, owner, base, key)
+	return result.Models, err
+}
+
+// DiscoverWithMetadata never follows redirects or returns provider error bodies.
+// Localhost and private-network endpoints remain supported for local providers.
+// Presets do not validate credentials or change the configured base URL.
+func (s *Store) DiscoverWithMetadata(ctx context.Context, owner, base, key string) (DiscoverResult, error) {
 	base, err := NormalizeURL(base)
 	if err != nil {
-		return nil, err
+		return DiscoverResult{}, err
 	}
 	if strings.TrimSpace(owner) == "" {
-		return nil, ErrOwner
+		return DiscoverResult{}, ErrOwner
 	}
 	key = strings.TrimSpace(key)
 	if !validText(key, 8192) {
-		return nil, errors.New("invalid api_key")
+		return DiscoverResult{}, errors.New("invalid api_key")
 	}
 	if key == "" {
 		saved, _, err := s.Get(owner)
 		if err != nil {
-			return nil, err
+			return DiscoverResult{}, err
 		}
 		if saved.BaseURL == base {
 			key = saved.APIKey
@@ -39,7 +55,7 @@ func (s *Store) Discover(ctx context.Context, owner, base, key string) ([]string
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/models", nil)
 	if err != nil {
-		return nil, errors.New("invalid base_url")
+		return DiscoverResult{}, errors.New("invalid base_url")
 	}
 	req.Header.Set("Accept", "application/json")
 	if key != "" {
@@ -48,18 +64,28 @@ func (s *Store) Discover(ctx context.Context, owner, base, key string) ([]string
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, errors.New("model discovery failed or timed out")
+		return DiscoverResult{}, errors.New("model discovery failed or timed out")
 	}
 	defer resp.Body.Close()
+	if err := ctx.Err(); err != nil {
+		return DiscoverResult{}, errors.New("model discovery failed or timed out")
+	}
 	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("model discovery returned HTTP %d", resp.StatusCode)
+		if (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) && arkPresetEndpoint(base) {
+			return DiscoverResult{
+				Models: arkPresetModels(),
+				Source: "preset",
+				Notice: "此服务未提供模型列表，已载入火山方舟预设候选；列表不代表密钥或套餐权限已验证，可手动调整。ark-code-latest 使用方舟控制台所选模型。",
+			}, nil
+		}
+		return DiscoverResult{}, fmt.Errorf("model discovery returned HTTP %d", resp.StatusCode)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
-		return nil, errors.New("model discovery response could not be read")
+		return DiscoverResult{}, errors.New("model discovery response could not be read")
 	}
 	if len(b) > maxResponseBytes {
-		return nil, errors.New("model discovery response exceeds 1 MiB")
+		return DiscoverResult{}, errors.New("model discovery response exceeds 1 MiB")
 	}
 	var body struct {
 		Data []struct {
@@ -67,7 +93,7 @@ func (s *Store) Discover(ctx context.Context, owner, base, key string) ([]string
 		} `json:"data"`
 	}
 	if json.Unmarshal(b, &body) != nil || body.Data == nil {
-		return nil, errors.New("invalid model discovery response")
+		return DiscoverResult{}, errors.New("invalid model discovery response")
 	}
 	models := make([]string, 0, len(body.Data))
 	seen := map[string]bool{}
@@ -79,8 +105,41 @@ func (s *Store) Discover(ctx context.Context, owner, base, key string) ([]string
 		}
 	}
 	if len(models) > 2048 {
-		return nil, errors.New("too many discovered models")
+		return DiscoverResult{}, errors.New("too many discovered models")
 	}
 	sort.Strings(models)
-	return models, nil
+	return DiscoverResult{Models: models, Source: "remote"}, nil
+}
+
+// Compare the normalized URL literally: reject alternate hosts, ports, escaped
+// paths and lookalike prefixes. Never probe or rewrite to another billing route.
+func arkPresetEndpoint(base string) bool {
+	switch base {
+	case "https://ark.cn-beijing.volces.com/api/plan/v3", "https://ark.cn-beijing.volces.com/api/coding/v3":
+		return true
+	default:
+		return false
+	}
+}
+
+// Catalog checked against official documentation on 2026-09-14:
+// Coding Plan (updated 2026-09-08): https://www.volcengine.com/docs/82379/1928261
+// Agent Plan (updated 2026-09-14): https://www.volcengine.com/docs/82379/2366394
+// Console-selected ark-code-latest alias: https://www.volcengine.com/docs/82379/2373738
+// These are candidates, not a per-account entitlement or credential check.
+func arkPresetModels() []string {
+	return []string{
+		"doubao-seed-2.1-turbo",
+		"doubao-seed-evolving",
+		"doubao-seed-2.0-lite",
+		"minimax-m3",
+		"glm-5.3",
+		"glm-latest",
+		"glm-5.3-flash",
+		"deepseek-v4-flash",
+		"deepseek-v4-pro",
+		"kimi-k2.7-code",
+		"kimi-k3",
+		"ark-code-latest",
+	}
 }

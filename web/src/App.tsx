@@ -153,6 +153,8 @@ function Workbench({
   // conversations whose history we've already loaded (or that have a live run),
   // so switching back never clobbers an in-flight stream with stale history.
   const seen = useRef<Set<string>>(new Set());
+  // Empty history is retryable, but distinguish it from history still loading.
+  const [historyLoaded, setHistoryLoaded] = useState<Set<string>>(new Set());
 
   const [cmdOpen, setCmdOpen] = useState(false);
   const [keysOpen, setKeysOpen] = useState(false); // "?" shortcut sheet
@@ -266,9 +268,12 @@ function Workbench({
       setActiveID(id);
       if (seen.current.has(id)) return; // already loaded or has a live stream
       seen.current.add(id);
+      setHistoryLoaded(ids => { const next = new Set(ids); next.delete(id); return next; });
       try {
         const rows = (await api.getMessages(id)) as (Message & { created_at?: number })[];
         hydrateMessages(id, rows.map((r) => ({ ...r, ts: r.ts || r.created_at || Date.now() })).sort((a, b) => a.ts - b.ts));
+        if (rows.length === 0) seen.current.delete(id);
+        setHistoryLoaded(ids => new Set(ids).add(id));
       } catch {
         seen.current.delete(id);
       }
@@ -326,7 +331,7 @@ function Workbench({
     [run, user.email],
   );
 
-  const recovery = useRunRecovery({ conversationID: activeID, messages, status, enabled: !isShared }, onResumed, runRevision);
+  const recovery = useRunRecovery({ conversationID: activeID, messages, status, enabled: !isShared, historyLoaded: historyLoaded.has(activeID) }, onResumed, runRevision);
   const retryPrompt = lastUserPrompt(messages, activeID) || recovery.run?.prompt || "";
 
   const lastMsgRef = useRef("");

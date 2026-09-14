@@ -163,6 +163,9 @@ func retryable(ctx context.Context, err error) bool {
 	if ctx.Err() != nil || IsCallLimit(err) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
+	if _, exhausted := QuotaExhaustion(err); exhausted {
+		return false
+	}
 	var ae *APIError
 	if errors.As(err, &ae) {
 		switch ae.Status {

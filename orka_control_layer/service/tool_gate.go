@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
@@ -171,7 +172,8 @@ func (g *toolGate) unlock(names []string) []*schema.ToolInfo {
 	return found
 }
 
-// search finds hidden tools matching the query. Every term must match first, so
+// search prioritizes explicit registered names in the current scope. Otherwise
+// it finds hidden tools matching the query. Every term must match first, so
 // "csv join" narrows rather than widens; if that finds nothing it falls back to
 // the best partial match.
 //
@@ -180,9 +182,37 @@ func (g *toolGate) unlock(names []string) []*schema.ToolInfo {
 // description never says "image". A miss costs a whole extra model round-trip,
 // which is the entire budget this gate is trying to save.
 func (g *toolGate) search(query string) []*schema.ToolInfo {
-	terms := strings.Fields(strings.ToLower(query))
+	query = strings.ToLower(strings.TrimSpace(query))
+	terms := strings.Fields(query)
 	g.mu.Lock()
 	defer g.mu.Unlock()
+
+	// Underscored names are intentional selectors even in prose. Short names
+	// such as shell/python only select exactly when they are the entire query.
+	// Keep identifier characters together so prefixes cannot select a tool.
+	tokens := make(map[string]bool)
+	for _, token := range strings.FieldsFunc(query, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '_' && r != '-'
+	}) {
+		tokens[token] = true
+	}
+	var explicit []*schema.ToolInfo
+	for _, ti := range g.all {
+		if ti == nil {
+			continue
+		}
+		name := strings.ToLower(ti.Name)
+		if name != "" && query == name {
+			return []*schema.ToolInfo{ti}
+		}
+		if strings.Contains(name, "_") && tokens[name] {
+			explicit = append(explicit, ti)
+		}
+	}
+	if len(explicit) > 0 {
+		sort.Slice(explicit, func(i, j int) bool { return explicit[i].Name < explicit[j].Name })
+		return explicit
+	}
 
 	type scored struct {
 		ti *schema.ToolInfo

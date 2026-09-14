@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/orka-oss/orka_core/reporting"
 	"io"
 	"os"
 	"path"
@@ -111,6 +112,9 @@ func read(root *os.Root, p string) ([]byte, error) {
 func validate(ctx context.Context, root *os.Root, p string, b []byte) error {
 	switch strings.ToLower(path.Ext(p)) {
 	case ".json":
+		if strings.HasSuffix(p, ".report.json") {
+			return reporting.Check(ctx, root.FS(), b)
+		}
 		if !json.Valid(b) {
 			return fmt.Errorf("invalid JSON")
 		}

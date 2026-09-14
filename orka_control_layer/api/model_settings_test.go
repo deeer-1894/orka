@@ -11,6 +11,8 @@ import (
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/config"
 	"github.com/orka-oss/orka_core/messages"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -148,5 +150,69 @@ func TestFollowupsBindsManualSelection(t *testing.T) {
 	a.Followups(context.Background(), c)
 	if c.Response.StatusCode() != 400 || mock.Calls() != 1 {
 		t.Fatal("invalid followup selection called provider")
+	}
+}
+
+type settingsDiscoveryTransport func(*http.Request) (*http.Response, error)
+
+func (f settingsDiscoveryTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestDiscoverModelsMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name, base, body, source string
+		status                   int
+		want                     []string
+	}{
+		{"plan preset", "https://ark.cn-beijing.volces.com/api/plan/v3", "provider-private-body", "preset", 404, []string{"doubao-seed-2.1-turbo", "doubao-seed-evolving", "doubao-seed-2.0-lite", "minimax-m3", "glm-5.3", "glm-latest", "glm-5.3-flash", "deepseek-v4-flash", "deepseek-v4-pro", "kimi-k2.7-code", "kimi-k3", "ark-code-latest"}},
+		{"coding preset", "https://ark.cn-beijing.volces.com/api/coding/v3", "provider-private-body", "preset", 405, []string{"doubao-seed-2.1-turbo", "doubao-seed-evolving", "doubao-seed-2.0-lite", "minimax-m3", "glm-5.3", "glm-latest", "glm-5.3-flash", "deepseek-v4-flash", "deepseek-v4-pro", "kimi-k2.7-code", "kimi-k3", "ark-code-latest"}},
+		{"official remote wins", "https://ark.cn-beijing.volces.com/api/plan/v3", `{"data":[{"id":"z"},{"id":"a"},{"id":"z"}]}`, "remote", 200, []string{"a", "z"}},
+		{"custom remote", "https://custom.test/v1", `{"data":[]}`, "remote", 200, []string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prior := http.DefaultTransport
+			calls := 0
+			http.DefaultTransport = settingsDiscoveryTransport(func(r *http.Request) (*http.Response, error) {
+				calls++
+				if r.URL.String() != tc.base+"/models" || r.Header.Get("Authorization") != "Bearer fake-test-key" {
+					t.Fatalf("unexpected request %s", r.URL)
+				}
+				return &http.Response{StatusCode: tc.status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(tc.body)), Request: r}, nil
+			})
+			t.Cleanup(func() { http.DefaultTransport = prior })
+			a := settingsAPI(t)
+			payload, _ := json.Marshal(map[string]string{"base_url": tc.base, "api_key": "fake-test-key"})
+			c := settingsRequest("alice", string(payload))
+			a.DiscoverModels(context.Background(), c)
+			if c.Response.StatusCode() != 200 {
+				t.Fatal(string(c.Response.Body()))
+			}
+			var response struct {
+				Data struct {
+					Models []string `json:"models"`
+					Source string   `json:"source"`
+					Notice string   `json:"notice"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(c.Response.Body(), &response); err != nil {
+				t.Fatal(err)
+			}
+			got := response.Data
+			if got.Source != tc.source || strings.Join(got.Models, ",") != strings.Join(tc.want, ",") || got.Models == nil || calls != 1 {
+				t.Fatalf("unexpected metadata: %+v calls=%d", got, calls)
+			}
+			if tc.source == "preset" && (!strings.Contains(got.Notice, "列表不代表密钥或套餐权限已验证") || !strings.Contains(got.Notice, "预设")) {
+				t.Fatalf("preset must disclose unverified candidates: %q", got.Notice)
+			}
+			if tc.source == "remote" && got.Notice != "" {
+				t.Fatalf("remote carried fallback notice: %q", got.Notice)
+			}
+			body := string(c.Response.Body())
+			if strings.Contains(body, "fake-test-key") || strings.Contains(body, "provider-private-body") {
+				t.Fatal("response exposed provider data")
+			}
+			if c.Response.Header.Get("Cache-Control") != "no-store" {
+				t.Fatal("missing no-store")
+			}
+		})
 	}
 }

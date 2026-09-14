@@ -88,10 +88,10 @@ func (a *API) DiscoverModels(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "invalid model discovery request")
 		return
 	}
-	models, err := store.Discover(ctx, authEmail(c), req.BaseURL, req.APIKey)
+	result, err := store.DiscoverWithMetadata(ctx, authEmail(c), req.BaseURL, req.APIKey)
 	if err != nil {
 		settingsError(c, err)
 		return
 	}
-	ok(c, map[string]any{"models": models})
+	ok(c, result)
 }

@@ -719,7 +719,7 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	research := newResearchSession(backend,
 		filepath.Join(evidenceDir, "evidence"), budgetFrom(ctx), s.Cfg.Agent.ResearchMaxCalls)
 	if rr := runResumeFrom(ctx); rr != nil && rr.Checkpoint != nil {
-		research.calls = rr.Checkpoint.ResearchCalls
+		research.restoreCheckpoint(ctx, rr.Checkpoint)
 	}
 	ctx = withResearchSession(ctx, research)
 	rc.Ctx = ctx

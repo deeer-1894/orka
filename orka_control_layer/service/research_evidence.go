@@ -18,26 +18,28 @@ import (
 const evidencePreviewChars = 6000
 
 type evidenceRecord struct {
-	ID            string `json:"id"`
-	Tool          string `json:"tool"`
-	URL           string `json:"url,omitempty"`
-	Query         string `json:"query,omitempty"`
-	Title         string `json:"title,omitempty"`
-	RetrievedAt   string `json:"retrieved_at"`
-	Path          string `json:"path,omitempty"`
-	Excerpt       string `json:"excerpt,omitempty"`
-	body          string
-	persistedHash [32]byte // Hash of exact file bytes; valid only when Path is set.
+	ID             string `json:"id"`
+	Tool           string `json:"tool"`
+	URL            string `json:"url,omitempty"`
+	Query          string `json:"query,omitempty"`
+	Title          string `json:"title,omitempty"`
+	RetrievedAt    string `json:"retrieved_at"`
+	Path           string `json:"path,omitempty"`
+	Excerpt        string `json:"excerpt,omitempty"`
+	body           string
+	persistedHash  [32]byte // Hash of exact file bytes; valid only when Path is set.
+	persistedBytes int64
 }
 
 // evidenceStore records source identity and readable tool output together. The
 // index is a durable catalog; search returns small excerpts from full records.
 // It knows neither agent plans nor provider budgets.
 type evidenceStore struct {
-	mu             sync.Mutex
-	backend        filesystem.Backend
-	dir, indexPath string
-	records        []evidenceRecord
+	mu               sync.Mutex
+	backend          filesystem.Backend
+	dir, indexPath   string
+	records          []evidenceRecord
+	recoveryWarnings []string
 }
 
 func newEvidenceStore(backend filesystem.Backend, dir string) *evidenceStore {
@@ -70,21 +72,12 @@ func (s *evidenceStore) capture(ctx context.Context, key, tool string, args map[
 		if err := s.backend.Write(ctx, &filesystem.WriteRequest{FilePath: path, Content: header + body}); err == nil {
 			r.Path = path
 			r.persistedHash = sha256.Sum256([]byte(header + body))
+			r.persistedBytes = int64(len(header + body))
 		}
 	}
 	s.records = append(s.records, r)
 	if r.Path != "" {
-		// Keep the source inventory below ordinary tool previews. Source bodies
-		// belong in their own files/search results, not in every catalog snapshot.
-		catalog := append([]evidenceRecord(nil), s.records...)
-		for i := range catalog {
-			catalog[i].Excerpt = ""
-		}
-		raw, _ := json.Marshal(catalog)
-		path := filepath.Join(s.dir, fmt.Sprintf("catalog-%03d.json", len(s.records)))
-		if err := s.backend.Write(ctx, &filesystem.WriteRequest{FilePath: path, Content: string(raw)}); err == nil {
-			s.indexPath = path
-		}
+		s.writeCatalogLocked(ctx)
 		return fmt.Sprintf("[Evidence %s; retrieved %s; full text: %s]\n%s", r.ID, r.RetrievedAt, r.Path, trunc(body, evidencePreviewChars))
 	}
 	// Do not truncate the only accessible copy if persistence is unavailable.
@@ -97,6 +90,9 @@ func (s *evidenceStore) summary() string {
 	text := fmt.Sprintf("%d successful observations saved; query them with search_evidence.", len(s.records))
 	if s.indexPath != "" {
 		text += " Source catalog: " + s.indexPath
+	}
+	if len(s.recoveryWarnings) > 0 {
+		text += " Evidence recovery: " + strings.Join(s.recoveryWarnings, "; ")
 	}
 	return text
 }
@@ -175,6 +171,14 @@ func (t evidenceSearchTool) Invoke(ctx context.Context, args map[string]any) (st
 	if v, ok := args["limit"].(int); ok && v >= 1 && v <= 10 {
 		n = v
 	}
-	raw, err := json.Marshal(t.s.evidence.search(q, n))
+	records := t.s.evidence.search(q, n)
+	var result any = records
+	if warnings := t.s.evidence.recoveryProblems(); len(warnings) > 0 {
+		result = struct {
+			Records  []evidenceRecord `json:"records"`
+			Warnings []string         `json:"recovery_warnings"`
+		}{records, warnings}
+	}
+	raw, err := json.Marshal(result)
 	return string(raw), err
 }

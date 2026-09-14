@@ -731,6 +731,13 @@ func (s *ChatService) heartbeat(ctx context.Context, meta messages.Meta, raw fun
 // brittle error-string matching; the status body is only inspected for the
 // provider-specific content-moderation signal.
 func friendlyErr(err error) string {
+	if reset, exhausted := llm.QuotaExhaustion(err); exhausted {
+		notice := "模型服务账户额度已用尽，重复重试不会恢复额度。"
+		if !reset.IsZero() {
+			notice += "服务商提示重置时间：" + reset.Format("2006-01-02 15:04:05 -0700") + "。"
+		}
+		return notice + "请在额度恢复后续跑，或选择可用的模型配置。"
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "处理超时了,请重试或简化任务。"
 	}

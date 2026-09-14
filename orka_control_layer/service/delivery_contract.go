@@ -91,7 +91,7 @@ type deliveryCheckTool struct{}
 
 func (deliveryCheckTool) Name() string { return "check_delivery" }
 func (deliveryCheckTool) Description() string {
-	return "Check every required output declared through update_plan.outputs. Returns structured failures and hashes from actual files: nonempty files, JSON/CSV/SVG structure, HTML local resources and ZIP integrity. Run after generation, repair failures before finishing. ok reports file checks only; plan_complete and unfinished_plan report outstanding checklist obligations, which also need evidence and explicit updates under their original titles. This does not verify business formulas, citation support, manifest semantics or completeness of your declared requirements; run independent task-specific tests too."
+	return "Check every required output declared through update_plan.outputs. Returns structured failures and hashes from actual files: nonempty files, JSON/CSV/SVG structure, HTML local resources, ZIP integrity, and fresh numeric bindings for declared *.report.json specs. Declare the report spec and its Markdown output; after CSV changes rerun render_report. Run after generation, repair failures before finishing. ok reports file checks only; plan_complete and unfinished_plan report outstanding checklist obligations, which also need evidence and explicit updates under their original titles. This does not verify business formulas, citation support, manifest semantics or completeness of your declared requirements; run independent task-specific tests too."
 }
 func (deliveryCheckTool) Schema() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
@@ -111,7 +111,7 @@ func (deliveryCheckTool) Invoke(ctx context.Context, _ map[string]any) (string, 
 		PlanComplete   bool     `json:"plan_complete"`
 		UnfinishedPlan []string `json:"unfinished_plan"`
 		Scope          string   `json:"scope"`
-	}{report, len(unfinished) == 0, unfinished, "ok covers file structure only, not completion of the original task or business-rule verification. Verify outstanding work and update its original plan titles before finishing."})
+	}{report, len(unfinished) == 0, unfinished, "ok covers file structure and declared numeric bindings only, not completion of the original task or business-rule verification. Verify outstanding work and update its original plan titles before finishing."})
 	return string(b), err
 }
 

@@ -71,7 +71,7 @@ async function mockApp(t, options = {}) {
       case '/model-settings/discover':
         return options.discoveryFails
           ? route.fulfill({ status: 502, json: { code: 502, msg: 'mock discovery unavailable' } })
-          : json({ models: discovered });
+          : json({ models: discovered, ...options.discoveryMetadata });
       case '/model-settings/save':
         // Echo only public fields, like the backend; assertions inspect the
         // original request so an accidental legacy field cannot be concealed.
@@ -286,5 +286,24 @@ test('history without a model_profile does not request followups or reuse the pr
     assert.equal(await page.getByRole('button').filter({ hasText: 'Follow up on:' }).count(), 0, 'previous suggestions are cleared');
     assert.equal(requests.filter(r => r.path === '/chat/run').length, 0, 'history viewing does not start a run');
   }
+  app.check();
+});
+
+
+test('provider presets populate the endpoint and label fallback models without claiming key validation', async t => {
+  const notice = '此地址未提供模型列表接口，已提供厂商预设候选。尚未验证密钥和模型调用权限。';
+  const app = await mockApp(t, { discovered: ['doubao-seed-2.0-pro'], discoveryMetadata: { source: 'preset', notice } });
+  const dialog = await app.openSettings();
+  await dialog.getByLabel('厂商', { exact: true }).selectOption('volcengine-plan');
+  assert.equal(await dialog.getByLabel('Base URL', { exact: true }).inputValue(), 'https://ark.cn-beijing.volces.com/api/plan/v3');
+  assert.equal(await dialog.getByLabel(MODEL_LIST_LABEL, { exact: true }).inputValue(), '');
+  await dialog.getByLabel('API Key', { exact: true }).fill('test-only-secret');
+  await dialog.getByRole('button', { name: '获取模型列表', exact: true }).click();
+  await dialog.getByRole('status').filter({ hasText: notice }).waitFor();
+  assert.equal(await dialog.getByLabel(MODEL_LIST_LABEL, { exact: true }).inputValue(), 'doubao-seed-2.0-pro');
+  const saved = await saveSettings(app.page, dialog);
+  assert.equal(saved.provider, 'volcengine-plan');
+  assert.deepEqual(saved.models, ['doubao-seed-2.0-pro']);
+  assert.equal(saved.api_key, 'test-only-secret');
   app.check();
 });

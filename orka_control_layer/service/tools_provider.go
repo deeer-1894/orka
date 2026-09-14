@@ -418,7 +418,7 @@ func groupForName(name string) string {
 		return "util"
 	case name == "currency" || name == "timezone" || name == "qrcode" ||
 		name == "csv_query" || name == "csv_stats" || name == "csv_to_json" ||
-		name == "doc_export" || name == "chart" ||
+		name == "doc_export" || name == "render_report" || name == "chart" ||
 		name == "xlsx_to_csv" || name == "csv_to_xlsx" || name == "pdf_extract" ||
 		name == "doc_read" || name == "sql_query" || name == "csv_join" || name == "slides":
 		return "office"

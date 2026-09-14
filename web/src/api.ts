@@ -308,5 +308,5 @@ export const modelSettings = {
   get: () => post<ModelSettingsData>("/model-settings/get", {}),
   save: (data: ModelSettingsInput) => post<ModelSettingsData>("/model-settings/save", data),
   discover: (data: { provider: string; base_url: string; api_key?: string }) =>
-    post<{ models: string[] }>("/model-settings/discover", data, true),
+    post<{ models: string[]; source?: "remote" | "preset"; notice?: string }>("/model-settings/discover", data, true),
 };

@@ -7,6 +7,8 @@ import { Button } from "./ui/button";
 const PROVIDERS = [
   { id: "custom", label: "自定义 / OpenAI 兼容", url: "" },
   { id: "openai", label: "OpenAI", url: "https://api.openai.com/v1" },
+  { id: "volcengine-plan", label: "火山方舟 Agent Plan", url: "https://ark.cn-beijing.volces.com/api/plan/v3" },
+  { id: "volcengine-coding", label: "火山方舟 Coding Plan", url: "https://ark.cn-beijing.volces.com/api/coding/v3" },
   { id: "deepseek", label: "DeepSeek", url: "https://api.deepseek.com/v1" },
   { id: "openrouter", label: "OpenRouter", url: "https://openrouter.ai/api/v1" },
   { id: "ollama", label: "Ollama（本地）", url: "http://localhost:11434/v1" },
@@ -44,7 +46,9 @@ export function ModelSettings({ onClose, onSaved }: { onClose: () => void; onSav
     try {
       const r = await modelSettings.discover({ provider: config.provider, base_url: config.base_url.trim(), ...(key ? { api_key: key } : {}) });
       setModelText([...new Set([...modelText.split(/[\n,]/).map(m => m.trim()).filter(Boolean), ...r.models])].join("\n"));
-      setNotice(r.models.length ? `获取到 ${r.models.length} 个模型，可在下方选择或手动填写。` : "该服务未返回模型，可以直接手动填写模型名称。");
+      setNotice(r.notice || (r.source === "preset"
+        ? "已提供厂商预设候选，尚未验证密钥和模型调用权限。可手动调整后保存。"
+        : r.models.length ? `获取到 ${r.models.length} 个模型，可在下方选择或手动填写。` : "该服务未返回模型，可以直接手动填写模型名称。"));
     } catch (e) { setError(`获取模型失败：${(e as Error).message}。可以手动填写模型名称后保存。`); }
     finally { setBusy(null); }
   };

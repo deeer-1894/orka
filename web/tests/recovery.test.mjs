@@ -192,3 +192,44 @@ test('history hydration does not collapse repeated human requests or drop an una
   const restored = hydrateConversation({ status: 'idle', messages: [] }, [event()], 'c', false);
   assert.equal(restored.status, 'error');
 });
+
+
+test('confirmed empty history attaches to latest running once without resume', async () => {
+  const attached = [], resumed = [];
+  const c = new RecoveryController({ list: async () => [record('new', { status: 'running' })], attach: cid => attached.push(cid), resume: async id => resumed.push(id) });
+  c.setContext(context({ messages: [], status: 'idle', historyLoaded: true }));
+  await c.refresh(); await c.refresh(); await c.resume();
+  assert.deepEqual(attached, ['c']); assert.deepEqual(resumed, []);
+  assert.equal(c.snapshot().recoverable, false);
+});
+test('blank fallback requires loaded history and protects identities, statuses and ambiguous latest', () => {
+  const blank = context({ messages: [], status: 'idle', historyLoaded: true });
+  const running = record('new', { status: 'running' });
+  assert.equal(currentRun(blank, [running])?.run_id, 'new');
+  for (const c of [
+    { ...blank, historyLoaded: false }, { ...blank, historyLoaded: undefined },
+    { ...blank, status: 'streaming' }, { ...blank, status: 'paused' },
+    { ...blank, enabled: false }, { ...blank, conversationID: '' },
+    { ...blank, messages: [{ ...userMessage('saved-user', 1), meta: { conversation_id: 'c' } }] },
+    { ...blank, messages: [{ ...userMessage('local-1', 1), meta: { conversation_id: 'c' } }] },
+  ]) assert.equal(currentRun(c, [running]), undefined);
+  assert.equal(currentRun(blank, [{ ...running, conversation_id: 'other' }]), undefined);
+  assert.equal(currentRun(blank, [running, { ...running, run_id: 'ambiguous' }]), undefined);
+  assert.equal(currentRun(blank, [running, record('later', { created_at: 30, status: 'done' })]), undefined);
+  for (const status of ['done', 'failed', 'partial', 'interrupted', 'paused']) assert.equal(currentRun(blank, [{ ...running, status }]), undefined);
+});
+test('empty-history query is invalidated by a local send or conversation switch', async () => {
+  for (const next of [context({ conversationID: 'other', messages: [], status: 'idle', historyLoaded: true }), context({ status: 'streaming', messages: [userMessage('local-1', 1)], historyLoaded: true })]) {
+    const q = deferred(), attached = [];
+    const c = new RecoveryController({ list: () => q.promise, attach: cid => attached.push(cid) });
+    c.setContext(context({ messages: [], status: 'idle', historyLoaded: true }));
+    const pending = c.refresh(); c.setContext(next);
+    q.resolve([record('new', { status: 'running' })]); await pending;
+    assert.deepEqual(attached, []);
+  }
+});
+test('late empty hydration cannot clear attached messages or terminal state', () => {
+  const { hydrateConversation } = createRequire(import.meta.url)(join(process.env.ORKA_TEST_BUILD, 'lib/runRecovery.js'));
+  const messages = [userMessage('server-user', 1), event('new', 'done')];
+  assert.deepEqual(hydrateConversation({ messages, status: 'done' }, [], 'c', true), { messages, status: 'done' });
+});

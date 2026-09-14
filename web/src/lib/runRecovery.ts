@@ -1,7 +1,7 @@
 import type { Message, RunRecord } from '../types';
 
 export type ChatStatus = 'idle' | 'streaming' | 'paused' | 'error' | 'done' | 'partial';
-export interface RecoveryContext { conversationID: string; messages: Message[]; status: ChatStatus; enabled?: boolean }
+export interface RecoveryContext { conversationID: string; messages: Message[]; status: ChatStatus; enabled?: boolean; historyLoaded?: boolean }
 export interface RecoverySnapshot { key: string; run?: RunRecord; recoverable: boolean; checking: boolean; busy: boolean; error: string }
 export interface RecoveryDependencies {
   list: (cid: string) => Promise<RunRecord[]>;
@@ -25,17 +25,24 @@ function identity(c: RecoveryContext) {
 export function recoveryKey(c: RecoveryContext): string {
   const id = identity(c);
   const user = [...c.messages].reverse().find(m => m.meta?.conversation_id === c.conversationID && m.type === 'chat' && m.role === 'user');
-  return JSON.stringify([c.conversationID, c.enabled !== false, c.status, id?.run, id?.trace, user?.id]);
+  return JSON.stringify([c.conversationID, c.enabled !== false, c.status, id?.run, id?.trace, user?.id, c.historyLoaded === true]);
 }
 
 export function currentRun(c: RecoveryContext, runs: RunRecord[]): RunRecord | undefined {
   const id = identity(c);
-  if (!id || !c.conversationID || c.enabled === false) return undefined;
+  if (!c.conversationID || c.enabled === false) return undefined;
   const own = runs.filter(r => r.conversation_id === c.conversationID);
   const newest = Math.max(...own.map(r => r.created_at));
   const latest = own.filter(r => r.created_at === newest);
   if (latest.length !== 1) return undefined; // ambiguous ordering fails closed
   const r = latest[0];
+  if (!id) {
+    // An external run can precede its first persisted message. Only a completed,
+    // completely empty history permits read-only attachment; an unmarked user
+    // prompt or a local stream must never borrow another turn's run identity.
+    return c.historyLoaded === true && c.messages.length === 0 &&
+      (c.status === 'idle' || c.status === 'error') && r.status === 'running' ? r : undefined;
+  }
   return (id.run ? r.run_id === id.run : r.trace_id === id.trace) ? r : undefined;
 }
 
