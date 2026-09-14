@@ -264,3 +264,25 @@ func TestEvidenceKeepsResolvedSourceMetadata(t *testing.T) {
 		t.Fatalf("source metadata=%s", raw)
 	}
 }
+
+func TestReadOnlyHTTPRequestUsesResearchBudgetAndEvidenceCache(t *testing.T) {
+	s := newResearchSession(newWorkspaceBackend(t.TempDir(), "reader"), ".orka_offload/http", nil, 1)
+	ctx := withResearchSession(context.Background(), s)
+	calls := 0
+	tool := EinoTool(retrievalFixture{"http_request", func(context.Context, map[string]any) (string, error) {
+		calls++
+		return "URL: https://example.test/page\nTitle: Cached HTTP\n\nEvidence body", nil
+	}})
+	first, err := tool.InvokableRun(ctx, `{"method":"GET","url":"https://example.test/page"}`)
+	if err != nil || !strings.Contains(first, "Evidence body") {
+		t.Fatalf("first=%q err=%v", first, err)
+	}
+	second, err := tool.InvokableRun(ctx, `{ "url": "https://example.test/page", "method": "get" }`)
+	if err != nil || calls != 1 || !strings.Contains(second, "cached") {
+		t.Fatalf("calls=%d second=%q err=%v", calls, second, err)
+	}
+	third, err := tool.InvokableRun(ctx, `{"method":"GET","url":"https://example.test/other"}`)
+	if err != nil || !strings.Contains(third, "retrieval budget") {
+		t.Fatalf("uncounted HTTP read: %q err=%v", third, err)
+	}
+}

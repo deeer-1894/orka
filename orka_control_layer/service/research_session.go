@@ -39,10 +39,18 @@ func newResearchSession(backend filesystem.Backend, dir string, budget *runBudge
 	return &researchSession{pending: make(map[string]*researchCall), cache: make(map[string]string), maxCalls: maxCalls, budget: budget, evidence: newEvidenceStore(backend, dir)}
 }
 
-func isResearchTool(name string) bool {
+func isResearchTool(name string, args map[string]any) bool {
 	switch name {
 	case "web_search", "fetch_url", "discover_docs", "read_section":
 		return true
+	case "http_request":
+		method, _ := args["method"].(string)
+		if method == "" {
+			method = "GET"
+		}
+		method = strings.ToUpper(strings.TrimSpace(method))
+		_, hasURL := args["url"].(string)
+		return hasURL && (method == "GET" || method == "HEAD")
 	}
 	return false
 }
@@ -53,6 +61,13 @@ func researchKey(name string, args map[string]any) string {
 	canonical := make(map[string]any, len(args))
 	for k, v := range args {
 		canonical[k] = v
+	}
+	if name == "http_request" {
+		if method, ok := canonical["method"].(string); ok {
+			canonical["method"] = strings.ToUpper(strings.TrimSpace(method))
+		} else {
+			canonical["method"] = "GET"
+		}
 	}
 	if raw, ok := canonical["url"].(string); ok {
 		raw = strings.TrimSpace(raw)
@@ -76,7 +91,7 @@ func (s *researchSession) invoke(ctx context.Context, name string, args map[stri
 	if s == nil {
 		return call()
 	}
-	if !isResearchTool(name) {
+	if !isResearchTool(name, args) {
 		out, err := call()
 		if name == "file_read" && err == nil && usefulResearchResult(out) {
 			out = s.evidence.reduceRepeatedRead(ctx, toolargs.Path(args), out)

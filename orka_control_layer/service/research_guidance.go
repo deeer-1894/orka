@@ -74,7 +74,7 @@ func (g *researchGuidance) BeforeModelRewriteState(ctx context.Context, state *a
 		filter := func(in []*schema.ToolInfo) []*schema.ToolInfo {
 			out := make([]*schema.ToolInfo, 0, len(in))
 			for _, info := range in {
-				if info != nil && !isResearchTool(info.Name) {
+				if info != nil && !isResearchTool(info.Name, nil) {
 					out = append(out, info)
 				}
 			}
