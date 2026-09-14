@@ -20,6 +20,8 @@ services:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     image: orka-tools
     container_name: orka-tools
+    # Reap orphaned command descendants after timeout/process-group cleanup.
+    init: true
     ports:
       - "127.0.0.1:8090:8090"
     volumes:
