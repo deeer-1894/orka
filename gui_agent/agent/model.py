@@ -169,10 +169,9 @@ class Planner:
 
     async def _som_predict(self, state: dict[str, Any], page=None) -> dict[str, Any]:
         try:
-            from openai import OpenAI
+            from openai import AsyncOpenAI
         except Exception:
             return {"action": "error", "message": "openai sdk unavailable for planner"}
-        client = OpenAI(base_url=self.base_url, api_key=self.api_key)
         sys = (
             "You are a GUI agent using Set-of-Marks. Interactive page elements are "
             "numbered. Output ONE JSON action object with key "
@@ -181,6 +180,11 @@ class Planner:
             "for type). Check 'Current page' against the instruction: as soon as "
             "the goal is satisfied, output {\"action\":\"done\",\"result\":\"<short summary "
             "with final url/title>\"}. Never repeat an action that already succeeded. "
+            "Use these exact action fields: navigate requires url (a full http(s) URL); "
+            "click requires mark (integer); type requires mark and text (string); "
+            "scroll uses direction (up/down/left/right); read has no extra fields; "
+            "done requires result; call_user requires reason; error requires message. "
+            "For example: {\"action\":\"navigate\",\"url\":\"https://example.com/\"}. "
             "Output ONLY the JSON object, no explanation."
         )
         # Current page context lets the model recognise a click already landed.
@@ -209,13 +213,25 @@ class Planner:
                 {"type": "text", "text": text},
                 {"type": "image_url", "image_url": {"url": "data:image/png;base64," + state["screenshot"]}},
             ]
-        resp = client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "system", "content": sys}, {"role": "user", "content": content}],
-            # Reasoning models (e.g. DeepSeek) may spend most of the budget on
-            # hidden reasoning before emitting content — keep this generous.
-            max_tokens=1500,
-        )
-        msg = resp.choices[0].message
-        text_out = msg.content or getattr(msg, "reasoning_content", None) or ""
-        return parse_action(text_out)
+        options: dict[str, Any] = {"max_tokens": 1500}
+        # Exact documented capability, not a model-family guess. Keep actions
+        # small so one visual invocation can finish inside its caller's budget.
+        if self.model == "glm-5.3-flash":
+            options.update(max_tokens=4096, reasoning_effort="low")
+        # A synchronous SDK request blocks the WebSocket disconnect watcher.
+        # Async I/O keeps cancellation live, closes the request on disconnect,
+        # and avoids hidden SDK retries exceeding the tool's 90-second budget.
+        async with AsyncOpenAI(
+            base_url=self.base_url, api_key=self.api_key, timeout=45, max_retries=0,
+        ) as client:
+            resp = await client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "system", "content": sys}, {"role": "user", "content": content}],
+                **options,
+            )
+        choice = resp.choices[0]
+        if choice.finish_reason != "stop":
+            return {"action": "error", "message": "planner did not finish its action response"}
+        # Hidden reasoning is not an instruction to execute, even when it
+        # happens to contain a parseable action example.
+        return parse_action(choice.message.content or "")

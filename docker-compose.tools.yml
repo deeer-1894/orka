@@ -67,8 +67,10 @@ services:
       - "127.0.0.1:6080:6080" # noVNC live browser view
     environment:
       - GUI_PORT=8100
-      - GUI_PLANNER=llm # text Set-of-Marks: any chat model can click/type
-      - VLM_ENABLE=0
+      - GUI_PLANNER=${GUI_PLANNER:-llm} # vlm sends screenshots; llm sends text marks
+      - VLM_ENABLE=${VLM_ENABLE:-0}
+      - VLM_MODEL=${VLM_MODEL:-gpt-4o}
+      - MACRO_ENABLE=${MACRO_ENABLE:-1}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:?set OPENAI_BASE_URL}
       - OPENAI_API_KEY=${OPENAI_API_KEY:?set OPENAI_API_KEY}
       - MODEL=${MODEL:-mimo-v2.5-pro}
