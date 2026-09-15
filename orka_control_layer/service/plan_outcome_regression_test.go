@@ -85,6 +85,25 @@ func TestRecordedSLAPlanUpdatesExposeOmittedObligations(t *testing.T) {
 	}
 }
 
+func TestPlanStepIDKeepsRenamedStepAsOneObligation(t *testing.T) {
+	tracker := &planTracker{}
+	ctx := withPlanTracker(context.Background(), tracker)
+	if _, err := (planTool{}).Invoke(ctx, map[string]any{
+		"steps": []any{map[string]any{"id": "research", "title": "收集资料", "status": "active"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (planTool{}).Invoke(ctx, map[string]any{
+		"steps": []any{map[string]any{"id": "research", "title": "核实资料并整理证据", "status": "done"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	steps := tracker.snapshot()
+	if len(steps) != 1 || steps[0].Title != "核实资料并整理证据" || steps[0].Status != "done" {
+		t.Fatalf("renamed step was duplicated instead of reconciled: %+v", steps)
+	}
+}
+
 func TestDeliveryCheckExposesUnfinishedPlanWithoutFailingValidFiles(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "report.md"), []byte("A generated report."), 0600); err != nil {

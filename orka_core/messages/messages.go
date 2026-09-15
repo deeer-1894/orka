@@ -149,6 +149,7 @@ func Confirm(c ConfirmRequest, meta Meta) Message {
 // "pending" | "active" | "done" so the UI can show real per-step progress
 // instead of an all-or-nothing list.
 type PlanStep struct {
+	ID     string `json:"id,omitempty"`
 	Title  string `json:"title"`
 	Status string `json:"status"`
 }

@@ -257,21 +257,29 @@ func (p *planTracker) record(steps []messages.PlanStep) {
 		return
 	}
 	p.mu.Lock()
-	// Omission is not completion. Keep stable titles when reporting progress;
-	// a renamed step is an addition, not permission to erase an old obligation.
+	// Omission is not completion. Explicit IDs let the model rename a step
+	// without creating a second obligation; legacy title-only updates retain
+	// their exact-title behavior for backward compatibility.
 	index := make(map[string]int, len(p.steps))
 	for i, step := range p.steps {
-		index[step.Title] = i
+		index[planStepKey(step)] = i
 	}
 	for _, step := range steps {
-		if i, ok := index[step.Title]; ok {
+		if i, ok := index[planStepKey(step)]; ok {
 			p.steps[i] = step
 		} else {
-			index[step.Title] = len(p.steps)
+			index[planStepKey(step)] = len(p.steps)
 			p.steps = append(p.steps, step)
 		}
 	}
 	p.mu.Unlock()
+}
+
+func planStepKey(step messages.PlanStep) string {
+	if step.ID != "" {
+		return "id:" + step.ID
+	}
+	return "title:" + step.Title
 }
 
 func (p *planTracker) snapshot() []messages.PlanStep {
@@ -296,7 +304,7 @@ func (p *planTracker) same(steps []messages.PlanStep) bool {
 		return false
 	}
 	for i := range steps {
-		if steps[i].Title != p.steps[i].Title || steps[i].Status != p.steps[i].Status {
+		if planStepKey(steps[i]) != planStepKey(p.steps[i]) || steps[i].Title != p.steps[i].Title || steps[i].Status != p.steps[i].Status {
 			return false
 		}
 	}

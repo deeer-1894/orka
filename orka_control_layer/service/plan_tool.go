@@ -22,7 +22,7 @@ const planToolName = "update_plan"
 
 func (planTool) Name() string { return planToolName }
 func (planTool) Description() string {
-	return "Maintain the task checklist. For multi-step work declare all pending steps and all required output file paths up front. Keep step titles stable and update actual progress with pending/active/done; omitted steps remain outstanding. Renaming or splitting a step adds new steps and does not close the original. Read the returned canonical steps, unfinished and omitted_unfinished fields. After verifying the original work, explicitly update its original title; never mark it done merely to clear the checklist. Output requirements are additive and cannot be removed by rewriting the plan. Only mark a step done after its work and relevant checks succeed. For file deliveries call check_delivery and task-specific tests before finishing. Include plan updates with actual work when possible; do not repeat unchanged plans. Research and unrelated computation can progress independently: generate working artifacts early and reserve time and tokens for verification, report, README and packaging."
+	return "Maintain the task checklist. For multi-step work declare all pending steps and all required output file paths up front. Give every multi-step item a short stable id and keep that id unchanged while updating its title or status. Update actual progress with pending/active/done; omitted steps remain outstanding. For legacy title-only items, keep the title stable; renaming without an id is treated as a new obligation. Read the returned canonical steps, unfinished and omitted_unfinished fields. After verifying the original work, explicitly update its original title; never mark it done merely to clear the checklist. Output requirements are additive and cannot be removed by rewriting the plan. Only mark a step done after its work and relevant checks succeed. For file deliveries call check_delivery and task-specific tests before finishing. Include plan updates with actual work when possible; do not repeat unchanged plans. Research and unrelated computation can progress independently: generate working artifacts early and reserve time and tokens for verification, report, README and packaging."
 
 }
 func (planTool) Schema() map[string]any {
@@ -37,6 +37,7 @@ func (planTool) Schema() map[string]any {
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
+						"id":     map[string]any{"type": "string", "description": "stable identifier; keep unchanged when renaming this step"},
 						"title":  map[string]any{"type": "string", "description": "short imperative step description"},
 						"status": map[string]any{"type": "string", "enum": []string{"pending", "active", "done"}, "description": "pending | active | done"},
 					},
@@ -81,15 +82,15 @@ func (planTool) Invoke(ctx context.Context, args map[string]any) (string, error)
 			emit(messages.Plan(plan, agent.MetaFrom(ctx)))
 		}
 	}
-	submittedTitles := make(map[string]bool, len(submitted))
+	submittedKeys := make(map[string]bool, len(submitted))
 	for _, step := range submitted {
-		submittedTitles[step.Title] = true
+		submittedKeys[planStepKey(step)] = true
 	}
 	unfinished, omitted := []string{}, []string{}
 	for _, step := range plan.Steps {
 		if step.Status != "done" {
 			unfinished = append(unfinished, step.Title)
-			if !submittedTitles[step.Title] {
+			if !submittedKeys[planStepKey(step)] {
 				omitted = append(omitted, step.Title)
 			}
 		}
@@ -134,7 +135,9 @@ func planFromArgs(args map[string]any) messages.PlanUpdate {
 		default:
 			status = "pending"
 		}
-		p.Steps = append(p.Steps, messages.PlanStep{Title: title, Status: status})
+		id, _ := m["id"].(string)
+		id = strings.TrimSpace(id)
+		p.Steps = append(p.Steps, messages.PlanStep{ID: id, Title: title, Status: status})
 	}
 	return p
 }
