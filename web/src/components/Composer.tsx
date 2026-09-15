@@ -537,11 +537,11 @@ function ComposerForm({
             placeholder="给 Orka 发消息…"
             className="block max-h-[200px] flex-1 resize-none bg-transparent px-1 py-2 text-[15px] outline-none placeholder:text-faint"
           />
-          <div className="flex shrink-0 items-center gap-1 rounded-full bg-surface2/60 p-0.5">
+          <div className="flex shrink-0 items-center overflow-hidden rounded-full border border-border bg-surface2/60">
             <button
               onClick={send}
               disabled={sending || blocked || (!text.trim() && attachments.length === 0) || uploading > 0}
-              className="grid h-10 w-10 place-items-center rounded-full bg-accent text-white hover:brightness-105 disabled:opacity-30 transition"
+              className="grid h-10 w-10 place-items-center bg-accent text-white hover:brightness-105 disabled:opacity-30 transition"
               title={busy ? "加入当前任务" : "发送"}
               aria-label={busy ? "加入当前任务" : "发送"}
             >
@@ -552,7 +552,7 @@ function ComposerForm({
             {busy && (
               <button
                 onClick={onKill}
-                className="grid h-10 w-10 place-items-center rounded-full bg-ink text-bg hover:opacity-80 transition"
+                className="grid h-10 w-10 place-items-center border-l border-bg/20 bg-ink text-bg hover:opacity-80 transition"
                 title="停止"
                 aria-label="停止"
               >

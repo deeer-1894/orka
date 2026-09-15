@@ -147,8 +147,20 @@ func (s *ChatService) withSelectedModel(ctx context.Context, version string) con
 	m.connection.Model = name
 	m.connection.Policy = m.policies[name]
 	v := m.verified[name]
-	m.connection.Capabilities = modelprofile.Capabilities{Text: v.Text.Verified, Vision: v.Vision.Verified, Tools: v.Tools.Verified}
+	m.connection.Capabilities = modelprofile.Capabilities{Text: v.Text.Verified, Vision: v.Vision.Verified || modelDeclaresVision(name), Tools: v.Tools.Verified}
 	return modelprofile.WithContext(context.WithValue(ctx, modelSnapshotKey{}, m), m.connection)
+}
+
+// modelDeclaresVision contains only explicit, stable provider model metadata.
+// It prevents a known multimodal model from being rejected by GUI before its
+// optional challenge probe has been persisted; unknown models remain fail-closed.
+func modelDeclaresVision(model string) bool {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "glm-5.3-flash":
+		return true
+	default:
+		return false
+	}
 }
 
 // Provider failures may echo the Authorization header. Redact before retries,
