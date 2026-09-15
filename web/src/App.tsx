@@ -334,6 +334,9 @@ function Workbench({
 
 
   const lastMsgRef = useRef("");
+  type QueuedSend = { message: string; fileIDs: string[]; budget: RunBudgetLimits; conversationID: string };
+  const queuedSends = useRef(new Map<string, QueuedSend[]>());
+  const [queuedRevision, setQueuedRevision] = useState(0);
   const onSend = useCallback(
     async (msg: string, fileIDs: string[] = [], budget?: RunBudgetLimits, conversationID?: string) => {
       // Capture the request before any asynchronous conversation creation. The
@@ -342,7 +345,14 @@ function Workbench({
       validateBudget(sendBudget);
       const request = { message: msg, userEmail: user.email, enabledTools: [...toolGroups], selectedVersion: version, activeSkill: activeSkill ?? "", fileIDs: [...fileIDs], confirmRisky, budget: sendBudget };
       const id = conversationID || activeID || await ensureConversation();
-      if (recovery.isBusy(id) || runActions.actions.isBusy(id)) throw new Error("任务操作正在进行，请稍候");
+      if (statusOf(id) === "streaming" || recovery.isBusy(id) || runActions.actions.isBusy(id)) {
+        const queue = queuedSends.current.get(id) || [];
+        queue.push({ message: msg, fileIDs: [...fileIDs], budget: sendBudget, conversationID: id });
+        queuedSends.current.set(id, queue);
+        setQueuedRevision((n) => n + 1);
+        toast("已加入当前任务，完成后自动继续", "success");
+        return;
+      }
       lastMsgRef.current = msg;
       seen.current.add(id);
       // Await only server acceptance. The task keeps streaming independently.
@@ -351,8 +361,25 @@ function Workbench({
       });
       refreshTasks();
     },
-    [ensureConversation, run, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill, confirmRisky, recovery.isBusy, activeID, conversationDraft.budget],
+    [ensureConversation, run, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill, confirmRisky, recovery.isBusy, runActions.actions, activeID, conversationDraft.budget, statusOf],
   );
+
+  // Drain messages added while a task was running. They become ordinary turns
+  // only after the active execution releases its conversation lease.
+  useEffect(() => {
+    if (!queuedRevision) return;
+    for (const [cid, queue] of queuedSends.current) {
+      if (!queue.length || statusOf(cid) === "streaming" || runActions.actions.isBusy(cid)) continue;
+      const next = queue.shift()!;
+      if (!queue.length) queuedSends.current.delete(cid);
+      void run({
+        message: next.message, conversationID: cid, userEmail: user.email,
+        enabledTools: [...toolGroups], selectedVersion: version, activeSkill: activeSkill ?? "",
+        fileIDs: next.fileIDs, confirmRisky, budget: next.budget,
+        onRejected: (error) => toast("追加消息发送失败：" + error.message, "error"),
+      });
+    }
+  }, [queuedRevision, runningIds, statusOf, runActions.actions, run, user.email, toolGroups, version, activeSkill, confirmRisky]);
 
   // Re-send the last user message after a failure (network drop, sandbox down…).
   const onRetry = useCallback(() => {
@@ -561,7 +588,7 @@ function Workbench({
                 </div>
               </div>
             ) : (
-              <Composer draftState={conversationDraft} sessionRecovery={sessionRecovery} conversationID={activeID} ensureConversation={ensureConversation} blocked={recovery.run?.status === "running" || recovery.busy || runActions.actions.isBusy(activeID) || connectionOf(activeID) === "stopping"} status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
+              <Composer draftState={conversationDraft} sessionRecovery={sessionRecovery} conversationID={activeID} ensureConversation={ensureConversation} blocked={recovery.busy || runActions.actions.isBusy(activeID) || connectionOf(activeID) === "stopping"} status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
             )}
           </div>
         </div>
