@@ -9,11 +9,19 @@ import (
 // newAgentModel applies one policy to primary, delegated, routed and backup
 // agents. Summary generation has its own limits and stays independent.
 func newAgentModel(client llm.Client, modelName, agentName string) *llm.EinoModel {
-	return llm.NewEinoModel(client, modelName).ForAgent(agentName).WithCallLimits(llm.CallLimits{
+	limits := llm.CallLimits{
 		FirstMaxTokens: 4096, MaxTokens: 8192, Timeout: 180 * time.Second,
 		OnResponseRetry: emitStreamReset,
 		ReasoningEffort: executionReasoningEffort,
-	})
+	}
+	// GLM-5.3 spent the entire 4k first-call allowance on reasoning in a
+	// measured project run. Leave room for the first executable tool action.
+	if modelName == "glm-5.3" {
+		limits.FirstMaxTokens = 16384
+		limits.MaxTokens = 16384
+		limits.Timeout = 5 * time.Minute
+	}
+	return llm.NewEinoModel(client, modelName).ForAgent(agentName).WithCallLimits(limits)
 }
 
 // executionReasoningEffort is deliberately an exact capability allow-list.

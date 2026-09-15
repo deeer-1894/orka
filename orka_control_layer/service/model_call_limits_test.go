@@ -156,3 +156,30 @@ func TestExecutionReasoningPolicyIsolatedAcrossConcurrentOverrides(t *testing.T)
 		t.Fatal("model override leaked to base instance")
 	}
 }
+
+// Replay a reasoning-heavy first action: a valid tool call follows 6k tokens
+// of thinking. The old 4k first-call cap repeatedly stopped before any work.
+func TestGLMReasoningCanReachFirstToolAction(t *testing.T) {
+	calls := 0
+	client := &gateScriptClient{respond: func(n int, req llm.Request) llm.Response {
+		for _, message := range req.Messages {
+			if message.Role == llm.RoleTool {
+				return llm.Response{Content: "done", FinishReason: "stop"}
+			}
+		}
+		if req.MaxTokens <= 6000 {
+			return llm.Response{Reasoning: "planning the implementation", FinishReason: "length"}
+		}
+		return gateCall("work", "echo", `{"text":"execute first action"}`)
+	}}
+	ag, err := BuildEinoAgent(context.Background(), client, "glm-5.3", "sys", []agent.BaseTool{echoTool{calls: &calls}}, 4, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RunEinoOnce(context.Background(), ag, "implement a complex project"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("executed actions = %d, want one", calls)
+	}
+}
