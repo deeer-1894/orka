@@ -17,6 +17,8 @@ from typing import Any
 
 from playwright.async_api import Browser, Page, async_playwright
 
+from operators.privacy import SENSITIVE_ELEMENT
+
 # human key names (UI-TARS hotkey style: "ctrl c") -> Playwright key names
 _KEYMAP = {
     "ctrl": "Control", "control": "Control", "shift": "Shift", "alt": "Alt",
@@ -138,6 +140,20 @@ class RemoteBrowserOperator:
         if links:
             out += "\nTOP LINKS: " + " | ".join(links)
         return out
+
+    async def input_is_sensitive(self, action: dict[str, Any]) -> bool:
+        try:
+            handle = action.get("_handle")
+            if handle is not None:
+                return bool(await handle.evaluate(SENSITIVE_ELEMENT))
+            selector = action.get("selector") or action.get("target")
+            if selector:
+                return bool(await self.page.locator(selector).evaluate(SENSITIVE_ELEMENT))
+            return bool(await self.page.evaluate(
+                "() => (" + SENSITIVE_ELEMENT + ")(document.activeElement)"
+            ))
+        except Exception:
+            return True
 
     async def execute(self, action: dict[str, Any]) -> str:
         kind = action.get("action")

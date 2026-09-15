@@ -15,6 +15,8 @@ class GraphState(TypedDict, total=False):
     marks: list[Any]          # Set-of-Marks: numbered interactive elements (with handles)
     marks_text: str           # textual mark index fed to the llm/vlm planner
     prediction: dict[str, Any]  # the next action chosen by predict
+    evidence: list[dict[str, Any]]  # bounded sanitized execution receipts + observations
+    outcome: str             # done (planner stopped) | partial (budget/no progress)
     history: list[dict[str, Any]]  # executed actions + results
     status: str               # "running" | "END" | "ERROR" | "CALL_USER"
     step: int

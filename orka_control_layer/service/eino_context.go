@@ -345,9 +345,9 @@ func clearedToolArgument(name string, arg *schema.ToolArgument, offloadPath stri
 		l0Abstract(arg.Text, argDigestChars))}, arg.Text
 }
 
-// pointArgAtItsOwnFile replaces the payload field with a note naming the path
-// the same call wrote it to, leaving every other field intact so the call still
-// reads as the request it was.
+// pointArgAtItsOwnFile removes the executable payload from historical calls.
+// Recovery instructions live in metadata, never in the content argument: a
+// model may replay an old call literally after context reduction.
 //
 // Reports false rather than guessing when the argument is not the expected
 // object — a model that sent something unusual keeps its argument verbatim.
@@ -364,8 +364,9 @@ func pointArgAtItsOwnFile(argText, payloadField, locationField string) (string, 
 	if !ok || location == "" {
 		return "", false
 	}
-	obj[payloadField] = fmt.Sprintf("<persisted-arg>已写入 %s(%d 字符),用 %s 读取当前内容</persisted-arg>",
-		location, len([]rune(payload)), readFileToolName)
+	delete(obj, payloadField)
+	obj["_orka_history"] = fmt.Sprintf("Historical call only: %s omitted (%d characters). The file is at %s; use %s to read current content before editing. This is not executable file content.",
+		payloadField, len([]rune(payload)), location, readFileToolName)
 	shrunk, err := json.Marshal(obj)
 	if err != nil {
 		return "", false

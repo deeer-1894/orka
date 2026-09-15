@@ -104,7 +104,7 @@ func TestExecutionReasoningPolicyFollowsActualModel(t *testing.T) {
 		want     string
 	}{
 		{"deepseek-v4-pro", "", "low"}, {"deepseek-v4-flash", "", "low"},
-		{"glm-5.3", "", "low"}, {"unknown", "glm-5.3", "low"},
+		{"glm-5.3", "", "low"}, {"glm-5.3-flash", "", "low"}, {"unknown", "glm-5.3-flash", "low"}, {"glm-5.3-flash", "unknown", ""}, {"glm-5.3-flash-unknown", "", ""}, {"unknown", "glm-5.3", "low"},
 		{"glm-5.3", "unknown", ""},
 		{"unknown", "", ""}, {"deepseek-v4-pro", "unknown", ""},
 		{"unknown", "deepseek-v4-pro", "low"},
@@ -183,5 +183,16 @@ func TestGLMReasoningCanReachFirstToolAction(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("executed actions = %d, want one", calls)
+	}
+}
+
+func TestFlashFirstActionHasRoomAfterReasoning(t *testing.T) {
+	client := llm.NewMock(llm.Response{Content: "next action", FinishReason: "stop"})
+	m := newAgentModel(client, "glm-5.3-flash", "test")
+	if _, err := m.Generate(context.Background(), []*schema.Message{schema.UserMessage("implement one small module")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := client.Requests[0].MaxTokens; got != 8192 {
+		t.Fatalf("Flash first output cap=%d, want 8192", got)
 	}
 }

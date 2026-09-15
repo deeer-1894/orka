@@ -18,6 +18,7 @@ from typing import Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
+from agent.evidence import Evidence
 from agent.graph import build
 from agent.macro import MacroStore
 from operators.remote_browser import RemoteBrowserOperator
@@ -122,11 +123,11 @@ async def run_task(ws: WebSocket, msg: dict[str, Any]) -> None:
             elif status == "ERROR":
                 await emit({"type": "error", "error": final.get("error", "error"), "session_id": session_id})
             else:
-                if _MACRO_ENABLED:
+                if _MACRO_ENABLED and final.get("outcome") == "done":
                     actions = [h["action"] for h in final.get("history", []) if h.get("action")]
                     if _macro_replayable(actions):
                         _macros.put(instruction, [_macro_clean(a) for a in actions])
-                await emit({"type": "done", "summary": final.get("result", ""), "session_id": session_id})
+                await emit({"type": "done", "summary": final.get("result", ""), "outcome": final.get("outcome", "partial"), "session_id": session_id})
         except Exception as e:  # noqa: BLE001
             # On failure, drop the shared browser so the next run gets a fresh one.
             await reset_operator()
@@ -167,13 +168,17 @@ async def replay_macro(operator, emit, instruction, session_id) -> bool:
         return False
     await emit({"type": "observe", "mode": "macro", "tokens": 0, "session_id": session_id})
     try:
-        for action in actions:
+        evidence = Evidence()
+        for step, action in enumerate(actions, 1):
+            receipt = await evidence.prepare(operator, action)
             result = await operator.execute(action)
+            receipt = evidence.executed(step, receipt, result)
             await emit({
                 "type": "action",
                 "action": action.get("action"),
-                "target": action.get("url") or action.get("selector") or "",
-                "result": result,
+                "target": receipt.get("target", ""),
+                "result": receipt["result"],
+                "evidence": receipt,
                 "session_id": session_id,
             })
         await emit({"type": "done", "summary": await operator.dom_snapshot(), "session_id": session_id})

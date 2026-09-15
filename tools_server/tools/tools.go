@@ -432,6 +432,10 @@ func missingPathError(req mcp.CallToolRequest, example string) *mcp.CallToolResu
 
 func fileWrite(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		content, err := fileWriteContent(req)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		rel := pathArg(req)
 		if rel == "" {
 			return missingPathError(req, "{\"path\": \"notes/summary.md\", \"content\": \"...\"}"), nil
@@ -445,7 +449,6 @@ func fileWrite(base string) mcpserver.ToolHandlerFunc {
 		}
 		// Back up the prior version before overwriting (recoverable + diffable).
 		backed := backupBeforeWrite(base, identity.From(ctx).Email, rel, identity.From(ctx).ConversationID)
-		content := req.GetString("content", "")
 		if err := os.WriteFile(p, []byte(content), pathsafe.WorkspaceFileMode); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

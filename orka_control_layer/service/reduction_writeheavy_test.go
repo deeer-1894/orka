@@ -133,9 +133,16 @@ func TestClearedWriteStillNamesItsPath(t *testing.T) {
 			if tc.Function.Name != "file_write" {
 				continue
 			}
-			if !strings.Contains(tc.Function.Arguments, "compute_something") {
+			var args map[string]any
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+				t.Fatal(err)
+			}
+			if _, omitted := args["_orka_history"]; omitted {
 				cleared++
-				if strings.Contains(tc.Function.Arguments, ".py") {
+				if _, exists := args["content"]; exists {
+					t.Fatal("real reduction left executable placeholder content")
+				}
+				if path, ok := args["path"].(string); ok && strings.HasSuffix(path, ".py") {
 					named++
 				}
 			}

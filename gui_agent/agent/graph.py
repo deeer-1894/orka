@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable
 
 from langgraph.graph import END, StateGraph
 
+from agent.evidence import Evidence
 from agent.model import Planner
 from agent.state import GraphState
 from operators import marks as marksmod
@@ -22,6 +23,7 @@ EmitFn = Callable[[dict[str, Any]], Awaitable[None]]
 
 def build(operator: RemoteBrowserOperator, emit: EmitFn):
     planner = Planner()
+    evidence = Evidence()
 
     async def screenshot_node(state: GraphState) -> GraphState:
         dom = await operator.dom_snapshot()
@@ -36,7 +38,7 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
             out["screenshot"] = shot
             out["shots"] = shots
             await emit({"type": "screenshot", "data": shot, "session_id": state.get("session_id", "")})
-            await emit({"type": "observe", "mode": "uitars", "tokens": 1, "session_id": state.get("session_id", "")})
+            observation_frame = {"type": "observe", "mode": "uitars", "tokens": 1, "session_id": state.get("session_id", "")}
         elif state.get("use_vision"):
             # Set-of-Marks: number interactive elements so the VLM can target
             # "mark N" instead of pixels.
@@ -46,7 +48,7 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
             out["marks"] = ms  # type: ignore[typeddict-unknown-key]
             out["marks_text"] = marksmod.marks_text(ms)  # type: ignore[typeddict-unknown-key]
             await emit({"type": "screenshot", "data": annotated, "session_id": state.get("session_id", "")})
-            await emit({"type": "observe", "mode": "vision", "marks": len(ms), "tokens": 1, "session_id": state.get("session_id", "")})
+            observation_frame = {"type": "observe", "mode": "vision", "marks": len(ms), "tokens": 1, "session_id": state.get("session_id", "")}
         else:
             if planner.mode == "llm":
                 # Text Set-of-Marks: number the interactive elements but send
@@ -55,10 +57,14 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
                 out["marks"] = ms  # type: ignore[typeddict-unknown-key]
                 out["marks_text"] = marksmod.marks_text(ms)  # type: ignore[typeddict-unknown-key]
                 await emit({"type": "screenshot", "data": shot, "session_id": state.get("session_id", "")})
-                await emit({"type": "observe", "mode": "llm", "marks": len(ms), "tokens": 0, "session_id": state.get("session_id", "")})
+                observation_frame = {"type": "observe", "mode": "llm", "marks": len(ms), "tokens": 0, "session_id": state.get("session_id", "")}
             else:
                 await emit({"type": "screenshot", "data": shot, "session_id": state.get("session_id", "")})
-                await emit({"type": "observe", "mode": "dom", "tokens": 0, "session_id": state.get("session_id", "")})
+                observation_frame = {"type": "observe", "mode": "dom", "tokens": 0, "session_id": state.get("session_id", "")}
+        observation = evidence.observe(int(state.get("step", 0)),
+            "[page] " + evidence.clean(dom, 600) + "\n[elements] " + evidence.clean(out.get("marks_text", ""), 500))
+        out["evidence"] = list(evidence.events)
+        await emit({**observation_frame, "evidence": observation})
         return out
 
     async def predict_node(state: GraphState) -> GraphState:
@@ -84,6 +90,7 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
 
         if kind == "done":
             out["status"] = "END"
+            out["outcome"] = "done"
             summary = action.get("result", "") or await operator.title()
             # Ground the answer: attach the page's real url + readable text so the
             # upstream model corrects/confirms the planner's summary instead of
@@ -108,18 +115,21 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
             await emit({"type": "error", "error": out["error"], "session_id": state.get("session_id", "")})
         else:
             try:
+                receipt = await evidence.prepare(operator, action)
                 result = await operator.execute(action)
+                receipt = evidence.executed(step, receipt, result)
+                out["evidence"] = list(evidence.events)
                 history.append({"action": action, "result": result})
                 out["history"] = history
-                target = action.get("url") or action.get("selector") or ""
+                target = receipt.get("target", "")
                 if not target and "x" in action:
                     target = f"({action['x']:.0f},{action['y']:.0f})"
                 await emit({
                     "type": "action",
                     "action": kind,
                     "target": target,
-                    "thought": action.get("_thought", ""),
-                    "result": result,
+                    "result": receipt["result"],
+                    "evidence": receipt,
                     "session_id": state.get("session_id", ""),
                 })
                 out["status"] = "running"
@@ -134,7 +144,9 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
         # model can answer from what we DID see instead of re-invoking the
         # browser over and over.
         def _sig(a: dict[str, Any]) -> tuple:
-            return (a.get("action"), a.get("url") or a.get("selector") or a.get("mark") or a.get("x"))
+            return (a.get("action"), a.get("url"), a.get("selector"), a.get("mark"),
+                    a.get("x"), a.get("y"), a.get("text"), a.get("direction"),
+                    a.get("dy"), a.get("key"), a.get("x2"), a.get("y2"))
 
         recent = [h["action"] for h in history[-3:] if h.get("action")]
         stuck = len(recent) == 3 and len({_sig(a) for a in recent}) == 1
@@ -145,6 +157,10 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
                 snap = await operator.dom_snapshot(limit=1200)
             except Exception:  # noqa: BLE001
                 snap = ""
+            out["outcome"] = "partial"
+            observation = evidence.observe(step, snap)
+            out["evidence"] = list(evidence.events)
+            await emit({"type": "observe", "evidence": observation, "session_id": state.get("session_id", "")})
             reason = "重复动作,无进展" if stuck else "达到步数上限"
             out["result"] = f"[浏览器停止:{reason}。以下是当前页面内容,请据此作答,不要再重复打开浏览器]\n{snap}"
         return out
