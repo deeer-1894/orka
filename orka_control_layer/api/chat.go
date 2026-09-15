@@ -347,8 +347,13 @@ func (a *API) ConfirmAction(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "conversation_id required to resume a paused run")
 		return
 	}
-	if _, _, _, pending := a.Chat.PendingConfirm(conv); !pending {
+	_, _, target, pending := a.Chat.PendingConfirm(conv)
+	if !pending {
 		fail(c, consts.StatusNotFound, "no pending confirmation (expired?)")
+		return
+	}
+	if target != req.ID {
+		fail(c, consts.StatusConflict, "confirmation is stale; use the latest confirmation")
 		return
 	}
 	runCtx, release, admissionErr := a.Chat.AdmitExecution(context.Background(), authEmail(c), conv, "")

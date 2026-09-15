@@ -122,7 +122,12 @@ function Workbench({
   const [shareFor, setShareFor] = useState<Conversation | null>(null); // open share dialog
   const [drawerArtifact, setDrawerArtifact] = useState<string | null>(null); // artifact to open inline in the drawer
   const openArtifactInDrawer = useCallback((id: string) => { setDrawerArtifact(id); setDrawerOpen(true); setDrawerTab("artifacts"); }, []);
-  const [activeID, setActiveID] = useState("");
+  const activeStorageKey = `orka.activeConversation.${user.email}`;
+  const [activeID, setActiveID] = useState(() => localStorage.getItem(activeStorageKey) || "");
+  useEffect(() => {
+    if (activeID) localStorage.setItem(activeStorageKey, activeID);
+    else localStorage.removeItem(activeStorageKey);
+  }, [activeID, activeStorageKey]);
   const [sessionRecovery] = useState(() => new SessionRecoveryStore(user.email));
   const persistenceWarning = useSyncExternalStore(sessionRecovery.subscribe, sessionRecovery.getWarning);
   const conversationSettings = useConversationSettings(sessionRecovery, activeID);
@@ -291,6 +296,15 @@ function Workbench({
     },
     [hydrateMessages],
   );
+
+  // Restore the last conversation after the list arrives. A deleted or revoked
+  // conversation is cleared instead of leaving the UI pointing at a blank id.
+  useEffect(() => {
+    if (!activeID || (!conversations.length && !shared.length)) return;
+    const exists = conversations.some(c => c.conversation_id === activeID) || shared.some(c => c.conversation_id === activeID);
+    if (exists) void selectConversation(activeID);
+    else setActiveID("");
+  }, [activeID, conversations, shared, selectConversation]);
 
   const setTools = (next: Set<string>) => conversationSettings.patch({ enabledTools: [...next] });
 

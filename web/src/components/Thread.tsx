@@ -1097,20 +1097,25 @@ const TOOL_LABEL: Record<string, string> = { shell: "终端命令", run_agent: "
 function ConfirmCard({ m, onResumed }: { m: Message; onResumed?: (cid: string) => void }) {
   const p = m.payload as ConfirmPayload;
   const [done, setDone] = useState<"" | "once" | "always" | "reject">("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
   const decide = async (approve: boolean, always: boolean) => {
-    if (done) return;
-    setDone(approve ? (always ? "always" : "once") : "reject");
+    if (done || submitting) return;
+    setSubmitting(true);
+    setError("");
     try {
       // meta carries the conversation this pause belongs to, which the server
       // needs to resume the checkpointed run.
       const cid = m.meta?.conversation_id || "";
       const res = await chatApi.confirm(p.id, approve, always, cid);
+      if (!res?.resolved) throw new Error("服务没有确认这次操作");
+      setDone(approve ? (always ? "always" : "once") : "reject");
       // The backend resumed a checkpointed run, so its SSE is a NEW stream this
       // client is not listening to — re-attach or the answer never arrives.
       if (res?.resumed && cid) onResumed?.(cid);
-    } catch {
-      setDone(""); // let them retry on failure
-    }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "确认失败，请重试");
+    } finally { setSubmitting(false); }
   };
   const doneLabel =
     done === "always" ? "✅ 本会话始终允许 · 继续执行" : done === "once" ? "✅ 已允许一次 · 继续执行" : "🚫 已拒绝,跳过该操作";
@@ -1124,11 +1129,12 @@ function ConfirmCard({ m, onResumed }: { m: Message; onResumed?: (cid: string) =
         <div className="text-[12.5px] text-faint">{doneLabel}</div>
       ) : (
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => decide(true, false)} className="rounded-lg bg-accent px-3 py-1.5 text-[12.5px] text-white hover:opacity-90">允许一次</button>
-          <button onClick={() => decide(true, true)} className="rounded-lg border border-accent/40 bg-surface px-3 py-1.5 text-[12.5px] text-ink hover:bg-accentsoft/60" title={`本会话内不再询问“${TOOL_LABEL[p.tool] || p.tool}”`}>本会话始终允许</button>
-          <button onClick={() => decide(false, false)} className="rounded-lg border border-border bg-surface px-3 py-1.5 text-[12.5px] text-muted hover:border-accent/40">拒绝</button>
+          <button disabled={submitting} onClick={() => decide(true, false)} className="rounded-lg bg-accent px-3 py-1.5 text-[12.5px] text-white hover:opacity-90 disabled:opacity-50">{submitting ? "处理中…" : "允许一次"}</button>
+          <button disabled={submitting} onClick={() => decide(true, true)} className="rounded-lg border border-accent/40 bg-surface px-3 py-1.5 text-[12.5px] text-ink hover:bg-accentsoft/60 disabled:opacity-50" title={`本会话内不再询问“${TOOL_LABEL[p.tool] || p.tool}”`}>本会话始终允许</button>
+          <button disabled={submitting} onClick={() => decide(false, false)} className="rounded-lg border border-border bg-surface px-3 py-1.5 text-[12.5px] text-muted hover:border-accent/40 disabled:opacity-50">拒绝</button>
         </div>
       )}
+      {error && <p role="alert" className="mt-2 text-[12px] text-accent">{error}</p>}
     </div>
   );
 }
