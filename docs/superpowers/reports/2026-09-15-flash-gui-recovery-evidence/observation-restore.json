@@ -1,0 +1,7 @@
+{
+  "original_bytes": 9734,
+  "overwritten_bytes": 1241,
+  "restored_bytes": 11245,
+  "sha256": "ea27f26516dea9a85c1dddf6502a27c00b24077ed31417eb83c20360906653b3",
+  "intervention": "restored prior observation record from baseline ZIP and retained correction; external repair"
+}

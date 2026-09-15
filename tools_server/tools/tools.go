@@ -93,9 +93,10 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 	), fileRead(baseStorage))
 
 	add(mcp.NewTool("file_write",
-		mcp.WithDescription("Write a UTF-8 text file to your storage (creates dirs)."),
+		mcp.WithDescription("Write a UTF-8 text file to your storage (creates dirs). mode=create is the default and refuses an existing file without changing it. Use mode=append to add only new text at the end (no automatic newline); use file_read then mode=replace with the complete new content to overwrite. replace and append retain prior-version backups when available. Compatibility change: clients that previously overwrote files without a mode must now explicitly pass mode=replace."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("relative file path")),
-		mcp.WithString("content", mcp.Required(), mcp.Description("file content")),
+		mcp.WithString("content", mcp.Required(), mcp.Description("complete file content for create/replace; only the text to add for append")),
+		mcp.WithString("mode", mcp.Enum("create", "replace", "append"), mcp.DefaultString("create"), mcp.Description("create (default): new file only; replace: overwrite with complete content; append: add text, creating the file if missing")),
 	), fileWrite(baseStorage))
 
 	add(mcp.NewTool("render_report",
@@ -432,6 +433,10 @@ func missingPathError(req mcp.CallToolRequest, example string) *mcp.CallToolResu
 
 func fileWrite(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		mode, err := fileWriteMode(req)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		content, err := fileWriteContent(req)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -447,12 +452,39 @@ func fileWrite(base string) mcpserver.ToolHandlerFunc {
 		if err := os.MkdirAll(filepath.Dir(p), pathsafe.WorkspaceDirMode); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		// Back up the prior version before overwriting (recoverable + diffable).
-		backed := backupBeforeWrite(base, identity.From(ctx).Email, rel, identity.From(ctx).ConversationID)
-		if err := os.WriteFile(p, []byte(content), pathsafe.WorkspaceFileMode); err != nil {
+		flags := os.O_WRONLY | os.O_CREATE
+		switch mode {
+		case "create":
+			// A check followed by a write races with another creator. O_EXCL
+			// makes refusal atomic and never touches the prior file or history.
+			flags |= os.O_EXCL
+		case "replace":
+			flags |= os.O_TRUNC
+		case "append":
+			// Let the kernel position each write at EOF; never read-concatenate
+			// and replace, which can lose another writer's appended bytes.
+			flags |= os.O_APPEND
+		}
+		backed := false
+		if mode != "create" {
+			backed = backupBeforeWrite(base, identity.From(ctx).Email, rel, identity.From(ctx).ConversationID)
+		}
+		file, err := os.OpenFile(p, flags, pathsafe.WorkspaceFileMode)
+		if err != nil {
+			if mode == "create" && os.IsExist(err) {
+				return mcp.NewToolResultError("mode=create refused: file already exists; no file was changed and no backup was created. Use mode=append to add text, or file_read then mode=replace with the complete new file content to intentionally overwrite."), nil
+			}
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		msg := fmt.Sprintf("wrote %d bytes to %s", len(content), rel)
+		written, writeErr := file.WriteString(content)
+		closeErr := file.Close()
+		if writeErr == nil {
+			writeErr = closeErr
+		}
+		if writeErr != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("mode=%s wrote %d bytes to %s before error: %v; use file_read to inspect the file before retrying", mode, written, rel, writeErr)), nil
+		}
+		msg := fmt.Sprintf("mode=%s wrote %d bytes to %s", mode, written, rel)
 		if backed {
 			msg += " (previous version saved to history)"
 		}

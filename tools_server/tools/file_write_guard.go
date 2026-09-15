@@ -25,3 +25,18 @@ func fileWriteContent(req mcp.CallToolRequest) (string, error) {
 	}
 	return content, nil
 }
+
+// The omitted mode intentionally means create, including for legacy clients.
+// Validate before resolving paths, creating directories, or backing up files.
+func fileWriteMode(req mcp.CallToolRequest) (string, error) {
+	args, _ := req.Params.Arguments.(map[string]any)
+	value, present := args["mode"]
+	if !present {
+		return "create", nil
+	}
+	mode, ok := value.(string)
+	if ok && (mode == "create" || mode == "replace" || mode == "append") {
+		return mode, nil
+	}
+	return "", fmt.Errorf("mode must be create, replace, or append; omit it for create. No file was changed")
+}

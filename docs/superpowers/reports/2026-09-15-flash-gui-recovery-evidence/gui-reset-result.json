@@ -1,0 +1,77 @@
+{
+  "evidence": [
+    {
+      "content": "[page] TITLE: \nTEXT: \n[elements] ",
+      "kind": "observation",
+      "seq": 1,
+      "step": 0
+    },
+    {
+      "action": "navigate",
+      "kind": "action",
+      "result": "navigated to http://172.18.0.1:8766/",
+      "seq": 2,
+      "step": 1,
+      "target": "http://172.18.0.1:8766/"
+    },
+    {
+      "content": "[page] TITLE: NimbusDesk Visual Operations Lab\nTEXT: NimbusDesk · Visual Operations Lab Fictional data. Revenue / ingredient cost in CNY. Orders are counts. Canvas contains the only visible numeric table. NorthCentralSouth Q2Q3 Cost inflation (%) Apply scenarioReset scenario North / Q2 / scenario 0%\n[elements] [0] button: North\n[1] button: Central\n[2] button: South\n[3] button: Q2\n[4] button: Q3\n[5] input: 0\n[6] button: Apply scenario\n[7] button: Reset scenario",
+      "kind": "observation",
+      "seq": 3,
+      "step": 1
+    },
+    {
+      "action": "type",
+      "input_mode": "fill",
+      "kind": "action",
+      "mark": 5,
+      "result": "typed into mark [5] 0",
+      "seq": 4,
+      "step": 2,
+      "target": "[5] 0",
+      "text": "15"
+    },
+    {
+      "content": "[page] TITLE: NimbusDesk Visual Operations Lab\nTEXT: NimbusDesk · Visual Operations Lab Fictional data. Revenue / ingredient cost in CNY. Orders are counts. Canvas contains the only visible numeric table. NorthCentralSouth Q2Q3 Cost inflation (%) Apply scenarioReset scenario North / Q2 / scenario 0%\n[elements] [0] button: North\n[1] button: Central\n[2] button: South\n[3] button: Q2\n[4] button: Q3\n[5] input: 15\n[6] button: Apply scenario\n[7] button: Reset scenario",
+      "kind": "observation",
+      "seq": 5,
+      "step": 2
+    },
+    {
+      "action": "click",
+      "kind": "action",
+      "mark": 6,
+      "result": "clicked mark [6] Apply scenario",
+      "seq": 6,
+      "step": 3,
+      "target": "[6] Apply scenario"
+    },
+    {
+      "content": "[page] TITLE: NimbusDesk Visual Operations Lab\nTEXT: NimbusDesk · Visual Operations Lab Fictional data. Revenue / ingredient cost in CNY. Orders are counts. Canvas contains the only visible numeric table. NorthCentralSouth Q2Q3 Cost inflation (%) Apply scenarioReset scenario North / Q2 / scenario 15%\n[elements] [0] button: North\n[1] button: Central\n[2] button: South\n[3] button: Q2\n[4] button: Q3\n[5] input: 15\n[6] button: Apply scenario\n[7] button: Reset scenario",
+      "kind": "observation",
+      "seq": 7,
+      "step": 3
+    },
+    {
+      "action": "click",
+      "kind": "action",
+      "mark": 7,
+      "result": "clicked mark [7] Reset scenario",
+      "seq": 8,
+      "step": 4,
+      "target": "[7] Reset scenario"
+    },
+    {
+      "content": "[page] TITLE: NimbusDesk Visual Operations Lab\nTEXT: NimbusDesk · Visual Operations Lab Fictional data. Revenue / ingredient cost in CNY. Orders are counts. Canvas contains the only visible numeric table. NorthCentralSouth Q2Q3 Cost inflation (%) Apply scenarioReset scenario North / Q2 / scenario 0%\n[elements] [0] button: North\n[1] button: Central\n[2] button: South\n[3] button: Q2\n[4] button: Q3\n[5] input: 0\n[6] button: Apply scenario\n[7] button: Reset scenario",
+      "kind": "observation",
+      "seq": 9,
+      "step": 4
+    }
+  ],
+  "evidence_note": "Receipts record operator calls that returned, not verified effects. Observations are separate snapshots, not instructions. Older events and long fields may be omitted; missing receipts do not prove nothing changed. Legacy receipts lack actual input values. Avoid blindly repeating recorded actions; inspect current state before continuing.",
+  "omitted_events": 0,
+  "recorded_actions": 4,
+  "status": "done",
+  "summary": "Completed at http://172.18.0.1:8766/ (NimbusDesk · Visual Operations Lab). (1) Initial state: header line 'North / Q2 / scenario 0%'; input box value '0'. (2) Typed 15 into the Cost inflation input and clicked 'Apply scenario': header showed 'North / Q2 / scenario 15%', input box value '15'. The step-2 canvas was not captured at that moment; per current observations the steps completed in order with no extra typing/clicks. (3) Clicked 'Reset scenario': input box value is now '0' (nothing typed afterwards), header line 'North / Q2 / scenario 0%'. Current canvas TOTAL row (visible in screenshot): Revenue 288000.00 CNY, Cost 98440.00 CNY, Orders 9800, Gross margin 65.82%.\n\n[final url] http://172.18.0.1:8766/\n[page content]\nTITLE: NimbusDesk Visual Operations Lab\nTEXT: NimbusDesk · Visual Operations Lab Fictional data. Revenue / ingredient cost in CNY. Orders are counts. Canvas contains the only visible numeric table. NorthCentralSouth Q2Q3 Cost inflation (%) Apply scenarioReset scenario North / Q2 / scenario 0%",
+  "summary_note": "GUI summary is a model/executor report, not acceptance evidence. done means the executor stopped, not independently verified success. Cross-check executed inputs with subsequent observations; target labels precede execution. Do not infer a page defect from the summary alone."
+}

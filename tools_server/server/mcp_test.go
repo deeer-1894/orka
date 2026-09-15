@@ -223,3 +223,61 @@ func TestGatewaySessionFilesShellPython(t *testing.T) {
 		}
 	}
 }
+
+func TestGateway_FileWriteIntentSchemaAndModes(t *testing.T) {
+	base := t.TempDir()
+	url := startGateway(t, Config{Secret: testSecret, BaseStorage: base})
+	c := connect(t, url, tokenHeader(t, "u@x.com", []string{"file:read", "file:write"}))
+	listed, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, tool := range listed.Tools {
+		if tool.Name != "file_write" {
+			continue
+		}
+		found = true
+		mode, ok := tool.InputSchema.Properties["mode"].(map[string]any)
+		if !ok {
+			t.Errorf("missing mode schema: %+v", tool.InputSchema)
+			continue
+		}
+		if mode["default"] != "create" {
+			t.Errorf("wrong default: %+v", mode)
+		}
+		enum, ok := mode["enum"].([]any)
+		if !ok || len(enum) != 3 || enum[0] != "create" || enum[1] != "replace" || enum[2] != "append" {
+			t.Errorf("wrong enum: %+v", mode)
+		}
+		for _, word := range []string{"create", "append", "replace", "existing"} {
+			if !strings.Contains(tool.Description, word) {
+				t.Errorf("description omits %q", word)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("file_write not listed")
+	}
+	for _, step := range []struct {
+		mode, content, want string
+		reject              bool
+	}{
+		{"", "original", "original", false},
+		{"", "supplement", "original", true},
+		{"append", "+added", "original+added", false},
+		{"replace", "complete replacement", "complete replacement", false},
+	} {
+		args := map[string]any{"path": "record.txt", "content": step.content}
+		if step.mode != "" {
+			args["mode"] = step.mode
+		}
+		result, text := callText(t, c, "file_write", args)
+		if result.IsError != step.reject {
+			t.Fatalf("unexpected outcome: %s", text)
+		}
+		if _, text := callText(t, c, "file_read", map[string]any{"path": "record.txt"}); text != step.want {
+			t.Fatalf("wrong bytes: %q, want %q", text, step.want)
+		}
+	}
+}
