@@ -243,7 +243,7 @@ export const api = {
     const j = await res.json();
     return (j.data ?? []) as { version: string; label: string; hint: string }[];
   },
-  kill: (id: string) => post("/chat/kill", { conversation_id: id, task_id: id }),
+  kill: (conversationID: string) => post("/chat/kill", { conversation_id: conversationID }),
 };
 
 export type FileVersion = { ts: string; when: number; size: number; path: string };

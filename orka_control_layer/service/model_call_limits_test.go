@@ -104,6 +104,8 @@ func TestExecutionReasoningPolicyFollowsActualModel(t *testing.T) {
 		want     string
 	}{
 		{"deepseek-v4-pro", "", "low"}, {"deepseek-v4-flash", "", "low"},
+		{"glm-5.3", "", "low"}, {"unknown", "glm-5.3", "low"},
+		{"glm-5.3", "unknown", ""},
 		{"unknown", "", ""}, {"deepseek-v4-pro", "unknown", ""},
 		{"unknown", "deepseek-v4-pro", "low"},
 	} {

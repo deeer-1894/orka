@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/cloudwego/eino/adk"
@@ -61,8 +62,15 @@ func (g *researchGuidance) BeforeModelRewriteState(ctx context.Context, state *a
 	if deliveryFrom(ctx).responseMode() == "file_receipt" {
 		text += "\nFinal response mode: file_receipt. Put substantive conclusions, actual verification results and ALL unresolved limitations in the declared report. Once all required files are checked and original plan steps are genuinely complete, end with a brief confirmation; runtime will publish scoped file links and file-check results. Do not spend a generation rewriting statistics. If the user requires a separate substantive chat answer, switch update_plan.final_response back to answer."
 	}
-	if pending := g.plan.unfinished(); len(pending) > 0 {
-		text += "\nOpen plan steps: " + trunc(strings.Join(pending, "; "), 1800)
+	var pending []string
+	for _, step := range g.plan.snapshot() {
+		if step.Status == "done" {
+			continue
+		}
+		pending = append(pending, fmt.Sprintf("id=%q status=%s title=%q", step.ID, step.Status, step.Title))
+	}
+	if len(pending) > 0 {
+		text += "\nOpen plan steps (reuse these exact IDs when updating; do not recreate existing obligations under new IDs):\n" + trunc(strings.Join(pending, "\n"), 2400)
 	}
 	notice := runtimeUserMessage(text)
 	notice.Extra[researchStateTag] = true

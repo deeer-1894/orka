@@ -7,6 +7,7 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
+	"github.com/orka-oss/orka_core/messages"
 )
 
 func TestExecutionRuntimeGuidanceRestoredWithoutResearchSession(t *testing.T) {
@@ -46,5 +47,25 @@ func TestExhaustionRemovesStaleExecutionInstructions(t *testing.T) {
 		if m.Extra[researchStateTag] == true {
 			t.Fatal("stale execute-tools notice contradicts exhausted budget")
 		}
+	}
+}
+
+func TestCompressedGuidancePreservesPlanIdentity(t *testing.T) {
+	tracker := &planTracker{}
+	tracker.record([]messages.PlanStep{{ID: "pkg-original", Title: "package and verify", Status: "active"}})
+	ctx := withBudget(context.Background(), newRunBudget(100, 1000, 0))
+	g := newResearchGuidance(ctx)
+	g.plan = tracker
+	state := &adk.ChatModelAgentState{Messages: []*schema.Message{schema.AssistantMessage("compressed summary without IDs", nil)}}
+	_, state, _ = g.BeforeModelRewriteState(ctx, state, nil)
+	notice := state.Messages[len(state.Messages)-1].Content
+	if !strings.Contains(notice, "pkg-original") || !strings.Contains(notice, "package and verify") {
+		t.Fatalf("compression lost canonical plan identity: %s", notice)
+	}
+	tracker.record([]messages.PlanStep{{ID: "pkg-original", Title: "verify clean extraction", Status: "active"}})
+	_, state, _ = g.BeforeModelRewriteState(ctx, state, nil)
+	notice = state.Messages[len(state.Messages)-1].Content
+	if !strings.Contains(notice, "pkg-original") || !strings.Contains(notice, "verify clean extraction") || strings.Contains(notice, "package and verify") {
+		t.Fatalf("canonical ID/title update not reflected: %s", notice)
 	}
 }

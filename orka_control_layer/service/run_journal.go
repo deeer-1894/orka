@@ -417,12 +417,14 @@ func (s *ChatService) ResumeRun(ctx context.Context, runID, email string, raw fu
 	rr.Messages = msgs
 	rr.Reason = reason
 	status := s.Run(ctx, ChatRunRequest{
-		Message:        rec.Prompt,
-		ConversationID: rec.ConversationID,
-		TaskID:         rec.TaskID,
-		UserEmail:      email,
-		Trigger:        "resume",
-		resumeFrom:     rr,
+		// Keep the recorded execution model even if the user has changed Auto.
+		SelectedVersion: rec.Model,
+		Message:         rec.Prompt,
+		ConversationID:  rec.ConversationID,
+		TaskID:          rec.TaskID,
+		UserEmail:       email,
+		Trigger:         "resume",
+		resumeFrom:      rr,
 	}, raw)
 	if status == db.RunDone || rr.SuccessorDurable {
 		dropJournal(s.Cfg.Storage.BaseStoragePath, runID)

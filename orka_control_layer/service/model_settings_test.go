@@ -10,6 +10,8 @@ import (
 	"github.com/orka-oss/orka_control_layer/modelsettings"
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/config"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo/integration/mtest"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -449,4 +451,43 @@ func TestUserModelFollowupsSkipChangedProfile(t *testing.T) {
 	if calls.Load() != 0 {
 		t.Fatal("old answer was sent to changed provider")
 	}
+}
+
+// Exercise the public recovery entry point, where the selected model used to
+// disappear before Run resolved the owner's current Auto default.
+func TestResumeRunRetainsRecordedModel(t *testing.T) {
+	mt := mtest.New(t, mtest.NewOptions().ClientType(mtest.Mock))
+	mt.Run("manual model differs from Auto", func(mt *mtest.T) {
+		ts, calls, mu := modelFixture(mt.T, func(int, string) llm.Response { return llm.Response{Content: "resumed", FinishReason: "stop"} })
+		svc := configuredModelService(mt.T, ts.URL)
+		svc.Msg.Store = &db.Storage{Runs: mt.Coll}
+		mt.AddMockResponses(
+			mtest.CreateCursorResponse(0, mt.DB.Name()+"."+mt.Coll.Name(), mtest.FirstBatch, bson.D{
+				{Key: "run_id", Value: "recorded"}, {Key: "owner_email", Value: "owner"},
+				{Key: "conversation_id", Value: "conv"}, {Key: "prompt", Value: "continue work"},
+				{Key: "model", Value: "manual"}, {Key: "resumable", Value: true}, {Key: "status", Value: db.RunFailed},
+			}),
+			mtest.CreateSuccessResponse(bson.E{Key: "n", Value: 1}, bson.E{Key: "nModified", Value: 1}),
+		)
+		j := newRunJournal(svc.Cfg.Storage.BaseStoragePath, "recorded", []*schema.Message{schema.UserMessage("continue work")})
+		j.append(schema.AssistantMessage("earlier progress", nil))
+		if !j.flush() {
+			mt.Fatal("journal persistence failed")
+		}
+		svc.ToolsFor = func(_ context.Context, req ChatRunRequest) ([]agent.BaseTool, func(), error) {
+			// Recovery storage was exercised above; the new execution uses the usual
+			// in-memory service fixture so unrelated persistence is outside this test.
+			svc.Msg.Store = nil
+			return nil, nil, nil
+		}
+		status, err := svc.ResumeRun(context.Background(), "recorded", "owner", (&collector{}).sink)
+		if err != nil || status != db.RunDone {
+			mt.Fatalf("status=%s err=%v", status, err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if len(*calls) != 1 || (*calls)[0] != "manual" {
+			mt.Fatalf("recovery called %v, want recorded manual model", *calls)
+		}
+	})
 }

@@ -29,7 +29,7 @@ func newAgentModel(client llm.Client, modelName, agentName string) *llm.EinoMode
 // a parameter inferred from a family prefix. Output/deadline limits still apply.
 func executionReasoningEffort(model string) string {
 	switch model {
-	case "deepseek-v4-pro", "deepseek-v4-flash":
+	case "deepseek-v4-pro", "deepseek-v4-flash", "glm-5.3":
 		return "low"
 	default:
 		return ""
