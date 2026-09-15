@@ -104,6 +104,25 @@ func TestPlanStepIDKeepsRenamedStepAsOneObligation(t *testing.T) {
 	}
 }
 
+func TestCompletedPlanRejectsASecondChecklist(t *testing.T) {
+	tracker := &planTracker{}
+	ctx := withPlanTracker(context.Background(), tracker)
+	if _, err := (planTool{}).Invoke(ctx, map[string]any{
+		"steps": []any{map[string]any{"id": "deliver", "title": "交付", "status": "done"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (planTool{}).Invoke(ctx, map[string]any{
+		"steps": []any{map[string]any{"id": "new", "title": "重新规划", "status": "pending"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	steps := tracker.snapshot()
+	if len(steps) != 1 || steps[0].ID != "deliver" || steps[0].Status != "done" {
+		t.Fatalf("completed plan was expanded by a second checklist: %+v", steps)
+	}
+}
+
 func TestDeliveryCheckExposesUnfinishedPlanWithoutFailingValidFiles(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "report.md"), []byte("A generated report."), 0600); err != nil {

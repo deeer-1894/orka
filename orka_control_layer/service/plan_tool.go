@@ -69,7 +69,10 @@ func (planTool) Invoke(ctx context.Context, args map[string]any) (string, error)
 	submitted := plan.Steps
 	changed := len(submitted) > 0 && !tracker.same(submitted)
 	note := "已更新任务清单。仅在实际工作及相关验证完成后将对应原始步骤标记为 done。"
-	if changed {
+	if tracker.completed() && changed {
+		changed = false
+		note = "当前计划已全部完成，本轮不再追加新的清单。若用户提出新目标，请开始新的任务会话。"
+	} else if changed {
 		tracker.record(submitted)
 	} else {
 		note = "计划未变化。不要重复提交相同清单；继续实际工作，并核对下面保留的未完成步骤。"

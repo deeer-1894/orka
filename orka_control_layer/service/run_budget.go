@@ -282,6 +282,23 @@ func planStepKey(step messages.PlanStep) string {
 	return "title:" + step.Title
 }
 
+func (p *planTracker) completed() bool {
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.steps) == 0 {
+		return false
+	}
+	for _, step := range p.steps {
+		if step.Status != "done" {
+			return false
+		}
+	}
+	return true
+}
+
 func (p *planTracker) snapshot() []messages.PlanStep {
 	if p == nil {
 		return nil
