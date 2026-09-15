@@ -16,18 +16,19 @@ import (
 
 func TestResearchAndDeliveryShareCumulativeTokenBoundary(t *testing.T) {
 	// Expensive non-research work must not deny the first required source until
-	// the delivery reserve starts. At the default 800k cap the boundary is 600k.
-	for _, spent := range []int{399999, 400000, 500000, 599999, 600000, 600001, 800000} {
+	// the delivery reserve starts at three quarters of the configured single-run cap.
+	reserve := runMaxTokens * 3 / 4
+	for _, spent := range []int{reserve - 1, reserve, reserve + 1, runMaxTokens} {
 		t.Run(fmt.Sprint(spent), func(t *testing.T) {
 			b := newRunBudget(100, runMaxTokens, 0)
 			b.AddUsage(spent, 0)
 			s := newResearchSession(nil, "", b, 0)
-			if s.maxCalls != 40 || b.maxTokens != 800000 {
+			if s.maxCalls != 40 || b.maxTokens != runMaxTokens {
 				t.Fatal("default hard limits changed")
 			}
 			calls := 0
 			out, err := s.invoke(context.Background(), "fetch_url", map[string]any{"url": "https://docs.example.test/required"}, func() (string, error) { calls++; return "required official source", nil })
-			limited := spent >= 600000
+			limited := spent >= reserve
 			if err != nil || (!limited && (calls != 1 || !strings.Contains(out, "required official source"))) || (limited && (calls != 0 || out != researchLimitNotice)) {
 				t.Fatalf("spent=%d calls=%d out=%s err=%v", spent, calls, out, err)
 			}
@@ -36,11 +37,11 @@ func TestResearchAndDeliveryShareCumulativeTokenBoundary(t *testing.T) {
 			if (len(state.ToolInfos) == 3) != limited || (len(state.DeferredToolInfos) == 1) != limited {
 				t.Fatalf("tool visibility disagrees with retrieval at %d: %v / %v", spent, toolInfoNames(state.ToolInfos), toolInfoNames(state.DeferredToolInfos))
 			}
-			if got := b.observe(nil); got != (spent >= 800000) {
+			if got := b.observe(nil); got != (spent >= runMaxTokens) {
 				t.Fatalf("global hard limit changed at %d: hit=%v reason=%s", spent, got, b.exhausted())
 			}
-			if spent >= 800000 && b.exhausted() != "tokens" {
-				t.Fatal("800k hard stop lost")
+			if spent >= runMaxTokens && b.exhausted() != "tokens" {
+				t.Fatal("single-run hard stop lost")
 			}
 		})
 	}
@@ -48,7 +49,7 @@ func TestResearchAndDeliveryShareCumulativeTokenBoundary(t *testing.T) {
 
 func TestResearchReserveStillAllowsCachedAndLocalEvidence(t *testing.T) {
 	b := newRunBudget(100, runMaxTokens, 0)
-	b.AddUsage(599999, 0)
+	b.AddUsage(runMaxTokens*3/4-1, 0)
 	s := newResearchSession(nil, "", b, 0)
 	ctx := context.Background()
 	args := map[string]any{"url": "https://docs.example.test/required"}
@@ -57,7 +58,7 @@ func TestResearchReserveStillAllowsCachedAndLocalEvidence(t *testing.T) {
 	if out, err := s.invoke(ctx, "fetch_url", args, call); err != nil || !strings.Contains(out, "required source body") {
 		t.Fatalf("source unavailable before reserve: %s %v", out, err)
 	}
-	for _, spent := range []int{600000, 800000} {
+	for _, spent := range []int{runMaxTokens * 3 / 4, runMaxTokens} {
 		b.AddUsage(spent-b.totalSpentTokens(), 0)
 		out, err := s.invoke(ctx, "fetch_url", args, call)
 		if err != nil || calls != 1 || !strings.Contains(out, "cached evidence") {
@@ -75,12 +76,12 @@ func TestResearchReserveStillAllowsCachedAndLocalEvidence(t *testing.T) {
 		}
 	}
 	// Local availability here only concerns the retrieval gate. The global model
-	// guard still stops generation at 800k, as asserted by the boundary test.
+	// guard still stops generation at the single-run limit, as asserted by the boundary test.
 }
 
 func TestResearchConcurrentReservationsAtDeliveryBoundary(t *testing.T) {
 	b := newRunBudget(100, runMaxTokens, 0)
-	b.AddUsage(599999, 0)
+	b.AddUsage(runMaxTokens*3/4-1, 0)
 	s := newResearchSession(nil, "", b, 0)
 	s.calls = 39
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -130,7 +131,7 @@ func TestResearchConcurrentReservationsAtDeliveryBoundary(t *testing.T) {
 		}
 	}
 	cp := checkpointFrom(withResearchSession(withBudget(ctx, b), s))
-	if cp.ResearchCalls != 40 || cp.SpentTokens != 599999 {
+	if cp.ResearchCalls != 40 || cp.SpentTokens != runMaxTokens*3/4-1 {
 		t.Fatalf("in-flight reservation absent from checkpoint: %+v", cp)
 	}
 	// A restart must not reclaim an already reserved remote call, even below
@@ -178,7 +179,7 @@ func TestResearchConcurrentReservationsAtDeliveryBoundary(t *testing.T) {
 
 func TestResearchCheckpointCarriesBudgetThroughDeliveryBoundary(t *testing.T) {
 	b := newRunBudget(100, runMaxTokens, 0)
-	b.AddUsage(500000, 0)
+	b.AddUsage(runMaxTokens/4, 0)
 	original := newResearchSession(nil, "", b, 0)
 	original.calls = 4
 	raw, err := json.Marshal(checkpointFrom(withResearchSession(withBudget(context.Background(), b), original)))
@@ -193,13 +194,13 @@ func TestResearchCheckpointCarriesBudgetThroughDeliveryBoundary(t *testing.T) {
 	restoreCheckpoint(&cp, next, nil, nil)
 	resumed := newResearchSession(nil, "", next, 0)
 	resumed.calls = cp.ResearchCalls // runEino restores this count from the same checkpoint.
-	next.AddUsage(99999, 0)
+	next.AddUsage(runMaxTokens/2-1, 0)
 	calls := 0
 	call := func() (string, error) { calls++; return "fifth required source", nil }
 	if out, err := resumed.invoke(context.Background(), "fetch_url", map[string]any{"url": "https://docs.example.test/fifth"}, call); err != nil || !strings.Contains(out, "fifth required source") {
 		t.Fatalf("resumed mandatory source blocked: %s %v", out, err)
 	}
-	if calls != 1 || resumed.calls != 5 || next.spentTokens() != 99999 || next.totalSpentTokens() != 599999 {
+	if calls != 1 || resumed.calls != 5 || next.spentTokens() != runMaxTokens/2-1 || next.totalSpentTokens() != runMaxTokens*3/4-1 {
 		t.Fatal("resumed accounting was reset or rebilled")
 	}
 	next.AddUsage(1, 0)
@@ -207,8 +208,8 @@ func TestResearchCheckpointCarriesBudgetThroughDeliveryBoundary(t *testing.T) {
 	if err != nil || out != researchLimitNotice || calls != 1 {
 		t.Fatalf("carried usage missed reserve: %s %v", out, err)
 	}
-	next.AddUsage(200000, 0)
+	next.AddUsage(runMaxTokens/4, 0)
 	if !next.observe(nil) || next.exhausted() != "tokens" {
-		t.Fatal("checkpoint bypassed global 800k cap")
+		t.Fatal("checkpoint bypassed global single-run cap")
 	}
 }

@@ -27,6 +27,12 @@ func TestDailyLimitHonoursConfig(t *testing.T) {
 	}
 }
 
+func TestSingleRunBudgetAllowsLongComplexTasks(t *testing.T) {
+	if runMaxTokens < 2_000_000 {
+		t.Fatalf("single-run token ceiling = %d, want at least 2,000,000", runMaxTokens)
+	}
+}
+
 // A daily ceiling has to clear the largest run the deployment supports, several
 // times over. A full research run measured 1.3M here, and the old 5M default
 // allowed fewer than four of them.

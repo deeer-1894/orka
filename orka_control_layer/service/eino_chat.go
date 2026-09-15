@@ -408,11 +408,11 @@ const subAgentMaxTokens = 250_000
 // which is a property of the task and not something the platform should decide.
 //
 // So this is now a safety cliff and nothing else, and the binding limits are the
-// ones denominated in what a run actually spends: runMaxTokens (800k) and
+// ones denominated in what a run actually spends: runMaxTokens (2M) and
 // runMaxWall (2h). A runaway loop still terminates — sooner, in fact, since a
 // loop burns tokens fast — while a task that genuinely needs sixty steps is no
 // longer cut off at forty for being complicated.
-const einoMaxIters = 200
+const einoMaxIters = 300
 
 // RunEinoOnce runs the agent to completion on a single user message and returns
 // the final assistant text. Tool steps and intermediate assistant turns are

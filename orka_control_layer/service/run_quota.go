@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/orka-oss/orka_core/messages"
 	"github.com/orka-oss/orka_control_layer/db"
+	"github.com/orka-oss/orka_core/messages"
 )
 
 // Cost guardrails. The per-run budget in run_budget.go stops one execution from
@@ -20,7 +20,7 @@ const (
 	// runMaxTokens caps ONE execution. Set well above normal work (measured p90
 	// here is ~144k) so it never interferes with a legitimately large job — it is
 	// a backstop against runaway loops, not a performance budget.
-	runMaxTokens = 800_000
+	runMaxTokens = 2_000_000
 	// runMaxWall caps one execution's wall clock. Long research legitimately
 	// takes tens of minutes; this only catches a run that has stopped making
 	// progress at all.
@@ -34,7 +34,7 @@ const (
 	// DAILY ceiling off a p90 SINGLE run is the mistake: the ceiling has to clear
 	// the largest run the deployment intends to support, several times over, or
 	// it stops being a runaway guard and becomes a cap on ordinary work.
-	userDailyTokens = 30_000_000
+	userDailyTokens = 50_000_000
 	// taskFailureLimit is how many consecutive failures disable a scheduled task.
 	// Three distinguishes a persistent fault from a transient one — a flaky
 	// network or a rate limit rarely repeats three times running.
