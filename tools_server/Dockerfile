@@ -1,7 +1,7 @@
-# Containerized tools gateway. This is the real isolation boundary for the shell
-# tool: commands run inside this container's filesystem + the mounted workspace,
-# never on the host. Build context is the repo ROOT (tools_server imports
-# orka_core via a replace directive), e.g.:
+# Containerized tools gateway. Bubblewrap creates a separate session-only mount
+# and PID/network namespaces inside this outer container; the outer container
+# alone does not isolate its mounted storage between users. Build context is
+# the repo root (tools_server imports orka_core via a replace directive), e.g.:
 #   docker build -f tools_server/Dockerfile -t orka-tools .
 
 # ---- builder ----
@@ -37,16 +37,18 @@ FROM python:3.12-slim-bookworm
 # merely slow link rather than a blocked one.
 ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git curl ca-certificates jq pandoc wkhtmltopdf poppler-utils fonts-noto-cjk \
+        bubblewrap git curl ca-certificates jq pandoc wkhtmltopdf poppler-utils fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir --index-url "$PIP_INDEX_URL" --retries 5 --timeout 60 \
         matplotlib pandas numpy openpyxl python-pptx
-# Run as a non-root user; the container is the sandbox, not the in-container uid.
+# Keep the gateway non-root. Runtime namespace/seccomp/AppArmor policy must
+# permit bwrap setup; the runner refuses execution if setup is unavailable.
 RUN useradd -m -u 10001 orka && mkdir -p /workspace && chown orka:orka /workspace
 COPY --from=build /out/orka_tools /usr/local/bin/orka_tools
 USER orka
 ENV TOOLS_ADDR=:8090 \
     BASE_STORAGE_PATH=/workspace \
-    SHELL_TOOL=1
+    CODE_EXECUTION=0 \
+    CODE_SANDBOX_MODE=bwrap
 EXPOSE 8090
 ENTRYPOINT ["/usr/local/bin/orka_tools"]

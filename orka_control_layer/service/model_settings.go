@@ -13,29 +13,33 @@ import (
 	"github.com/orka-oss/orka_control_layer/modelsettings"
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/config"
+	"github.com/orka-oss/orka_core/modelprofile"
 )
 
 // modelSnapshot contains no locks or registry. It is captured once at run entry
 // and inherited by delegates, routing, auxiliary calls and recovery execution.
 // ChatService itself is never copied: cancellation/confirmation stay shared.
 type modelSnapshot struct {
-	profile string
-	cfg     config.LLMConfig
-	main    llm.Client
+	profile    string
+	cfg        config.LLMConfig
+	client     llm.Client
+	connection modelprofile.Snapshot
+	verified   map[string]modelsettings.Verification
+	policies   map[string]modelprofile.CallPolicy
 }
 
 type modelSnapshotKey struct{}
 
 func (s *ChatService) defaultModels() modelSnapshot {
-	cfg := s.Cfg.LLM
+	legacy := s.Cfg.LLM
+	cfg := config.LLMConfig{OpenAIBaseURL: legacy.OpenAIBaseURL, Model: legacy.Model, Models: legacy.Models, MaxRetries: legacy.MaxRetries}
 	cfg.Models = modelsettings.OrderedModels(cfg.Model, cfg.Models)
 	cfg.Model = ""
 	if len(cfg.Models) > 0 {
 		cfg.Model = cfg.Models[0]
 	}
-	cfg.MiniModel = cfg.Model
 	cfg.OpenAIAPIKey = "" // credentials belong only to clients, not config snapshots
-	return modelSnapshot{cfg: cfg, main: s.Main}
+	return modelSnapshot{cfg: cfg, client: s.Client, connection: modelprofile.Snapshot{ProfileID: "deployment", Protocol: modelprofile.OpenAICompatible, BaseURL: cfg.OpenAIBaseURL, Model: cfg.Model, APIKey: s.Cfg.LLM.OpenAIAPIKey}}
 }
 
 func (s *ChatService) modelsForContext(ctx context.Context) modelSnapshot {
@@ -64,19 +68,26 @@ func (s *ChatService) resolveModels(owner string) (modelSnapshot, error) {
 	if !exists || !saved.Enabled {
 		return m, nil
 	}
+	if err := modelsettings.RequireSupportedProtocol(saved.Protocol); err != nil {
+		return modelSnapshot{}, err
+	}
+	m.connection = modelprofile.Snapshot{ProfileID: saved.ID, Protocol: saved.Protocol, BaseURL: saved.BaseURL, APIKey: saved.APIKey}
+	m.verified = saved.Verified
+	m.policies = saved.Policies
 	m.profile = modelProfile(owner, saved)
 	first := saved.Models[0] // enabled settings are validated to contain a model
-	m.cfg = config.LLMConfig{OpenAIBaseURL: saved.BaseURL, Model: first, MiniModel: first, VLMModel: first, Models: append([]string(nil), saved.Models...), MaxRetries: m.cfg.MaxRetries}
+	m.cfg = config.LLMConfig{OpenAIBaseURL: saved.BaseURL, Model: first, VLMModel: first, Models: append([]string(nil), saved.Models...), MaxRetries: m.cfg.MaxRetries}
 	// Connection identity excludes model order/selection: the same credential
 	// still shares its provider concurrency allowance after a list-only edit.
-	identity := modelProfile(owner, modelsettings.Config{BaseURL: saved.BaseURL, APIKey: saved.APIKey})
+	identity := modelProfile(owner, modelsettings.Config{Protocol: saved.Protocol, BaseURL: saved.BaseURL, APIKey: saved.APIKey})
 	retries := m.cfg.MaxRetries
-	m.main = &pooledModelClient{pool: &s.modelClients, identity: identity, create: func() llm.Client {
+	m.client = &pooledModelClient{pool: &s.modelClients, identity: identity, create: func() llm.Client {
 		raw := llm.NewOpenAIClient(saved.BaseURL, saved.APIKey)
 		raw.HTTP.Transport = userModelTransport
 		raw.HTTP.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 		safe := &privateModelClient{client: raw, key: saved.APIKey}
-		return llm.NewLimiterFromEnv(llm.NewMetered(llm.NewRetry(safe, llm.RetryConfig{MaxAttempts: retries}), func(ctx context.Context) string { return agent.MetaFrom(ctx).AgentID }))
+		metered := llm.NewMetered(llm.NewAccounted(safe), func(ctx context.Context) string { return agent.MetaFrom(ctx).AgentID })
+		return llm.NewLimiterFromEnv(llm.NewRetry(metered, llm.RetryConfig{MaxAttempts: retries}))
 	}}
 	return m, nil
 }
@@ -101,7 +112,7 @@ func (s *ChatService) withUserModels(ctx context.Context, owner string) (context
 	if err != nil {
 		return ctx, err
 	}
-	return context.WithValue(ctx, modelSnapshotKey{}, m), nil
+	return s.withSelectedModel(context.WithValue(ctx, modelSnapshotKey{}, m), ModelAuto), nil
 }
 
 // ModelConfigForUser supplies the same effective configuration as execution.
@@ -113,9 +124,9 @@ func (s *ChatService) ModelConfigForUser(owner string) (config.LLMConfig, error)
 
 func (m modelSnapshot) modelFor(version string) (llm.Client, string) {
 	if version != "" && version != ModelAuto && m.cfg.AllowsModel(version) {
-		return m.main, version
+		return m.client, version
 	}
-	return m.main, m.cfg.Model
+	return m.client, m.cfg.Model
 }
 
 var ErrModelSelection = errors.New("所选模型不在当前模型列表中，请重新选择模型后再试。")
@@ -127,18 +138,23 @@ func (m modelSnapshot) validateSelection(version string) error {
 	return nil
 }
 
-// Freeze the explicit choice for every call in this run. The compatibility
-// MiniModel field aliases the same model; delegates and auxiliaries do not
-// switch to another model based on their role.
+// Freeze the explicit choice for every call in this run; delegates and
+// auxiliaries inherit the same model without role-based routing.
 func (s *ChatService) withSelectedModel(ctx context.Context, version string) context.Context {
 	m := s.modelsForContext(ctx)
 	_, name := m.modelFor(version)
-	m.cfg.Model, m.cfg.MiniModel, m.cfg.VLMModel = name, name, name
-	return context.WithValue(ctx, modelSnapshotKey{}, m)
+	m.cfg.Model, m.cfg.VLMModel = name, name
+	m.connection.Model = name
+	m.connection.Policy = m.policies[name]
+	v := m.verified[name]
+	m.connection.Capabilities = modelprofile.Capabilities{Text: v.Text.Verified, Vision: v.Vision.Verified, Tools: v.Tools.Verified}
+	return modelprofile.WithContext(context.WithValue(ctx, modelSnapshotKey{}, m), m.connection)
 }
 
 // Provider failures may echo the Authorization header. Redact before retries,
-// logging, checkpointing or user-visible error conversion, retaining HTTP status
+// logging, checkpointing or user-visible error conversion. HTTP error bodies
+// are discarded because JSON/URL-encoded credentials defeat literal replacement.
+// Retain HTTP status
 // and cancellation identity for existing retry/failure policies.
 type privateModelClient struct {
 	client *llm.OpenAIClient
@@ -157,7 +173,7 @@ func (c *privateModelClient) safeError(err error) error {
 	}
 	var apiErr *llm.APIError
 	if errors.As(err, &apiErr) {
-		return &llm.APIError{Status: apiErr.Status, Body: strings.ReplaceAll(apiErr.Body, c.key, "[redacted]")}
+		return &llm.APIError{Status: apiErr.Status, Body: "provider request failed"}
 	}
 	return errors.New(strings.ReplaceAll(err.Error(), c.key, "[redacted]"))
 }

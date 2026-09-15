@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/orka-oss/orka_control_layer/db"
+	"github.com/orka-oss/orka_core/config"
 	"github.com/orka-oss/orka_core/messages"
 )
 
@@ -17,14 +18,14 @@ import (
 // have objected.
 
 const (
-	// runMaxTokens caps ONE execution. Set well above normal work (measured p90
+	// runMaxTokens caps one task including resumed attempts. Set well above normal work (measured p90
 	// here is ~144k) so it never interferes with a legitimately large job — it is
 	// a backstop against runaway loops, not a performance budget.
-	runMaxTokens = 2_000_000
-	// runMaxWall caps one execution's wall clock. Long research legitimately
+	runMaxTokens = config.DefaultRunMaxTokens
+	// runMaxWall caps the task wall clock, including resumes. Long research legitimately
 	// takes tens of minutes; this only catches a run that has stopped making
 	// progress at all.
-	runMaxWall = 2 * time.Hour
+	runMaxWall = config.DefaultRunMaxWallSeconds * time.Second
 	// userDailyTokens caps a single user's rolling 24h spend across all runs.
 	// Override with agent.user_daily_tokens / USER_DAILY_TOKENS.
 	//
@@ -34,7 +35,7 @@ const (
 	// DAILY ceiling off a p90 SINGLE run is the mistake: the ceiling has to clear
 	// the largest run the deployment intends to support, several times over, or
 	// it stops being a runaway guard and becomes a cap on ordinary work.
-	userDailyTokens = 50_000_000
+	userDailyTokens = config.DefaultUserDailyTokens
 	// taskFailureLimit is how many consecutive failures disable a scheduled task.
 	// Three distinguishes a persistent fault from a transient one — a flaky
 	// network or a rate limit rarely repeats three times running.
@@ -42,18 +43,18 @@ const (
 )
 
 // quotaExceeded reports why a user may not start a new run, or "" to proceed.
-// Checked before the run starts: refusing up front costs nothing, whereas
-// discovering the ceiling mid-run wastes everything spent getting there.
+// This is only an explanatory preflight. BudgetSession.ReserveUsage is the
+// atomic admission gate before EVERY paid attempt, including auxiliary calls.
 func (s *ChatService) quotaExceeded(ctx context.Context, email string) string {
 	if email == "" || s.Msg == nil || s.Msg.Store == nil {
 		return ""
 	}
-	since := time.Now().Add(-24 * time.Hour).UnixMilli()
-	used, err := s.Msg.Store.TokensSince(ctx, email, since)
-	if err != nil {
-		return "" // never block work because the meter is unreadable
-	}
 	limit := s.dailyTokenLimit()
+	usage, err := ReadDailyBudget(ctx, s.budgetLedger(), email, limit)
+	if err != nil {
+		return "暂时无法读取用量账本，已暂停新调用。请稍后重试。"
+	}
+	used := saturatingUsageSum(usage.UsedTokens, usage.ReservedTokens)
 	if used < limit {
 		return ""
 	}

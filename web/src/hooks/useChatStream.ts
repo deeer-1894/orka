@@ -1,6 +1,9 @@
-import { useCallback, useRef, useState } from "react";
+import type { SessionRecoveryStore } from '../lib/sessionRecovery';
+import type { RunBudgetLimits } from '../lib/runBudget';
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../types";
 import { hydrateConversation, terminalStatus, type ChatStatus } from "../lib/runRecovery";
+import { invalidateSessionFiles } from "./useFileRevision";
 import { api, auth } from "../api";
 
 export type RunStatus = ChatStatus;
@@ -11,11 +14,15 @@ const STREAM_ID = "__stream__";
 const REASON_ID = "__reasoning__";
 
 export interface RunParams {
+  onAccepted?: () => void;
+  onRejected?: (error: Error) => void;
   message: string;
   conversationID: string;
   userEmail: string;
   enabledTools: string[];
   resumeKey?: string;
+  budget?: RunBudgetLimits;
+  modelProfile?: string; // opaque revision: retries reject stale model configuration
   selectedVersion?: string; // "auto" or an explicit model ID
   activeSkill?: string; // user-locked skill mode (researcher / writer / …)
   fileIDs?: string[]; // uploaded attachment paths (text injected; images → VLM)
@@ -29,6 +36,9 @@ export interface RunParams {
 interface ConvStream {
   messages: Message[];
   status: RunStatus;
+  connection?: "connecting" | "connected" | "disconnected" | "stopping";
+  error?: string;
+  input?: RunParams;
 }
 
 const EMPTY: ConvStream = { messages: [], status: "idle" };
@@ -39,9 +49,17 @@ const EMPTY: ConvStream = { messages: [], status: "idle" };
  * is displayed. Each conversation keeps its own messages, status and abort
  * controller; switching conversations never interrupts a running one.
  */
-export function useChatStreams() {
+export function useChatStreams(session?: SessionRecoveryStore) {
+  const retryInputs = useRef(new Map<string, RunParams>());
+  const readInput = useCallback((cid: string) => {
+    if (!retryInputs.current.has(cid)) { const saved = session?.readRetry(cid); if (saved) retryInputs.current.set(cid, saved); }
+    return retryInputs.current.get(cid);
+  }, [session]);
+  const saveInput = useCallback((cid: string, input: RunParams) => { retryInputs.current.set(cid, input); session?.writeRetry(cid, input); }, [session]);
   const [streams, setStreams] = useState<Record<string, ConvStream>>({});
   const abortRefs = useRef<Record<string, AbortController>>({});
+  useEffect(() => () => { Object.values(abortRefs.current).forEach(controller => controller.abort()); }, []);
+  const lastRunIDs = useRef<Record<string, string>>({});
   const runVersions = useRef<Record<string, number>>({});
 
   // immutably update one conversation's stream slice
@@ -58,7 +76,9 @@ export function useChatStreams() {
 
   // Late history fills missing turns even after a newer stream has finished.
   const hydrateMessages = useCallback((cid: string, messages: Message[]) => {
-    patch(cid, c => hydrateConversation(c, messages, cid, !!runVersions.current[cid]));
+    const runID = [...messages].reverse().find(m => m.meta?.run_id)?.meta.run_id;
+    if (runID && !abortRefs.current[cid]) lastRunIDs.current[cid] = runID;
+    patch(cid, c => ({ ...c, ...hydrateConversation(c, messages, cid, !!runVersions.current[cid]) }));
   }, [patch]);
 
   const run = useCallback(
@@ -75,6 +95,9 @@ export function useChatStreams() {
       };
       const updateStatus = (status: RunStatus) => patch(cid, c => current() ? { ...c, status } : c);
       updateStatus("streaming");
+      if (!p.attachOnly && !p.resumeKey) saveInput(cid, { ...p, ...(p.budget ? { budget: { ...p.budget } } : {}), onAccepted: undefined, onRejected: undefined, fileIDs: [...(p.fileIDs || [])], enabledTools: [...p.enabledTools] });
+      patch(cid, c => ({ ...c, connection: 'connecting', error: '', input: readInput(cid) }));
+      let accepted = !!p.attachOnly;
 
       // optimistic echo of the user's message
       if (p.message && !p.resumeKey) {
@@ -91,7 +114,7 @@ export function useChatStreams() {
         ]);
       }
 
-      const state = { terminal: "streaming" as RunStatus, lastSeq: 0 };
+      const state = { terminal: "streaming" as RunStatus, lastSeq: 0, runID: p.attachOnly ? lastRunIDs.current[cid] || "" : "" };
       // Per-run token buffer, flushed on the next animation frame (see below).
       const pending: { buf: Record<string, string>; proto: Record<string, Message>; raf: number } = { buf: {}, proto: {}, raf: 0 };
 
@@ -128,7 +151,21 @@ export function useChatStreams() {
         try {
           const msg = JSON.parse(data) as Message;
           if (msg.meta?.conversation_id && msg.meta.conversation_id !== cid) return;
+          if (msg.meta?.run_id) { state.runID = msg.meta.run_id; lastRunIDs.current[cid] = state.runID; }
           if (msg.type === "heartbeat") return;
+          if (msg.meta?.model_profile) {
+            const input = readInput(cid);
+            if (input && (input.modelProfile !== msg.meta.model_profile || (msg.meta.model_version && input.selectedVersion !== msg.meta.model_version))) {
+              const next = { ...input, modelProfile: msg.meta.model_profile, selectedVersion: msg.meta.model_version || input.selectedVersion };
+              saveInput(cid, next);
+              patch(cid, c => current() ? { ...c, input: next } : c);
+            }
+          }
+          if (msg.type === 'stream' && msg.action === 'snapshot') {
+            const snapshot = msg.payload as {cursor?:number;run_id?:string} | undefined;
+            if (typeof snapshot?.cursor === 'number') state.lastSeq = snapshot.cursor;
+            return;
+          }
           if (msg.type === "stream" && msg.action === "reset") {
             // The model call was retried/failed over mid-stream: drop the partial
             // text from the failed attempt so it isn't concatenated with the new one.
@@ -158,8 +195,9 @@ export function useChatStreams() {
             const dropReason = msg.type === "tool" || (msg.type === "chat" && msg.role === "assistant");
             let base = dropReason ? m.filter((x) => x.id !== REASON_ID) : m;
             base = msg.type === "chat" && msg.role === "assistant" ? base.filter((x) => x.id !== STREAM_ID) : base;
-            return [...base, msg];
+            return [...base.filter(x => x.id !== msg.id), msg];
           });
+          if (["tool", "file", "task"].includes(msg.type)) invalidateSessionFiles(cid);
           const terminal = terminalStatus(msg);
           if (terminal) {
             state.terminal = terminal;
@@ -173,6 +211,7 @@ export function useChatStreams() {
 
       const consume = async (res: Response) => {
         if (!res.ok || !res.body) throw new Error("stream unavailable: " + res.status);
+        patch(cid, c => current() ? { ...c, connection: c.connection === 'stopping' ? 'stopping' : 'connected' } : c);
         const reader = res.body.getReader();
         const dec = new TextDecoder();
         let buf = "";
@@ -191,26 +230,42 @@ export function useChatStreams() {
       // attachLoop (re)joins the conversation's SSE, replaying anything missed.
       // maxAttempts is higher when attaching to a resuming run, because the
       // backend needs a moment to rebuild the agent from its checkpoint.
+      let reconciled = false, reconcileRunID = "";
       const attachLoop = async (maxAttempts: number) => {
         let attempts = 0;
         while (state.terminal === "streaming" && !ctrl.signal.aborted && attempts < maxAttempts) {
+          patch(cid, c => current() ? { ...c, connection: c.connection === 'stopping' ? 'stopping' : 'connecting' } : c);
           attempts++;
           await new Promise((r) => setTimeout(r, 500 * attempts));
           if (!current()) break;
           try {
             const url =
               `/api/v1/controller/chat/attach?conversation_id=${encodeURIComponent(cid)}` +
-              `&last_event_id=${state.lastSeq}`;
+              `&last_event_id=${state.lastSeq}&run_id=${encodeURIComponent(state.runID)}` + (reconcileRunID ? "&reconcile=1" : "");
             const ar = await fetch(url, {
               headers: { ...(auth.token() ? { Authorization: "Bearer " + auth.token() } : {}) },
               signal: ctrl.signal,
             });
+            if (ar.status === 409) {
+              const envelope = await ar.json().catch(() => ({}));
+              const gap = envelope.data ?? envelope;
+              if (!gap.reconcile || reconciled || !gap.run_id) break;
+              reconciled = true;
+              const history = await api.getMessages(cid) as (Message & {created_at?:number})[];
+              if (!current()) break;
+              if (pending.raf) { cancelAnimationFrame(pending.raf); pending.raf = 0; }
+              pending.buf = {}; pending.proto = {};
+              patch(cid, c => current() ? { ...c, ...hydrateConversation({ ...c, messages:c.messages.filter(m => m.id !== STREAM_ID && m.id !== REASON_ID) }, history.map(m => ({...m,ts:m.ts||m.created_at||0})), cid, true) } : c);
+              state.lastSeq = 0; state.runID = gap.run_id; lastRunIDs.current[cid] = gap.run_id; reconcileRunID = gap.run_id;
+              continue;
+            }
             if (ar.status === 404) {
               if (p.attachOnly) continue; // the resumed run may not be registered yet
               break;
             }
             const previousSeq = state.lastSeq;
             await consume(ar);
+            reconcileRunID = "";
             if (state.lastSeq > previousSeq) attempts = 0;
           } catch {
             /* retry */
@@ -225,6 +280,7 @@ export function useChatStreams() {
           await attachLoop(8);
           const finalStatus = state.terminal === "streaming" ? "error" : state.terminal;
           updateStatus(finalStatus);
+          if (finalStatus === 'error') patch(cid, c => current() ? { ...c, connection: c.connection === 'stopping' ? 'stopping' : 'disconnected' } : c);
           return finalStatus;
         }
         const res = await fetch("/api/v1/controller/chat/run", {
@@ -240,45 +296,58 @@ export function useChatStreams() {
             enabled_tools: p.enabledTools,
             resume_key: p.resumeKey ?? "",
             selected_version: p.selectedVersion ?? "",
+            ...(p.modelProfile ? { model_profile: p.modelProfile } : {}),
             active_skill: p.activeSkill ?? "",
             file_ids: p.fileIDs ?? [],
             confirm_risky: p.confirmRisky ?? false,
+            ...(p.budget ? { budget: p.budget } : {}),
           }),
           signal: ctrl.signal,
         });
+        if (!res.ok) { const rejection = await res.json().catch(() => ({})); throw new Error(rejection.msg || `请求未被接受 (${res.status})`); }
+        accepted = true; p.onAccepted?.();
         await consume(res);
 
         // reconnect + replay missed events if the stream dropped mid-run
         await attachLoop(5);
         const finalStatus = state.terminal === "streaming" ? "error" : state.terminal;
         updateStatus(finalStatus);
+        if (finalStatus === 'error') patch(cid, c => current() ? { ...c, connection: c.connection === 'stopping' ? 'stopping' : 'disconnected' } : c);
         return finalStatus;
       } catch (e) {
-        if ((e as Error).name !== "AbortError") { updateStatus("error"); return "error" as const; }
+        if ((e as Error).name === "AbortError" && !accepted) p.onRejected?.(new Error("请求已取消，输入已保留"));
+        if ((e as Error).name !== "AbortError") {
+          if (!accepted) p.onRejected?.(e instanceof Error ? e : new Error(String(e)));
+          updateStatus("error");
+          patch(cid, c => current() ? { ...c, connection: c.connection === 'stopping' ? 'stopping' : 'disconnected', error: accepted ? '连接已断开，任务状态待确认' : '发送失败：' + (e instanceof Error ? e.message : '请重试') } : c);
+          return "error" as const;
+        }
       } finally {
         if (current()) flushDeltas();
         if (pending.raf) cancelAnimationFrame(pending.raf);
         if (abortRefs.current[cid] === ctrl) delete abortRefs.current[cid];
       }
     },
-    [patch],
+    [patch, readInput, saveInput],
   );
 
-  const kill = useCallback(
-    (cid: string) => {
-      if (!cid) return;
-      // /chat/kill cancels the detached backend run (closing any GUI WS + freeing
-      // the browser lock); aborting the local fetch alone wouldn't stop it.
-      api.kill(cid).catch(() => {});
+  const stopping = useRef(new Set<string>());
+  const kill = useCallback(async (cid: string) => {
+    if (!cid || stopping.current.has(cid)) return;
+    stopping.current.add(cid);
+    patch(cid, c => ({ ...c, connection: 'stopping', error: '' }));
+    try {
+      await api.kill(cid);
       abortRefs.current[cid]?.abort();
-      patch(cid, (c) => ({ ...c, status: "idle" }));
-    },
-    [patch],
-  );
+      patch(cid, c => ({ ...c, status: 'stopped', connection: 'connected', error: '' }));
+    } catch (error) {
+      patch(cid, c => ({ ...c, connection: 'disconnected', error: '停止失败：' + (error instanceof Error ? error.message : '请重试') }));
+    } finally { stopping.current.delete(cid); }
+  }, [patch]);
 
   const messagesOf = useCallback((cid: string) => streams[cid]?.messages ?? [], [streams]);
   const statusOf = useCallback((cid: string): RunStatus => streams[cid]?.status ?? "idle", [streams]);
   const runningIds = Object.keys(streams).filter((cid) => streams[cid].status === "streaming");
 
-  return { run, kill, setConvMessages, hydrateMessages, messagesOf, statusOf, runningIds };
+  return { run, kill, connectionOf: (cid: string) => streams[cid]?.connection, errorOf: (cid: string) => streams[cid]?.error, inputOf: readInput, setConvMessages, hydrateMessages, messagesOf, statusOf, runningIds };
 }

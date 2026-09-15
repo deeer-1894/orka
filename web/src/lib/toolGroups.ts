@@ -1,12 +1,14 @@
 // Tool groups mirror the backend's groupForName() in tools_provider.go: the
 // chat run's enabled_tools accepts either exact tool names OR these group ids,
-// and an empty set means "all tools" (the default auto-orchestration). Chips let
+// and an empty set means automatic non-code tools. code/python/shell require
+// explicit selection to authorize execution. Chips let
 // the user narrow the toolset per conversation without flooding the UI with all
 // ~11 individual tools.
 export const TOOL_GROUPS = [
   { id: "web", label: "联网", icon: "🔎", desc: "搜索 / 抓网页 / 天气 / HTTP" },
   { id: "file", label: "文件", icon: "📄", desc: "读写你的工作区" },
-  { id: "gui_agent", label: "浏览器", icon: "🌐", desc: "真实浏览器自动化" },
+  { id: "browser", label: "网页 DOM", icon: "🌐", desc: "按网页 DOM 读取、点击、填表与页面脚本操作" },
+  { id: "gui_agent", label: "GUI 视觉", icon: "🖥️", desc: "根据截图识别页面并进行视觉操作，与网页 DOM 共用本会话浏览器" },
   { id: "shell", label: "终端", icon: "⌨️", desc: "在工作区执行命令 / 脚本 / 代码" },
   { id: "util", label: "工具", icon: "🧮", desc: "时间 / 计算 / 换算" },
   { id: "office", label: "办公", icon: "📊", desc: "汇率 / 时区 / 二维码 / CSV / Excel / 文档读写 / 图表 / SQL / PPT" },

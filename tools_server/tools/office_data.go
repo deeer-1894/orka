@@ -12,6 +12,7 @@ import (
 
 	"github.com/orka-oss/orka_core/pathsafe"
 	"github.com/orka-oss/tools_server/identity"
+	"github.com/orka-oss/tools_server/runner"
 )
 
 // These tools extend the office set with Excel I/O, document reading, SQL/joins
@@ -22,6 +23,20 @@ import (
 // runPython runs an inline python script (env-configured, argv-free) in the
 // workspace and returns its combined output.
 func runPython(ctx context.Context, root, script string, env []string) (string, error) {
+	for i, entry := range env {
+		key, out, ok := strings.Cut(entry, "=")
+		if !ok || out == "" {
+			continue
+		}
+		switch key {
+		case "XL_OUT", "CX_OUT", "SQL_OUT", "J_OUT", "SL_OUT", "CHART_OUT":
+			return generateWorkspaceFile(root, out, func(temp string) (string, error) {
+				staged := append([]string(nil), env...)
+				staged[i] = key + "=" + temp
+				return runInWorkspace(ctx, root, "python3", []string{"-c", script}, staged)
+			})
+		}
+	}
 	return runInWorkspace(ctx, root, "python3", []string{"-c", script}, env)
 }
 
@@ -56,7 +71,7 @@ func xlsxToCSV(base string) mcpserver.ToolHandlerFunc {
 		env := []string{"XL_IN=" + in, "XL_SHEET=" + req.GetString("sheet", ""), "XL_OUT=" + out}
 		msg, err := runPython(ctx, root, xlsxToCSVScript, env)
 		if err != nil {
-			return mcp.NewToolResultText("xlsx_to_csv failed (needs pandas/openpyxl in the gateway): " + err.Error() + "\n" + trunc(msg, 600)), nil
+			return mcp.NewToolResultError("xlsx_to_csv failed (needs pandas/openpyxl in the gateway): " + err.Error() + "\n" + trunc(msg, 600)), nil
 		}
 		return mcp.NewToolResultText(strings.TrimSpace(msg)), nil
 	}
@@ -90,7 +105,7 @@ func csvToXLSX(base string) mcpserver.ToolHandlerFunc {
 		env := []string{"CX_IN=" + in, "CX_OUT=" + out, "CX_SHEET=" + req.GetString("sheet", "Sheet1")}
 		msg, err := runPython(ctx, root, csvToXLSXScript, env)
 		if err != nil {
-			return mcp.NewToolResultText("csv_to_xlsx failed (needs pandas/openpyxl in the gateway): " + err.Error() + "\n" + trunc(msg, 600)), nil
+			return mcp.NewToolResultError("csv_to_xlsx failed (needs pandas/openpyxl in the gateway): " + err.Error() + "\n" + trunc(msg, 600)), nil
 		}
 		return mcp.NewToolResultText(strings.TrimSpace(msg)), nil
 	}
@@ -125,9 +140,11 @@ func pdfExtract(base string) mcpserver.ToolHandlerFunc {
 		}
 		out := baseName(req.GetString("out", ""))
 		if out != "" {
-			args = append(args, in, out)
-			if msg, err := runInWorkspace(ctx, root, "pdftotext", args, nil); err != nil {
-				return mcp.NewToolResultText("pdf_extract failed (needs poppler in the gateway): " + err.Error() + "\n" + trunc(msg, 400)), nil
+			if msg, err := generateWorkspaceFile(root, out, func(temp string) (string, error) {
+				staged := append(append([]string(nil), args...), in, temp)
+				return runInWorkspace(ctx, root, "pdftotext", staged, nil)
+			}); err != nil {
+				return mcp.NewToolResultError("pdf_extract failed (needs poppler in the gateway): " + err.Error() + "\n" + trunc(msg, 400)), nil
 			}
 			if fi, err := os.Stat(filepath.Join(root, out)); err == nil {
 				return mcp.NewToolResultText(fmt.Sprintf("extracted %s → %s (%s)", in, out, humanBytes(fi.Size()))), nil
@@ -137,7 +154,7 @@ func pdfExtract(base string) mcpserver.ToolHandlerFunc {
 		args = append(args, in, "-") // write to stdout
 		msg, err := runInWorkspace(ctx, root, "pdftotext", args, nil)
 		if err != nil {
-			return mcp.NewToolResultText("pdf_extract failed (needs poppler in the gateway): " + err.Error() + "\n" + trunc(msg, 400)), nil
+			return mcp.NewToolResultError("pdf_extract failed (needs poppler in the gateway): " + err.Error() + "\n" + trunc(msg, 400)), nil
 		}
 		if strings.TrimSpace(msg) == "" {
 			return mcp.NewToolResultText("(no extractable text — the PDF may be scanned images)"), nil
@@ -159,14 +176,16 @@ func docRead(base string) mcpserver.ToolHandlerFunc {
 		}
 		out := baseName(req.GetString("out", ""))
 		if out != "" {
-			if msg, err := runInWorkspace(ctx, root, "pandoc", []string{in, "-t", "gfm", "-o", out}, nil); err != nil {
-				return mcp.NewToolResultText("doc_read failed (is pandoc available?): " + err.Error() + "\n" + trunc(msg, 400)), nil
+			if msg, err := generateWorkspaceFile(root, out, func(temp string) (string, error) {
+				return runInWorkspace(ctx, root, "pandoc", []string{in, "-t", "gfm", "-o", temp}, nil)
+			}); err != nil {
+				return mcp.NewToolResultError("doc_read failed (is pandoc available?): " + err.Error() + "\n" + trunc(msg, 400)), nil
 			}
 			return mcp.NewToolResultText("read " + in + " → " + out + " (Markdown)"), nil
 		}
 		msg, err := runInWorkspace(ctx, root, "pandoc", []string{in, "-t", "gfm"}, nil)
 		if err != nil {
-			return mcp.NewToolResultText("doc_read failed (is pandoc available?): " + err.Error() + "\n" + trunc(msg, 400)), nil
+			return mcp.NewToolResultError("doc_read failed (is pandoc available?): " + err.Error() + "\n" + trunc(msg, 400)), nil
 		}
 		return mcp.NewToolResultText(trunc(msg, 12000)), nil
 	}
@@ -198,7 +217,7 @@ func sqlQuery(base string) mcpserver.ToolHandlerFunc {
 		}
 		msg, err := runPython(ctx, root, sqlQueryScript, env)
 		if err != nil {
-			return mcp.NewToolResultText("sql_query failed: " + err.Error() + "\n" + trunc(msg, 800)), nil
+			return mcp.NewToolResultError("sql_query failed: " + err.Error() + "\n" + trunc(msg, 800)), nil
 		}
 		return mcp.NewToolResultText(trunc(strings.TrimSpace(msg), 8000)), nil
 	}
@@ -251,7 +270,7 @@ func csvJoin(base string) mcpserver.ToolHandlerFunc {
 		}
 		msg, err := runPython(ctx, root, csvJoinScript, env)
 		if err != nil {
-			return mcp.NewToolResultText("csv_join failed: " + err.Error() + "\n" + trunc(msg, 800)), nil
+			return mcp.NewToolResultError("csv_join failed: " + err.Error() + "\n" + trunc(msg, 800)), nil
 		}
 		return mcp.NewToolResultText(trunc(strings.TrimSpace(msg), 4000)), nil
 	}
@@ -289,7 +308,7 @@ func slidesGenerate(base string) mcpserver.ToolHandlerFunc {
 		env := []string{"SL_MD=" + content, "SL_TITLE=" + req.GetString("title", ""), "SL_OUT=" + out}
 		msg, err := runPython(ctx, root, slidesScript, env)
 		if err != nil {
-			return mcp.NewToolResultText("slides failed (needs python-pptx in the gateway): " + err.Error() + "\n" + trunc(msg, 600)), nil
+			return mcp.NewToolResultError("slides failed (needs python-pptx in the gateway): " + err.Error() + "\n" + trunc(msg, 600)), nil
 		}
 		return mcp.NewToolResultText(strings.TrimSpace(msg)), nil
 	}
@@ -328,7 +347,7 @@ func pythonRun(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		root, rootErr := pathsafe.EnsureSession(base, identity.From(ctx).Email, identity.From(ctx).ConversationID)
 		if rootErr != nil {
-			return mcp.NewToolResultError(rootErr.Error()), nil
+			return executionFailure(rootErr), nil
 		}
 		code := req.GetString("code", "")
 		file := strings.TrimSpace(req.GetString("path", ""))
@@ -339,26 +358,20 @@ func pythonRun(base string) mcpserver.ToolHandlerFunc {
 		case file != "" && file != ".":
 			resolved, err := pathsafe.Resolve(root, file)
 			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+				return executionFailure(err), nil
 			}
-			args = []string{resolved}
+			relative, err := filepath.Rel(root, resolved)
+			if err != nil {
+				return executionFailure(err), nil
+			}
+			args = []string{"./" + filepath.ToSlash(relative)}
 		default:
-			return mcp.NewToolResultError("provide `code` (a snippet) or `path` (a .py file)"), nil
+			return executionFailure(fmt.Errorf("provide `code` (a snippet) or `path` (a .py file)")), nil
 		}
 		if argv := strings.Fields(req.GetString("argv", "")); len(argv) > 0 {
 			args = append(args, argv...)
 		}
-		msg, err := runInWorkspace(ctx, root, "python3", args, nil)
-		out := strings.TrimSpace(msg)
-		if err != nil {
-			if out == "" {
-				out = "(no output)"
-			}
-			return mcp.NewToolResultText("python exited with error: " + err.Error() + "\n--- output ---\n" + trunc(out, 8000)), nil
-		}
-		if out == "" {
-			return mcp.NewToolResultText("(ran successfully, no output)"), nil
-		}
-		return mcp.NewToolResultText(trunc(out, 8000)), nil
+		out, _ := runner.FromEnv().Execute(ctx, runner.Request{Root: root, Program: "python3", Args: args})
+		return executionResult(out), nil
 	}
 }

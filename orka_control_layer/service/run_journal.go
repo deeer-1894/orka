@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -128,7 +129,7 @@ func (j *runJournal) flush() bool {
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock() // serialize snapshot + rename; an older flush cannot overwrite a newer one
-	f := journalFile{RunID: j.runID, UpdatedAt: time.Now().UnixMilli(), Seed: j.seed, Messages: j.msgs, Delegates: j.delegates}
+	f := journalFile{RunID: j.runID, UpdatedAt: time.Now().UnixMilli(), Seed: browserHistoryMessages(j.seed), Messages: browserHistoryMessages(j.msgs), Delegates: browserHistoryDelegates(j.delegates)}
 	if j.checkpoint != nil {
 		f.Checkpoint = j.checkpoint()
 	}
@@ -360,19 +361,44 @@ func (s *ChatService) settleJournal(runID string, j *runJournal, status string) 
 // The resumed execution gets its OWN run record: the original stays in the log
 // as the failure it was, and the audit trail shows a recovery rather than
 // rewriting history.
+// PreparedResume is an already validated, claimed continuation. The API must
+// prepare before reporting acceptance, so rejected budgets/checkpoints are not
+// presented as a successful restart.
+type PreparedResume func(context.Context, func(messages.Message)) (string, error)
+
 func (s *ChatService) ResumeRun(ctx context.Context, runID, email string, raw func(messages.Message)) (string, error) {
 	if s.Msg == nil || s.Msg.Store == nil {
 		return "", errors.New("run storage unavailable")
 	}
 	rec, err := s.Msg.Store.GetRun(ctx, runID)
-	if err != nil {
+	if err != nil || rec.OwnerEmail != email {
 		return "", errors.New("run not found")
 	}
-	if rec.OwnerEmail != email {
-		return "", errors.New("run not found") // don't confirm another user's run exists
+	admitted, release, err := s.AdmitExecution(ctx, email, rec.ConversationID, rec.TaskID)
+	if err != nil {
+		return "", err
 	}
-	if !rec.Resumable {
-		return "", errors.New("这个运行无法继续(没有可恢复的记录)")
+	defer release()
+	prepared, err := s.PrepareResumeRun(admitted, runID, email)
+	if err != nil {
+		return "", err
+	}
+	return prepared(admitted, raw)
+}
+
+func (s *ChatService) PrepareResumeRun(ctx context.Context, runID, email string) (PreparedResume, error) {
+	if s.Msg == nil || s.Msg.Store == nil {
+		return nil, errors.New("run storage unavailable")
+	}
+	rec, err := s.Msg.Store.GetRun(ctx, runID)
+	if err != nil {
+		return nil, errors.New("run not found")
+	}
+	if rec.OwnerEmail != email {
+		return nil, errors.New("run not found") // don't confirm another user's run exists
+	}
+	if !rec.Resumable || (rec.Status != db.RunFailed && rec.Status != db.RunPartial && rec.Status != db.RunInterrupted) {
+		return nil, errors.New("这个运行无法继续(没有可恢复的记录)")
 	}
 	f := loadJournal(s.Cfg.Storage.BaseStoragePath, runID)
 	msgs := resumeMessages(f)
@@ -380,7 +406,7 @@ func (s *ChatService) ResumeRun(ctx context.Context, runID, email string, raw fu
 		// The flag outlived the transcript (manually cleaned, or storage moved).
 		// Correct the record rather than leaving a button that cannot work.
 		_ = s.Msg.Store.ClearRunResumable(ctx, runID)
-		return "", errors.New("这个运行的记录已不存在,无法继续")
+		return nil, errors.New("这个运行的记录已不存在,无法继续")
 	}
 	// Old journal versions did not contain a ledger. Account the preceding
 	// record conservatively rather than treating its already billed work as free.
@@ -388,8 +414,12 @@ func (s *ChatService) ResumeRun(ctx context.Context, runID, email string, raw fu
 		f.Checkpoint = &runCheckpoint{SpentTokens: rec.Tokens}
 	}
 	// A resume reuses the existing allowance; it never authorizes a new one.
-	if f.Checkpoint != nil && f.Checkpoint.SpentTokens >= runMaxTokens {
-		return "", errors.New("任务预算已用尽，记录和产物已保留；续跑需要明确追加预算，当前不会重置额度")
+	if err := validateCheckpointDeadline(f.Checkpoint); err != nil {
+		return nil, err
+	}
+	policy, err := ResolveResumeBudget(s.budgetConfig(), f.Checkpoint.BudgetPolicy, f.Checkpoint.SpentTokens)
+	if err != nil {
+		return nil, fmt.Errorf("任务预算无法恢复，记录和产物已保留: %w", err)
 	}
 	reason := "failed"
 	if rec.Status == db.RunPartial {
@@ -407,36 +437,49 @@ func (s *ChatService) ResumeRun(ctx context.Context, runID, email string, raw fu
 	// buttons resuming from the same stale point.
 	claimed, err := s.Msg.Store.ClaimRunResume(ctx, runID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if !claimed {
-		return "", errors.New("该运行已在恢复或已被恢复")
+		return nil, errors.New("该运行已在恢复或已被恢复")
 	}
 
-	rr := resumeJournal(f)
-	rr.Messages = msgs
-	rr.Reason = reason
-	status := s.Run(ctx, ChatRunRequest{
-		// Keep the recorded execution model even if the user has changed Auto.
-		SelectedVersion: rec.Model,
-		Message:         rec.Prompt,
-		ConversationID:  rec.ConversationID,
-		TaskID:          rec.TaskID,
-		UserEmail:       email,
-		Trigger:         "resume",
-		resumeFrom:      rr,
-	}, raw)
-	if status == db.RunDone || rr.SuccessorDurable {
-		dropJournal(s.Cfg.Storage.BaseStoragePath, runID)
-	} else if status != db.RunPaused && rr.Advanced {
-		// Reoffering old state here would omit newly charged calls and outcomes.
-		// Keep the predecessor on disk, but fail closed until current state is durable.
-		return status, errors.New("最新续跑状态未能可靠保存；旧记录已保留，但当前暂停续跑入口，避免重复执行或重置预算")
-	} else if status != db.RunPaused {
-		// Admission/startup may fail before a successor journal exists.
-		_ = s.Msg.Store.SetRunResumable(context.Background(), runID, len(f.Messages))
-	}
-	return status, nil
+	var claimMu sync.Mutex
+	used := false
+	return func(runCtx context.Context, raw func(messages.Message)) (string, error) {
+		claimMu.Lock()
+		if used {
+			claimMu.Unlock()
+			return "", errors.New("continuation already started")
+		}
+		used = true
+		claimMu.Unlock()
+		rr := resumeJournal(f)
+		rr.Messages = msgs
+		rr.Reason = reason
+		status := s.Run(runCtx, ChatRunRequest{
+			// Keep the recorded execution model even if the user has changed Auto.
+			SelectedVersion: rec.Model,
+			Budget:          policy,
+			EnabledTools:    append([]string(nil), f.Checkpoint.EnabledTools...),
+			Message:         rec.Prompt,
+			ConversationID:  rec.ConversationID,
+			TaskID:          rec.TaskID,
+			UserEmail:       email,
+			Trigger:         "resume",
+			resumeFrom:      rr,
+		}, raw)
+		if status == db.RunDone || rr.SuccessorDurable {
+			dropJournal(s.Cfg.Storage.BaseStoragePath, runID)
+		} else if status != db.RunPaused && rr.Advanced {
+			// Reoffering old state here would omit newly charged calls and outcomes.
+			// Keep the predecessor on disk, but fail closed until current state is durable.
+			return status, errors.New("最新续跑状态未能可靠保存；旧记录已保留，但当前暂停续跑入口，避免重复执行或重置预算")
+		} else if status != db.RunPaused {
+			// Admission/startup may fail before a successor journal exists.
+			_ = s.Msg.Store.SetRunResumable(context.Background(), runID, len(f.Messages))
+		}
+		return status, nil
+	}, nil
 }
 
 // ---- context carriers ----

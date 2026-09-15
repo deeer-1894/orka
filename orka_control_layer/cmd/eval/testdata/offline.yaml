@@ -1,0 +1,17 @@
+tasks:
+  - id: scoped_delivery
+    prompt: "Produce the fixture report"
+    timeout_s: 2
+    expect:
+      status: done
+      files: [report.txt]
+      contains: [fixture]
+      file_contains:
+        report.txt: [verified fixture]
+    followup:
+      prompt: "Check the same report"
+      expect:
+        status: done
+        files: [report.txt]
+        file_contains:
+          report.txt: [verified fixture]

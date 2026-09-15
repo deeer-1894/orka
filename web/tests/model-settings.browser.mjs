@@ -81,7 +81,7 @@ async function mockApp(t, options = {}) {
         // Auto resolves to the first model; followups must use the answer's
         // recorded model, which can differ from the header's "auto" selection.
         const modelVersion = body.selected_version === 'auto' ? config.models[0] : body.selected_version;
-        const meta = { conversation_id: body.conversation_id, model_version: modelVersion, model_profile: 'test-profile-1' };
+        const meta = { conversation_id: body.conversation_id, run_id: 'run-' + body.conversation_id, model_version: modelVersion, model_profile: 'test-profile-1' };
         const id = `answer-${requests.length}`, ts = Date.now();
         const frames = [
           { id: `${id}-stream`, type: 'stream', role: 'assistant', content: `Streaming response for: ${body.message}`, ts, meta },
@@ -142,6 +142,8 @@ async function sendMessage(page, message, expectedModelVersion) {
     answer: `Final response for: ${message}`,
     selected_version: expectedModelVersion,
     model_profile: 'test-profile-1',
+    conversation_id: request.postDataJSON().conversation_id,
+    run_id: 'run-' + request.postDataJSON().conversation_id,
   }, 'followups retain the final assistant model and opaque profile');
   await page.getByRole('button').filter({ hasText: `Follow up on: ${message}` }).waitFor();
   assert.equal(await page.getByText(`Final response for: ${message}`, { exact: true }).count(), 1);
@@ -251,7 +253,7 @@ test('failed discovery keeps manual list entry and saving available', async t =>
 
 test('history without a model_profile does not request followups or reuse the previous profile', async t => {
   const messages = (conversationID, profile) => {
-    const meta = { conversation_id: conversationID, model_version: INITIAL_MODELS[1], ...(profile === undefined ? {} : { model_profile: profile }) };
+    const meta = { conversation_id: conversationID, run_id: 'run-' + conversationID, model_version: INITIAL_MODELS[1], ...(profile === undefined ? {} : { model_profile: profile }) };
     return [
       { id: `${conversationID}-user`, type: 'chat', role: 'user', content: `Prompt from ${conversationID}`, ts: 1, meta: { conversation_id: conversationID } },
       { id: `${conversationID}-assistant`, type: 'chat', role: 'assistant', content: `Answer from ${conversationID}`, ts: 2, meta },
@@ -271,6 +273,7 @@ test('history without a model_profile does not request followups or reuse the pr
   assert.deepEqual((await positive).postDataJSON(), {
     prompt: 'Prompt from history-with-profile', answer: 'Answer from history-with-profile',
     selected_version: INITIAL_MODELS[1], model_profile: 'test-profile-1',
+    conversation_id: 'history-with-profile', run_id: 'run-history-with-profile',
   });
   await page.getByRole('button').filter({ hasText: 'Follow up on: Prompt from history-with-profile' }).waitFor();
   const countBeforeLegacy = requests.filter(r => r.path === '/chat/followups').length;

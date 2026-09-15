@@ -5,6 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 from agent.model import Planner
+from agent.config import ModelConfig, ModelPolicy
 
 
 class FakeClient:
@@ -35,9 +36,8 @@ def response(content, reason='stop', thinking=None):
 
 
 class SomPlannerTests(unittest.IsolatedAsyncioTestCase):
-    def planner(self, model='glm-5.3-flash'):
-        with patch.dict(os.environ, {'GUI_PLANNER':'vlm', 'VLM_MODEL':model, 'OPENAI_BASE_URL':'https://example.test/v1','OPENAI_API_KEY':'fixture'}):
-            return Planner()
+    def planner(self, model='glm-5.3-flash', effort=''):
+        return Planner(ModelConfig("https://example.test/v1", "fixture", model, True, ModelPolicy(reasoning_effort=effort)), mode="vlm")
 
     def sdk(self, fake):
         return patch('openai.AsyncOpenAI', return_value=fake)
@@ -45,7 +45,7 @@ class SomPlannerTests(unittest.IsolatedAsyncioTestCase):
     async def test_vision_input_and_known_reasoning_policy(self):
         fake = FakeClient(response('{"action":"navigate","url":"https://example.test"}'))
         with self.sdk(fake), patch('openai.OpenAI', side_effect=AssertionError('blocking client used')):
-            result, vision = await self.planner().predict({'instruction':'open site','screenshot':'cG5n'},None)
+            result, vision = await self.planner(effort='low').predict({'instruction':'open site','screenshot':'cG5n'},None)
         self.assertTrue(vision)
         self.assertEqual(result['url'],'https://example.test')
         self.assertEqual(fake.request['reasoning_effort'],'low')

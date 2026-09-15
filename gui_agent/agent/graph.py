@@ -8,6 +8,7 @@ edges route on status: running -> screenshot; END/ERROR/CALL_USER -> finish.
 from __future__ import annotations
 
 import base64
+import hashlib
 from typing import Any, Awaitable, Callable
 
 from langgraph.graph import END, StateGraph
@@ -15,15 +16,19 @@ from langgraph.graph import END, StateGraph
 from agent.evidence import Evidence
 from agent.model import Planner
 from agent.state import GraphState
+from agent.task_memory import TaskMemory
 from operators import marks as marksmod
 from operators.remote_browser import RemoteBrowserOperator
 
 EmitFn = Callable[[dict[str, Any]], Awaitable[None]]
 
 
-def build(operator: RemoteBrowserOperator, emit: EmitFn):
-    planner = Planner()
+def build(operator: RemoteBrowserOperator, emit: EmitFn, planner=None):
+    planner = planner or Planner()
     evidence = Evidence()
+    task_memory = TaskMemory(evidence)
+    observation_source = {}
+    last_memory = task_memory.snapshot()
 
     async def screenshot_node(state: GraphState) -> GraphState:
         dom = await operator.dom_snapshot()
@@ -34,12 +39,12 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
             # off its training distribution). Keep a rolling screenshot window
             # for the model's multi-turn context.
             window = planner.uitars.max_shots if planner.uitars else 5
-            shots = list(state.get("shots", []))[-(window - 1):] + [shot]
+            shots = (list(state.get("shots", []))[-(window - 1):] if window > 1 else []) + [shot]
             out["screenshot"] = shot
             out["shots"] = shots
             await emit({"type": "screenshot", "data": shot, "session_id": state.get("session_id", "")})
             observation_frame = {"type": "observe", "mode": "uitars", "tokens": 1, "session_id": state.get("session_id", "")}
-        elif state.get("use_vision"):
+        elif planner.mode == "vlm":
             # Set-of-Marks: number interactive elements so the VLM can target
             # "mark N" instead of pixels.
             ms = await marksmod.collect_marks(operator.page)
@@ -63,6 +68,10 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
                 observation_frame = {"type": "observe", "mode": "dom", "tokens": 0, "session_id": state.get("session_id", "")}
         observation = evidence.observe(int(state.get("step", 0)),
             "[page] " + evidence.clean(dom, 600) + "\n[elements] " + evidence.clean(out.get("marks_text", ""), 500))
+        observation_source.update(observed_step=int(state.get("step", 0)),
+            observation_seq=observation["seq"],
+            screenshot_sha256=hashlib.sha256(out.get("screenshot", shot).encode()).hexdigest())
+        out["task_memory"] = task_memory.snapshot()
         out["evidence"] = list(evidence.events)
         await emit({**observation_frame, "evidence": observation})
         return out
@@ -74,11 +83,10 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
         if raw is not None:
             # fold the model's reply into the multi-turn history (uitars)
             out["responses"] = list(state.get("responses", [])) + [raw]
-        if used_vision:
-            out["use_vision"] = True
         return out
 
     async def execute_node(state: GraphState) -> GraphState:
+        nonlocal last_memory
         action = state.get("prediction", {}) or {}
         # set-of-marks: resolve a mark index to a concrete element handle
         if "mark" in action and state.get("marks"):
@@ -87,6 +95,18 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
         step = int(state.get("step", 0)) + 1
         history = list(state.get("history", []))
         out: GraphState = {"step": step}
+        # Classify input before recording model notes so secret parameters cannot
+        # enter new progress fields. Notes describe this pre-action view only.
+        prepared = await evidence.prepare(operator, action)
+        progress = action.pop("progress", None)
+        if not prepared.get("input_redacted"):
+            task_memory.record(progress, observation_source)
+        current_memory = task_memory.snapshot()
+        if current_memory != last_memory:
+            await emit({"type": "progress", "task_memory": current_memory,
+                        "session_id": state.get("session_id", "")})
+            last_memory = current_memory
+        out["task_memory"] = current_memory
 
         if kind == "done":
             out["status"] = "END"
@@ -108,14 +128,12 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
         elif kind == "call_user":
             out["status"] = "CALL_USER"
             out["call_user"] = action.get("reason", "user input required")
-            await emit({"type": "call_user", "reason": out["call_user"], "session_id": state.get("session_id", "")})
         elif kind == "error":
             out["status"] = "ERROR"
             out["error"] = action.get("message", "error")
-            await emit({"type": "error", "error": out["error"], "session_id": state.get("session_id", "")})
         else:
             try:
-                receipt = await evidence.prepare(operator, action)
+                receipt = prepared
                 result = await operator.execute(action)
                 receipt = evidence.executed(step, receipt, result)
                 out["evidence"] = list(evidence.events)
@@ -135,8 +153,7 @@ def build(operator: RemoteBrowserOperator, emit: EmitFn):
                 out["status"] = "running"
             except Exception as e:  # noqa: BLE001
                 out["status"] = "ERROR"
-                out["error"] = str(e)
-                await emit({"type": "error", "error": str(e), "session_id": state.get("session_id", "")})
+                out["error"] = f"browser action failed ({type(e).__name__})"
 
         # Stop conditions: out of step budget, OR stuck (the last 3 actions are
         # identical — a scroll/click loop on a page the planner can't make

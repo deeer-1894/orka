@@ -97,3 +97,42 @@ func TestModelDefaultsUseOrderedList(t *testing.T) {
 		}
 	}
 }
+
+func TestRunBudgetPolicyDefaultsAndOverrides(t *testing.T) {
+	c := Config{}
+	c.applyDefaults()
+	if c.Agent.RunMaxTokens != 2_000_000 || c.Agent.RunMaxWallSeconds != 7200 || c.Agent.RunMaxSteps != 300 {
+		t.Fatalf("long task defaults changed: %+v", c.Agent)
+	}
+	t.Setenv("RUN_MAX_TOKENS", "1000000")
+	t.Setenv("RUN_TOKEN_CEILING", "3000000")
+	t.Setenv("RUN_MAX_WALL_SECONDS", "3600")
+	t.Setenv("RUN_MAX_STEPS", "120")
+	c.applyEnv()
+	if c.Agent.RunMaxTokens != 1000000 || c.Agent.RunTokenCeiling != 3000000 || c.Agent.RunMaxWallSeconds != 3600 || c.Agent.RunMaxSteps != 120 {
+		t.Fatal(c.Agent)
+	}
+}
+
+func TestBudgetValidationAlsoAppliesInDev(t *testing.T) {
+	t.Setenv("ORKA_DEV", "1")
+	for _, a := range []AgentConfig{
+		{RunMaxTokens: -1}, {RunMaxWallSeconds: -1}, {RunMaxSteps: -1},
+		{RunMaxTokens: 100, RunTokenCeiling: 99}, {RunMaxWallSeconds: 100, RunWallSecondsCeiling: 99},
+		{RunMaxSteps: 100, RunStepsCeiling: 99}, {UserDailyTokens: -1}, {UsageReservationTokens: -1},
+	} {
+		c := Config{Agent: a}
+		if err := c.Validate(); err == nil {
+			t.Fatalf("accepted invalid budget: %+v", a)
+		}
+	}
+}
+
+func TestLoadRejectsMalformedBudgetEnvironment(t *testing.T) {
+	for _, value := range []string{"oops", "-1", "99999999999999999999999"} {
+		t.Setenv("RUN_MAX_TOKENS", value)
+		if _, err := Load(""); err == nil {
+			t.Fatalf("silently ignored RUN_MAX_TOKENS=%s", value)
+		}
+	}
+}

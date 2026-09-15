@@ -19,6 +19,15 @@ import (
 // silently run with a publicly-known signing key.
 const DefaultDevSecret = "dev-only-change-me"
 
+// Historical task defaults remain the migration policy for old checkpoints.
+const (
+	DefaultRunMaxTokens           = 2_000_000
+	DefaultRunMaxWallSeconds      = 7200
+	DefaultRunMaxSteps            = 300
+	DefaultUserDailyTokens        = 50_000_000
+	DefaultUsageReservationTokens = 32_768
+)
+
 // Config is the full application configuration.
 type Config struct {
 	Server   ServerConfig   `yaml:"server"`
@@ -82,6 +91,16 @@ type StorageConfig struct {
 }
 
 type AgentConfig struct {
+	// Run defaults are deployment policy. A zero ceiling equals its default;
+	// an explicitly larger ceiling permits bounded per-task increases.
+	RunMaxTokens          int `yaml:"run_max_tokens"`
+	RunMaxWallSeconds     int `yaml:"run_max_wall_seconds"`
+	RunMaxSteps           int `yaml:"run_max_steps"`
+	RunTokenCeiling       int `yaml:"run_token_ceiling"`
+	RunWallSecondsCeiling int `yaml:"run_wall_seconds_ceiling"`
+	RunStepsCeiling       int `yaml:"run_steps_ceiling"`
+	// Fallback reservation when a caller cannot estimate its input/output cost.
+	UsageReservationTokens int `yaml:"usage_reservation_tokens"`
 	// ResearchMaxCalls bounds external research per run; zero uses the built-in limit.
 	ResearchMaxCalls int              `yaml:"research_max_calls"`
 	CheckpointTTLSec int              `yaml:"checkpoint_ttl_sec"`
@@ -128,6 +147,9 @@ func IsDev() bool {
 // missing or placeholder HMAC secret is fatal: with a known signing key an
 // attacker could forge context tokens (bypassing tool RBAC) and user sessions.
 func (c *Config) Validate() error {
+	if err := c.Agent.ValidateBudget(); err != nil {
+		return err
+	}
 	s := c.Security.CtxTokenSecret
 	if IsDev() {
 		return nil
@@ -169,8 +191,14 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("config read %q: %w", path, err)
 		}
 	}
+	if err := validateBudgetEnv(); err != nil {
+		return nil, err
+	}
 	c.applyEnv()
 	c.applyDefaults()
+	if err := c.Agent.ValidateBudget(); err != nil {
+		return nil, err
+	}
 	return &c, nil
 }
 
@@ -197,6 +225,13 @@ func (c *Config) applyEnv() {
 	envStr(&c.Agent.GUIAgentWSURL, "GUI_AGENT_WS_URL")
 	envStr(&c.Agent.SkillsDir, "SKILLS_DIR")
 	envInt(&c.Agent.UserDailyTokens, "USER_DAILY_TOKENS")
+	envInt(&c.Agent.RunMaxTokens, "RUN_MAX_TOKENS")
+	envInt(&c.Agent.RunMaxWallSeconds, "RUN_MAX_WALL_SECONDS")
+	envInt(&c.Agent.RunMaxSteps, "RUN_MAX_STEPS")
+	envInt(&c.Agent.RunTokenCeiling, "RUN_TOKEN_CEILING")
+	envInt(&c.Agent.RunWallSecondsCeiling, "RUN_WALL_SECONDS_CEILING")
+	envInt(&c.Agent.RunStepsCeiling, "RUN_STEPS_CEILING")
+	envInt(&c.Agent.UsageReservationTokens, "USAGE_RESERVATION_TOKENS")
 	if os.Getenv("MULTI_AGENT") == "1" {
 		c.Agent.MultiAgent = true
 	}
@@ -209,6 +244,7 @@ func (c *Config) applyEnv() {
 }
 
 func (c *Config) applyDefaults() {
+	c.Agent = c.Agent.WithBudgetDefaults()
 	setDefault(&c.Server.ControlAddr, ":8080")
 	setDefault(&c.Server.ToolsAddr, ":8090")
 	if len(c.Server.CORSAllowedHosts) == 0 {
@@ -268,4 +304,57 @@ func splitComma(s string) []string {
 		}
 	}
 	return out
+}
+
+// WithBudgetDefaults also supports callers constructing Config directly in tests
+// or embedding Orka without the YAML loader.
+func (a AgentConfig) WithBudgetDefaults() AgentConfig {
+	setDefaultInt(&a.RunMaxTokens, DefaultRunMaxTokens)
+	setDefaultInt(&a.RunMaxWallSeconds, DefaultRunMaxWallSeconds)
+	setDefaultInt(&a.RunMaxSteps, DefaultRunMaxSteps)
+	setDefaultInt(&a.RunTokenCeiling, a.RunMaxTokens)
+	setDefaultInt(&a.RunWallSecondsCeiling, a.RunMaxWallSeconds)
+	setDefaultInt(&a.RunStepsCeiling, a.RunMaxSteps)
+	setDefaultInt(&a.UsageReservationTokens, DefaultUsageReservationTokens)
+	setDefaultInt(&a.UserDailyTokens, DefaultUserDailyTokens)
+	return a
+}
+
+// ValidateBudget rejects policy mistakes instead of interpreting them as an
+// unlimited budget. Development mode must obey the same cost controls.
+func (a AgentConfig) ValidateBudget() error {
+	a = a.WithBudgetDefaults()
+	for _, d := range []struct {
+		name           string
+		value, ceiling int
+	}{
+		{"run_max_tokens", a.RunMaxTokens, a.RunTokenCeiling},
+		{"run_max_wall_seconds", a.RunMaxWallSeconds, a.RunWallSecondsCeiling},
+		{"run_max_steps", a.RunMaxSteps, a.RunStepsCeiling},
+	} {
+		if d.value <= 0 || d.ceiling < d.value {
+			return fmt.Errorf("agent.%s must be positive and no greater than its deployment ceiling", d.name)
+		}
+	}
+	// Seconds must fit time.Duration, including ceilings selected by requests.
+	if int64(a.RunWallSecondsCeiling) > (1<<63-1)/1_000_000_000 {
+		return errors.New("agent.run_wall_seconds_ceiling overflows time.Duration")
+	}
+	if a.UserDailyTokens <= 0 || a.UsageReservationTokens <= 0 {
+		return errors.New("agent daily quota and usage reservation must be positive")
+	}
+	return nil
+}
+
+// Malformed cost limits must not silently fall back to a more permissive value.
+func validateBudgetEnv() error {
+	for _, key := range []string{"RUN_MAX_TOKENS", "RUN_MAX_WALL_SECONDS", "RUN_MAX_STEPS", "RUN_TOKEN_CEILING", "RUN_WALL_SECONDS_CEILING", "RUN_STEPS_CEILING", "USAGE_RESERVATION_TOKENS", "USER_DAILY_TOKENS"} {
+		if value, ok := os.LookupEnv(key); ok {
+			n, err := strconv.Atoi(value)
+			if err != nil || n < 0 {
+				return fmt.Errorf("%s must be a nonnegative integer", key)
+			}
+		}
+	}
+	return nil
 }

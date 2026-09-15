@@ -31,6 +31,10 @@ func (s *Store) Discover(ctx context.Context, owner, base, key string) ([]string
 // Localhost and private-network endpoints remain supported for local providers.
 // Presets do not validate credentials or change the configured base URL.
 func (s *Store) DiscoverWithMetadata(ctx context.Context, owner, base, key string) (DiscoverResult, error) {
+	return s.discover(ctx, owner, base, key, true)
+}
+
+func (s *Store) discover(ctx context.Context, owner, base, key string, useActive bool) (DiscoverResult, error) {
 	base, err := NormalizeURL(base)
 	if err != nil {
 		return DiscoverResult{}, err
@@ -42,13 +46,18 @@ func (s *Store) DiscoverWithMetadata(ctx context.Context, owner, base, key strin
 	if !validText(key, 8192) {
 		return DiscoverResult{}, errors.New("invalid api_key")
 	}
-	if key == "" {
+	if useActive {
 		saved, _, err := s.Get(owner)
 		if err != nil {
 			return DiscoverResult{}, err
 		}
 		if saved.BaseURL == base {
-			key = saved.APIKey
+			if err := RequireSupportedProtocol(saved.Protocol); err != nil {
+				return DiscoverResult{}, err
+			}
+			if key == "" {
+				key = saved.APIKey
+			}
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -142,4 +151,29 @@ func arkPresetModels() []string {
 		"kimi-k3",
 		"ark-code-latest",
 	}
+}
+
+// DiscoverProfile scopes a blank credential to the named connection, even when
+// two accounts at the same provider share a URL. An unsaved ID uses only its
+// explicitly supplied key; it can never inherit another connection's key.
+func (s *Store) DiscoverProfile(ctx context.Context, owner, id, base, key, protocol string) (DiscoverResult, error) {
+	if protocol == "" {
+		protocol = "openai-compatible"
+	}
+	if err := RequireSupportedProtocol(protocol); err != nil {
+		return DiscoverResult{}, err
+	}
+	base, err := NormalizeURL(base)
+	if err != nil {
+		return DiscoverResult{}, err
+	}
+	p, err := s.GetProfiles(owner)
+	if err != nil {
+		return DiscoverResult{}, err
+	}
+	c, found := findProfile(p, id)
+	if strings.TrimSpace(key) == "" && found && c.BaseURL == base && c.Protocol == protocol {
+		key = c.APIKey
+	}
+	return s.discover(ctx, owner, base, key, false)
 }

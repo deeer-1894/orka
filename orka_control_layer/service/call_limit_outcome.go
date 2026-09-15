@@ -114,8 +114,9 @@ func assessRunOutcome(rc *agent.RunContext, runErr, ctxErr error) runOutcome {
 		out.status = db.RunPaused
 	}
 	if rc.Ctx != nil && (out.status == db.RunDone || out.status == db.RunPartial) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(rc.Ctx), 10*time.Second)
 		out.unfinished = append(out.unfinished, deliveryFrom(rc.Ctx).failures(ctx)...)
+		out.unfinished = append(out.unfinished, acceptanceFailures(ctx)...)
 		cancel()
 		if out.status == db.RunDone && (out.budgetHit != "" || len(out.unfinished) > 0) {
 			out.status = db.RunPartial

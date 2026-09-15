@@ -1,8 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/cloudwego/eino/schema"
 	"github.com/orka-oss/orka_control_layer/db"
@@ -10,8 +13,10 @@ import (
 	"github.com/orka-oss/orka_control_layer/modelsettings"
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/config"
+	"github.com/orka-oss/orka_core/modelprofile"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo/integration/mtest"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -53,8 +58,7 @@ func TestUserModelRuntimeSnapshot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Save during ToolsFor, after the request snapshot was taken. Main, mini,
-	// routing and delegates must still use the original snapshot for this run.
+	// Save during ToolsFor after capture; all delegates keep the original snapshot.
 	svc.ToolsFor = func(ctx context.Context, req ChatRunRequest) ([]agent.BaseTool, func(), error) {
 		if req.UserEmail == "alice" {
 			_, err := svc.ModelSettings.Save("alice", modelsettings.Config{BaseURL: ts.URL + "/changed", Model: "changed", Enabled: true}, "changed-secret")
@@ -244,7 +248,7 @@ func TestUserModelRedirectAndErrorRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = snapshot.main.Chat(context.Background(), llm.Request{Model: "user-main"}); err == nil || reached.Load() {
+	if _, err = snapshot.client.Chat(context.Background(), llm.Request{Model: "user-main"}); err == nil || reached.Load() {
 		t.Fatal("redirect followed", err)
 	}
 	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "upstream echoes private-key", 401) }))
@@ -257,7 +261,7 @@ func TestUserModelRedirectAndErrorRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = snapshot.main.Chat(context.Background(), llm.Request{Model: "m"}); err == nil || strings.Contains(err.Error(), "private-key") {
+	if _, err = snapshot.client.Chat(context.Background(), llm.Request{Model: "m"}); err == nil || strings.Contains(err.Error(), "private-key") {
 		t.Fatal("key leak", err)
 	}
 }
@@ -339,11 +343,11 @@ func TestUserModelFollowupsUsesExplicitChoice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := svc.SuggestFollowupsForUser(context.Background(), "owner", "manual", snapshot.profile, "question", "answer")
+	got, err := suggestRecordedFollowups(t, svc, "manual", snapshot.profile, "question", "answer")
 	if err != nil || len(got) != 1 || got[0] != "Next question?" {
 		t.Fatal(got, err)
 	}
-	if _, err = svc.SuggestFollowupsForUser(context.Background(), "owner", "removed", snapshot.profile, "question", "answer"); err != ErrModelSelection {
+	if _, err = suggestRecordedFollowups(t, svc, "removed", snapshot.profile, "question", "answer"); err != ErrModelSelection {
 		t.Fatal("invalid selection accepted", err)
 	}
 	mu.Lock()
@@ -353,19 +357,18 @@ func TestUserModelFollowupsUsesExplicitChoice(t *testing.T) {
 	}
 }
 
-func TestUserModelLegacyBuilderInputsIgnored(t *testing.T) {
+func TestUserModelLegacyRoleSelectionIgnored(t *testing.T) {
 	for _, role := range []string{"main", "mini"} {
 		t.Run(role, func(t *testing.T) {
 			selected := llm.NewMock(llm.Response{Content: "selected", FinishReason: "stop"})
-			obsolete := llm.NewMock(llm.Response{Content: "obsolete", FinishReason: "stop"})
 			specs := []config.SubAgentConfig{{Name: "worker", Description: "work", Tools: []string{"file_read"}, Model: role}}
-			subs, err := BuildEinoSubAgents(context.Background(), selected, "chosen", obsolete, "old-mini", deepTestTools(), specs)
+			subs, err := BuildEinoSubAgents(context.Background(), selected, "chosen", deepTestTools(), specs)
 			if err != nil {
 				t.Fatal(err)
 			}
 			result, err := RunEinoOnce(context.Background(), subs[0], "do work")
-			if err != nil || result != "selected" || selected.Calls() != 1 || selected.Requests[0].Model != "chosen" || obsolete.Calls() != 0 {
-				t.Fatalf("result=%s err=%v selected=%d obsolete=%d", result, err, selected.Calls(), obsolete.Calls())
+			if err != nil || result != "selected" || selected.Calls() != 1 || selected.Requests[0].Model != "chosen" {
+				t.Fatalf("result=%s err=%v selected=%d", result, err, selected.Calls())
 			}
 		})
 	}
@@ -428,14 +431,14 @@ func TestUserModelFollowupsSkipChangedProfile(t *testing.T) {
 	if len(snapshot.profile) != 64 || strings.Contains(snapshot.profile, "private-key") {
 		t.Fatal("unsafe profile")
 	}
-	if _, err = svc.SuggestFollowupsForUser(context.Background(), "owner", "manual", "", "Q", "A"); err != nil {
+	if _, err = suggestRecordedFollowups(t, svc, "manual", "", "Q", "A"); err != ErrFollowupIdentity {
 		t.Fatal(err)
 	}
 	_, err = svc.ModelSettings.Save("owner", modelsettings.Config{BaseURL: ts.URL + "/changed", Models: []string{"manual"}, Enabled: true}, "different-key")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := svc.SuggestFollowupsForUser(context.Background(), "owner", "manual", snapshot.profile, "Q", "A"); err != nil || len(got) != 0 {
+	if got, err := suggestRecordedFollowups(t, svc, "manual", snapshot.profile, "Q", "A"); err != nil || len(got) != 0 {
 		t.Fatal(got, err)
 	}
 	current, err := svc.resolveModels("owner")
@@ -445,7 +448,7 @@ func TestUserModelFollowupsSkipChangedProfile(t *testing.T) {
 	if _, err = svc.ModelSettings.Save("owner", modelsettings.Config{BaseURL: ts.URL + "/changed", Models: []string{"manual"}, Enabled: true}, "rotated-key"); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := svc.SuggestFollowupsForUser(context.Background(), "owner", "manual", current.profile, "Q", "A"); err != nil || len(got) != 0 {
+	if got, err := suggestRecordedFollowups(t, svc, "manual", current.profile, "Q", "A"); err != nil || len(got) != 0 {
 		t.Fatal(got, err)
 	}
 	if calls.Load() != 0 {
@@ -462,6 +465,11 @@ func TestResumeRunRetainsRecordedModel(t *testing.T) {
 		svc := configuredModelService(mt.T, ts.URL)
 		svc.Msg.Store = &db.Storage{Runs: mt.Coll}
 		mt.AddMockResponses(
+			mtest.CreateCursorResponse(0, mt.DB.Name()+"."+mt.Coll.Name(), mtest.FirstBatch, bson.D{
+				{Key: "run_id", Value: "recorded"}, {Key: "owner_email", Value: "owner"},
+				{Key: "conversation_id", Value: "conv"}, {Key: "prompt", Value: "continue work"},
+				{Key: "model", Value: "manual"}, {Key: "resumable", Value: true}, {Key: "status", Value: db.RunFailed},
+			}),
 			mtest.CreateCursorResponse(0, mt.DB.Name()+"."+mt.Coll.Name(), mtest.FirstBatch, bson.D{
 				{Key: "run_id", Value: "recorded"}, {Key: "owner_email", Value: "owner"},
 				{Key: "conversation_id", Value: "conv"}, {Key: "prompt", Value: "continue work"},
@@ -490,4 +498,152 @@ func TestResumeRunRetainsRecordedModel(t *testing.T) {
 			mt.Fatalf("recovery called %v, want recorded manual model", *calls)
 		}
 	})
+}
+
+func TestSelectedModelPublishesCoreSnapshot(t *testing.T) {
+	s := &ChatService{Cfg: &config.Config{LLM: config.LLMConfig{Model: "default", Models: []string{"manual"}, OpenAIBaseURL: "http://deployment/v1", OpenAIAPIKey: "deployment-key"}}, Client: llm.NewMock()}
+	s.ModelSettings = modelsettings.New(filepath.Join(t.TempDir(), "storage"))
+	_, err := s.ModelSettings.SaveProfiles("alice", modelsettings.Profiles{Profiles: []modelsettings.Config{{ID: "work", Name: "Work", BaseURL: "http://provider/v1", Models: []string{"first", "manual"}, Enabled: true}}, ActiveProfileID: "work"}, map[string]string{"work": "user-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := s.withUserModels(context.Background(), "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx = s.withSelectedModel(ctx, "manual")
+	got, ok := modelprofile.FromContext(ctx)
+	if !ok || got.ProfileID != "work" || got.Model != "manual" || got.APIKey != "user-key" || got.Protocol != "openai-compatible" || got.Capabilities.Vision {
+		t.Fatal("incorrect GUI snapshot", got)
+	}
+	_, err = s.ModelSettings.Save("alice", modelsettings.Config{BaseURL: "http://changed/v1", Models: []string{"changed"}, Enabled: true}, "new-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen, _ := modelprofile.FromContext(ctx)
+	if frozen != got {
+		t.Fatal("in-flight GUI snapshot changed")
+	}
+}
+
+func TestVerifiedGUIContextUsesSelectedProfile(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Messages []struct {
+				Content []struct {
+					Type     string `json:"type"`
+					ImageURL struct {
+						URL string `json:"url"`
+					} `json:"image_url"`
+				} `json:"content"`
+			} `json:"messages"`
+		}
+		if json.NewDecoder(r.Body).Decode(&req) != nil || len(req.Messages) != 1 || len(req.Messages[0].Content) != 2 {
+			t.Error("expected vision challenge")
+			w.WriteHeader(400)
+			return
+		}
+		raw, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(req.Messages[0].Content[1].ImageURL.URL, "data:image/png;base64,"))
+		img, err := png.Decode(bytes.NewReader(raw))
+		if err != nil {
+			t.Error(err)
+			w.WriteHeader(400)
+			return
+		}
+		colors := make([]string, img.Bounds().Dx()/32)
+		for i := range colors {
+			red, green, _, _ := img.At(i*32+16, 16).RGBA()
+			color := "blue"
+			if red > 0 && green > 0 {
+				color = "yellow"
+			} else if red > 0 {
+				color = "red"
+			} else if green > 0 {
+				color = "green"
+			}
+			colors[i] = color
+		}
+		fmt.Fprintf(w, `{"choices":[{"message":{"content":%q},"finish_reason":"stop"}]}`, strings.Join(colors, ","))
+	}))
+	defer upstream.Close()
+	s := &ChatService{Cfg: &config.Config{}, Client: llm.NewMock(), ModelSettings: modelsettings.New(filepath.Join(t.TempDir(), "storage"))}
+	p := modelsettings.Profiles{Profiles: []modelsettings.Config{{ID: "work", Name: "Work", BaseURL: upstream.URL, Models: []string{"first", "vision-model"}, Enabled: true}}, ActiveProfileID: "work"}
+	if _, err := s.ModelSettings.SaveProfiles("alice", p, map[string]string{"work": "work-key"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ModelSettings.Probe(context.Background(), "alice", "work", "vision-model", []string{"vision"}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := s.withUserModels(context.Background(), "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	auto, _ := modelprofile.FromContext(ctx)
+	if auto.Model != "first" || auto.Capabilities.Vision {
+		t.Fatal("Auto inherited another model's vision")
+	}
+	ctx = s.withSelectedModel(ctx, "vision-model")
+	selected, _ := modelprofile.FromContext(ctx)
+	if selected.Model != "vision-model" || !selected.Capabilities.Vision || selected.APIKey != "work-key" || selected.BaseURL != upstream.URL {
+		t.Fatal("GUI snapshot diverged from verified connection", selected)
+	}
+	other, err := s.withUserModels(context.Background(), "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outsider, _ := modelprofile.FromContext(other)
+	if outsider.APIKey == "work-key" || outsider.Capabilities.Vision {
+		t.Fatal("GUI connection crossed owners")
+	}
+}
+
+type profileAttemptAccountant struct{ begins, settles, tokens int }
+
+func (a *profileAttemptAccountant) Begin(context.Context, llm.Request) (func(context.Context, llm.Response, error) error, error) {
+	a.begins++
+	return func(_ context.Context, r llm.Response, _ error) error {
+		a.settles++
+		a.tokens += r.Usage.PromptTokens + r.Usage.CompletionTokens
+		return nil
+	}, nil
+}
+func TestUserConnectionAccountsEveryProviderAttempt(t *testing.T) {
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(503)
+			fmt.Fprint(w, `{"error":{"message":"temporary"},"usage":{"prompt_tokens":10,"completion_tokens":2}}`)
+			return
+		}
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":2}}`)
+	}))
+	defer ts.Close()
+	svc := configuredModelService(t, ts.URL)
+	ctx, err := svc.withUserModels(context.Background(), "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountant := &profileAttemptAccountant{}
+	ctx = llm.WithCallAccountant(ctx, accountant)
+	m := svc.modelsForContext(ctx)
+	client, model := m.modelFor("auto")
+	if _, err := client.Chat(ctx, llm.Request{Model: model}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || accountant.begins != 2 || accountant.settles != 2 || accountant.tokens != 34 {
+		t.Fatal("retry attempt escaped budget", calls, accountant)
+	}
+}
+
+func TestUserProviderErrorCannotLeakEncodedCredential(t *testing.T) {
+	safe := &privateModelClient{key: "private-key"}
+	err := safe.safeError(&llm.APIError{Status: 401, Body: `{"api_key":"private\u002dkey"}`})
+	var apiErr *llm.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 401 {
+		t.Fatal("lost HTTP error identity")
+	}
+	if strings.Contains(apiErr.Body, "private") || strings.Contains(apiErr.Body, "api_key") {
+		t.Fatal("encoded provider credential retained")
+	}
 }

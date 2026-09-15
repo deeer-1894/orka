@@ -8,6 +8,7 @@ import (
 	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_control_layer/llm"
 	"github.com/orka-oss/orka_core/agent"
+	"github.com/orka-oss/orka_core/config"
 )
 
 // Auto is an ordered-list default, independent of prompt complexity and cycle
@@ -30,14 +31,12 @@ func TestAutoNeverEscalates(t *testing.T) {
 			svc.Cfg.LLM.Model = "first"
 			svc.Cfg.LLM.MiniModel = "legacy-fast"
 			svc.Cfg.LLM.Models = []string{"manual"}
-			obsolete := llm.NewMock(llm.Response{Content: "wrong client", FinishReason: "stop"})
-			svc.Mini = obsolete
 			svc.ToolsFor = func(context.Context, ChatRunRequest) ([]agent.BaseTool, func(), error) {
 				return deepTestTools(), nil, nil
 			}
 			status := svc.Run(context.Background(), ChatRunRequest{ConversationID: "conv", Message: prompt, SelectedVersion: ModelAuto}, (&collector{}).sink)
-			if status != db.RunDone || calls != 5 || len(obsolete.Requests) != 0 {
-				t.Fatalf("status=%s calls=%d obsolete=%d", status, calls, len(obsolete.Requests))
+			if status != db.RunDone || calls != 5 {
+				t.Fatalf("status=%s calls=%d", status, calls)
 			}
 		})
 	}
@@ -52,13 +51,30 @@ func TestDeploymentModelListDropsMiniTier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fmt.Sprint(cfg.Models) != "[first manual mini]" || cfg.Model != "first" || cfg.MiniModel != "first" {
+	if fmt.Sprint(cfg.Models) != "[first manual mini]" || cfg.Model != "first" || cfg.MiniModel != "" {
 		t.Fatal(cfg.Models, cfg.Model, cfg.MiniModel)
 	}
 	for _, tc := range []struct{ selection, want string }{{"", "first"}, {"auto", "first"}, {"manual", "manual"}, {"mini", "mini"}, {"obsolete", "first"}} {
 		client, name := svc.modelFor(tc.selection)
-		if client != svc.Main || name != tc.want {
+		if client != svc.Client || name != tc.want {
 			t.Errorf("selection %s: %s", tc.selection, name)
 		}
+	}
+}
+
+func TestSingleClientConstructorIgnoresLegacyMiniConfiguration(t *testing.T) {
+	selected := llm.NewMock()
+	cfg := &config.Config{LLM: config.LLMConfig{Model: "selected", MiniModel: "legacy-mini"}}
+	svc := NewChatService(cfg, selected, nil, nil, nil, nil)
+	if svc.Client != selected {
+		t.Fatal("constructor replaced selected client")
+	}
+	got, name := svc.modelFor(ModelAuto)
+	if got != selected || name != "selected" {
+		t.Fatal("legacy mini altered selection")
+	}
+	snapshot := svc.defaultModels()
+	if snapshot.cfg.MiniModel != "" || snapshot.cfg.AllowsModel("legacy-mini") {
+		t.Fatal("legacy mini propagated into runtime")
 	}
 }

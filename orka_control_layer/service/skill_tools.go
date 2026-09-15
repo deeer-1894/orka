@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_control_layer/service/middlewares"
+	"github.com/orka-oss/orka_core/agent"
 )
 
 // find_skills + skill_create round out the Claude-Code-style skill system: the
@@ -31,11 +31,15 @@ func (findSkillsTool) Schema() map[string]any {
 		},
 	}
 }
-func (findSkillsTool) Invoke(_ context.Context, args map[string]any) (string, error) {
+func (findSkillsTool) Invoke(ctx context.Context, args map[string]any) (string, error) {
 	q := strings.ToLower(strings.TrimSpace(asStr(args["query"])))
 	var b strings.Builder
 	n := 0
-	for _, s := range middlewares.AllSkills() {
+	defs, err := middlewares.VisibleSkills(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, s := range defs {
 		if q == "" || strings.Contains(strings.ToLower(s.Name), q) || strings.Contains(strings.ToLower(s.Desc), q) {
 			fmt.Fprintf(&b, "- %s: %s\n", s.Name, s.Desc)
 			n++
@@ -64,7 +68,7 @@ func (skillCreateTool) Schema() map[string]any {
 		"required": []string{"name", "description", "instructions"},
 	}
 }
-func (skillCreateTool) Invoke(_ context.Context, args map[string]any) (string, error) {
+func (skillCreateTool) Invoke(ctx context.Context, args map[string]any) (string, error) {
 	def := middlewares.SkillDef{
 		Name:   asStr(args["name"]),
 		Desc:   asStr(args["description"]),
@@ -73,7 +77,7 @@ func (skillCreateTool) Invoke(_ context.Context, args map[string]any) (string, e
 	if strings.TrimSpace(def.Desc) == "" || strings.TrimSpace(def.Prompt) == "" {
 		return "", fmt.Errorf("skill_create needs a non-empty description and instructions")
 	}
-	if err := middlewares.RegisterSkill(def, true); err != nil {
+	if err := middlewares.RegisterPersonalSkill(ctx, def); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("Created skill %q. It's now adoptable with apply_skill and will survive a restart.", strings.ToLower(strings.TrimSpace(def.Name))), nil
@@ -112,7 +116,7 @@ func (skillInstallTool) Invoke(ctx context.Context, args map[string]any) (string
 	if err != nil {
 		return "", err
 	}
-	name, err := middlewares.InstallSkillMD(string(body))
+	name, err := middlewares.InstallPersonalSkill(ctx, string(body))
 	if err != nil {
 		return "", fmt.Errorf("invalid SKILL.md: %w", err)
 	}
@@ -121,7 +125,7 @@ func (skillInstallTool) Invoke(ctx context.Context, args map[string]any) (string
 
 // SkillTools returns the always-available skill-management tools.
 func SkillTools() []agent.BaseTool {
-	return []agent.BaseTool{findSkillsTool{}, skillCreateTool{}, skillInstallTool{}}
+	return []agent.BaseTool{applyPersonalSkillTool{}, findSkillsTool{}, skillCreateTool{}, skillInstallTool{}}
 }
 
 func asStr(v any) string {
@@ -132,4 +136,24 @@ func asStr(v any) string {
 		return s
 	}
 	return fmt.Sprint(v)
+}
+
+type applyPersonalSkillTool struct{}
+
+func (applyPersonalSkillTool) Name() string { return "apply_skill" }
+func (applyPersonalSkillTool) Description() string {
+	return "Read a system or your personal skill by name and apply its guidance to this task."
+}
+func (applyPersonalSkillTool) Schema() map[string]any {
+	return map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}}, "required": []string{"name"}}
+}
+func (applyPersonalSkillTool) Invoke(ctx context.Context, args map[string]any) (string, error) {
+	def, ok, err := middlewares.GetVisibleSkill(ctx, asStr(args["name"]))
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("skill not found")
+	}
+	return def.Prompt, nil
 }

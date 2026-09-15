@@ -1,12 +1,13 @@
+import { readPolicies, type ModelPolicy } from './modelPolicies';
 interface ModelSettingsInput {
   provider: string; base_url: string;
-  models: string[]; enabled: boolean; api_key?: string;
+  models: string[]; enabled: boolean; api_key?: string; policies?: Record<string,ModelPolicy>;
 }
 
 // Portable profiles deliberately exclude credentials and retired routing roles.
 export function exportModelProfile(profile: ModelSettingsInput): string {
-  const { provider, base_url, models, enabled } = profile;
-  return JSON.stringify({ version: 2, provider, base_url, models, enabled }, null, 2);
+  const { provider, base_url, models, enabled, policies } = profile;
+  return JSON.stringify({ version: 2, provider, base_url, models, enabled, ...(policies?{policies:readPolicies(policies)}:{}) }, null, 2);
 }
 
 export function importModelProfile(text: string): ModelSettingsInput {
@@ -26,6 +27,6 @@ export function importModelProfile(text: string): ModelSettingsInput {
   if (enabled && !models.length) throw new Error("请至少填写一个模型");
   return {
     provider: typeof p.provider === "string" ? p.provider : "custom",
-    base_url: p.base_url.trim(), models, enabled,
+    base_url: p.base_url.trim(), models, enabled, ...(p.policies ? {policies:readPolicies(p.policies)} : {}),
   };
 }

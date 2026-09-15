@@ -7,7 +7,6 @@ import (
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	"go.mongodb.org/mongo-driver/bson"
 
-	"github.com/orka-oss/orka_core/messages"
 	"github.com/orka-oss/orka_control_layer/service"
 )
 
@@ -79,12 +78,23 @@ func (a *API) RerunRun(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusNotFound, "run not found")
 		return
 	}
-	go a.Chat.Run(context.Background(), service.ChatRunRequest{
-		Message:        run.Prompt,
-		ConversationID: run.ConversationID,
-		TaskID:         run.TaskID,
-		UserEmail:      run.OwnerEmail,
-		Trigger:        "rerun",
-	}, func(messages.Message) {})
+	runCtx, release, admissionErr := a.Chat.AdmitExecution(context.Background(), run.OwnerEmail, run.ConversationID, run.TaskID)
+	if admissionErr != nil {
+		fail(c, consts.StatusConflict, admissionErr.Error())
+		return
+	}
+	rs := a.hub.start(run.ConversationID, service.ExecutionID(runCtx))
+	go func() {
+		defer release()
+		a.Chat.Run(runCtx, service.ChatRunRequest{
+			SelectedVersion: run.Model,
+			Message:         run.Prompt,
+			ConversationID:  run.ConversationID,
+			TaskID:          run.TaskID,
+			UserEmail:       run.OwnerEmail,
+			Trigger:         "rerun",
+		}, rs.publish)
+		a.hub.finishStream(run.ConversationID, rs)
+	}()
 	ok(c, map[string]string{"status": "rerunning"})
 }

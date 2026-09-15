@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"fmt"
 	"golang.org/x/net/html"
+	"io/fs"
 	"net/url"
-	"os"
 	"path"
 	"strings"
 )
 
-func checkHTML(root *os.Root, p string, b []byte) error {
+func checkHTML(root fs.FS, p string, b []byte) error {
 	doc, err := html.Parse(bytes.NewReader(b))
 	if err != nil {
 		return err
@@ -44,7 +44,7 @@ func checkHTML(root *os.Root, p string, b []byte) error {
 	return walk(doc)
 }
 
-func checkResource(root *os.Root, p, ref string) error {
+func checkResource(root fs.FS, p, ref string) error {
 	if strings.ContainsAny(ref, "<>\"\n\r") || strings.TrimSpace(ref) == "" {
 		return fmt.Errorf("malformed resource reference")
 	}
@@ -62,7 +62,7 @@ func checkResource(root *os.Root, p, ref string) error {
 	if !ValidPath(target) {
 		return fmt.Errorf("resource escapes workspace")
 	}
-	st, err := root.Stat(target)
+	st, err := fs.Stat(root, target)
 	if err != nil || !st.Mode().IsRegular() || st.Size() == 0 {
 		return fmt.Errorf("missing/invalid local resource %q", ref)
 	}

@@ -31,6 +31,11 @@ import (
 // runBudget is one run's remaining allowance. Safe for concurrent use: sub-agent
 // middlewares consult it from their own goroutines.
 type runBudget struct {
+	explicitSteps        bool
+	carriedSteps         int
+	carriedUnknownCalls  int
+	carriedUnknownTokens int
+
 	maxSteps  int // model generation cycles (0 = unlimited)
 	maxTokens int // cumulative tokens across the run (0 = unlimited)
 	deadline  time.Time
@@ -57,6 +62,8 @@ type runBudget struct {
 	usageReported   bool   // even a zero-cost completed exchange is authoritative
 	carried         int    // tokens consumed by preceding attempts
 	spent           int    // billed tokens reported by AddUsage; metered budgets only
+	reserved        int    // in-flight calls; managed by BudgetSession
+	sharedSteps     int    // logical cycles shared across branches, independent of compaction
 	hit             string // "" until exhausted, then steps | tokens | time
 }
 
@@ -70,7 +77,7 @@ func (b *runBudget) AddUsage(promptTokens, completionTokens int) {
 		return
 	}
 	b.mu.Lock()
-	b.spent += promptTokens + completionTokens
+	b.spent = saturatingUsageSum(b.spent, saturatingUsageSum(promptTokens, completionTokens))
 	b.usageReported = true
 	b.mu.Unlock()
 }
@@ -95,14 +102,16 @@ func (b *runBudget) spentTokens() int {
 	return b.spent
 }
 
-// totalSpentTokens is the task allowance ledger; spentTokens is this attempt's bill.
+// totalSpentTokens is the task allowance ledger; spentTokens is this attempt's
+// bill. In-flight reservations survive checkpoint recovery conservatively as
+// committed allowance; a crashed exchange must not reopen the parent's budget.
 func (b *runBudget) totalSpentTokens() int {
 	if b == nil {
 		return 0
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.carried + b.spent
+	return saturatingUsageSum(b.carried, saturatingUsageSum(b.spent, b.reserved))
 }
 
 func newRunBudget(maxSteps, maxTokens int, wall time.Duration) *runBudget {
@@ -170,7 +179,12 @@ func (b *runBudget) observe(msgs []*schema.Message) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.metered {
-		tokens = b.carried + b.spent
+		tokens = saturatingUsageSum(b.carried, b.spent)
+	}
+	if b.explicitSteps {
+		steps = b.sharedSteps
+	} else {
+		steps = max(steps, b.sharedSteps)
 	}
 	b.steps, b.tokens = steps, tokens
 	if b.hit != "" && b.sticky {
@@ -200,7 +214,7 @@ func (b *runBudget) exhausted() string {
 	// no next BeforeModel observation to latch these terminal limits.
 	if b.hit == "" {
 		switch {
-		case b.metered && b.maxTokens > 0 && b.carried+b.spent >= b.maxTokens:
+		case b.metered && b.maxTokens > 0 && saturatingUsageSum(b.carried, b.spent) >= b.maxTokens:
 			b.hit = "tokens"
 		case !b.deadline.IsZero() && time.Now().After(b.deadline):
 			b.hit = "time"

@@ -23,7 +23,7 @@ func deliveryResponse(ctx context.Context, m *schema.Message) *schema.Message {
 	if len(paths) == 0 || len(p.snapshot()) == 0 || len(p.unfinished()) != 0 {
 		return m
 	}
-	report := artifacts.Check(ctx, d.root, paths)
+	report := artifacts.CheckDeclared(ctx, d.root, paths)
 	if !report.OK || ctx.Err() != nil || budgetFrom(ctx).exhausted() != "" {
 		return m
 	}

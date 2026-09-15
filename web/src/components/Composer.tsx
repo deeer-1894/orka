@@ -1,3 +1,5 @@
+import type { SessionRecoveryStore } from '../lib/sessionRecovery';
+import { validateBudget, type RunBudgetLimits } from '../lib/runBudget';
 import { useEffect, useRef, useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
 import {
@@ -10,6 +12,8 @@ import {
   type CatalogGroup,
 } from "../lib/toolGroups";
 import { api, files as fileApi, tools as toolsApi, type ToolInfo } from "../api";
+import { invalidateSessionFiles, useFileRevision } from "../hooks/useFileRevision";
+import { useConversationDraft } from "../hooks/useConversationDraft";
 import { toast, toastError } from "../lib/toast";
 import { Icon } from "./Icon";
 
@@ -22,7 +26,6 @@ const SKILL_ICON: Record<string, { icon: string; label: string }> = {
   translator: { icon: "🌐", label: "翻译" },
 };
 
-interface Attachment { name: string; path: string; image: boolean; conversationID: string }
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
 
 // Mirrors the built-in skills registered in the control layer (skills_registry.go).
@@ -35,21 +38,12 @@ export const SKILLS = [
   { name: "translator", label: "翻译", icon: "🌐", desc: "自然地道的翻译" },
 ];
 
-export function Composer({
-  blocked = false,
-  status,
-  onSend,
-  onKill,
-  enabledTools,
-  onSetTools,
-  activeSkill,
-  onPickSkill,
-  conversationID,
-  ensureConversation,
-}: {
+interface ComposerProps {
+  sessionRecovery?: SessionRecoveryStore;
+  draftState?: ReturnType<typeof useConversationDraft>;
   status: RunStatus;
   blocked?: boolean;
-  onSend: (msg: string, fileIDs?: string[]) => void;
+  onSend: (msg: string, fileIDs?: string[], budget?: RunBudgetLimits, conversationID?: string) => void | Promise<unknown>;
   onKill: () => void;
   enabledTools: Set<string>;
   onSetTools: (next: Set<string>) => void;
@@ -57,8 +51,23 @@ export function Composer({
   onPickSkill: (name: string | null) => void;
   conversationID: string;
   ensureConversation: () => Promise<string>;
-}) {
-  const [text, setText] = useState("");
+}
+
+export function Composer(props: ComposerProps) {
+  return props.draftState ? <ComposerForm {...props} draft={props.draftState} /> : <StandaloneComposer {...props} />;
+}
+function StandaloneComposer(props: ComposerProps) {
+  const draft = useConversationDraft(props.conversationID, props.sessionRecovery);
+  return <ComposerForm {...props} draft={draft} />;
+}
+function ComposerForm({
+  draft, blocked = false, status, onSend, onKill, enabledTools, onSetTools,
+  activeSkill, onPickSkill, conversationID, ensureConversation,
+}: ComposerProps & { draft: ReturnType<typeof useConversationDraft> }) {
+  const { text, setText, attachments, setAttachments } = draft;
+  const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
+  const [sendError, setSendError] = useState<{ cid: string; message: string } | null>(null);
   const [menu, setMenu] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [catalog, setCatalog] = useState<ToolInfo[] | null>(null);
@@ -75,6 +84,9 @@ export function Composer({
   const [previewCache, setPreviewCache] = useState<Record<string, string>>({});
   // @-mention: reference a workspace file as context (Cursor-style).
   const [atOpen, setAtOpen] = useState(false);
+  const [atDir, setAtDir] = useState(".");
+  const [atError, setAtError] = useState("");
+  const fileRevision = useFileRevision(conversationID);
   const [atQuery, setAtQuery] = useState("");
   const [atSel, setAtSel] = useState(0);
   const [atListing, setAtListing] = useState<{ conversationID: string; items: { name: string; dir: boolean; size: number }[] }>({ conversationID: "", items: [] });
@@ -152,11 +164,8 @@ export function Composer({
       setDeleting(null);
     }
   };
-  const [allAttachments, setAttachments] = useState<Attachment[]>([]);
-  const attachments = allAttachments.filter(a => a.conversationID === conversationID);
   useEffect(() => {
-    setAttachments(a => a.filter(item => item.conversationID === conversationID));
-    setAtListing({ conversationID, items: [] }); setAtSel(0);
+    setAtListing({ conversationID, items: [] }); setAtSel(0); setAtDir(".");
   }, [conversationID]);
   const [uploading, setUploading] = useState(0);
   const [dragging, setDragging] = useState(false);
@@ -183,7 +192,7 @@ export function Composer({
       if (!cid) {
         const scope = uploadScope.current;
         if (!scope.creating) scope.creating = ensureConversation().then(id => {
-          if (scope.generation === generation) scope.createdID = id;
+          if (scope.generation === generation) { scope.createdID = id; draft.move("", id); }
           return id;
         }).finally(() => { if (scope.generation === generation) scope.creating = null; });
         cid = await scope.creating;
@@ -192,7 +201,8 @@ export function Composer({
         if (uploadScope.current.generation !== generation) break;
         try {
           const path = await fileApi.upload(f, "", undefined, cid);
-          if (uploadScope.current.generation === generation) setAttachments(a => [...a, { name: f.name, path, image: IMAGE_RE.test(f.name), conversationID: cid }]);
+          invalidateSessionFiles(cid);
+          if (uploadScope.current.generation === generation) draft.addAttachment({ name: f.name, path, image: IMAGE_RE.test(f.name), conversationID: cid });
         } catch { toastError("上传失败：" + f.name); }
       }
     } catch { toastError("无法创建上传文件的会话"); }
@@ -229,11 +239,12 @@ export function Composer({
   useEffect(() => {
     let current = true;
     if (!atOpen || !conversationID) return;
-    fileApi.scopedList(".", conversationID, true)
+    setAtError("");
+    fileApi.scopedList(atDir, conversationID, true)
       .then(items => { if (current) setAtListing({ conversationID, items }); })
-      .catch(() => { if (current) setAtListing({ conversationID, items: [] }); });
+      .catch(() => { if (current) setAtListing({ conversationID, items: [] }); setAtError("文件读取失败，请重新打开引用列表"); });
     return () => { current = false; };
-  }, [atOpen, conversationID]);
+  }, [atOpen, conversationID, atDir, fileRevision]);
 
   // Detect an `@token` being typed at the cursor → open the file picker.
   const syncAt = (value: string, cursor: number | null) => {
@@ -242,9 +253,14 @@ export function Composer({
     if (m) { setAtOpen(true); setAtQuery(m[2]); setAtSel(0); } else setAtOpen(false);
   };
   const atMatches = atFiles
-    .filter((f) => !f.dir && f.name.toLowerCase().includes(atQuery.toLowerCase()))
+    .filter((f) => f.name.toLowerCase().includes(atQuery.toLowerCase()))
     .slice(0, 8);
 
+  const chooseFile = (file: { name: string; dir: boolean }) => {
+    const path = atDir === '.' ? file.name : `${atDir}/${file.name}`;
+    if (file.dir) { setAtListing({ conversationID, items: [] }); setAtDir(path); setAtQuery(''); setAtSel(0); }
+    else pickFile(path);
+  };
   // Insert the picked file as a context attachment and strip the @token.
   const pickFile = (name: string) => {
     const ta = taRef.current;
@@ -256,13 +272,19 @@ export function Composer({
     requestAnimationFrame(() => ta?.focus());
   };
 
-  const send = () => {
-    if (blocked) return;
-    if ((!text.trim() && attachments.length === 0) || busy || uploading > 0) return;
-    onSend(text.trim(), attachments.map((a) => a.path));
-    setText("");
-    setAttachments([]);
-    setMenu(false);
+  const send = async () => {
+    if (blocked || sendingRef.current || busy || uploading > 0 || (!text.trim() && !attachments.length)) return;
+    let cid = conversationID;
+    const sent = { text, attachments };
+    sendingRef.current = true; setSending(true); setSendError(null);
+    try {
+      validateBudget(draft.budget);
+      if (!cid) { cid = await ensureConversation(); draft.move("", cid); }
+      await onSend(text.trim(), attachments.map(a => a.path), { ...draft.budget }, cid);
+      draft.clearAccepted(cid, sent); setMenu(false);
+    } catch (error) {
+      setSendError({ cid, message: "发送失败：" + (error instanceof Error ? error.message : "请重试") });
+    } finally { sendingRef.current = false; setSending(false); }
   };
 
   // Skills are now a locked "mode" (structured active_skill the backend injects
@@ -337,8 +359,8 @@ export function Composer({
                 );
               })}
             </div>
-            <div className="mt-1 border-t border-border px-1 pt-1.5">
-              <div className="mb-1 px-1 text-[11px] text-faint">从网上安装技能 (SKILL.md 链接)</div>
+            <details className="mt-1 border-t border-border px-1 pt-1.5">
+              <summary className="mb-1 cursor-pointer px-1 text-[11px] text-faint">高级 · 安装技能</summary>
               <div className="flex items-center gap-1">
                 <input
                   value={installUrl}
@@ -355,19 +377,22 @@ export function Composer({
                   {installing ? "…" : "安装"}
                 </button>
               </div>
-            </div>
+            </details>
           </div>
         )}
 
-        {atOpen && atMatches.length > 0 && (
+        {atOpen && (
           <div className="absolute bottom-[calc(100%+8px)] left-0 z-20 w-80 rounded-2xl border border-border bg-surface p-1.5 shadow-lg">
-            <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-faint">引用工作区文件作为上下文</div>
+            <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-faint">引用工作区文件作为上下文 · {atDir}</div>
+            {atDir !== "." && <button onClick={() => { setAtDir(atDir.includes("/") ? atDir.slice(0, atDir.lastIndexOf("/")) : "."); setAtListing({ conversationID, items: [] }); }}>返回上级目录</button>}
+            {atError && <p role="alert">{atError}</p>}
             <div className="max-h-[40vh] overflow-y-auto">
               {atMatches.map((f, i) => (
                 <button
                   key={f.name}
                   onMouseEnter={() => setAtSel(i)}
-                  onClick={() => pickFile(f.name)}
+                  onClick={() => chooseFile(f)}
+                  aria-label={f.dir ? "打开目录 " + f.name : "引用 " + (atDir === "." ? f.name : atDir + "/" + f.name)}
                   className={"flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left " + (i === atSel ? "bg-surface2" : "hover:bg-surface2")}
                 >
                   <span className="text-[15px]">{IMAGE_RE.test(f.name) ? "🖼️" : "📄"}</span>
@@ -403,6 +428,7 @@ export function Composer({
           )}
         </div>
 
+        {sendError?.cid === conversationID && <p role="alert" className="mb-2 text-sm text-accent">{sendError.message}</p>}
         {(attachments.length > 0 || uploading > 0) && (
           <div className="mb-2 flex flex-wrap gap-1.5">
             {attachments.map((a) => (
@@ -477,7 +503,7 @@ export function Composer({
                 : "w-10 text-muted hover:bg-surface2") +
               (toolsOpen ? " bg-surface2" : "")
             }
-            title={enabledTools.size === 0 ? "默认按任务自动选择工具，点击可限定范围" : `已限定 ${enabledTools.size} 类工具，点击调整`}
+            title={enabledTools.size === 0 ? "默认按任务自动选择非代码工具；代码执行需主动启用" : `已限定 ${enabledTools.size} 类工具，点击调整`}
             aria-label="工具范围"
           >
             <Icon name="wrench" size={17} />
@@ -492,7 +518,7 @@ export function Composer({
               if (atOpen && atMatches.length) {
                 if (e.key === "ArrowDown") { e.preventDefault(); setAtSel((s) => Math.min(s + 1, atMatches.length - 1)); return; }
                 if (e.key === "ArrowUp") { e.preventDefault(); setAtSel((s) => Math.max(s - 1, 0)); return; }
-                if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pickFile(atMatches[atSel].name); return; }
+                if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); chooseFile(atMatches[atSel]); return; }
                 if (e.key === "Escape") { e.preventDefault(); setAtOpen(false); return; }
               }
               // Enter sends; Shift+Enter is a newline. ⌘/Ctrl+Enter also sends —
@@ -516,13 +542,14 @@ export function Composer({
               onClick={onKill}
               className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-ink text-bg hover:opacity-80 transition"
               title="Stop"
+              aria-label="停止"
             >
               <span className="h-3 w-3 rounded-[3px] bg-bg" />
             </button>
           ) : (
             <button
               onClick={send}
-              disabled={blocked || (!text.trim() && attachments.length === 0) || uploading > 0}
+              disabled={sending || blocked || (!text.trim() && attachments.length === 0) || uploading > 0}
               className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-accent text-white hover:brightness-105 disabled:opacity-30 transition"
               title="Send"
               aria-label="发送"
@@ -556,9 +583,9 @@ function ToolPicker({
   return (
     <div className="rounded-xl border border-border bg-surface p-2">
       <div className="mb-1.5 flex items-center gap-2 px-1">
-        <span className="text-[11px] text-faint">限定工具范围 · 默认自动选择全部</span>
+        <span className="text-[11px] text-faint">默认自动选择非代码工具 · 代码执行需主动启用</span>
         {selected.size > 0 && (
-          <button onClick={() => onSet(new Set())} className="text-[11px] text-faint hover:text-accent" title="恢复按任务自动选择">重置为自动</button>
+          <button onClick={() => onSet(new Set())} className="text-[11px] text-faint hover:text-accent" title="恢复默认（不授权代码执行）">重置为自动</button>
         )}
         <button onClick={onClose} className="ml-auto text-[11px] text-faint hover:text-ink">收起</button>
       </div>
@@ -585,7 +612,7 @@ function ToolPicker({
                     {g.icon} {g.label}
                     {partial && <span className="ml-1 text-[10px]">部分</span>}
                   </button>
-                  <span className="truncate text-[11px] text-faint">{g.tools.length} 个工具</span>
+                  <span className="truncate text-[11px] text-faint">{g.tools.length} 个工具{["code", "shell"].includes(g.id) && " · 需主动启用"}</span>
                   <button onClick={() => onExpand(open ? null : g.id)} className="ml-auto px-1 text-[11px] text-faint hover:text-ink">
                     {open ? "▾" : "▸"}
                   </button>

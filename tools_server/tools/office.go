@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/orka-oss/orka_core/pathsafe"
+	"github.com/orka-oss/orka_core/workspaceio"
 	"io"
 	"net/http"
 	"os"
@@ -123,11 +124,19 @@ func qrGenerate(base string) mcpserver.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError("qr encode failed: " + err.Error()), nil
 		}
-		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel, identity.From(ctx).ConversationID)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+		rootPath, rootErr := pathsafe.EnsureSession(base, identity.From(ctx).Email, identity.From(ctx).ConversationID)
+		if rootErr != nil {
+			return mcp.NewToolResultError(rootErr.Error()), nil
 		}
-		if err := os.WriteFile(p, png, pathsafe.WorkspaceFileMode); err != nil {
+		_, err = workspaceio.ReplaceGenerated(rootPath, rel, func(temp string) error {
+			pinned, err := os.OpenRoot(rootPath)
+			if err != nil {
+				return err
+			}
+			defer pinned.Close()
+			return pinned.WriteFile(temp, png, pathsafe.WorkspaceFileMode)
+		})
+		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		return mcp.NewToolResultText(fmt.Sprintf("QR code (%dx%d) for %q saved to %s", size, size, trunc(text, 60), rel)), nil

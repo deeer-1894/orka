@@ -3,10 +3,10 @@ package api
 import (
 	"context"
 	"github.com/orka-oss/orka_core/pathsafe"
+	"github.com/orka-oss/orka_core/workspaceio"
 	"os"
 	"path/filepath"
 	"sort"
-	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
@@ -15,10 +15,10 @@ import (
 // trashDir mirrors tools_server's TrashDir: the gateway writes a timestamped
 // copy of every overwritten file here, giving the control layer a version
 // history to list, diff (client-side), and restore.
-const trashDir = ".orka_trash"
+const trashDir = workspaceio.TrashDir
 
 // stampFormat must match tools_server's: nanosecond backup-dir timestamps.
-const stampFormat = "20060102-150405.000000000"
+const stampFormat = workspaceio.VersionFormat
 
 // fileVersion is one historical snapshot of a file.
 type fileVersion struct {
@@ -95,7 +95,7 @@ func (a *API) FileRestore(ctx context.Context, c *app.RequestContext) {
 		fail(c, 400, "invalid path")
 		return
 	}
-	if _, err := time.Parse(stampFormat, req.TS); err != nil {
+	if _, err := workspaceio.ParseVersion(req.TS); err != nil {
 		fail(c, 400, "invalid version timestamp")
 		return
 	}
@@ -137,19 +137,13 @@ func (a *API) FileRestore(ctx context.Context, c *app.RequestContext) {
 
 // snapshotToTrash writes content to .orka_trash/<now>/<rel> (best-effort).
 func snapshotToTrash(root *os.Root, rel string, content []byte) {
-	dst, err := fileRel(filepath.Join(trashDir, time.Now().Format(stampFormat), rel))
-	if err != nil {
-		return
-	}
-	if root.MkdirAll(filepath.Dir(dst), pathsafe.WorkspaceDirMode) == nil {
-		_ = root.WriteFile(dst, content, pathsafe.WorkspaceFileMode)
-	}
+	_, _ = workspaceio.Snapshot(root, rel, content)
 }
 
 // parseStampMillis turns a 20060102-150405 trash folder name into unix millis;
 // 0 if it doesn't parse (the TS still sorts lexically).
 func parseStampMillis(stamp string) int64 {
-	t, err := time.ParseInLocation(stampFormat, stamp, time.Local)
+	t, err := workspaceio.ParseVersion(stamp)
 	if err != nil {
 		return 0
 	}

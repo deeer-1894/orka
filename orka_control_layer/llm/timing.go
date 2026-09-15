@@ -126,8 +126,8 @@ var llmStats struct {
 // report books the call's cost first, then logs. The booking is unconditional;
 // the logging is not.
 func (t *Metered) report(ctx context.Context, req Request, resp Response, d time.Duration, streamed bool, err error) {
-	if s := usageSinkFrom(ctx); s != nil {
-		s.AddUsage(resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+	if owner := ctx.Value(legacyAccountingOwnerKey{}); !HasCallAccountant(ctx) && (owner == nil || owner == t) {
+		ReportExternalUsage(ctx, resp.Usage)
 	}
 	if timingEnabled() {
 		t.log(ctx, req, resp, d, streamed, err)
@@ -174,6 +174,7 @@ func (t *Metered) log(ctx context.Context, req Request, resp Response, d time.Du
 }
 
 func (t *Metered) Chat(ctx context.Context, req Request) (Response, error) {
+	ctx, _ = withLegacyAccountingOwner(ctx, t)
 	start := time.Now()
 	resp, err := t.Client.Chat(ctx, req)
 	t.report(ctx, req, resp, time.Since(start), false, err)
@@ -184,6 +185,7 @@ func (t *Metered) Chat(ctx context.Context, req Request) (Response, error) {
 // still blocks its agent until the last token, so that is the number the wall
 // clock is made of.
 func (t *Metered) ChatStream(ctx context.Context, req Request, onDelta func(string)) (Response, error) {
+	ctx, _ = withLegacyAccountingOwner(ctx, t)
 	sc, ok := t.Client.(StreamingClient)
 	if !ok {
 		return t.Chat(ctx, req)

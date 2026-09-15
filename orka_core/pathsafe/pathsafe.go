@@ -66,7 +66,7 @@ func UserRoot(base, user string) string {
 // or malformed context is an error; it must never fall back to the user root.
 func SessionRoot(base, user, conversationID string) (string, error) {
 	if strings.TrimSpace(base) == "" || strings.TrimSpace(user) == "" ||
-		user != strings.TrimSpace(user) || user == "." || user == ".." || strings.ContainsAny(user, "/\\\x00") {
+		user != strings.TrimSpace(user) || user == "." || strings.Contains(user, "..") || strings.ContainsAny(user, "/\\\x00") {
 		return "", fmt.Errorf("workspace requires a valid owner and storage base")
 	}
 	if conversationID == "" || len(conversationID) > 128 {

@@ -52,7 +52,7 @@ func TestReviewDelegateReplay(t *testing.T) {
 			return llm.Response{Content: "finished", FinishReason: "stop"}
 		}
 	}}
-	ag, err := BuildEinoDeepOrchestrator(ctx, model, "main", model, "mini", "delegate work", deepTestTools(), nil, 10, false)
+	ag, err := BuildEinoDeepOrchestrator(ctx, model, "main", "delegate work", deepTestTools(), nil, 10, false)
 	if err != nil {
 		t.Fatal(err)
 	}

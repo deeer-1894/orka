@@ -7,18 +7,16 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/pathsafe"
+	"github.com/orka-oss/orka_core/toolargs"
+	"github.com/orka-oss/orka_core/workspaceio"
 )
 
-// trashDir holds pre-overwrite backups so an agent's file_write can't silently
-// destroy earlier content (the model has no delete tool, so overwrite is the
-// only data-loss path; this makes it recoverable without any confirm friction).
-const trashDir = ".orka_trash"
+// trashDir is the shared history location; write semantics live in workspaceio.
+const trashDir = workspaceio.TrashDir
 
 // New returns the file tool set rooted at root.
 func New(root string) []agent.BaseTool {
@@ -50,56 +48,21 @@ func (t readTool) Invoke(_ context.Context, args map[string]any) (string, error)
 
 type writeTool struct{ root string }
 
-func (writeTool) Name() string { return "file_write" }
-func (writeTool) Description() string {
-	return "Write a UTF-8 text file (creates dirs). Args: {path, content}."
-}
+func (writeTool) Name() string        { return "file_write" }
+func (writeTool) Description() string { return workspaceio.WriteDescription }
 func (writeTool) Schema() map[string]any {
-	return objSchema(map[string]any{
-		"path":    strProp("relative file path"),
-		"content": strProp("file content"),
-	}, "path", "content")
+	return objSchema(workspaceio.WriteProperties(), "path", "content")
 }
 func (t writeTool) Invoke(_ context.Context, args map[string]any) (string, error) {
-	rel := asString(args["path"])
-	p, err := pathsafe.Resolve(t.root, rel)
+	intent, err := workspaceio.ParseIntent(args)
 	if err != nil {
 		return "", err
 	}
-	// Back up an existing file before overwriting it (best-effort, recoverable).
-	backed := false
-	if old, rerr := os.ReadFile(p); rerr == nil {
-		backed = backupOverwrite(t.root, rel, old)
-	}
-	if err := os.MkdirAll(filepath.Dir(p), pathsafe.WorkspaceDirMode); err != nil {
-		return "", fmt.Errorf("mkdir: %w", err)
-	}
-	if err := os.WriteFile(p, []byte(asString(args["content"])), pathsafe.WorkspaceFileMode); err != nil {
-		return "", fmt.Errorf("write: %w", err)
-	}
-	msg := fmt.Sprintf("wrote %d bytes to %s", len(asString(args["content"])), rel)
-	if backed {
-		msg += " (previous version backed up to " + trashDir + ")"
-	}
-	return msg, nil
-}
-
-// backupOverwrite copies the prior file content to .orka_trash/<ts>/<path>.
-// Best-effort: failures never block the write. Paths under .orka_trash are
-// skipped so the trash never recurses on itself.
-func backupOverwrite(root, rel string, content []byte) bool {
-	if strings.HasPrefix(filepath.ToSlash(rel), trashDir+"/") || rel == trashDir {
-		return false
-	}
-	ts := time.Now().Format("20060102-150405")
-	dst, err := pathsafe.Resolve(root, filepath.Join(trashDir, ts, rel))
+	result, err := workspaceio.Apply(t.root, toolargs.Path(args), intent)
 	if err != nil {
-		return false
+		return "", err
 	}
-	if os.MkdirAll(filepath.Dir(dst), pathsafe.WorkspaceDirMode) != nil {
-		return false
-	}
-	return os.WriteFile(dst, content, pathsafe.WorkspaceFileMode) == nil
+	return result.String(), nil
 }
 
 type listTool struct{ root string }

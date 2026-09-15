@@ -6,31 +6,30 @@ package connectors
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"time"
 
+	"github.com/orka-oss/orka_control_layer/llm"
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/messages"
-	"github.com/orka-oss/orka_core/ws"
 )
 
 // RunAgentTool adapts the GUI executor to agent.BaseTool.
 type RunAgentTool struct {
-	WSURL    string
-	Token    string // shared secret sent as Authorization: Bearer on the WS handshake
-	MaxSteps int
-	Timeout  time.Duration
+	WSURL        string
+	Token        string // shared secret sent as Authorization: Bearer on the WS handshake
+	MaxSteps     int
+	Timeout      time.Duration // execution budget, starts after the queued phase
+	QueueTimeout time.Duration
 }
 
-// NewRunAgentTool builds a run_agent tool targeting wsURL. token may be empty
-// (dev); when set it is sent so the GUI executor can authenticate the caller.
+// NewRunAgentTool builds a run_agent tool targeting a private wsURL. A shared
+// bearer token is required to authenticate the control-layer caller.
 // MaxSteps bounds one browser invocation; the GUI agent also stops early on
 // no-progress (repeated actions) and returns a grounded page snapshot, so a
 // flailing run ends in a few steps rather than burning the whole budget.
 func NewRunAgentTool(wsURL, token string) *RunAgentTool {
-	return &RunAgentTool{WSURL: wsURL, Token: token, MaxSteps: 10, Timeout: 90 * time.Second}
+	return &RunAgentTool{WSURL: wsURL, Token: token, MaxSteps: 10, Timeout: 90 * time.Second, QueueTimeout: 30 * time.Second}
 }
 
 func (*RunAgentTool) Name() string { return "run_agent" }
@@ -45,81 +44,168 @@ func (*RunAgentTool) Schema() map[string]any {
 	}
 }
 
-func (t *RunAgentTool) Invoke(ctx context.Context, args map[string]any) (string, error) {
-	instruction := fmt.Sprint(args["instruction"])
-	emit := agent.EmitFrom(ctx)
+func (t *RunAgentTool) Invoke(ctx context.Context, args map[string]any) (result string, invokeErr error) {
+	identity, modelConfig, err := guiContext(ctx)
+	if err != nil {
+		return "", err
+	}
+	instruction, err := guiInstruction(args)
+	if err != nil {
+		return "", err
+	}
+	queueTimeout, executionTimeout := t.QueueTimeout, t.Timeout
+	if queueTimeout <= 0 {
+		queueTimeout = 30 * time.Second
+	}
+	if executionTimeout <= 0 {
+		executionTimeout = 90 * time.Second
+	}
+	if queueTimeout > 600*time.Second || executionTimeout > 600*time.Second || t.MaxSteps < 1 || t.MaxSteps > 100 {
+		return "", fmt.Errorf("GUI timeouts must be at most 600 seconds and max_steps between 1 and 100")
+	}
 	streamCtx, stopStream := context.WithCancel(ctx)
 	defer stopStream()
-
-	frames := make(chan map[string]any, 64)
-	runMsg, _ := json.Marshal(map[string]any{
-		"type":        "run",
-		"instruction": instruction,
-		"session_id":  messages.NewID(),
-		"max_steps":   t.MaxSteps,
+	queueCtx, cancelDial := context.WithTimeout(streamCtx, queueTimeout)
+	defer cancelDial()
+	connection, err := dialGUI(queueCtx, t.WSURL, t.Token)
+	if err != nil {
+		return "", err
+	}
+	defer connection.Close()
+	invocationID := messages.NewID()
+	usage := &guiUsageLedger{}
+	callCtx, finish, err := llm.BeginExternalCall(ctx, llm.ExternalCallSpec{
+		CallID: invocationID, Source: "gui", MaxSteps: t.MaxSteps,
+		PromptTokens: 32768, MaxCompletionTokens: modelConfig.Policy.MaxTokens,
 	})
-
-	opts := []ws.Option{
-		ws.WithOnMessage(func(b []byte) {
-			var m map[string]any
-			if json.Unmarshal(b, &m) == nil {
-				select {
-				case frames <- m:
-				case <-streamCtx.Done():
-				}
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		// Stop remote execution before detached accounting can wait on storage.
+		stopStream()
+		connection.Close()
+		invokeErr = finish(ctx, usage.complete && usage.unknown == 0 && usage.calls > 0, invokeErr)
+	}()
+	request := map[string]any{"type": "run", "instruction": instruction, "session_id": invocationID,
+		"identity": identity, "model_config": guiWireConfig(modelConfig), "max_steps": t.MaxSteps,
+		"queue_timeout": queueTimeout.Seconds(), "execution_timeout": executionTimeout.Seconds()}
+	deadline, _ := queueCtx.Deadline()
+	connection.SetWriteDeadline(deadline)
+	if err := connection.WriteJSON(request); err != nil {
+		return "", fmt.Errorf("GUI request send failed")
+	}
+	request = nil // do not retain credential-bearing payloads in frame/evidence state
+	frames := make(chan map[string]any, 64)
+	matches := func(frame map[string]any) bool {
+		return frame["session_id"] == invocationID && frame["run_id"] == identity.RunID
+	}
+	readerDone := make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		for {
+			var frame map[string]any
+			err := connection.ReadJSON(&frame)
+			if err != nil {
+				frame = map[string]any{"type": "transport_error", "session_id": invocationID, "run_id": identity.RunID}
 			}
-		}),
+			if !matches(frame) {
+				continue
+			}
+			select {
+			case frames <- frame:
+			case <-streamCtx.Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	stopReader := func() {
+		stopStream()
+		connection.Close()
+		<-readerDone
 	}
-	if t.Token != "" {
-		opts = append(opts, ws.WithHeaders(http.Header{"Authorization": []string{"Bearer " + t.Token}}))
+	defer stopReader()
+	meta := agent.MetaFrom(ctx)
+	meta.UserEmail, meta.ConversationID, meta.RunID = identity.OwnerID, identity.ConversationID, identity.RunID
+	evidence := guiEvidence{usage: usage, phase: "queue"}
+	collect := func(frame map[string]any) {
+		if !matches(frame) {
+			return
+		}
+		evidence.add(frame)
+		usage.add(callCtx, frame)
 	}
-	cli := ws.NewClient(t.WSURL, opts...)
-	cli.Start(streamCtx)
-	defer cli.Close()
-
-	// Send queues until the connection is established, then flushes.
-	if err := cli.Send(runMsg); err != nil {
-		return "", fmt.Errorf("run_agent: send: %w", err)
-	}
-
-	var evidence guiEvidence
-	drainEvidence := func() {
-		// Include frames already received when the deadline wins select.
-		// Snapshot the queue length so incoming frames cannot extend the wait.
-		for pending := len(frames); pending > 0; pending-- {
-			evidence.add(<-frames)
+	drain := func() {
+		// Join the reader before draining. Keep only this invocation's
+		// evidence/usage; buffered screenshots are discarded without SSE.
+		stopReader()
+		for remaining := len(frames); remaining > 0; remaining-- {
+			collect(<-frames)
 		}
 	}
-	timeout := time.After(t.Timeout)
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
 	for {
+		// A ready buffered frame must not win a select against cancellation.
+		if ctx.Err() != nil {
+			drain()
+			return evidence.result("cancelled", ctx.Err().Error()), ctx.Err()
+		}
 		select {
 		case <-ctx.Done():
 			stopStream()
-			drainEvidence()
+			drain()
 			return evidence.result("cancelled", ctx.Err().Error()), ctx.Err()
-		case <-timeout:
+		case <-timer.C:
 			stopStream()
-			drainEvidence()
-			return evidence.result("partial", fmt.Sprintf("GUI timed out after %s; execution may be incomplete.", t.Timeout)), nil
-		case m := <-frames:
-			switch m["type"] {
-			case "done":
+			drain()
+			return evidence.result("partial", "GUI "+evidence.phase+" timeout; inspect current state before retrying"), nil
+		case frame := <-frames:
+			if ctx.Err() != nil {
+				collect(frame) // retain receipts/usage, never resurface old events
+				continue
+			}
+			switch frame["type"] {
+			case "started":
+				if evidence.phase == "queue" {
+					evidence.phase = "execution"
+					if !timer.Stop() {
+						select {
+						case <-timer.C:
+						default:
+						}
+					}
+					// The server owns the precise execution deadline. Give its
+					// terminal evidence a small bounded transport grace period.
+					timer.Reset(executionTimeout + time.Second)
+				}
+				surface(ctx, meta, "started", frame)
+			case "done", "error", "call_user":
+				collect(frame)
+				usage.finish(frame)
+				if phase, ok := frame["phase"].(string); ok {
+					evidence.phase = guiClip(phase, 32)
+				}
+				if frame["type"] == "call_user" {
+					surface(ctx, meta, "call_user", frame)
+					return evidence.result("call_user", fmt.Sprint(frame["reason"])), nil
+				}
+				if frame["type"] == "error" {
+					return evidence.result("partial", fmt.Sprint(frame["error"])), nil
+				}
 				status := "done"
-				if m["outcome"] == "partial" {
+				if frame["outcome"] == "partial" {
 					status = "partial"
 				}
-				return evidence.result(status, fmt.Sprint(m["summary"])), nil
-			case "error":
-				if evidence.actions > 0 {
-					return evidence.result("partial", fmt.Sprintf("GUI error: %v", m["error"])), nil
-				}
-				return evidence.result("error", fmt.Sprint(m["error"])), fmt.Errorf("gui error: %v", m["error"])
-			case "call_user":
-				surface(emit, "call_user", m)
-				return evidence.result("call_user", fmt.Sprint(m["reason"])), nil
-			default:
-				evidence.add(m)
-				surface(emit, fmt.Sprint(m["type"]), m)
+				return evidence.result(status, fmt.Sprint(frame["summary"])), nil
+			case "transport_error":
+				return evidence.result("partial", "GUI connection closed before its terminal outcome"), nil
+			case "action", "observe", "usage", "screenshot", "queued", "session", "progress":
+				collect(frame)
+				surface(ctx, meta, fmt.Sprint(frame["type"]), frame)
 			}
 		}
 	}
@@ -142,9 +228,10 @@ func describeStep(m map[string]any) string {
 	return act
 }
 
-func surface(emit func(messages.Message), action string, payload map[string]any) {
-	if emit == nil {
+func surface(ctx context.Context, meta messages.Meta, action string, payload map[string]any) {
+	emit := agent.EmitFrom(ctx)
+	if emit == nil || ctx.Err() != nil {
 		return
 	}
-	emit(messages.Browser(action, payload, messages.Meta{}))
+	emit(messages.Browser(action, payload, meta))
 }

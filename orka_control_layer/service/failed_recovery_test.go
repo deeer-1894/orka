@@ -14,9 +14,10 @@ type boundedChargedFailure struct{ spent int }
 
 func (c *boundedChargedFailure) Chat(ctx context.Context, _ llm.Request) (llm.Response, error) {
 	b := budgetFrom(ctx)
-	b.AddUsage(200, 0)
-	c.spent = b.totalSpentTokens()
-	return llm.Response{}, errors.New("fixture failure after charged call")
+	b.mu.Lock()
+	c.spent = b.carried + 200
+	b.mu.Unlock()
+	return llm.Response{Usage: llm.Usage{Known: true, PromptTokens: 200, TotalTokens: 200}}, errors.New("fixture failure after charged call")
 }
 func TestBoundedFailedHandoffDoesNotReofferOldAllowance(t *testing.T) {
 	client := &boundedChargedFailure{}

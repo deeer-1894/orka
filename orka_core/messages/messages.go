@@ -37,6 +37,7 @@ const (
 
 // Meta is carried on every message for routing, persistence and tracing.
 type Meta struct {
+	RunID          string `json:"run_id,omitempty" bson:"run_id,omitempty"`
 	ModelProfile   string `json:"model_profile,omitempty" bson:"model_profile,omitempty"` // opaque configuration revision; never a credential
 	ConversationID string `json:"conversation_id" bson:"conversation_id"`
 	TaskID         string `json:"task_id" bson:"task_id"`

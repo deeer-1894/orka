@@ -63,6 +63,12 @@ type Request struct {
 
 // Usage reports token consumption for a call (when the provider returns it).
 type Usage struct {
+	// Known affirms complete authoritative counts, including explicit zero.
+	Known bool
+	// Incomplete marks observed missing/partial/malformed provider usage. It
+	// overrides Known and legacy positive-count inference. Both flags false
+	// preserve older in-process clients without provenance.
+	Incomplete       bool
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int

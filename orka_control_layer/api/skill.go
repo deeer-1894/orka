@@ -16,7 +16,11 @@ import (
 // ListSkills returns the live skill catalog (builtin + filesystem + installed),
 // name + description only — so the UI can show every adoptable skill.
 func (a *API) ListSkills(ctx context.Context, c *app.RequestContext) {
-	defs := middlewares.AllSkills()
+	defs, err := middlewares.VisibleSkills(middlewares.WithSkillOwner(ctx, a.BaseStorage, authEmail(c)))
+	if err != nil {
+		fail(c, 500, "skill storage unavailable")
+		return
+	}
 	out := make([]map[string]string, 0, len(defs))
 	for _, d := range defs {
 		out = append(out, map[string]string{"name": d.Name, "description": d.Desc})
@@ -34,7 +38,11 @@ func (a *API) GetSkill(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "name required")
 		return
 	}
-	d, found := middlewares.GetSkill(req.Name)
+	d, found, err := middlewares.GetVisibleSkill(middlewares.WithSkillOwner(ctx, a.BaseStorage, authEmail(c)), req.Name)
+	if err != nil {
+		fail(c, 500, "skill storage unavailable")
+		return
+	}
 	if !found {
 		fail(c, consts.StatusNotFound, "skill not found")
 		return
@@ -51,7 +59,7 @@ func (a *API) DeleteSkill(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "name required")
 		return
 	}
-	if err := middlewares.DeleteSkill(req.Name); err != nil {
+	if err := middlewares.DeletePersonalSkill(middlewares.WithSkillOwner(ctx, a.BaseStorage, authEmail(c)), req.Name); err != nil {
 		fail(c, consts.StatusBadRequest, err.Error())
 		return
 	}
@@ -84,7 +92,7 @@ func (a *API) InstallSkill(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
-	name, err := middlewares.InstallSkillMD(string(body))
+	name, err := middlewares.InstallPersonalSkill(middlewares.WithSkillOwner(ctx, a.BaseStorage, authEmail(c)), string(body))
 	if err != nil {
 		fail(c, consts.StatusBadRequest, "invalid SKILL.md: "+err.Error())
 		return

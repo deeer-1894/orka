@@ -32,7 +32,7 @@ func TestDeliveryResponseDoesNotRepublishInventedStatistics(t *testing.T) {
 	ctx := withJournal(withDelivery(withPlanTracker(context.Background(), p), d), j)
 	incorrect := "P0=38/42; T0068 source_row=106, open=true."
 	model := llm.NewMock(llm.Response{Content: incorrect, FinishReason: "stop"})
-	ag, err := BuildEinoOrchestrator(ctx, model, "test", model, "test", "deliver files", nil, nil, 10, false)
+	ag, err := BuildEinoOrchestrator(ctx, model, "test", "deliver files", nil, nil, 10, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -67,7 +67,8 @@ var coreTools = map[string]bool{
 	// (report_parser, factor_proposer, factor_reviewer) are deliberately absent —
 	// they matter only inside that pipeline, which asks for them by name.
 	"researcher": true, "writer": true, "browser": true, "engineer": true,
-	"task": true, // DeepAgent exposes delegation through this single tool.
+	"delegate_browser": true, // legacy function delegate; browser is the DOM tool
+	"task":             true, // DeepAgent exposes delegation through this single tool.
 	// the gate's own escape hatch
 	findToolsName: true,
 }

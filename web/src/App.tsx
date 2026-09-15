@@ -1,15 +1,23 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { validateBudget } from './lib/runBudget';
+import { ActionChip } from './components/ActionChip';
+import { useConversationDraft } from './hooks/useConversationDraft';
+import { SessionRecoveryStore } from './lib/sessionRecovery';
+import { useConversationSettings } from './hooks/useConversationSettings';
+import type { RunBudgetLimits } from './lib/runBudget';
+import { Suspense, lazy, useMemo, useCallback, useSyncExternalStore, useEffect, useRef, useState } from "react";
 import { api, auth, setOnUnauthorized } from "./api";
 import { useChatStreams } from "./hooks/useChatStream";
 import { useRunRecovery } from "./hooks/useRunRecovery";
-import { lastUserPrompt } from "./lib/runRecovery";
 import { useEventStream } from "./hooks/useEventStream";
 import { ModelSettings } from "./components/ModelSettings";
 import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
 import { Thread } from "./components/Thread";
 import { Composer } from "./components/Composer";
-import { ArtifactDrawer } from "./components/ArtifactDrawer";
+const ArtifactDrawer = lazy(() => import("./components/ArtifactDrawer").then(m => ({ default: m.ArtifactDrawer })));
+import { useRunActions } from "./hooks/useRunActions";
+import { invalidateSessionFiles } from "./hooks/useFileRevision";
+import { clearFollowUps } from "./components/FollowUps";
 import { ShareDialog } from "./components/ShareDialog";
 import { CommandPalette, type Command } from "./components/CommandPalette";
 import { Icon } from "./components/Icon";
@@ -20,10 +28,9 @@ import { Toaster, toast } from "./lib/toast";
 import { ConfirmHost } from "./lib/confirm";
 import { useTheme } from "./lib/theme";
 import { useResource, refreshResource } from "./lib/useResource";
-import { loadTools, saveTools } from "./lib/toolGroups";
 import type { Conversation, Message, Notification } from "./types";
 
-type Tab = "overview" | "artifacts" | "files" | "runs" | "tasks" | "flows" | "factors" | "integrations" | "metrics";
+import type { WorkbenchTab as Tab } from "./lib/workbenchTabs";
 
 // Tools whose output the user watches in the 文件 face.
 const FILE_TOOLS = new Set([
@@ -72,7 +79,7 @@ export default function App() {
 
   // a 401 from any request → drop back to the login screen (no page reload)
   useEffect(() => {
-    setOnUnauthorized(() => setUser(null));
+    setOnUnauthorized(() => { clearFollowUps(); setUser(null); });
   }, []);
 
   // restore session on load
@@ -95,7 +102,7 @@ export default function App() {
       ) : !user ? (
         <Login onAuthed={(s) => setUser({ email: s.email, name: s.name })} />
       ) : (
-        <Workbench user={user} onSignOut={() => { auth.clear(); setUser(null); }} />
+        <Workbench key={user.email} user={user} onSignOut={() => { auth.clear(); clearFollowUps(); setUser(null); }} />
       )}
       <Toaster />
       <ConfirmHost />
@@ -116,6 +123,10 @@ function Workbench({
   const [drawerArtifact, setDrawerArtifact] = useState<string | null>(null); // artifact to open inline in the drawer
   const openArtifactInDrawer = useCallback((id: string) => { setDrawerArtifact(id); setDrawerOpen(true); setDrawerTab("artifacts"); }, []);
   const [activeID, setActiveID] = useState("");
+  const [sessionRecovery] = useState(() => new SessionRecoveryStore(user.email));
+  const persistenceWarning = useSyncExternalStore(sessionRecovery.subscribe, sessionRecovery.getWarning);
+  const conversationSettings = useConversationSettings(sessionRecovery, activeID);
+  const conversationDraft = useConversationDraft(activeID, sessionRecovery);
 
   // Sidebar starts open on desktop, closed on narrow screens (where it overlays).
   const [sidebarOpen, setSidebarOpen] = useState(() =>
@@ -123,20 +134,19 @@ function Workbench({
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<Tab>("overview");
-  // Shared metrics resource (also feeds the 指标 panel) — one poll, paused when hidden.
-  const metricsRes = useResource("metrics", api.metrics, { interval: 4000 });
-  const totalTokens = metricsRes?.total_tokens ?? 0;
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
-  const [version, setVersion] = useState("auto"); // Auto or an explicit model ID.
+  const version = conversationSettings.value.selectedVersion;
+  const setVersion = (selectedVersion: string) => conversationSettings.patch({ selectedVersion });
   const [theme, toggleTheme] = useTheme();
-  // Per-conversation enabled tool groups (empty = all tools, the default).
-  const [toolGroups, setToolGroups] = useState<Set<string>>(() => loadTools(""));
+  // Per-conversation scope. Empty uses default tools without code execution.
+  const toolGroups = useMemo(() => new Set(conversationSettings.value.enabledTools), [conversationSettings.value.enabledTools]);
   const [models, setModels] = useState<ModelOption[]>(MODELS_FALLBACK);
   const [scheduleFor, setScheduleFor] = useState<string | null>(null); // prompt to schedule
-  const [activeSkill, setActiveSkill] = useState<string | null>(null); // locked skill mode
+  const activeSkill = conversationSettings.value.activeSkill;
+  const setActiveSkill = (activeSkill: string | null) => conversationSettings.patch({ activeSkill });
   // Gate side-effecting tools (terminal/browser/network/code) behind approval.
-  const [confirmRisky, setConfirmRisky] = useState(() => localStorage.getItem("orka.confirmRisky") !== "0");
-  const toggleConfirm = useCallback(() => setConfirmRisky((v) => { localStorage.setItem("orka.confirmRisky", v ? "0" : "1"); return !v; }), []);
+  const confirmRisky = conversationSettings.value.confirmRisky;
+  const toggleConfirm = () => conversationSettings.patch({ confirmRisky: !confirmRisky });
 
   useEffect(() => {
     api.models().then((m) => m.length && setModels(m)).catch(() => {});
@@ -144,7 +154,7 @@ function Workbench({
   // conversation_ids that have a scheduled (cron) task → marked 🔁 in the sidebar.
   const [scheduledIds, setScheduledIds] = useState<Set<string>>(new Set());
 
-  const { run, kill, hydrateMessages, messagesOf, statusOf, runningIds } = useChatStreams();
+  const { run, kill, hydrateMessages, messagesOf, statusOf, runningIds, connectionOf, errorOf, inputOf } = useChatStreams(sessionRecovery);
   const [runRevision, setRunRevision] = useState(0);
   const messages = messagesOf(activeID);
   const status = statusOf(activeID);
@@ -236,6 +246,7 @@ function Workbench({
   useEventStream(
     useCallback((kind: string) => {
       if (kind === "notification") refreshResource("notifications");
+      if (["file", "artifact", "run"].includes(kind)) invalidateSessionFiles();
       if (kind === "run") {
         setRunRevision(n => n + 1);
         refreshResource("runs:all");
@@ -281,21 +292,7 @@ function Workbench({
     [hydrateMessages],
   );
 
-  // Load the saved tool-group selection whenever the active conversation changes.
-  useEffect(() => {
-    setToolGroups(loadTools(activeID));
-  }, [activeID]);
-
-  // Persist a new tool selection (group ids and/or individual tool names) for
-  // the active conversation. Replaces the old per-group toggle so the picker can
-  // express "this group minus one tool".
-  const setTools = useCallback(
-    (next: Set<string>) => {
-      setToolGroups(next);
-      saveTools(activeID, next);
-    },
-    [activeID],
-  );
+  const setTools = (next: Set<string>) => conversationSettings.patch({ enabledTools: [...next] });
 
   const creatingConversation = useRef({ activeID, generation: 0, promise: null as Promise<string> | null });
   if (creatingConversation.current.activeID !== activeID) {
@@ -312,6 +309,7 @@ function Workbench({
       setConversations(cs => cs.some(item => item.conversation_id === c.conversation_id) ? cs : [c, ...cs]);
       // A late creation must not replace a conversation selected in the meantime.
       if (state.generation === generation && !state.activeID) {
+        conversationSettings.move("", c.conversation_id);
         state.activeID = c.conversation_id;
         setActiveID(c.conversation_id);
       }
@@ -319,7 +317,7 @@ function Workbench({
     }).finally(() => { if (state.promise === promise) state.promise = null; });
     state.promise = promise;
     return promise;
-  }, []);
+  }, [conversationSettings.move]);
 
   // After approving a paused danger tool the backend resumes the checkpointed
   // run, which streams on a NEW SSE this client isn't reading — re-attach so the
@@ -331,33 +329,36 @@ function Workbench({
     [run, user.email],
   );
 
-  const recovery = useRunRecovery({ conversationID: activeID, messages, status, enabled: !isShared, historyLoaded: historyLoaded.has(activeID) }, onResumed, runRevision);
-  const retryPrompt = lastUserPrompt(messages, activeID) || recovery.run?.prompt || "";
+  const runActions = useRunActions(onResumed);
+  const recovery = useRunRecovery({ conversationID: activeID, messages, status, enabled: !isShared, historyLoaded: historyLoaded.has(activeID) }, onResumed, runRevision, runActions.actions);
+
 
   const lastMsgRef = useRef("");
   const onSend = useCallback(
-    async (msg: string, fileIDs: string[] = []) => {
-      if (recovery.isBusy(activeID)) return;
+    async (msg: string, fileIDs: string[] = [], budget?: RunBudgetLimits, conversationID?: string) => {
+      // Capture the request before any asynchronous conversation creation. The
+      // composer may already have created its target while the user navigated.
+      const sendBudget = { ...(budget ?? conversationDraft.budget) };
+      validateBudget(sendBudget);
+      const request = { message: msg, userEmail: user.email, enabledTools: [...toolGroups], selectedVersion: version, activeSkill: activeSkill ?? "", fileIDs: [...fileIDs], confirmRisky, budget: sendBudget };
+      const id = conversationID || activeID || await ensureConversation();
+      if (recovery.isBusy(id) || runActions.actions.isBusy(id)) throw new Error("任务操作正在进行，请稍候");
       lastMsgRef.current = msg;
-      const id = await ensureConversation();
       seen.current.add(id);
-      // carry a new chat's tool selection onto its freshly-created conversation id
-      if (id && toolGroups.size) saveTools(id, toolGroups);
-      const enabledTools = toolGroups.size ? [...toolGroups] : [];
-      // fire-and-forget: do NOT await, so other conversations stay interactive
-      // while this one streams. The backend runs each conversation concurrently.
-      run({ message: msg, conversationID: id, userEmail: user.email, enabledTools, selectedVersion: version, activeSkill: activeSkill ?? "", fileIDs, confirmRisky }).then(() => {
-        refreshConversations(); // pick up the auto-generated title
+      // Await only server acceptance. The task keeps streaming independently.
+      await new Promise<void>((resolve, reject) => {
+        void run({ ...request, conversationID: id, onAccepted: resolve, onRejected: reject }).then(() => refreshConversations());
       });
       refreshTasks();
     },
-    [ensureConversation, run, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill, confirmRisky, recovery.isBusy, activeID],
+    [ensureConversation, run, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill, confirmRisky, recovery.isBusy, activeID, conversationDraft.budget],
   );
 
   // Re-send the last user message after a failure (network drop, sandbox down…).
   const onRetry = useCallback(() => {
-    if (retryPrompt) onSend(retryPrompt);
-  }, [onSend, retryPrompt]);
+    const input = inputOf(activeID);
+    if (input && !runActions.actions.isBusy(activeID)) void run({ ...input });
+  }, [activeID, inputOf, run, runActions.actions]);
 
   const onRename = useCallback(async (id: string, title: string) => {
     try {
@@ -432,7 +433,7 @@ function Workbench({
     ...models.map((m): Command => ({ id: "model:" + m.version, group: "切换模型", icon: "◆", label: m.label, hint: m.hint, keywords: m.version, run: () => setVersion(m.version) })),
     ...([
       ["overview", "概览"], ["artifacts", "页面 Artifacts"], ["files", "文件"],
-      ["runs", "运行历史"], ["flows", "流程 / 工作流"], ["tasks", "定时任务"], ["factors", "因子库"], ["integrations", "集成"], ["metrics", "指标"],
+      ["runs", "运行历史"], ["flows", "流程 / 工作流"], ["tasks", "定时任务"], ["factors", "因子库"], ["integrations", "集成"], ["metrics", "指标"], ["system", "服务状态"],
     ] as [Tab, string][]).map(([t, label]): Command => ({ id: "panel:" + t, group: "打开面板", icon: "▸", label, run: () => openPanel(t) })),
     ...conversations.slice(0, 60).map((c): Command => ({ id: "conv:" + c.conversation_id, group: "跳转会话", icon: "💬", label: c.title || "未命名会话", keywords: c.title, run: () => selectConversation(c.conversation_id) })),
   ];
@@ -493,7 +494,7 @@ function Workbench({
             {isShared && <span className="shrink-0 text-[11px] text-faint" title={`由 ${activeConv?.owner_email} 分享`}>· 共享</span>}
           </div>
           <ModelSelect value={version} onChange={setVersion} models={models} />
-          <button onClick={() => setModelSettingsOpen(true)} className="shrink-0 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:bg-surface2">模型配置</button>
+          <ActionChip variant="headerChip" size="headerChip" icon="gear" onClick={() => setModelSettingsOpen(true)} className="shrink-0">模型配置</ActionChip>
           {/* Run-mode safety switch. It belongs beside the model picker rather
               than under the input: both answer "how will this behave when I
               send", both are persistent session state, and keeping it in the
@@ -514,11 +515,6 @@ function Workbench({
             <Icon name="shield" size={13} />
             <span className="hidden sm:inline">{confirmRisky ? "需确认" : "不确认"}</span>
           </button>
-          {totalTokens > 0 && (
-            <span className="inline-flex items-center gap-1 text-[11px] text-faint" title="本进程累计 token 用量">
-              <Icon name="coin" size={13} /> {totalTokens >= 1000 ? (totalTokens / 1000).toFixed(1) + "k" : totalTokens} tokens
-            </span>
-          )}
           <NotificationBell onJump={onJumpToConversation} />
           <button
             onClick={toggleTheme}
@@ -528,21 +524,29 @@ function Workbench({
           >
             <Icon name={theme === "dark" ? "sun" : "moon"} />
           </button>
-          <button
+          <ActionChip
+            variant="headerChip" size="headerChip" icon="table"
             onClick={() => setDrawerOpen((o) => !o)}
             aria-label="切换工作台面板"
             aria-pressed={drawerOpen}
             title="工作台:概览 · 页面 · 文件 · 运营台"
-            className={
-              "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[13px] transition " +
-              (drawerOpen ? "border-accent/40 bg-accentsoft text-accent" : "border-border text-muted hover:bg-surface2")
-            }
-          >
-            <Icon name="table" size={14} /> 工作台
-          </button>
+            className="shrink-0"
+          >工作台</ActionChip>
         </header>
 
-        <Thread conversationID={activeID} ownerEmail={activeConv?.owner_email || user.email} recovery={recovery} onContinue={() => void recovery.resume()} canRetry={!readOnly && !!retryPrompt && recovery.run?.status !== "running"} messages={messages} status={status} onResume={onResume} onResumed={onResumed} onPick={onSend} onRetry={onRetry} onSchedule={setScheduleFor} onFork={onFork} fileConv={isShared ? activeID : undefined} bottomInset={composerH} />
+        {persistenceWarning && <p role="alert" className="mx-5 mb-2 text-xs text-accent">{persistenceWarning}</p>}
+        {(connectionOf(activeID) === "disconnected" || connectionOf(activeID) === "stopping" || errorOf(activeID)) && (
+          <div className="mx-5 mb-2 flex flex-wrap items-center gap-2 text-xs" role="status">
+            {connectionOf(activeID) === "disconnected" && <span className="text-muted">任务连接已中断。</span>}
+            {connectionOf(activeID) === "stopping" && <span className="text-muted">正在停止，等待服务确认…</span>}
+            {errorOf(activeID) && <span role="alert" className="text-accent">{errorOf(activeID)}</span>}
+            {connectionOf(activeID) === "disconnected" && !readOnly && <>
+              <ActionChip onClick={() => void onResumed(activeID)} icon="refresh">重新连接</ActionChip>
+              <ActionChip onClick={() => void kill(activeID)}>再次请求停止</ActionChip>
+            </>}
+          </div>
+        )}
+        <Thread conversationID={activeID} ownerEmail={activeConv?.owner_email || user.email} recovery={recovery} onContinue={() => void recovery.resume()} canRetry={!readOnly && !!inputOf(activeID) && recovery.run?.status !== "running"} messages={messages} status={status} onResume={onResume} onResumed={onResumed} onPick={msg => { void onSend(msg).catch(e => toast(e.message || "发送失败", "error")); }} onRetry={onRetry} onSchedule={setScheduleFor} onFork={onFork} fileConv={isShared ? activeID : undefined} bottomInset={composerH} />
         {/* The composer floats OVER the thread (its height is fed back as the
             thread's bottom padding), so the conversation scrolls clear of it
             instead of the last lines being clipped behind the tool row. */}
@@ -557,13 +561,21 @@ function Workbench({
                 </div>
               </div>
             ) : (
-              <Composer conversationID={activeID} ensureConversation={ensureConversation} blocked={recovery.busy} status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
+              <Composer draftState={conversationDraft} sessionRecovery={sessionRecovery} conversationID={activeID} ensureConversation={ensureConversation} blocked={recovery.run?.status === "running" || recovery.busy || runActions.actions.isBusy(activeID) || connectionOf(activeID) === "stopping"} status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
             )}
           </div>
         </div>
       </main>
 
-      <ArtifactDrawer
+      {drawerOpen && <Suspense fallback={<div role="status" className="p-4">正在加载工作台…</div>}><ArtifactDrawer
+        onResumeRun={runActions.resume}
+        canResumeRun={record => runActions.actions.canResume(record)}
+        isRunBusy={cid => runActions.actions.isBusy(cid)}
+        runRevision={runRevision}
+        budget={conversationDraft.budget}
+        onBudgetChange={conversationDraft.setBudget}
+        budgetDisabled={readOnly}
+        runContext={{ conversationID: activeID, messages, run: recovery.run }}
         conversationID={activeID}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
@@ -574,7 +586,7 @@ function Workbench({
         onJumpToConversation={onJumpToConversation}
         focusArtifact={drawerArtifact}
         onClearArtifact={() => setDrawerArtifact(null)}
-      />
+      /></Suspense>}
 
       {scheduleFor !== null && (
         <ScheduleDialog
@@ -594,7 +606,7 @@ function Workbench({
         />
       )}
 
-      {modelSettingsOpen && <ModelSettings onClose={() => setModelSettingsOpen(false)} onSaved={() => { setVersion("auto"); api.models().then(setModels).catch(() => {}); }} />}
+      {modelSettingsOpen && <ModelSettings onClose={() => setModelSettingsOpen(false)} onSaved={() => { setVersion("auto"); api.models().then(m => setModels(m.length ? m : MODELS_FALLBACK)).catch(() => {}); }} />}
       {shareFor && (
         <ShareDialog
           conv={shareFor}
@@ -764,7 +776,7 @@ function NotificationBell({ onJump }: { onJump: (cid: string) => void }) {
 // typeahead and outside-click/Esc come from the primitive (replacing the old
 // hand-rolled fixed-overlay menu), themed with the project's warm-paper tokens.
 function ModelSelect({ value, onChange, models }: { value: string; onChange: (v: string) => void; models: ModelOption[] }) {
-  const cur = models.find((m) => m.version === value) || models[0];
+  const cur = models.find((m) => m.version === value) || models[0] || MODELS_FALLBACK[0];
   return (
     <DropdownMenu>
       <DropdownMenuTrigger

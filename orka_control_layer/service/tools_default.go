@@ -2,24 +2,19 @@ package service
 
 import (
 	"context"
-	"fmt"
+	"errors"
 )
 
-// guiMockTool stands in for the GUI agent (run_agent) until Phase 6 connects the
-// real Playwright/CDP executor over WebSocket.
-type guiMockTool struct{}
+// An unconfigured executor must never return simulated completion in production.
+type guiUnavailableTool struct{}
 
-func (guiMockTool) Name() string { return "run_agent" }
-func (guiMockTool) Description() string {
-	return "Run a GUI automation task in a browser (mock until Phase 6). Input: a natural-language instruction."
+func (guiUnavailableTool) Name() string { return "run_agent" }
+func (guiUnavailableTool) Description() string {
+	return "GUI execution is unavailable: configure the GUI service before requesting browser actions."
 }
-func (guiMockTool) Schema() map[string]any {
-	return map[string]any{
-		"type":       "object",
-		"properties": map[string]any{"instruction": map[string]any{"type": "string"}},
-		"required":   []string{"instruction"},
-	}
+func (guiUnavailableTool) Schema() map[string]any {
+	return map[string]any{"type": "object", "properties": map[string]any{"instruction": map[string]any{"type": "string"}}, "required": []string{"instruction"}}
 }
-func (guiMockTool) Invoke(_ context.Context, args map[string]any) (string, error) {
-	return fmt.Sprintf("[gui-mock] completed task: %v", args["instruction"]), nil
+func (guiUnavailableTool) Invoke(context.Context, map[string]any) (string, error) {
+	return "", errors.New("GUI executor is not configured; no browser action was performed")
 }

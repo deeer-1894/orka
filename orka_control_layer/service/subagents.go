@@ -37,7 +37,7 @@ const researcherPrompt = "You are a rigorous research worker. Use web_search the
 
 const writerPrompt = "You are a writing/file worker. Produce the requested document and, when asked to save it, use file_write with a plain relative filename. Return a short confirmation: what you wrote and the filename."
 
-const browserPrompt = "You are a browser-automation worker. Use run_agent to interact with web pages (navigate, click, type) and return what you found. If a page can't be reached or parsed, report what you DID observe rather than retrying endlessly."
+const browserPrompt = "You are a browser-automation worker. Use the browser tool, when available, for DOM navigation, snapshots, unique CSS selectors, page JavaScript, screenshots and downloads. Use run_agent, when available, for visual interaction or unsupported frames/popups. Both use the same browser session. Follow the enabled tools and report only what you observed. If a page can't be reached or parsed, report the failure rather than retrying endlessly."
 
 const engineerPrompt = "You are a software-engineering worker with a real terminal. Workflow: write code/config to files with file_write (plain relative paths), then run and test it with shell (e.g. `python3 app.py`, `node x.js`, `go run .`, `bash build.sh`), read outputs with file_read, and ITERATE until it works — fix errors you see in the shell output and re-run. " +
 	"Keep everything inside the workspace (relative paths only). Don't install heavy dependencies unless the task needs them. " +
@@ -83,7 +83,7 @@ func DefaultSubAgents() []config.SubAgentConfig {
 			Name:        "browser",
 			Description: "Delegate a multi-step browser task (log in, click, fill forms, read a JS-heavy/dynamic page) — also the fallback when web_search/fetch_url are blocked or return nothing and the info must be obtained by browsing. Input: a self-contained instruction including the URL. Returns what was observed.",
 			Prompt:      browserPrompt,
-			Tools:       []string{"run_agent"},
+			Tools:       []string{"browser", "run_agent"},
 		},
 		{
 			Name:        "engineer",
@@ -130,7 +130,7 @@ func DefaultSubAgents() []config.SubAgentConfig {
 // named as the mistake it is, because on this endpoint every extra round-trip
 // costs 15-25 seconds of wall clock.
 const OrchestratorPrompt = middlewares.DefaultSystemPrompt + "\n\n" +
-	"You are an ORCHESTRATOR. Sub-agents (researcher, writer, browser, engineer) appear as tools. Rules:\n" +
+	"You are an ORCHESTRATOR. Delegate through the available specialist tools (researcher, writer, delegate_browser or legacy browser, engineer). The browser tool with an action parameter is an atomic DOM tool, not a delegate. Rules:\n" +
 	"- PARALLELISE INDEPENDENT WORK. When a task splits into subtasks that do not depend on each " +
 	"other — researching three products, checking four sources, drafting several sections — delegate " +
 	"them ALL IN ONE TURN, one sub-agent per subtask. They run concurrently, so N subtasks cost about " +

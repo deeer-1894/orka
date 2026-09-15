@@ -11,6 +11,8 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
+        pill: "gap-1.5 rounded-full border border-border bg-surface text-[12.5px] font-normal text-muted hover:bg-surface2 hover:text-ink aria-pressed:bg-surface2 aria-selected:bg-surface2",
+        headerChip: "gap-1.5 rounded-full border border-border bg-transparent text-[12px] font-normal text-faint hover:bg-surface2 hover:text-ink aria-pressed:border-accent/40 aria-pressed:bg-accentsoft aria-pressed:text-accent",
         default: "bg-accent text-white hover:brightness-105",
         soft: "bg-accentsoft text-accent hover:brightness-[1.02]",
         outline: "border border-border bg-surface text-muted hover:bg-surface2 hover:text-ink",
@@ -21,6 +23,8 @@ const buttonVariants = cva(
       size: {
         default: "h-9 px-3.5 py-2",
         sm: "h-8 px-3",
+        compact: "h-7 px-3 py-1",
+        headerChip: "h-7 px-2.5 py-1",
         lg: "h-10 px-5",
         icon: "h-8 w-8",
       },

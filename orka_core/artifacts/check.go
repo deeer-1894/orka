@@ -12,8 +12,10 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/orka-oss/orka_core/acceptance"
 	"github.com/orka-oss/orka_core/reporting"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"strings"
@@ -39,7 +41,23 @@ type Report struct {
 func ValidPath(p string) bool {
 	return p != "" && p != "." && !strings.ContainsAny(p, "\\\x00") && !strings.HasPrefix(p, "/") && path.Clean(p) == p && p != ".." && !strings.HasPrefix(p, "../")
 }
+
+// Check opens a confined workspace and delegates all checks to CheckFS.
 func Check(ctx context.Context, rootPath string, paths []string) Report {
+	if len(paths) == 0 || len(paths) > MaxFiles {
+		return CheckFS(ctx, nil, paths)
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return Report{OK: false, Files: []File{}, Failures: []string{"workspace: " + err.Error()}}
+	}
+	defer root.Close()
+	return CheckFS(ctx, root.FS(), paths)
+}
+
+// CheckFS checks files and their local dependencies on the supplied filesystem.
+// Callers provide a confined, stable snapshot when checking a fixed delivery.
+func CheckFS(ctx context.Context, root fs.FS, paths []string) Report {
 	report := Report{OK: true, Files: []File{}, Failures: []string{}}
 	fail := func(p string, err error) {
 		report.OK = false
@@ -49,12 +67,10 @@ func Check(ctx context.Context, rootPath string, paths []string) Report {
 		fail("delivery", fmt.Errorf("declare 1..%d files", MaxFiles))
 		return report
 	}
-	root, err := os.OpenRoot(rootPath)
-	if err != nil {
-		fail("workspace", err)
+	if root == nil {
+		fail("workspace", fmt.Errorf("filesystem is required"))
 		return report
 	}
-	defer root.Close()
 	seen := map[string]bool{}
 	for _, p := range paths {
 		if err := ctx.Err(); err != nil {
@@ -83,8 +99,8 @@ func Check(ctx context.Context, rootPath string, paths []string) Report {
 	}
 	return report
 }
-func read(root *os.Root, p string) ([]byte, error) {
-	st, err := root.Stat(p)
+func read(root fs.FS, p string) ([]byte, error) {
+	st, err := fs.Stat(root, p)
 	if err != nil {
 		return nil, err
 	}
@@ -109,11 +125,22 @@ func read(root *os.Root, p string) ([]byte, error) {
 	}
 	return b, nil
 }
-func validate(ctx context.Context, root *os.Root, p string, b []byte) error {
+func validate(ctx context.Context, root fs.FS, p string, b []byte) error {
 	switch strings.ToLower(path.Ext(p)) {
 	case ".json":
+		if strings.HasSuffix(p, ".acceptance.json") {
+			spec, err := acceptance.DecodeSpec(b)
+			if err != nil {
+				return err
+			}
+			report := acceptance.Check(ctx, root, spec)
+			if !report.OK {
+				return fmt.Errorf("acceptance requirements failed or remain unverified")
+			}
+			return nil
+		}
 		if strings.HasSuffix(p, ".report.json") {
-			return reporting.Check(ctx, root.FS(), b)
+			return reporting.Check(ctx, root, b)
 		}
 		if !json.Valid(b) {
 			return fmt.Errorf("invalid JSON")

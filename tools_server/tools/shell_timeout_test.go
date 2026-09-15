@@ -18,6 +18,7 @@ import (
 )
 
 func TestShellTimeoutClosesDescendantPipes(t *testing.T) {
+	t.Setenv("CODE_SANDBOX_MODE", "unsafe-dev")
 	for _, name := range []string{"deadline", "cancellation", "shell_exits_before_child", "failed_shell_exits_before_child", "direct_process_changes_group"} {
 		cancelParent := name == "cancellation"
 
@@ -67,14 +68,8 @@ func TestShellTimeoutClosesDescendantPipes(t *testing.T) {
 					t.Fatal("missing timeout observation")
 				}
 				if name == "deadline" {
-					text := ""
-					for _, c := range result.Content {
-						if v, ok := c.(mcp.TextContent); ok {
-							text += v.Text
-						}
-					}
-					if !strings.Contains(text, "timed out") {
-						t.Errorf("missing timeout observation: %s", text)
+					if out := decodeOutcome(t, result); !out.TimedOut {
+						t.Errorf("missing timeout observation: %+v", out)
 					}
 				}
 			case <-time.After(3 * time.Second):
@@ -101,23 +96,25 @@ func TestShellTimeoutClosesDescendantPipes(t *testing.T) {
 }
 
 func TestShellSuccessfulOutputStillReturned(t *testing.T) {
+	t.Setenv("CODE_SANDBOX_MODE", "unsafe-dev")
 	ctx := identity.With(context.Background(), identity.Identity{Email: "tester", ConversationID: "normal"})
 	r, err := shellExec(t.TempDir())(ctx, callWith(map[string]any{"command": "printf ready"}))
 	if err != nil || r == nil {
 		t.Fatalf("shell: %v", err)
 	}
-	if len(r.Content) != 1 || r.Content[0].(mcp.TextContent).Text != "ready" {
+	if decodeOutcome(t, r).Stdout != "ready" {
 		t.Fatalf("unexpected output: %+v", r)
 	}
 }
 
 func TestShellAllowsChildOutputWithinDeadline(t *testing.T) {
+	t.Setenv("CODE_SANDBOX_MODE", "unsafe-dev")
 	ctx := identity.With(context.Background(), identity.Identity{Email: "tester", ConversationID: "child-output"})
 	r, err := shellExec(t.TempDir())(ctx, callWith(map[string]any{"command": "(sleep 1; printf ready) &", "timeout_sec": 3}))
 	if err != nil || r == nil {
 		t.Fatalf("shell: %v", err)
 	}
-	if len(r.Content) != 1 || r.Content[0].(mcp.TextContent).Text != "ready" {
+	if decodeOutcome(t, r).Stdout != "ready" {
 		t.Fatalf("lost valid child output: %+v", r)
 	}
 }

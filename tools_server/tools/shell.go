@@ -2,8 +2,8 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -13,13 +13,11 @@ import (
 
 	"github.com/orka-oss/orka_core/pathsafe"
 	"github.com/orka-oss/tools_server/identity"
+	"github.com/orka-oss/tools_server/runner"
 )
 
-// shellDenylist blocks the most catastrophic commands as defense-in-depth. This
-// is NOT a sandbox — the command still runs as the gateway's OS user — but it
-// stops the worst accidental/hallucinated damage (host-wide deletes, privilege
-// escalation, remote-code-exec pipes, key theft, machine control). For real
-// isolation, run the tools gateway inside a container/VM (see shellExec docs).
+// shellDenylist catches common destructive mistakes before execution. The
+// runner's namespace and mount boundary enforces isolation independently.
 var shellDenylist = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\brm\s+-[a-zA-Z]*\s*(/|~|\$HOME|/\*|\.\.)`), // rm -rf targeting / ~ .. etc.
 	regexp.MustCompile(`(?i)\b(sudo|doas)\b`),                           // privilege escalation
@@ -40,38 +38,25 @@ func unsafeShell(cmd string) string {
 	return ""
 }
 
-// shellExec runs a shell command confined to the caller's workspace directory.
-// This is the Manus-style "computer" capability: beyond the browser, the agent
-// gets a real terminal — run CLI tools, scripts, git, package managers, data
-// processing, or code it just wrote (e.g. `python3 script.py`).
-//
-// It is intentionally powerful, so it is fenced:
-//   - cwd and HOME start at the session workspace (base/<email>/sessions/<conversation>)
-//   - a hard timeout caps runaway commands (default 30s, max 120s)
-//   - combined stdout+stderr is size-capped
-//   - a non-zero exit or timeout is returned as a tool OBSERVATION (not a fatal
-//     error), so the agent can read the failure and adapt
-//   - it is registered ONLY when SHELL_TOOL=1; for untrusted workloads run the
-//     gateway inside a container/VM, which is the real isolation boundary
-//     (exactly how Manus sandboxes its shell).
+// shellExec delegates all process execution to runner. A working directory is
+// not a sandbox: production requires the bwrap boundary, with only this session
+// mounted at /workspace. CODE_SANDBOX_MODE=unsafe-dev is an explicit opt-out.
 func shellExec(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		command := strings.TrimSpace(req.GetString("command", ""))
 		if command == "" {
-			return mcp.NewToolResultError("command is required"), nil
+			return executionFailure(fmt.Errorf("command is required")), nil
 		}
 		if reason := unsafeShell(command); reason != "" {
-			return mcp.NewToolResultText("refused for safety: " + reason +
-				". The shell runs in the tools container and blocks host-destructive commands. " +
-				"If you genuinely need this, run it yourself in a sandbox."), nil
+			return executionFailure(fmt.Errorf("command refused: %s", reason)), nil
 		}
 
 		root, rootErr := pathsafe.EnsureSession(base, identity.From(ctx).Email, identity.From(ctx).ConversationID)
 		if rootErr != nil {
-			return mcp.NewToolResultError(rootErr.Error()), nil
+			return executionFailure(rootErr), nil
 		}
 		if err := os.MkdirAll(root, pathsafe.WorkspaceDirMode); err != nil {
-			return mcp.NewToolResultError("workspace unavailable: " + err.Error()), nil
+			return executionFailure(fmt.Errorf("workspace unavailable: %w", err)), nil
 		}
 
 		timeout := time.Duration(req.GetInt("timeout_sec", 30)) * time.Second
@@ -81,34 +66,7 @@ func shellExec(base string) mcpserver.ToolHandlerFunc {
 		cctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 
-		c := exec.CommandContext(cctx, "sh", "-c", command)
-		configureShellProcess(c)
-		// Retain CommandContext's direct-process fallback if the command moves
-		// out of its original group. Captured pipes are managed separately.
-		c.WaitDelay = 250 * time.Millisecond
-		c.Dir = root
-		// Confine writes/config to the workspace by pointing HOME there; keep the
-		// inherited PATH so common tools (git, python3, node, …) resolve.
-		c.Env = append(os.Environ(), "HOME="+root)
-
-		out, err := shellOutput(cctx, c)
-		text := string(out)
-		const maxOut = 16 * 1024
-		if len(text) > maxOut {
-			text = text[:maxOut] + "\n…(output truncated at 16KB)"
-		}
-
-		switch {
-		case cctx.Err() == context.DeadlineExceeded:
-			return mcp.NewToolResultText("command timed out after " + timeout.String() + "; partial output:\n" + text), nil
-		case cctx.Err() == context.Canceled:
-			return mcp.NewToolResultText("command canceled; partial output:\n" + text), nil
-		case err != nil:
-			return mcp.NewToolResultText("command exited with error: " + err.Error() + "\n--- output ---\n" + text), nil
-		case strings.TrimSpace(text) == "":
-			return mcp.NewToolResultText("(command succeeded, exit 0, no output)"), nil
-		default:
-			return mcp.NewToolResultText(text), nil
-		}
+		out, _ := runner.FromEnv().Execute(cctx, runner.Request{Root: root, Program: "sh", Args: []string{"-c", command}, Timeout: timeout})
+		return executionResult(out), nil
 	}
 }

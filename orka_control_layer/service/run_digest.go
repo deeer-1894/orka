@@ -137,8 +137,10 @@ func (s *ChatService) digestAsync(parent context.Context, convID string, d db.Ru
 	}
 	model, modelName := s.modelsForContext(parent).modelFor(ModelAuto)
 	source := digestSource(msgs)
+	doneBudget := beginBudgetAuxiliary(parent)
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer doneBudget()
+		ctx, cancel := context.WithTimeout(parent, 45*time.Second)
 		defer cancel()
 		if model != nil && source != "" {
 			if learned := s.summarizeFindings(ctx, model, modelName, d.Prompt, source); learned != "" {
@@ -158,14 +160,14 @@ func (s *ChatService) digestAsync(parent context.Context, convID string, d db.Ru
 // is confined to the one thing a model is needed for. Anything a later turn
 // might cite as fact comes from the deterministic half instead.
 func (s *ChatService) summarizeFindings(ctx context.Context, model llm.Client, modelName, prompt, source string) string {
-	resp, err := model.Chat(llm.WithAgent(ctx, "run-digest"), llm.Request{Model: modelName, Messages: []llm.ChatMessage{
+	resp, err := model.Chat(llm.WithAgent(ctx, "run-digest"), boundedDirectRequest(ctx, llm.Request{Model: modelName, Messages: []llm.ChatMessage{
 		{Role: llm.RoleSystem, Content: "你在为一个 AI agent 压缩它刚完成的一轮工作,供它在下一轮回忆。\n" +
 			"只写这轮**查到/得出了什么**——具体的结论、数据、事实。\n" +
 			"不要复述它做了哪些操作(那部分已单独记录)。不要写开场白、不要总结体裁。\n" +
 			"不确定的内容宁可省略,也不要编造:这段文字会被当作记忆使用。\n" +
 			"用与用户相同的语言,300 字以内,直接给要点。"},
 		{Role: llm.RoleUser, Content: "本轮任务:" + prompt + "\n\n工具返回的原始内容:\n" + source},
-	}})
+	}}))
 	if err != nil {
 		return ""
 	}

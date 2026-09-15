@@ -11,11 +11,12 @@ import (
 	"github.com/orka-oss/orka_control_layer/llm"
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/messages"
+	"github.com/orka-oss/orka_core/modelprofile"
 )
 
 func TestAgentFirstCallHasOutputLimit(t *testing.T) {
 	client := llm.NewMock(llm.Response{Content: "ok", FinishReason: "stop"})
-	ag, err := BuildEinoAgent(context.Background(), client, "m", "sys", nil, 4, nil)
+	ag, err := BuildEinoAgent(context.Background(), client, "m", "sys", nil, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,16 +31,15 @@ func TestAgentFirstCallHasOutputLimit(t *testing.T) {
 func TestTruncatedCallsCannotExhaustADKRetriesOrFailover(t *testing.T) {
 	bad := llm.Response{Content: "incomplete", FinishReason: "length"}
 	client := llm.NewMock(bad, bad, bad, bad)
-	backup := llm.NewMock(llm.Response{Content: "should not run"})
-	ag, err := BuildEinoAgent(context.Background(), client, "m", "sys", nil, 4, llm.NewEinoModel(backup, "backup"))
+	ag, err := BuildEinoAgent(context.Background(), client, "m", "sys", nil, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := RunEinoOnce(context.Background(), ag, "hi"); err == nil {
 		t.Fatal("truncated output was accepted as completed work")
 	}
-	if client.Calls() != 2 || backup.Calls() != 0 {
-		t.Fatalf("calls = %d + backup %d; want 2 + 0", client.Calls(), backup.Calls())
+	if client.Calls() != 2 {
+		t.Fatalf("calls = %d; want 2", client.Calls())
 	}
 }
 
@@ -55,7 +55,7 @@ func TestTruncatedToolBatchNeverExecutes(t *testing.T) {
 				llm.Response{FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{{ID: "good", Name: "echo", Arguments: `{"text":"accepted action"}`}}},
 				llm.Response{FinishReason: "stop", Content: "done"},
 			)
-			ag, err := BuildEinoAgent(context.Background(), client, "m", "sys", []agent.BaseTool{echoTool{calls: &calls}}, 4, nil)
+			ag, err := BuildEinoAgent(context.Background(), client, "m", "sys", []agent.BaseTool{echoTool{calls: &calls}}, 4)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -85,7 +85,7 @@ func TestLengthRetryClearsDiscardedThinking(t *testing.T) {
 		}
 	})
 	client := llm.NewMock(llm.Response{FinishReason: "length"}, llm.Response{FinishReason: "stop", Content: "ok"})
-	ag, err := BuildEinoAgent(ctx, client, "m", "sys", nil, 4, nil)
+	ag, err := BuildEinoAgent(ctx, client, "m", "sys", nil, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestGLMReasoningCanReachFirstToolAction(t *testing.T) {
 		}
 		return gateCall("work", "echo", `{"text":"execute first action"}`)
 	}}
-	ag, err := BuildEinoAgent(context.Background(), client, "glm-5.3", "sys", []agent.BaseTool{echoTool{calls: &calls}}, 4, nil)
+	ag, err := BuildEinoAgent(context.Background(), client, "glm-5.3", "sys", []agent.BaseTool{echoTool{calls: &calls}}, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,5 +194,36 @@ func TestFlashFirstActionHasRoomAfterReasoning(t *testing.T) {
 	}
 	if got := client.Requests[0].MaxTokens; got != 8192 {
 		t.Fatalf("Flash first output cap=%d, want 8192", got)
+	}
+}
+
+func TestNamedProfileDoesNotGuessReasoningPolicy(t *testing.T) {
+	mock := llm.NewMock(llm.Response{Content: "ok", FinishReason: "stop"})
+	ctx := modelprofile.WithContext(context.Background(), modelprofile.Snapshot{ProfileID: "work", Model: "glm-5.3", Protocol: modelprofile.OpenAICompatible})
+	m := newAgentModel(mock, "glm-5.3", "test")
+	if _, err := m.Generate(ctx, []*schema.Message{schema.UserMessage("action")}); err != nil {
+		t.Fatal(err)
+	}
+	if mock.Requests[0].ReasoningEffort != "" || mock.Requests[0].MaxTokens != 4096 {
+		t.Fatal("model name invented provider policy", mock.Requests[0])
+	}
+}
+
+func TestExplicitNamedModelPolicyOverridesLegacyDefaults(t *testing.T) {
+	mock := llm.NewMock(llm.Response{Content: "ok", FinishReason: "stop"})
+	ctx := modelprofile.WithContext(context.Background(), modelprofile.Snapshot{ProfileID: "work", Model: "custom", Policy: modelprofile.CallPolicy{FirstMaxTokens: 12000, MaxTokens: 16000, ReasoningEffort: "low", TimeoutSeconds: 240}})
+	m := newAgentModel(mock, "custom", "test")
+	if _, err := m.Generate(ctx, []*schema.Message{schema.UserMessage("action")}); err != nil {
+		t.Fatal(err)
+	}
+	if mock.Requests[0].ReasoningEffort != "low" || mock.Requests[0].MaxTokens != 12000 {
+		t.Fatal("explicit policy ignored", mock.Requests[0])
+	}
+	// A per-call override must not inherit a different model's capabilities.
+	if _, err := m.Generate(ctx, []*schema.Message{schema.UserMessage("action")}, model.WithModel("other")); err != nil {
+		t.Fatal(err)
+	}
+	if mock.Requests[1].ReasoningEffort != "" || mock.Requests[1].MaxTokens != 4096 {
+		t.Fatal("policy crossed selected model")
 	}
 }

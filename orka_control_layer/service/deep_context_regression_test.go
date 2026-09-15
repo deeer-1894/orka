@@ -13,7 +13,7 @@ import (
 func TestDeepTaskVisibleOnFirstCall(t *testing.T) {
 	ctx := withToolGate(context.Background(), newToolGate())
 	model := llm.NewMock(llm.Response{Content: "done"})
-	ag, err := BuildEinoDeepOrchestrator(ctx, model, "main", model, "mini", "delegate independent work", deepTestTools(), nil, 10, false)
+	ag, err := BuildEinoDeepOrchestrator(ctx, model, "main", "delegate independent work", deepTestTools(), nil, 10, false)
 	if err != nil {
 		t.Fatal(err)
 	}

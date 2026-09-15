@@ -4,10 +4,10 @@ import (
 	"context"
 	"strings"
 
-	"github.com/orka-oss/orka_core/agent"
-	"github.com/orka-oss/orka_core/messages"
 	"github.com/orka-oss/orka_control_layer/llm"
 	"github.com/orka-oss/orka_control_layer/service/middlewares"
+	"github.com/orka-oss/orka_core/agent"
+	"github.com/orka-oss/orka_core/messages"
 )
 
 // fast_path.go — answer a question that needs no tools without building an agent.
@@ -129,7 +129,8 @@ func (s *ChatService) tryFastPath(ctx context.Context, rc *agent.RunContext, req
 	// back to the agent would be worse than a moment's silence.
 	var resp llm.Response
 	var err error
-	r := llm.Request{Model: model, Messages: msgs}
+	r := boundedDirectRequest(ctx, llm.Request{Model: model, Messages: msgs})
+	ctx = llm.WithAgent(ctx, "fast-path")
 	if sc, okStream := client.(llm.StreamingClient); okStream {
 		resp, err = sc.ChatStream(ctx, r, func(string) {})
 	} else {

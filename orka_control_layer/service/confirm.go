@@ -274,7 +274,7 @@ func (s *ChatService) wrapConfirm(tools []agent.BaseTool, interruptible bool) []
 	hub := s.confirmReady()
 	out := make([]agent.BaseTool, len(tools))
 	for i, t := range tools {
-		if dangerTools[t.Name()] {
+		if dangerousToolName(t.Name()) {
 			out[i] = confirmGate{inner: t, hub: hub, interruptible: interruptible}
 		} else {
 			out[i] = t
@@ -295,6 +295,14 @@ func (s *ChatService) wrapConfirm(tools []agent.BaseTool, interruptible bool) []
 // Only the method is inspected. Everything else on the list runs arbitrary code
 // or commits a consequential change however it is called, so it stays gated.
 func needsConfirm(tool string, args map[string]any) bool {
+	if tool == "browser" {
+		switch asStr(args["action"]) {
+		case "snapshot", "wait", "screenshot":
+			return false
+		default:
+			return true
+		}
+	}
 	if tool != "http_request" {
 		return true
 	}
@@ -316,6 +324,8 @@ func summarizeAction(tool string, args map[string]any) string {
 		return ""
 	}
 	switch tool {
+	case "browser":
+		return "在当前网页执行 DOM 操作: " + trunc(s("action"), 32) + "（输入值与脚本已隐藏）"
 	case "shell":
 		return "在工作区执行命令: " + trunc(s("command")+s("cmd"), 200)
 	case "run_agent":

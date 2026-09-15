@@ -6,16 +6,16 @@ package tools
 import (
 	"context"
 	"fmt"
-	"github.com/orka-oss/orka_core/pathsafe"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
+	"github.com/orka-oss/orka_core/pathsafe"
 	"github.com/orka-oss/orka_core/toolargs"
+	"github.com/orka-oss/orka_core/workspaceio"
 	"github.com/orka-oss/tools_server/identity"
 	"github.com/orka-oss/tools_server/util"
 )
@@ -50,9 +50,9 @@ func Registry() map[string]Meta {
 		"json_query":    {Group: "util", Scope: ""},
 		"datetime":      {Group: "util", Scope: ""},
 		"random":        {Group: "util", Scope: ""},
-		"memory":        {Group: "file", Scope: "file:write"}, // persists to the user's storage
-		"http_request":  {Group: "web", Scope: "web:search"},  // network egress → gated
-		"shell":         {Group: "shell", Scope: ""},          // env-gated (SHELL_TOOL=1); confined to the workspace
+		"memory":        {Group: "file", Scope: "file:write"},    // persists to the user's storage
+		"http_request":  {Group: "web", Scope: "web:search"},     // network egress → gated
+		"shell":         {Group: "shell", Scope: "code:execute"}, // opt-in code execution; runner enforces isolation
 		// Office / productivity tools.
 		"currency":      {Group: "office", Scope: ""},
 		"timezone":      {Group: "office", Scope: ""},
@@ -70,7 +70,7 @@ func Registry() map[string]Meta {
 		"sql_query":     {Group: "office", Scope: "file:read"},
 		"csv_join":      {Group: "office", Scope: "file:write"},
 		"slides":        {Group: "office", Scope: "file:write"},
-		"python":        {Group: "code", Scope: ""}, // confined to the workspace container, like shell
+		"python":        {Group: "code", Scope: "code:execute"}, // same capability and isolation as shell
 		"lark_whoami":   {Group: "lark", Scope: "lark:read"},
 		"aio_echo":      {Group: "aio", Scope: "aio:read"},
 	}
@@ -80,6 +80,7 @@ func Registry() map[string]Meta {
 // a scope guard (defense in depth: list filtering is not enough on its own).
 func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]bool) {
 	reg := Registry()
+	codeEnabled := os.Getenv("CODE_EXECUTION") == "1"
 	add := func(tool mcp.Tool, h mcpserver.ToolHandlerFunc) {
 		if blacklist[tool.Name] {
 			return
@@ -92,11 +93,11 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 		mcp.WithString("path", mcp.Required(), mcp.Description("relative file path")),
 	), fileRead(baseStorage))
 
-	add(mcp.NewTool("file_write",
-		mcp.WithDescription("Write a UTF-8 text file to your storage (creates dirs). mode=create is the default and refuses an existing file without changing it. Use mode=append to add only new text at the end (no automatic newline); use file_read then mode=replace with the complete new content to overwrite. replace and append retain prior-version backups when available. Compatibility change: clients that previously overwrote files without a mode must now explicitly pass mode=replace."),
-		mcp.WithString("path", mcp.Required(), mcp.Description("relative file path")),
-		mcp.WithString("content", mcp.Required(), mcp.Description("complete file content for create/replace; only the text to add for append")),
-		mcp.WithString("mode", mcp.Enum("create", "replace", "append"), mcp.DefaultString("create"), mcp.Description("create (default): new file only; replace: overwrite with complete content; append: add text, creating the file if missing")),
+	add(mcp.NewTool("file_write", mcp.WithDescription(workspaceio.WriteDescription),
+		func(t *mcp.Tool) {
+			t.InputSchema.Properties = workspaceio.WriteProperties()
+			t.InputSchema.Required = []string{"path", "content"}
+		},
 	), fileWrite(baseStorage))
 
 	add(mcp.NewTool("render_report",
@@ -227,16 +228,15 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 		mcp.WithString("content_type", mcp.Description("Content-Type for the body")),
 	), httpRequest())
 
-	// The shell/terminal is powerful, so it is opt-in via SHELL_TOOL=1 and is
-	// started in the per-conversation workspace (see shellExec). Run the gateway inside a
-	// container/VM for hard isolation when exposing it to untrusted workloads.
-	if os.Getenv("SHELL_TOOL") == "1" {
+	// Arbitrary shell and Python share one opt-in and code:execute capability.
+	// The runner enforces a session-only mount, including inside a tools container.
+	if codeEnabled {
 		add(mcp.NewTool("shell",
 			// The "not for reading/writing files" clause is load-bearing: the eval
 			// suite caught the agent creating files with `printf > f.txt` instead of
 			// file_write, which needs an approval in a confirm-gated session and
 			// bypasses the workspace write-diff/undo machinery keyed on file_*.
-			mcp.WithDescription("Run a shell command in your workspace (POSIX sh). Use it like a terminal: run CLI tools, scripts, git, package managers, data processing, or code you wrote (e.g. `python3 app.py`, `grep -rn foo .`, `ls -la`). Every call starts in this conversation's workspace, shared with file_read/file_write/file_list. Use relative paths such as outputs/audit.py; do not change to a guessed root such as /workspace. Run pwd only when you need its absolute path. Output is captured. Prefer this over describing manual steps when one command would do the job. Do NOT use it to read or write files — use file_read/file_write/file_list, which are safer and tracked."),
+			mcp.WithDescription("Run a shell command in your workspace (POSIX sh). Use it like a terminal: run CLI tools, scripts, git, package managers, data processing, or code you wrote (e.g. `python3 app.py`, `grep -rn foo .`, `ls -la`). Every call starts in this conversation's workspace, shared with file_read/file_write/file_list. The production sandbox has no network access; dependencies must be preinstalled. Use relative paths such as outputs/audit.py; do not change to a guessed root such as /workspace. Run pwd only when you need its absolute path. Returns JSON with ok, exit_code, stdout, stderr, timed_out, canceled; failures set isError. Prefer this over describing manual steps when one command would do the job. Do NOT use it to read or write files — use file_read/file_write/file_list, which are safer and tracked."),
 			mcp.WithString("command", mcp.Required(), mcp.Description("the shell command to run")),
 			mcp.WithNumber("timeout_sec", mcp.Description("max seconds before it's killed (default 30, max 120)")),
 		), shellExec(baseStorage))
@@ -355,12 +355,14 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 		mcp.WithString("out", mcp.Description("output .pptx filename (default slides.pptx)")),
 	), slidesGenerate(baseStorage))
 
-	add(mcp.NewTool("python",
-		mcp.WithDescription("Run Python in the sandboxed workspace and capture its output — for writing code, computing, and data analysis. pandas/numpy/matplotlib/openpyxl are preinstalled; files read/written are relative to your workspace. Args: code (a snippet) OR path (a .py file to run), and optional argv."),
-		mcp.WithString("code", mcp.Description("Python source to execute (use this or path)")),
-		mcp.WithString("path", mcp.Description("a workspace .py file to run instead of inline code")),
-		mcp.WithString("argv", mcp.Description("optional space-separated args passed to the script")),
-	), pythonRun(baseStorage))
+	if codeEnabled {
+		add(mcp.NewTool("python",
+			mcp.WithDescription("Run Python in the sandboxed workspace and capture its output — for writing code, computing, and data analysis. pandas/numpy/matplotlib/openpyxl are preinstalled; files read/written are relative to your workspace. Args: code (a snippet) OR path (a .py file to run), and optional argv. Returns JSON with ok, exit_code, stdout, stderr, timed_out, canceled; failures set isError."),
+			mcp.WithString("code", mcp.Description("Python source to execute (use this or path)")),
+			mcp.WithString("path", mcp.Description("a workspace .py file to run instead of inline code")),
+			mcp.WithString("argv", mcp.Description("optional space-separated args passed to the script")),
+		), pythonRun(baseStorage))
+	}
 
 	add(mcp.NewTool("lark_whoami",
 		mcp.WithDescription("Lark: return the current user (stub)."),
@@ -381,6 +383,9 @@ func guard(scope string, h mcpserver.ToolHandlerFunc) mcpserver.ToolHandlerFunc 
 		// allowed to do; saying the token expired tells it to get a new one.
 		if id.AuthErr != nil {
 			return mcp.NewToolResultError("auth failed (retryable — the caller should refresh its context token): " + id.AuthErr.Error()), nil
+		}
+		if id.CatalogOnly() {
+			return mcp.NewToolResultError("permission denied: catalog credential is metadata-only; tools/call is forbidden"), nil
 		}
 		if scope != "" && !id.HasScope(scope) {
 			return mcp.NewToolResultError("permission denied: missing scope " + scope), nil
@@ -433,62 +438,24 @@ func missingPathError(req mcp.CallToolRequest, example string) *mcp.CallToolResu
 
 func fileWrite(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		mode, err := fileWriteMode(req)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		content, err := fileWriteContent(req)
+		intent, err := workspaceio.ParseIntent(req.GetArguments())
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		rel := pathArg(req)
 		if rel == "" {
-			return missingPathError(req, "{\"path\": \"notes/summary.md\", \"content\": \"...\"}"), nil
+			return missingPathError(req, `{"path":"notes/summary.md","content":"..."}`), nil
 		}
-		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel, identity.From(ctx).ConversationID)
+		id := identity.From(ctx)
+		root, err := pathsafe.SessionRoot(base, id.Email, id.ConversationID)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		if err := os.MkdirAll(filepath.Dir(p), pathsafe.WorkspaceDirMode); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		flags := os.O_WRONLY | os.O_CREATE
-		switch mode {
-		case "create":
-			// A check followed by a write races with another creator. O_EXCL
-			// makes refusal atomic and never touches the prior file or history.
-			flags |= os.O_EXCL
-		case "replace":
-			flags |= os.O_TRUNC
-		case "append":
-			// Let the kernel position each write at EOF; never read-concatenate
-			// and replace, which can lose another writer's appended bytes.
-			flags |= os.O_APPEND
-		}
-		backed := false
-		if mode != "create" {
-			backed = backupBeforeWrite(base, identity.From(ctx).Email, rel, identity.From(ctx).ConversationID)
-		}
-		file, err := os.OpenFile(p, flags, pathsafe.WorkspaceFileMode)
+		result, err := workspaceio.Apply(root, rel, intent)
 		if err != nil {
-			if mode == "create" && os.IsExist(err) {
-				return mcp.NewToolResultError("mode=create refused: file already exists; no file was changed and no backup was created. Use mode=append to add text, or file_read then mode=replace with the complete new file content to intentionally overwrite."), nil
-			}
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		written, writeErr := file.WriteString(content)
-		closeErr := file.Close()
-		if writeErr == nil {
-			writeErr = closeErr
-		}
-		if writeErr != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("mode=%s wrote %d bytes to %s before error: %v; use file_read to inspect the file before retrying", mode, written, rel, writeErr)), nil
-		}
-		msg := fmt.Sprintf("mode=%s wrote %d bytes to %s", mode, written, rel)
-		if backed {
-			msg += " (previous version saved to history)"
-		}
-		return mcp.NewToolResultText(msg), nil
+		return mcp.NewToolResultText(result.String()), nil
 	}
 }
 

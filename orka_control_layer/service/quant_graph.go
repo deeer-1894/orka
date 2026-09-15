@@ -57,6 +57,7 @@ type stageFn func(context.Context, *PipelineState) error
 // RunFactorGraph executes the typed pipeline for one report and returns the
 // final state. Emitted plan events keep the UI's execution timeline live.
 func (s *ChatService) RunFactorGraph(ctx context.Context, owner, reportPath string) (*PipelineState, error) {
+	ctx = WithQuantCapability(ctx)
 	ctx, settingsErr := s.withUserModels(ctx, owner)
 	if settingsErr != nil {
 		return nil, settingsErr
@@ -129,9 +130,8 @@ func (s *ChatService) scopedAgentRun(ctx context.Context, owner, instruction, ta
 	}
 	tools = filterByName(tools, toolNames)
 
-	client, model := models.main, models.cfg.Model
-	ag, err := BuildEinoAgent(ctx, client, model, instruction, tools, 12, nil,
-		contextHandlers(ctx, s.Cfg.Storage.BaseStoragePath, owner, "quant-stage", tools, s.Cfg.Agent.SubAgents)...)
+	client, model := models.client, models.cfg.Model
+	ag, err := BuildEinoAgent(ctx, client, model, instruction, tools, 12, contextHandlers(ctx, s.Cfg.Storage.BaseStoragePath, owner, "quant-stage", tools, s.Cfg.Agent.SubAgents)...)
 	if err != nil {
 		return "", err
 	}

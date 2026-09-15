@@ -150,3 +150,31 @@ func TestDiscoverCancellationCannotBecomePreset(t *testing.T) {
 		t.Fatal("cancelled discovery became preset", result, err)
 	}
 }
+
+func TestDiscoverNamedProfileDoesNotBorrowActiveCredential(t *testing.T) {
+	s := New(filepath.Join(t.TempDir(), "storage"))
+	p := Profiles{Profiles: []Config{{ID: "a", Name: "A", BaseURL: "https://same.test/v1", Models: []string{"a"}, Enabled: true}, {ID: "b", Name: "B", BaseURL: "https://same.test/v1", Models: []string{"b"}, Enabled: true}}, ActiveProfileID: "a"}
+	if _, err := s.SaveProfiles("alice", p, map[string]string{"a": "key-a"}); err != nil {
+		t.Fatal(err)
+	}
+	var auth string
+	mockDiscovery(t, func(r *http.Request) (*http.Response, error) {
+		auth = r.Header.Get("Authorization")
+		return discoveryResponse(r, 200, `{"data":[{"id":"listed"}]}`), nil
+	})
+	result, err := s.DiscoverProfile(context.Background(), "alice", "b", "https://same.test/v1", "", "openai-compatible")
+	if err != nil || result.Source != "remote" || auth != "" {
+		t.Fatal("borrowed active profile key", err)
+	}
+	_, err = s.DiscoverProfile(context.Background(), "alice", "a", "https://same.test/v1", "", "openai-compatible")
+	if err != nil || auth != "Bearer key-a" {
+		t.Fatal("didn't use matching profile key", err)
+	}
+	_, err = s.DiscoverProfile(context.Background(), "alice", "a", "https://other.test/v1", "", "openai-compatible")
+	if err != nil || auth != "" {
+		t.Fatal("key crossed URL", err)
+	}
+	if _, err = s.DiscoverProfile(context.Background(), "alice", "a", "https://same.test/v1", "", "anthropic"); err == nil {
+		t.Fatal("unsupported protocol accepted")
+	}
+}

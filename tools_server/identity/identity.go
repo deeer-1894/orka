@@ -43,3 +43,14 @@ func From(ctx context.Context) Identity {
 	}
 	return Identity{}
 }
+
+// CatalogOnly identifies the explicit metadata credential, not wildcard grants.
+// It cannot invoke even otherwise scopeless tools, with or without a conversation.
+func (i Identity) CatalogOnly() bool {
+	for _, scope := range i.Scopes {
+		if scope == "tools:catalog" {
+			return true
+		}
+	}
+	return false
+}

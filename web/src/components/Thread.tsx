@@ -1,3 +1,6 @@
+import { ActionChip } from './ActionChip';
+import { useDeliveryManifest } from '../hooks/useDeliveryManifest';
+import type { DeliverySnapshot } from '../lib/runEvidence';
 import { useCallback, createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
 import type { BrowserPayload, ClarifyPayload, Message, ToolPayload, WeatherCardData } from "../types";
@@ -8,6 +11,7 @@ import { useSessionFiles } from "../hooks/useSessionFiles";
 import { isIncompleteRun, type RecoverySnapshot } from "../lib/runRecovery";
 import { Markdown } from "./Markdown";
 import { FilePreview } from "./FilePreview";
+import { FollowUps } from "./FollowUps";
 import { WeatherCard, parseWeatherCard } from "./WeatherCard";
 import { Icon, type IconName } from "./Icon";
 import { confirmDialog } from "../lib/confirm";
@@ -16,6 +20,7 @@ import { toast, toastError } from "../lib/toast";
 // Opening a workspace file is shared down the step tree (Steps → Step, AgentLane)
 // via context so a filename is clickable wherever it appears without prop drilling.
 const FileScopeCtx = createContext({ conversationID: "", ownerEmail: "", readOnly: true });
+const DeliveryManifestCtx = createContext<DeliverySnapshot[]>([]);
 const OpenFileCtx = createContext<(name: string, opts?: { history?: boolean }) => void>(() => {});
 
 // File-producing tools and how to find the file they touched: prefer the explicit
@@ -55,6 +60,7 @@ function group(messages: Message[]): Block[] {
     }
   };
   for (const m of messages) {
+    if (buf.length && buf[buf.length - 1].meta?.run_id !== m.meta?.run_id) flush();
     if (m.type === "task" || m.type === "heartbeat") continue;
     if (m.type === "stream" && m.action === "reasoning") {
       // live "thinking" tokens from a reasoning model → collapsible indicator.
@@ -63,6 +69,7 @@ function group(messages: Message[]): Block[] {
     } else if (m.type === "chat" || m.type === "stream") {
       // "stream" is the live, transient assistant bubble (token deltas).
       flush();
+      if (m.role === "user") planBlock = null;
       blocks.push({ kind: m.role === "user" ? "user" : "assistant", m });
     } else if (m.type === "clarify") {
       flush();
@@ -74,7 +81,7 @@ function group(messages: Message[]): Block[] {
       // The agent re-emits the WHOLE plan on every update (idempotent snapshot).
       // Render a single live checklist that updates in place: keep the block at
       // the first plan's position and point it at the latest snapshot.
-      if (planBlock) {
+      if (planBlock && (!m.meta?.run_id || planBlock.m.meta?.run_id === m.meta.run_id)) {
         planBlock.m = m;
       } else {
         flush();
@@ -144,6 +151,10 @@ export function Thread({
     if (name && fileConv) setPreviewFile({ name, conversationID: fileConv, history: opts?.history });
   };
   useEffect(() => { setPreviewFile(null); }, [conversationID]);
+  const deliveryRunKey = useMemo(() => [...new Set(messages.filter(m =>
+    m.role === "assistant" && m.meta?.run_id && /\[[^\]]*\]\([^)]+\)/.test(m.content || "")
+  ).map(m => m.meta.run_id))].sort().join(","), [messages]);
+  const deliveryManifest = useDeliveryManifest(fileConv, deliveryRunKey, status);
   const files = useSessionFiles(messages, { conversationID: fileConv, ownerEmail }, status);
   // Smart auto-scroll: only follow new content when the user is already near the
   // bottom, so scrolling up to read history isn't yanked back down.
@@ -229,6 +240,7 @@ export function Thread({
 
   return (
     <FileScopeCtx.Provider value={{ conversationID: fileConv, ownerEmail, readOnly: readOnlyFiles }}>
+    <DeliveryManifestCtx.Provider value={deliveryManifest}>
     <OpenFileCtx.Provider value={openFile}>
     <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto">
       <ThreadOutline turns={turns} />
@@ -278,8 +290,10 @@ export function Thread({
           );
         })}
         {thinking && <Thinking />}
-        {canAct && !failed && lastAssistant >= 0 && lastUserPrompt && blocks[lastAssistant].kind === "assistant" && (
-          <FollowUps
+        {!readOnlyFiles && canAct && !failed && lastAssistant > lastUser && lastUserPrompt && blocks[lastAssistant].kind === "assistant" && (
+          <FollowUps ownerEmail={ownerEmail}
+            conversationID={conversationID}
+            runID={(blocks[lastAssistant] as Extract<Block, { kind: "assistant" }>).m.meta.run_id || ""}
             prompt={lastUserPrompt}
             answer={(blocks[lastAssistant] as Extract<Block, { kind: "assistant" }>).m.content || ""}
             selectedVersion={(blocks[lastAssistant] as Extract<Block, { kind: "assistant" }>).m.meta.model_version || "auto"}
@@ -291,10 +305,9 @@ export function Thread({
           <div className="mb-6 ml-[42px] space-y-2" role="status">
             <div className="flex flex-wrap items-center gap-3">
               {(recovery.recoverable || recovery.busy) && (
-                <button onClick={onContinue} disabled={recovery.busy}
-                  className="rounded-lg border border-accent/40 bg-accentsoft/50 px-3 py-1.5 text-[13px] text-accent disabled:opacity-50">
+                <ActionChip onClick={onContinue} disabled={recovery.busy} icon="refresh">
                   {recovery.busy ? "正在继续任务…" : "继续未完成任务"}
-                </button>
+                </ActionChip>
               )}
             </div>
             <p className="text-[12px] text-faint">
@@ -308,6 +321,7 @@ export function Thread({
       {previewFile && previewFile.conversationID === fileConv && <FilePreview key={fileConv + ":" + previewFile.name} name={previewFile.name} conv={fileConv} readOnly={readOnlyFiles} initialHistory={previewFile.history} onClose={() => setPreviewFile(null)} />}
     </div>
     </OpenFileCtx.Provider>
+    </DeliveryManifestCtx.Provider>
     </FileScopeCtx.Provider>
   );
 }
@@ -648,10 +662,22 @@ function Citations({ text }: { text: string }) {
 
 function Assistant({ m, live, onRegenerate, onSchedule, suppressPlan }: { m: Message; live?: boolean; onRegenerate?: () => void; onSchedule?: () => void; suppressPlan?: boolean }) {
   const scope = useContext(FileScopeCtx);
+  const snapshots = useContext(DeliveryManifestCtx);
+  const snapshotFor = useCallback((path: string) => !live && m.type === "chat" && m.meta?.run_id
+    ? snapshots.find(snapshot => snapshot.conversation_id === scope.conversationID && snapshot.run_id === m.meta.run_id && snapshot.files.some(file => file.path === path))
+    : undefined, [snapshots, scope.conversationID, m.meta?.run_id, m.type, live]);
   const resolveLink = useCallback((href: string) => {
     const path = workspaceLinkPath(href, scope);
-    return path ? fileApi.downloadURL(path, scope.conversationID) : href;
-  }, [scope.conversationID, scope.ownerEmail]);
+    if (!path) return href;
+    const snapshot = snapshotFor(path);
+    return snapshot ? api.deliveryDownloadURL(scope.conversationID, snapshot.run_id, path) : fileApi.downloadURL(path, scope.conversationID);
+  }, [scope.conversationID, scope.ownerEmail, snapshotFor]);
+  const linkLabel = useCallback((href: string) => {
+    const path = workspaceLinkPath(href, scope);
+    if (!path) return undefined;
+    const snapshot = snapshotFor(path);
+    return snapshot ? `交付快照 · 版本 ${snapshot.version}` : "当前工作区 · 未关联交付快照";
+  }, [scope.conversationID, scope.ownerEmail, snapshotFor]);
   // When the agent emitted a structured plan event, don't also regex a prose
   // plan out of the answer — the StructuredPlan block already shows it.
   const plan = suppressPlan ? null : parsePlan(m.content ?? "");
@@ -663,12 +689,12 @@ function Assistant({ m, live, onRegenerate, onSchedule, suppressPlan }: { m: Mes
       <div className="min-w-0 flex-1 pt-0.5">
         {plan ? (
           <>
-            {plan.lead && <Markdown resolveLink={resolveLink}>{plan.lead}</Markdown>}
+            {plan.lead && <Markdown resolveLink={resolveLink} linkLabel={linkLabel}>{plan.lead}</Markdown>}
             <PlanChecklist steps={plan.steps} live={!!live} />
-            {plan.tail && <Markdown resolveLink={resolveLink}>{plan.tail}</Markdown>}
+            {plan.tail && <Markdown resolveLink={resolveLink} linkLabel={linkLabel}>{plan.tail}</Markdown>}
           </>
         ) : (
-          <Markdown resolveLink={resolveLink}>{m.content ?? ""}</Markdown>
+          <Markdown resolveLink={resolveLink} linkLabel={linkLabel}>{m.content ?? ""}</Markdown>
         )}
         {!live && <Citations text={m.content ?? ""} />}
         <div className="mt-1 flex gap-1 opacity-0 transition group-hover:opacity-100">
@@ -713,16 +739,8 @@ function CopyButton({ text }: { text: string }) {
 
 const AGENT_ICON: Record<string, IconName> = { researcher: "search", writer: "rename", browser: "globe" };
 
-// Live remote-browser (noVNC) URL — the orka-gui sandbox's animated screen, same
-// source the 电脑 panel uses.
-const NOVNC_URL =
-  (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_NOVNC_URL ||
-  "http://localhost:6080/vnc.html?autoconnect=1&resize=scale&reconnect=1";
-
-// InlineComputer embeds the "电脑" right inside the step timeline: while the run
-// is live it shows the animated remote browser (you watch it click/scroll/type in
-// place); once settled it shows the last captured frame (replay). This is the
-// "watch it work" surface, inline where it happens.
+// Display only captured evidence carried by this run's conversation stream.
+// A shared administrator desktop is never embedded in an account's timeline.
 function InlineComputer({ live, frames }: { live: boolean; frames: BrowserPayload[] }) {
   const [open, setOpen] = useState(true);
   const latest = frames.length ? frames[frames.length - 1] : undefined;
@@ -731,21 +749,20 @@ function InlineComputer({ live, frames }: { live: boolean; frames: BrowserPayloa
       <div className="flex items-center gap-1.5 border-b border-border bg-surface2 px-2.5 py-1.5">
         <span className={"h-1.5 w-1.5 rounded-full " + (live ? "animate-pulse bg-ok" : "bg-faint")} />
         <span className="text-[12px] text-muted">
-          {live ? "实时浏览器 · 正在操作" : "浏览器画面"}{frames.length ? ` · ${frames.length} 帧` : ""}
+          {live ? "本次运行 · 截图证据更新中" : "本次运行 · 截图证据"}{frames.length ? ` · ${frames.length} 帧` : ""}
         </span>
         <button onClick={() => setOpen((o) => !o)} aria-label={open ? "收起画面" : "展开画面"} className="ml-auto text-faint hover:text-accent">
           <Icon name="chevron" size={13} className={"transition-transform " + (open ? "" : "-rotate-90")} />
         </button>
       </div>
       {open && (
-        live ? (
-          <iframe src={NOVNC_URL} title="实时浏览器" className="block w-full bg-white" style={{ height: 300, border: 0 }} />
-        ) : latest?.data ? (
-          <img src={"data:image/png;base64," + latest.data} alt="浏览器画面" className="block w-full" />
+        latest?.data ? (
+          <img src={"data:image/png;base64," + latest.data} alt="本次运行截图" className="block w-full" />
         ) : (
           <div className="px-3 py-6 text-center text-[12px] text-faint">本次运行未捕获画面</div>
         )
       )}
+      <p className="px-3 py-2 text-[11px] text-faint">需要人工接管时，请由本地管理员单独打开 noVNC；此处仅展示运行证据。</p>
     </div>
   );
 }
@@ -760,8 +777,7 @@ function Steps({ items, live }: { items: Message[]; live?: boolean }) {
     .filter((m) => m.type === "browser")
     .map((m) => m.payload as BrowserPayload)
     .filter((p): p is BrowserPayload => !!p && !!p.data);
-  // Show the inline 电脑 when the agent used the browser this turn (live → animated
-  // remote screen; settled → frame replay).
+  // Frames belong to this step group; group() separates distinct run ids.
   const hasBrowser = items.some((m) => m.type === "browser");
 
   // Partition: the orchestrator's own steps render flat; each sub-agent's steps
@@ -1203,36 +1219,8 @@ function Reasoning({ m }: { m: Message }) {
 }
 
 // FollowUps shows 2–3 suggested next questions under the latest answer (Perplexity
-// style); clicking one sends it. Fetched lazily from the configured model once the turn
-// settles, keyed by the answer so it refreshes per turn.
-function FollowUps({ prompt, answer, selectedVersion, modelProfile, onPick }: { prompt: string; answer: string; selectedVersion: string; modelProfile: string; onPick: (t: string) => void }) {
-  const [items, setItems] = useState<string[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    setItems([]);
-    if (!answer.trim() || !modelProfile) return;
-    api.followups(prompt, answer, selectedVersion, modelProfile).then((r) => { if (!cancelled) setItems(r.suggestions || []); }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [prompt, answer, selectedVersion, modelProfile]);
-  if (items.length === 0) return null;
-  return (
-    <div className="rise mb-6 ml-[42px]">
-      <div className="mb-1.5 text-[11px] text-faint">追问</div>
-      <div className="flex flex-col items-start gap-1.5">
-        {items.map((q, i) => (
-          <button
-            key={i}
-            onClick={() => onPick(q)}
-            className="group max-w-full rounded-xl border border-border bg-surface px-3 py-1.5 text-left text-[13px] text-muted transition hover:border-accent/40 hover:bg-surface2 hover:text-ink"
-          >
-            <span className="mr-1 text-accent opacity-60 group-hover:opacity-100">+</span>
-            {q}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
+// style); clicking one sends it. Generated automatically after completion and
+// cached by owner, conversation, run and the answered model revision.
 
 const EXAMPLES = [
   {

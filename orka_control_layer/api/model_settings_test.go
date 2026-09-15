@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_control_layer/llm"
 	"github.com/orka-oss/orka_control_layer/message_utils"
 	"github.com/orka-oss/orka_control_layer/modelsettings"
@@ -11,6 +12,8 @@ import (
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/config"
 	"github.com/orka-oss/orka_core/messages"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo/integration/mtest"
 	"io"
 	"net/http"
 	"strings"
@@ -21,7 +24,9 @@ func settingsAPI(t *testing.T) *API {
 	cfg := &config.Config{}
 	cfg.Storage.BaseStoragePath = t.TempDir()
 	cfg.LLM.Model = "deployment"
-	return &API{Chat: service.NewChatService(cfg, nil, nil, nil, nil, nil, nil)}
+	chat := service.NewChatService(cfg, nil, nil, nil, nil, nil)
+	chat.UsageLedger = &apiBudgetLedger{}
+	return &API{Chat: chat}
 }
 func settingsRequest(email, body string) *app.RequestContext {
 	c := app.NewContext(0)
@@ -122,35 +127,78 @@ func TestModelSettingsListOnlyContract(t *testing.T) {
 }
 
 func TestFollowupsBindsManualSelection(t *testing.T) {
-	a := settingsAPI(t)
-	a.Chat.Cfg.LLM.Models = []string{"manual"}
-	mock := llm.NewMock(llm.Response{Content: `["Next?"]`, FinishReason: "stop"})
-	a.Chat.Main = mock
-	// A prior Run provides the opaque profile through normal message metadata.
-	var profile string
-	a.Chat.ToolsFor = func(context.Context, service.ChatRunRequest) ([]agent.BaseTool, func(), error) { return nil, nil, nil }
-	a.Chat.Msg = message_utils.New(nil, 1, nil)
-	a.Chat.DisableSummary = true
-	a.Chat.DisableFastPath = true
-	a.Chat.Run(context.Background(), service.ChatRunRequest{UserEmail: "alice", ConversationID: "profile", Message: "Q", SelectedVersion: "manual"}, func(m messages.Message) {
-		if m.Meta.ModelProfile != "" {
-			profile = m.Meta.ModelProfile
+	mt := mtest.New(t, mtest.NewOptions().ClientType(mtest.Mock))
+	mt.Run("trusted stored selection", func(mt *mtest.T) {
+		t := mt.T
+		a := settingsAPI(t)
+		a.Chat.Cfg.LLM.Models = []string{"manual"}
+		mock := llm.NewMock(llm.Response{Content: `["Next?"]`, FinishReason: "stop"})
+		a.Chat.Client = llm.NewAccounted(mock)
+		// A prior Run provides the opaque profile through normal message metadata.
+		var profile string
+		a.Chat.ToolsFor = func(context.Context, service.ChatRunRequest) ([]agent.BaseTool, func(), error) { return nil, nil, nil }
+		a.Chat.Msg = message_utils.New(nil, 1, nil)
+		a.Chat.DisableSummary = true
+		a.Chat.DisableFastPath = true
+		a.Chat.Run(context.Background(), service.ChatRunRequest{UserEmail: "alice", ConversationID: "profile", Message: "Q", SelectedVersion: "manual"}, func(m messages.Message) {
+			if m.Meta.ModelProfile != "" {
+				profile = m.Meta.ModelProfile
+			}
+		})
+		mock = llm.NewMock(llm.Response{Content: `["Next?"]`, FinishReason: "stop"})
+		a.Chat.Client = llm.NewAccounted(mock)
+		a.Chat.Msg.Store = &db.Storage{Runs: mt.Coll}
+		stored := bson.D{{Key: "run_id", Value: "saved"}, {Key: "owner_email", Value: "alice"}, {Key: "conversation_id", Value: "profile"}, {Key: "status", Value: db.RunDone}, {Key: "model", Value: "manual"}, {Key: "prompt", Value: "stored question"}, {Key: "output", Value: "stored answer"}}
+		readRun := func() {
+			mt.AddMockResponses(mtest.CreateCursorResponse(0, mt.DB.Name()+"."+mt.Coll.Name(), mtest.FirstBatch, stored))
+		}
+		stored[3].Value = db.RunRunning
+		readRun()
+		payload, _ := json.Marshal(map[string]string{"conversation_id": "profile", "run_id": "saved", "prompt": "UNTRUSTED QUESTION", "answer": "UNTRUSTED ANSWER", "selected_version": "manual", "model_profile": profile})
+		c := settingsRequest("alice", string(payload))
+		a.Followups(context.Background(), c)
+		if c.Response.StatusCode() != 409 || mock.Calls() != 0 {
+			t.Fatal("running run paid for followups")
+		}
+		stored[3].Value = db.RunDone
+		readRun()
+		c = settingsRequest("alice", string(payload))
+		a.Followups(context.Background(), c)
+		if c.Response.StatusCode() != 200 || mock.Calls() != 1 || mock.Requests[0].Model != "manual" {
+			t.Fatal(string(c.Response.Body()), mock.Calls())
+		}
+		if !strings.Contains(mock.Requests[0].Messages[1].Content, "stored answer") || strings.Contains(mock.Requests[0].Messages[1].Content, "UNTRUSTED") {
+			t.Fatal("used browser text instead of stored run")
+		}
+		readRun()
+		payload, _ = json.Marshal(map[string]string{"conversation_id": "profile", "run_id": "saved", "prompt": "UNTRUSTED QUESTION", "answer": "UNTRUSTED ANSWER", "selected_version": "removed", "model_profile": profile})
+		c = settingsRequest("alice", string(payload))
+		a.Followups(context.Background(), c)
+		if c.Response.StatusCode() != 200 || mock.Calls() != 1 {
+			t.Fatal("legacy selected_version changed stored selection or bypassed deduplication")
+		}
+		account, err := a.Chat.UsageLedger.Load(context.Background(), "alice")
+		if err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for _, entry := range account.Entries {
+			if entry.Source != "followups" {
+				continue
+			}
+			count++
+			if entry.RelatedConversationID != "profile" || entry.RelatedRunID != "saved" || entry.RunID == "saved" {
+				t.Fatalf("missing independent aux association: %+v", entry)
+			}
+			snapshot, err := a.Chat.RunBudgetSnapshot(context.Background(), "alice", entry.RunID)
+			if err != nil || snapshot.RelatedRunID != "saved" || snapshot.RelatedConversationID != "profile" {
+				t.Fatalf("missing durable aux projection: %+v %v", snapshot, err)
+			}
+		}
+		if count != 1 {
+			t.Fatalf("followup ledger attempts=%d want 1", count)
 		}
 	})
-	mock = llm.NewMock(llm.Response{Content: `["Next?"]`, FinishReason: "stop"})
-	a.Chat.Main = mock
-	payload, _ := json.Marshal(map[string]string{"prompt": "Q", "answer": "A", "selected_version": "manual", "model_profile": profile})
-	c := settingsRequest("alice", string(payload))
-	a.Followups(context.Background(), c)
-	if c.Response.StatusCode() != 200 || mock.Calls() != 1 || mock.Requests[0].Model != "manual" {
-		t.Fatal(string(c.Response.Body()), mock.Calls())
-	}
-	payload, _ = json.Marshal(map[string]string{"prompt": "Q", "answer": "A", "selected_version": "removed", "model_profile": profile})
-	c = settingsRequest("alice", string(payload))
-	a.Followups(context.Background(), c)
-	if c.Response.StatusCode() != 400 || mock.Calls() != 1 {
-		t.Fatal("invalid followup selection called provider")
-	}
 }
 
 type settingsDiscoveryTransport func(*http.Request) (*http.Response, error)
@@ -214,5 +262,40 @@ func TestDiscoverModelsMetadata(t *testing.T) {
 				t.Fatal("missing no-store")
 			}
 		})
+	}
+}
+
+func TestNamedProfilesAPIContract(t *testing.T) {
+	a := settingsAPI(t)
+	c := settingsRequest("alice", `{"profiles":[{"id":"work","name":"Work","protocol":"openai-compatible","base_url":"http://localhost/v1","api_key":"private-key","models":["first","manual"],"enabled":true,"verified":{"first":{"vision":{"verified":true}}}}],"active_profile_id":"work"}`)
+	a.SaveModelProfiles(context.Background(), c)
+	if c.Response.StatusCode() != 200 {
+		t.Fatal(string(c.Response.Body()))
+	}
+	body := string(c.Response.Body())
+	if strings.Contains(body, "private-key") || strings.Contains(body, `"api_key":`) || strings.Contains(body, `"verified":true`) {
+		t.Fatal("secret/forged verification in response")
+	}
+	c = settingsRequest("alice", "")
+	a.GetModelProfiles(context.Background(), c)
+	if !strings.Contains(string(c.Response.Body()), `"active_profile_id":"work"`) {
+		t.Fatal("missing active profile")
+	}
+	c = settingsRequest("alice", "")
+	a.GetModelSettings(context.Background(), c)
+	if !strings.Contains(string(c.Response.Body()), `"models":["first","manual"]`) {
+		t.Fatal("legacy doesn't read active")
+	}
+	for _, h := range []func(context.Context, *app.RequestContext){a.GetModelProfiles, a.SaveModelProfiles, a.ProbeModelProfile} {
+		c = settingsRequest("", `{}`)
+		h(context.Background(), c)
+		if c.Response.StatusCode() != 401 {
+			t.Fatal("profile handler allows anonymous")
+		}
+	}
+	c = settingsRequest("alice", `{"profile_id":"work","model":"first","capabilities":[]}`)
+	a.ProbeModelProfile(context.Background(), c)
+	if c.Response.StatusCode() != 400 {
+		t.Fatal("unrequested probe accepted")
 	}
 }

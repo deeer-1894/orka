@@ -53,7 +53,7 @@ func TestDeepAgentCatalogAndActivationStayScoped(t *testing.T) {
 	}}
 	calls := 0
 	tools := append(deepTestTools(), retrievalFixture{"qrcode", func(context.Context, map[string]any) (string, error) { calls++; return "QR generated", nil }})
-	ag, err := BuildEinoDeepOrchestrator(ctx, model, "main", model, "mini", "delegate work", tools, nil, 12, false)
+	ag, err := BuildEinoDeepOrchestrator(ctx, model, "main", "delegate work", tools, nil, 12, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestSpecialistResearchGuidanceFollowsSharedAllowance(t *testing.T) {
 				return "URL: https://fixture.test/docs\nTitle: Checkpoints\n\nDurable checkpoints.", nil
 			}}
 			model := llm.NewMock(gateCall("fetch", "fetch_url", `{"url":"https://fixture.test/docs"}`), gateCall("lookup", "search_evidence", `{"query":"checkpoints"}`), llm.Response{Content: "done"})
-			subs, err := BuildEinoSubAgents(ctx, model, "main", model, "mini", []agent.BaseTool{source, evidenceSearchTool{s}, gateStubTool{name: "file_write"}}, []config.SubAgentConfig{{Name: "researcher", Tools: []string{"fetch_url", "search_evidence", "file_write"}}})
+			subs, err := BuildEinoSubAgents(ctx, model, "main", []agent.BaseTool{source, evidenceSearchTool{s}, gateStubTool{name: "file_write"}}, []config.SubAgentConfig{{Name: "researcher", Tools: []string{"fetch_url", "search_evidence", "file_write"}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -171,7 +171,7 @@ func TestSpecialistFinalBudgetNoticeRemainsLast(t *testing.T) {
 	s := newResearchSession(nil, "", b, 10)
 	ctx := withResearchSession(withBudget(context.Background(), b), s)
 	model := llm.NewMock(gateCall("read", "file_read", `{"path":"report.md"}`), llm.Response{Content: "partial"})
-	subs, err := BuildEinoSubAgents(ctx, model, "main", model, "mini", []agent.BaseTool{gateStubTool{name: "file_read"}}, []config.SubAgentConfig{{Name: "writer", Tools: []string{"file_read"}, MaxIters: 2}})
+	subs, err := BuildEinoSubAgents(ctx, model, "main", []agent.BaseTool{gateStubTool{name: "file_read"}}, []config.SubAgentConfig{{Name: "writer", Tools: []string{"file_read"}, MaxIters: 2}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestConcurrentAgentCatalogsShareOnlyActivation(t *testing.T) {
 			t.Parallel()
 			ctx := withToolGate(context.Background(), root)
 			model := llm.NewMock(gateCall("activate", "find_tools", `{"query":"`+name+`"}`), gateCall("use", name, `{}`), llm.Response{Content: "done"})
-			ag, err := BuildEinoAgent(ctx, model, "main", "use the requested tool", []agent.BaseTool{gateStubTool{name: name}}, 10, nil)
+			ag, err := BuildEinoAgent(ctx, model, "main", "use the requested tool", []agent.BaseTool{gateStubTool{name: name}}, 10)
 			if err != nil {
 				t.Fatal(err)
 			}

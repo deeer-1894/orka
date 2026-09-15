@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { artifacts as artApi, subscribeArtifact } from "../api";
 import type { Artifact, ArtifactBlock, ArtifactVersion } from "../types";
-import { ArtifactRenderer } from "./ArtifactRenderer";
+const ArtifactRenderer = lazy(() => import("./ArtifactRenderer").then(m => ({default:m.ArtifactRenderer})));
 import { Icon } from "./Icon";
 import { toast, toastError } from "../lib/toast";
 import { useOverlay } from "../lib/useOverlay";
@@ -239,7 +239,7 @@ function ArtifactBody({ artifactId, onClose, inline, backLabel }: { artifactId: 
       {showShare && art && <ShareBar art={art} onChange={(a) => setArt(a)} />}
 
       <div className="flex-1 overflow-y-auto px-5 py-4">
-        {ver ? <ArtifactRenderer blocks={ver.blocks} /> : <div className="text-[13px] text-faint">加载…</div>}
+        {ver ? <Suspense fallback={<p role="status">正在加载成果…</p>}><ArtifactRenderer blocks={ver.blocks} /></Suspense> : <div className="text-[13px] text-faint">加载…</div>}
         {ver?.note && <div className="mt-4 border-t border-border pt-2 text-[11px] text-faint">本版更新: {ver.note}</div>}
       </div>
     </div>

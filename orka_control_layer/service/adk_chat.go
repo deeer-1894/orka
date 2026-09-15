@@ -29,18 +29,20 @@ import (
 
 // ChatRunRequest is the /chat/run payload.
 type ChatRunRequest struct {
-	Message         string   `json:"message"`
-	ConversationID  string   `json:"conversation_id"`
-	TaskID          string   `json:"task_id"`
-	EnabledTools    []string `json:"enabled_tools"`
-	FileIDs         []string `json:"file_ids"`
-	TemplateID      string   `json:"template_id"`
-	SelectedVersion string   `json:"selected_version"`
-	ResumeKey       string   `json:"resume_key"`
-	UserEmail       string   `json:"user_email"`
-	ActiveSkill     string   `json:"active_skill"`  // user-locked skill mode (deterministic prompt injection)
-	Trigger         string   `json:"trigger"`       // manual | schedule (audit: how the run was started)
-	ConfirmRisky    bool     `json:"confirm_risky"` // gate side-effecting tools behind user approval
+	Budget          TaskBudgetRequest `json:"budget,omitempty"`
+	ModelProfile    string            `json:"model_profile,omitempty"`
+	Message         string            `json:"message"`
+	ConversationID  string            `json:"conversation_id"`
+	TaskID          string            `json:"task_id"`
+	EnabledTools    []string          `json:"enabled_tools"`
+	FileIDs         []string          `json:"file_ids"`
+	TemplateID      string            `json:"template_id"`
+	SelectedVersion string            `json:"selected_version"`
+	ResumeKey       string            `json:"resume_key"`
+	UserEmail       string            `json:"user_email"`
+	ActiveSkill     string            `json:"active_skill"`  // user-locked skill mode (deterministic prompt injection)
+	Trigger         string            `json:"trigger"`       // manual | schedule (audit: how the run was started)
+	ConfirmRisky    bool              `json:"confirm_risky"` // gate side-effecting tools behind user approval
 
 	// Internal (never bound from JSON): set when resuming an interrupted run.
 	resumeCheckpoint *runCheckpoint
@@ -55,11 +57,12 @@ type ToolsProvider func(ctx context.Context, req ChatRunRequest) (tools []agent.
 
 // ChatService runs the end-to-end chat path.
 type ChatService struct {
+	UsageLedger   db.UsageLedger
 	ModelSettings *modelsettings.Store
 	modelClients  modelClientPool
+	followups     followupCache
 	Cfg           *config.Config
-	Main          llm.Client
-	Mini          llm.Client
+	Client        llm.Client
 	CP            checkpoint.Store
 	Msg           *message_utils.Messenger
 	Metrics       *obs.Metrics
@@ -87,17 +90,15 @@ type ChatService struct {
 	ckpt     adk.CheckPointStore // interrupt/resume checkpoints (nil = blocking gate)
 	ckptInit sync.Once
 
-	mu   sync.Mutex
-	runs map[string]context.CancelFunc
+	executions executionRegistry
 }
 
 // NewChatService builds a ChatService with sane defaults. By default it serves
-// the real local filesystem tools (per-user root) plus the GUI mock; callers may
+// the real local filesystem tools (per-session root) plus an unavailable GUI adapter; callers may
 // override ToolsFor to add MCP tools from tools_server.
-func NewChatService(cfg *config.Config, main, _ llm.Client, store checkpoint.Store, msg *message_utils.Messenger, metrics *obs.Metrics, log *slog.Logger) *ChatService {
+func NewChatService(cfg *config.Config, client llm.Client, store checkpoint.Store, msg *message_utils.Messenger, metrics *obs.Metrics, log *slog.Logger) *ChatService {
 	s := &ChatService{
-		Cfg: cfg, Main: main, Mini: main, ModelSettings: modelsettings.New(cfg.Storage.BaseStoragePath), CP: store, Msg: msg, Metrics: metrics, Log: log,
-		runs: map[string]context.CancelFunc{},
+		Cfg: cfg, Client: client, ModelSettings: modelsettings.New(cfg.Storage.BaseStoragePath), CP: store, Msg: msg, Metrics: metrics, Log: log,
 	}
 	if cfg.Storage.BaseStoragePath == "" {
 		s.ModelSettings = nil
@@ -112,35 +113,21 @@ func (s *ChatService) modelFor(version string) (llm.Client, string) {
 	return s.defaultModels().modelFor(version)
 }
 
-func (s *ChatService) register(id string, cancel context.CancelFunc) {
-	s.mu.Lock()
-	s.runs[id] = cancel
-	s.mu.Unlock()
-}
-
-func (s *ChatService) unregister(id string) {
-	s.mu.Lock()
-	delete(s.runs, id)
-	s.mu.Unlock()
-}
-
-// Kill cancels a running session by id (task_id or conversation_id). Returns
-// true if a session was found. Uses channel/context cancellation, not polling.
-func (s *ChatService) Kill(id string) bool {
-	s.mu.Lock()
-	cancel, ok := s.runs[id]
-	s.mu.Unlock()
-	if ok {
-		cancel()
-	}
-	return ok
-}
-
 // Run executes one chat request, streaming events through raw. It blocks until
 // the run completes, interrupts (clarify) or is cancelled. raw writes SSE frames.
 func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(messages.Message)) string {
+	if raw == nil {
+		raw = func(messages.Message) {}
+	}
+	parent, release, admissionErr := s.AdmitExecution(parent, req.UserEmail, req.ConversationID, req.TaskID)
+	if admissionErr != nil {
+		raw(taskFailed(messages.Meta{ConversationID: req.ConversationID, TaskID: req.TaskID, UserEmail: req.UserEmail}, admissionErr.Error()))
+		return db.RunFailed
+	}
+	defer release()
 	traceID := trace.NewTraceID()
 	meta := messages.Meta{
+		RunID:          ExecutionID(parent),
 		ConversationID: req.ConversationID,
 		TaskID:         req.TaskID,
 		TraceID:        traceID,
@@ -150,9 +137,6 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	runID := firstNonEmpty(req.TaskID, req.ConversationID, traceID)
-	s.register(runID, cancel)
-	defer s.unregister(runID)
 
 	if s.Metrics != nil {
 		s.Metrics.ActiveSessions.Add(1)
@@ -173,6 +157,10 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		raw(taskFailed(meta, err.Error()))
 		return db.RunFailed
 	}
+	if req.ModelProfile != "" && req.ModelProfile != s.modelsForContext(ctx).profile {
+		raw(taskFailed(meta, "原请求使用的模型配置已更改，请明确选择当前配置后重新发送。"))
+		return db.RunFailed
+	}
 	meta.ModelProfile = s.modelsForContext(ctx).profile
 	ctx = s.withSelectedModel(ctx, req.SelectedVersion)
 	model, modelName := s.modelsForContext(ctx).modelFor(req.SelectedVersion)
@@ -188,6 +176,15 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	ctx = spanCtx
 	// Local tools (e.g. artifact_publish) learn whose run they're in from ctx.
 	ctx = WithRunInfo(ctx, req.ConversationID, req.UserEmail)
+	ctx = middlewares.WithSkillOwner(ctx, s.Cfg.Storage.BaseStoragePath, req.UserEmail)
+	budgetCtx, session, cancelBudget, budgetErr := s.prepareRunBudget(ctx, &req)
+	if budgetErr != nil {
+		raw(taskFailed(meta, "无法开始任务："+budgetErr.Error()))
+		return db.RunFailed
+	}
+	defer cancelBudget()
+	ctx = withBudgetAuxiliary(budgetCtx)
+	budget := session.Budget()
 
 	deps := PipelineDeps{LLM: model, Model: modelName, Metrics: s.Metrics}
 
@@ -216,7 +213,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 
 	// A user-locked skill deterministically injects its expert guidance into the
 	// system prompt (vs. waiting for the model to adopt it via apply_skill).
-	if sp, ok := middlewares.SkillPrompt(req.ActiveSkill); ok {
+	if sp, ok := middlewares.SkillPromptFor(ctx, req.ActiveSkill); ok {
 		base := deps.SystemPrompt
 		if base == "" {
 			base = middlewares.DefaultSystemPrompt
@@ -246,7 +243,6 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// Give this run a budget and a place to record the plan it commits to. Both
 	// are read back at finalize: a run that ran out of budget, or that left its
 	// own checklist unfinished, must not be filed as a success.
-	budget := newRunBudget(einoMaxIters, runMaxTokens, runMaxWall)
 	plan := &planTracker{}
 	if s.Cfg.Storage.BaseStoragePath != "" {
 		root, err := pathsafe.EnsureSession(s.Cfg.Storage.BaseStoragePath, req.UserEmail, req.ConversationID)
@@ -267,7 +263,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		tools = s.wrapConfirm(tools, ckptStore != nil && req.ConversationID != "")
 	}
 	rc.Tools = tools
-	rc.Ctx = llm.WithUsageSink(withPlanTracker(withBudget(rc.Ctx, budget), plan), budget)
+	rc.Ctx = withPlanTracker(withBudget(rc.Ctx, budget), plan)
 	// Narrow the tool surface to what this run plausibly needs; find_tools opens
 	// the rest on demand. Per run, so one conversation unlocking the CSV tools
 	// does not make every other conversation pay for them.
@@ -305,7 +301,6 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// run. On a resume, seed it with the recovered transcript.
 	journal := newRunJournal(s.Cfg.Storage.BaseStoragePath, runRecID, nil)
 	rc.Ctx = withRunID(withJournal(rc.Ctx, journal), runRecID)
-	journal.trackState(rc.Ctx)
 	if req.resumeFrom != nil {
 		journal.inherit(req.resumeFrom)
 		defer func() {
@@ -319,7 +314,10 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	if req.resumeFrom != nil {
 		rc.Ctx = withRunResume(rc.Ctx, req.resumeFrom)
 	}
+	rc.Ctx = withAcceptance(rc.Ctx, s.Cfg.Storage.BaseStoragePath, req.UserEmail, req.ConversationID, runRecID)
+	journal.trackState(rc.Ctx)
 
+	ctx = rc.Ctx
 	if req.ResumeKey != "" {
 		err = s.resume(ctx, rc, req, raw, deps, tools, model, modelName)
 		// All exits share finish/finalize/journal settlement, including call limits
@@ -336,7 +334,9 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 			s.titleAsync(ctx, req.ConversationID, req.Message)
 		}
 		userMsg := humanChat(req.Message, meta)
-		rc.Messages = s.withAttachments(rc.Ctx, append(history, userMsg), req, meta)
+		rc.Messages = append(history, userMsg)
+		s.persistPreparedAcceptance(rc, req)
+		rc.Messages = s.withAttachments(rc.Ctx, rc.Messages, req, meta)
 		s.Msg.Deliver(rc, nil, userMsg, true)
 		s.Msg.Deliver(rc, raw, messages.Task("start", meta), true)
 		// A question that needs no tools does not need an agent: measured here,
@@ -349,14 +349,14 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		}
 	}
 
-	s.finish(ctx, rc, meta, req, raw, err)
-	status := s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err())
-	// Compact what this run did into the conversation's memory, BEFORE the
-	// journal is settled — the transcript is the only place the tool work exists,
-	// and a successful run is about to delete it.
+	// Settle auxiliary generations before publishing the final bill/checkpoint.
 	if t := journal.transcript(); len(t) > 0 {
 		s.digestAsync(rc.Ctx, req.ConversationID, buildDigest(runRecID, req.Message, t), t)
 	}
+	waitBudgetAuxiliary(rc.Ctx)
+	s.finish(ctx, rc, meta, req, raw, err)
+	status := s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err())
+
 	// The journal exists to rescue a run that died with work behind it. Keep it
 	// only when both halves are true — the run ended badly AND it got far enough
 	// that resuming beats restarting — and delete it otherwise, so journals do
@@ -400,7 +400,10 @@ func (s *ChatService) createRun(ctx context.Context, req ChatRunRequest, meta me
 	if s.Msg == nil || s.Msg.Store == nil || req.UserEmail == "" {
 		return ""
 	}
-	id := "run_" + messages.NewID()
+	id := ExecutionID(ctx)
+	if id == "" {
+		id = "run_" + messages.NewID()
+	}
 	r := &db.RunRecord{
 		RunID:          id,
 		TaskID:         req.TaskID,
@@ -444,7 +447,7 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 	// Advance the scheduled-task circuit breaker. A partial run counts as a
 	// success for this purpose: it did work and stopped honestly, which is not
 	// the repeated hard failure the breaker exists to catch.
-	s.recordTaskOutcome(bg, req.TaskID, req.UserEmail, status != db.RunFailed)
+	s.recordTaskOutcome(bg, req.TaskID, req.UserEmail, status == db.RunDone)
 	// Alert on UNATTENDED failures (scheduled/webhook/rerun) — a manual failure
 	// the user is already watching on screen.
 	if status == db.RunFailed && req.Trigger != "" && req.Trigger != "manual" && req.UserEmail != "" {
@@ -562,6 +565,8 @@ func (s *ChatService) resume(ctx context.Context, rc *agent.RunContext, req Chat
 		}
 		restoreCheckpoint(&saved, budgetFrom(rc.Ctx), planTrackerFrom(rc.Ctx), deliveryFrom(rc.Ctx))
 		rc.Ctx = withRunResume(rc.Ctx, &runResume{Checkpoint: &saved})
+		rc.Ctx = withAcceptance(rc.Ctx, s.Cfg.Storage.BaseStoragePath, req.UserEmail, req.ConversationID, runIDFrom(rc.Ctx))
+		journalFrom(rc.Ctx).trackState(rc.Ctx)
 	}
 	rc.Messages = c.Messages
 	rc.Cursor = c.Cursor
@@ -578,6 +583,7 @@ func (s *ChatService) resume(ctx context.Context, rc *agent.RunContext, req Chat
 		s.Msg.Deliver(rc, nil, um, true)
 	}
 	rc.Interrupt = nil
+	s.persistPreparedAcceptance(rc, req)
 	return s.runEino(ctx, rc, deps, tools, model, modelName, raw)
 }
 
@@ -611,9 +617,10 @@ func (s *ChatService) finish(ctx context.Context, rc *agent.RunContext, meta mes
 	case rc.Interrupt != nil && rc.Interrupt.Reason == "confirm":
 		// Paused on a danger-tool approval. The Runner already checkpointed the
 		// run; remember what it takes to rebuild it so /chat/confirm can resume —
-		// including after a control-plane restart. No "done" task: the run is
-		// pending, not finished.
+		// including after a control-plane restart. Publish the paused outcome
+		// through the same budget/event boundary as every other completed attempt.
 		s.persistPendingConfirm(rc, req)
+		s.publishRunOutcome(ctx, rc, meta, raw, assessRunOutcome(rc, nil, ctx.Err()))
 	default:
 		outcome := assessRunOutcome(rc, nil, ctx.Err())
 		if outcome.status == db.RunPartial {
@@ -659,8 +666,8 @@ func (s *ChatService) ResumeConfirm(ctx context.Context, convID string, approve,
 	if !found {
 		return false
 	}
-	if p.Checkpoint != nil && p.Checkpoint.SpentTokens >= runMaxTokens {
-		raw(messages.Chat(messages.RoleAssistant, "任务预算已用尽，确认记录已保留，当前不会自动追加额度。", messages.Meta{ConversationID: convID}))
+	if err := applyResumeBudget(s.budgetConfig(), &p.Request, p.Checkpoint); err != nil {
+		raw(messages.Chat(messages.RoleAssistant, "任务预算无法恢复，确认记录已保留："+err.Error(), messages.Meta{ConversationID: convID}))
 		return true
 	}
 	dropPausedRun(s.Cfg.Storage.BaseStoragePath, convID) // one decision per pause
@@ -701,7 +708,7 @@ func (s *ChatService) persistClarify(ctx context.Context, rc *agent.RunContext, 
 		if s.Log != nil {
 			s.Log.Error("save checkpoint", "trace_id", meta.TraceID, "err", err)
 		}
-		s.Msg.Deliver(rc, raw, taskFailed(meta, "failed to persist clarify checkpoint"), true)
+		s.publishRunOutcome(ctx, rc, meta, raw, assessRunOutcome(rc, fmt.Errorf("failed to persist clarify checkpoint: %w", err), ctx.Err()))
 		return
 	}
 	if s.Metrics != nil {
@@ -710,7 +717,7 @@ func (s *ChatService) persistClarify(ctx context.Context, rc *agent.RunContext, 
 	clar := *rc.Interrupt.Clarify
 	clar.ResumeKey = key
 	s.Msg.Deliver(rc, raw, messages.Clarify(clar, meta), true)
-	s.Msg.Deliver(rc, raw, messages.Task("paused", meta), true)
+	s.publishRunOutcome(ctx, rc, meta, raw, assessRunOutcome(rc, nil, ctx.Err()))
 }
 
 func (s *ChatService) heartbeat(ctx context.Context, meta messages.Meta, raw func(messages.Message)) {
@@ -779,13 +786,15 @@ func (s *ChatService) titleAsync(parent context.Context, convID, message string)
 	if model == nil || s.Msg == nil || s.Msg.Store == nil {
 		return
 	}
+	doneBudget := beginBudgetAuxiliary(parent)
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer doneBudget()
+		ctx, cancel := context.WithTimeout(parent, 15*time.Second)
 		defer cancel()
-		resp, err := model.Chat(llm.WithAgent(ctx, "title"), llm.Request{Model: modelName, Messages: []llm.ChatMessage{
+		resp, err := model.Chat(llm.WithAgent(ctx, "title"), boundedDirectRequest(ctx, llm.Request{Model: modelName, Messages: []llm.ChatMessage{
 			{Role: llm.RoleSystem, Content: "You generate a very short chat title (max 6 words) summarizing the user's first message. Reply with ONLY the title — same language as the message, no quotes, no punctuation at the end, no prefixes."},
 			{Role: llm.RoleUser, Content: message},
-		}})
+		}}))
 		if err != nil {
 			return // keep the snippet title
 		}
@@ -838,4 +847,37 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// persistPreparedAcceptance runs after real input/recovery messages are ready,
+// once per execution and before the first generation. Runtime notes and unknown
+// legacy user-role strings cannot become new task requirements.
+func (s *ChatService) persistPreparedAcceptance(rc *agent.RunContext, req ChatRunRequest) {
+	requests := preparedHumanRequests(rc, req)
+	if err := persistAcceptanceContract(rc.Ctx, requests); err != nil && s.Log != nil && runIDFrom(rc.Ctx) != "" {
+		s.Log.Warn("acceptance contract unavailable", "run_id", runIDFrom(rc.Ctx), "err", err)
+	}
+}
+func preparedHumanRequests(rc *agent.RunContext, req ChatRunRequest) []string {
+	requests := []string{}
+	seen := map[string]bool{}
+	add := func(text string) {
+		if strings.TrimSpace(text) != "" && !seen[text] {
+			seen[text] = true
+			requests = append(requests, text)
+		}
+	}
+	if req.resumeFrom != nil {
+		for _, m := range req.resumeFrom.Messages {
+			if isHumanRequest(m) {
+				add(m.Content)
+			}
+		}
+	}
+	for _, m := range rc.Messages {
+		if m.Role == messages.RoleUser && m.Action == humanInputAction {
+			add(m.Content)
+		}
+	}
+	return requests
 }

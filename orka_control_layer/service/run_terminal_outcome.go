@@ -21,6 +21,38 @@ func (s *ChatService) publishRunOutcome(ctx context.Context, rc *agent.RunContex
 		out.status, out.errorDetail = db.RunFailed, "cancelled"
 		middlewares.SetFinal(rc, "本轮已由用户取消；已有成果不代表已完成验收。")
 	}
+	if out.status == db.RunDone && rc.Ctx != nil {
+		if err := s.publishDelivery(rc.Ctx); err != nil {
+			out.status = db.RunPartial
+			out.unfinished = append(out.unfinished, "固定交付版本未能发布："+err.Error())
+			out.errorDetail = "delivery publication failed"
+			notice := partialRunNotice(out)
+			middlewares.SetFinal(rc, notice)
+			s.Msg.Deliver(rc, raw, messages.Chat(messages.RoleAssistant, notice, meta), true)
+		}
+	}
+	if rc.Ctx != nil && errors.Is(rc.Ctx.Err(), context.Canceled) {
+		out.status, out.errorDetail = db.RunFailed, "cancelled"
+	}
+	if rc.Ctx != nil {
+		if session := BudgetSessionFrom(rc.Ctx); session != nil {
+			runID := meta.RunID
+			if runID == "" {
+				runID = session.runID
+			}
+			if err := session.PersistRun(ctx, runID, out.status); err != nil {
+				out.status = db.RunPartial
+				out.errorDetail = "budget snapshot persistence failed"
+				out.unfinished = append(out.unfinished, "任务用量快照未能保存；已结算费用与未完成预留仍在账本中")
+				notice := partialRunNotice(out)
+				middlewares.SetFinal(rc, notice)
+				s.Msg.Deliver(rc, raw, messages.Chat(messages.RoleAssistant, notice, meta), true)
+				if s.Log != nil {
+					s.Log.Error("run budget snapshot failed", "run_id", runID, "err", err)
+				}
+			}
+		}
+	}
 	rc.Put(varPublishedRunOutcome, out)
 	event := messages.Task(out.status, meta)
 	event.Content = out.errorDetail

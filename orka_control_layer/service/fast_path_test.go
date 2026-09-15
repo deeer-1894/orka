@@ -92,7 +92,7 @@ func TestFastPathServesAPlainAnswer(t *testing.T) {
 	svc, rc, col := newFastPathService(t, llm.Response{Content: "幂等就是重复执行结果不变。", FinishReason: "stop"})
 	req := ChatRunRequest{Message: "什么是幂等性", ConversationID: "c1"}
 
-	if !svc.tryFastPath(context.Background(), rc, req, svc.Main, "m", col.sink) {
+	if !svc.tryFastPath(context.Background(), rc, req, svc.Client, "m", col.sink) {
 		t.Fatal("fast path declined a plain question")
 	}
 	if got := middlewares.Final(rc); !contains(got, "幂等") {
@@ -113,7 +113,7 @@ func TestFastPathBailsOutOnNeedTools(t *testing.T) {
 	svc, rc, col := newFastPathService(t, llm.Response{Content: needToolsMarker, FinishReason: "stop"})
 	req := ChatRunRequest{Message: "这个项目现在怎么样", ConversationID: "c1"}
 
-	if svc.tryFastPath(context.Background(), rc, req, svc.Main, "m", col.sink) {
+	if svc.tryFastPath(context.Background(), rc, req, svc.Client, "m", col.sink) {
 		t.Fatal("served an answer the model said it could not give")
 	}
 	for _, m := range col.byType(messages.EventChat) {
@@ -130,14 +130,14 @@ func TestFastPathBailsOutOnToolCalls(t *testing.T) {
 		ToolCalls:    []llm.ToolCall{{ID: "1", Name: "web_search", Arguments: "{}"}},
 		FinishReason: "tool_calls",
 	})
-	if svc.tryFastPath(context.Background(), rc, ChatRunRequest{Message: "什么是幂等性"}, svc.Main, "m", col.sink) {
+	if svc.tryFastPath(context.Background(), rc, ChatRunRequest{Message: "什么是幂等性"}, svc.Client, "m", col.sink) {
 		t.Fatal("served a turn that wanted to call a tool")
 	}
 }
 
 func TestFastPathBailsOutOnEmptyAnswer(t *testing.T) {
 	svc, rc, col := newFastPathService(t, llm.Response{Content: "   ", FinishReason: "stop"})
-	if svc.tryFastPath(context.Background(), rc, ChatRunRequest{Message: "什么是幂等性"}, svc.Main, "m", col.sink) {
+	if svc.tryFastPath(context.Background(), rc, ChatRunRequest{Message: "什么是幂等性"}, svc.Client, "m", col.sink) {
 		t.Fatal("served an empty answer")
 	}
 }

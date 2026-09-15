@@ -234,7 +234,7 @@ func TestResearchSessionWiredThroughEinoRunner(t *testing.T) {
 		llm.Response{ToolCalls: []llm.ToolCall{{ID: "two", Name: "search_evidence", Arguments: `{"query":"checkpoints"}`}}},
 		llm.Response{Content: "done"},
 	)
-	ag, err := BuildEinoAgent(ctx, model, "m", "execute the request", []agent.BaseTool{source, evidenceSearchTool{s}}, 10, nil)
+	ag, err := BuildEinoAgent(ctx, model, "m", "execute the request", []agent.BaseTool{source, evidenceSearchTool{s}}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

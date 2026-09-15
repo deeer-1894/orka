@@ -148,5 +148,5 @@ func planFromArgs(args map[string]any) messages.PlanUpdate {
 // withPlan appends the plan tool to a tool set (orchestrator / main agent only —
 // sub-agents don't own the user-facing checklist).
 func withPlan(tools []agent.BaseTool) []agent.BaseTool {
-	return append(tools, planTool{}, deliveryCheckTool{})
+	return append(tools, planTool{}, deliveryCheckTool{}, acceptanceCheckTool{})
 }

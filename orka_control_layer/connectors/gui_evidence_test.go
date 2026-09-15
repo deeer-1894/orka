@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/websocket"
+	"github.com/orka-oss/orka_core/modelprofile"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,20 +21,22 @@ func invokeGUIFrames(t *testing.T, frames []map[string]any) (string, error) {
 			return
 		}
 		defer conn.Close()
-		if _, _, err := conn.ReadMessage(); err != nil {
+		var request map[string]any
+		if err := conn.ReadJSON(&request); err != nil {
 			return
 		}
 		for _, frame := range frames {
-			if err := conn.WriteJSON(frame); err != nil {
+			if err := writeGUIFrame(conn, request, frame); err != nil {
 				return
 			}
 		}
 		_, _, _ = conn.ReadMessage() // caller closes on terminal frame or timeout
 	}))
 	defer server.Close()
-	tool := NewRunAgentTool("ws"+strings.TrimPrefix(server.URL, "http"), "")
+	tool := NewRunAgentTool("ws"+strings.TrimPrefix(server.URL, "http"), "fake-service-token")
 	tool.Timeout = 200 * time.Millisecond
-	return tool.Invoke(context.Background(), map[string]any{"instruction": "offline test"})
+	tool.QueueTimeout = 200 * time.Millisecond
+	return tool.Invoke(testGUIContext(), map[string]any{"instruction": "offline test"})
 }
 
 func receiptFrame(value string) map[string]any {
@@ -145,4 +148,18 @@ func TestGUIReceiptWindowHasAbsoluteSequenceAndOmissionCount(t *testing.T) {
 	if result.Evidence[0].Seq != 77 || result.Evidence[23].Seq != 100 || result.Evidence[23].Text != "99" {
 		t.Fatalf("bad sequence: %+v", result.Evidence)
 	}
+}
+
+func testGUIContext() context.Context {
+	ctx := WithGUIIdentity(context.Background(), GUIIdentity{"fake-owner", "fake-conversation", "fake-run"})
+	return modelprofile.WithContext(ctx, modelprofile.Snapshot{Protocol: modelprofile.OpenAICompatible,
+		BaseURL: "http://fake-provider.test/v1", APIKey: "fake-model-key", Model: "selected-model",
+		Capabilities: modelprofile.Capabilities{Vision: true}})
+}
+
+// Echo the execution scope like the authenticated Python executor.
+func writeGUIFrame(conn *websocket.Conn, request, frame map[string]any) error {
+	frame["session_id"] = request["session_id"]
+	frame["run_id"] = request["identity"].(map[string]any)["run_id"]
+	return conn.WriteJSON(frame)
 }

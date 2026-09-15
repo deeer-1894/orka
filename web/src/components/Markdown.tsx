@@ -25,6 +25,7 @@ export const Markdown = memo(function Markdown({
   children,
   resolveImage,
   resolveLink,
+  linkLabel,
 }: {
   children: string;
   // Optional rewriter for image sources. Markdown image paths are usually
@@ -33,6 +34,7 @@ export const Markdown = memo(function Markdown({
   // them to the workspace file API.
   resolveImage?: (src: string) => string;
   resolveLink?: (href: string) => string;
+  linkLabel?: (href: string) => string | undefined;
 }) {
   return (
     <div className="md">
@@ -40,7 +42,7 @@ export const Markdown = memo(function Markdown({
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[[rehypeKatex, { throwOnError: false, errorColor: "var(--color-accent)" }]]}
         components={{
-          a: ({ href, ...props }) => <a {...props} href={resolveLink && typeof href === "string" ? resolveLink(href) : href} target="_blank" rel="noreferrer" />,
+          a: ({ href, children, ...props }) => <a {...props} href={resolveLink && typeof href === "string" ? resolveLink(href) : href} target="_blank" rel="noreferrer">{children}{typeof href === "string" && linkLabel?.(href) && <small className="ml-1 text-muted">{linkLabel(href)}</small>}</a>,
           img: ({ src, ...props }) => (
             <img {...props} src={resolveImage && typeof src === "string" ? resolveImage(src) : src} />
           ),

@@ -24,7 +24,7 @@ func TestResolve_RejectsTraversal(t *testing.T) {
 		"../../etc/passwd",
 		"../outside",
 		"a/../../b",
-		"/etc/passwd",          // absolute is neutralized -> stays in root
+		"/etc/passwd", // absolute is neutralized -> stays in root
 		"sub/../../../../escape",
 	}
 	for _, c := range cases {
@@ -65,5 +65,15 @@ func TestUserRoot_SingleSegment(t *testing.T) {
 	r2 := UserRoot("/data/storage", "../../etc")
 	if strings.Contains(r2, "..") {
 		t.Fatalf("user root not sanitized: %q", r2)
+	}
+}
+
+func TestSessionRootRejectsLossyOwnerAlias(t *testing.T) {
+	base := t.TempDir()
+	if _, err := SessionRoot(base, "a..b@example.test", "same-conversation"); err == nil {
+		t.Fatal("owner accepted despite lossy UserRoot normalization")
+	}
+	if _, err := SessionRoot(base, "a_b@example.test", "same-conversation"); err != nil {
+		t.Fatal(err)
 	}
 }

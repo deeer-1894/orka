@@ -2,13 +2,17 @@ package api
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 
-	"github.com/orka-oss/orka_core/messages"
 	"github.com/orka-oss/orka_control_layer/db"
+	"github.com/orka-oss/orka_control_layer/service"
+	workflowstate "github.com/orka-oss/orka_control_layer/workflow"
+	"github.com/orka-oss/orka_core/messages"
 )
 
 // ListWorkflows returns the user's defined workflows.
@@ -29,8 +33,12 @@ type createWorkflowReq struct {
 // CreateWorkflow saves a workflow definition.
 func (a *API) CreateWorkflow(ctx context.Context, c *app.RequestContext) {
 	var req createWorkflowReq
-	if err := bind(c, &req); err != nil || req.Name == "" || len(req.Steps) == 0 {
+	if err := bind(c, &req); err != nil || strings.TrimSpace(req.Name) == "" || len(req.Steps) == 0 {
 		fail(c, consts.StatusBadRequest, "name and at least one step required")
+		return
+	}
+	if err := workflowstate.Validate(req.Steps); err != nil {
+		fail(c, consts.StatusBadRequest, err.Error())
 		return
 	}
 	wf := &db.Workflow{
@@ -65,8 +73,7 @@ func (a *API) DeleteWorkflow(ctx context.Context, c *app.RequestContext) {
 	ok(c, map[string]string{"status": "deleted"})
 }
 
-// RunWorkflow kicks off a workflow as a detached sequential run and returns the
-// conversation id (observe its steps there + in run history).
+// RunWorkflow durably admits a detached DAG and returns its parent run ID.
 func (a *API) RunWorkflow(ctx context.Context, c *app.RequestContext) {
 	var req workflowIDReq
 	if err := bind(c, &req); err != nil || req.WorkflowID == "" {
@@ -74,11 +81,37 @@ func (a *API) RunWorkflow(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	wf, err := a.Store.GetWorkflow(ctx, req.WorkflowID)
-	if err != nil || wf.OwnerEmail != authEmail(c) {
+	if err != nil || wf == nil || wf.OwnerEmail != authEmail(c) {
 		fail(c, consts.StatusNotFound, "workflow not found")
 		return
 	}
-	convID := messages.NewID()
-	go a.Chat.RunWorkflow(context.Background(), *wf, convID)
-	ok(c, map[string]string{"status": "running", "conversation_id": convID})
+	if err := workflowstate.Validate(wf.Steps); err != nil {
+		fail(c, consts.StatusBadRequest, err.Error())
+		return
+	}
+	r, err := a.Chat.StartWorkflow(context.Background(), *wf, messages.NewID())
+	if err != nil {
+		code := consts.StatusInternalServerError
+		if errors.Is(err, service.ErrExecutionActive) {
+			code = consts.StatusConflict
+		}
+		fail(c, code, "workflow start failed")
+		return
+	}
+	ok(c, map[string]string{"status": r.Status, "conversation_id": r.ConversationID, "run_id": r.RunID})
+}
+
+// WorkflowRunStatus returns an owner-scoped parent/step snapshot. Wire as GET
+// /workflows/runs/:run_id; it is separate from individual chat run history.
+func (a *API) WorkflowRunStatus(ctx context.Context, c *app.RequestContext) {
+	r, err := a.Store.GetWorkflowRun(ctx, c.Param("run_id"), authEmail(c))
+	if errors.Is(err, db.ErrNotFound) {
+		fail(c, consts.StatusNotFound, "workflow run not found")
+		return
+	}
+	if err != nil {
+		fail(c, consts.StatusInternalServerError, "workflow status failed")
+		return
+	}
+	ok(c, r)
 }

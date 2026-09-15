@@ -121,15 +121,15 @@ func attachmentPreview(path string, limit int) (string, bool, error) {
 func (s *ChatService) describeImages(ctx context.Context, userText string, urls []string) string {
 	models := s.modelsForContext(ctx)
 	vlm := models.cfg.VLMModel
-	if vlm == "" || models.main == nil {
+	if vlm == "" || models.client == nil {
 		return "(未配置视觉模型，无法解析图片)"
 	}
 	prompt := "Describe the attached image(s) in detail and extract ALL text, data, and elements relevant to the user's request. " +
 		"Be thorough and literal — this description is the only way a downstream text-only agent can 'see' the image.\n\nUser's request: " + userText
-	resp, err := models.main.Chat(llm.WithAgent(ctx, "attachment-vlm"), llm.Request{
+	resp, err := models.client.Chat(llm.WithAgent(ctx, "attachment-vlm"), boundedDirectRequest(ctx, llm.Request{
 		Model:    vlm,
 		Messages: []llm.ChatMessage{{Role: llm.RoleUser, Content: prompt, Images: urls}},
-	})
+	}))
 	if err != nil {
 		if s.Log != nil {
 			s.Log.Warn("vlm image describe failed", "err", err)

@@ -175,7 +175,7 @@ func TestGateway_RBACScopeFilter(t *testing.T) {
 }
 
 func sessionHeader(t *testing.T, owner, conv string) map[string]string {
-	claims := security.NewToken(owner, []string{"file:read", "file:write"}, time.Hour)
+	claims := security.NewToken(owner, []string{"file:read", "file:write", "code:execute"}, time.Hour)
 	claims.ConversationID = conv
 	tok, err := security.Sign(claims, []byte(testSecret))
 	if err != nil {
@@ -184,7 +184,8 @@ func sessionHeader(t *testing.T, owner, conv string) map[string]string {
 	return map[string]string{"X-Orka-Token": tok}
 }
 func TestGatewaySessionFilesShellPython(t *testing.T) {
-	t.Setenv("SHELL_TOOL", "1")
+	t.Setenv("CODE_EXECUTION", "1")
+	t.Setenv("CODE_SANDBOX_MODE", "unsafe-dev")
 	base := t.TempDir()
 	endpoint := startGateway(t, Config{Secret: testSecret, BaseStorage: base})
 	for _, conv := range []string{"one", "two"} {

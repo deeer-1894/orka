@@ -19,6 +19,8 @@ gui_agent/data/
 node_modules/
 web/node_modules/
 web/dist/
+# Generated visual QA captures (not screenshot baselines)
+web/tests/screenshots/
 
 # python
 __pycache__/

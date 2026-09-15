@@ -10,6 +10,12 @@ import (
 // compression and process restarts. Usage is cumulative across manual resumes;
 // each run record still accounts only for calls made in its own attempt.
 type runCheckpoint struct {
+	AcceptanceRunIDs []string           `json:"acceptance_run_ids,omitempty"`
+	BudgetSnapshot   *BudgetSnapshot    `json:"budget_snapshot,omitempty"`
+	BudgetPolicy     *TaskBudgetRequest `json:"budget_policy,omitempty"`
+	EnabledTools     []string           `json:"enabled_tools"`
+	toolsRecorded    bool
+
 	SuccessfulTools         int                 `json:"successful_tools"`
 	successfulToolsRecorded bool                // distinguish an authoritative zero from a legacy absent field
 	LastCallError           string              `json:"last_call_error,omitempty"`
@@ -35,11 +41,18 @@ func (c *runCheckpoint) UnmarshalJSON(data []byte) error {
 	}
 	*c = runCheckpoint(decoded)
 	_, c.successfulToolsRecorded = fields["successful_tools"]
+	_, c.toolsRecorded = fields["enabled_tools"]
 	return nil
 }
 
 func checkpointFrom(ctx context.Context) *runCheckpoint {
-	c := &runCheckpoint{successfulToolsRecorded: true, Plan: planTrackerFrom(ctx).snapshot(), Outputs: deliveryFrom(ctx).snapshot(), FinalResponse: deliveryFrom(ctx).responseMode(), SpentTokens: budgetFrom(ctx).totalSpentTokens()}
+	c := &runCheckpoint{AcceptanceRunIDs: acceptanceRunIDs(ctx), EnabledTools: budgetRequestTools(ctx), toolsRecorded: true, successfulToolsRecorded: true, Plan: planTrackerFrom(ctx).snapshot(), Outputs: deliveryFrom(ctx).snapshot(), FinalResponse: deliveryFrom(ctx).responseMode(), SpentTokens: budgetFrom(ctx).totalSpentTokens()}
+	if session := BudgetSessionFrom(ctx); session != nil {
+		snapshot := session.Snapshot()
+		c.BudgetSnapshot = &snapshot
+		policy := snapshot.Limits
+		c.BudgetPolicy = &policy
+	}
 	if b := budgetFrom(ctx); b != nil {
 		b.mu.Lock()
 		c.SuccessfulTools, c.LastCallError = b.successfulTools, b.lastCallError
@@ -60,6 +73,20 @@ func restoreCheckpoint(c *runCheckpoint, b *runBudget, p *planTracker, d *delive
 	if b != nil {
 		b.mu.Lock()
 		b.carried = max(b.carried, c.SpentTokens)
+		if c.BudgetSnapshot != nil {
+			snapshot := c.BudgetSnapshot
+			if !snapshot.Deadline.IsZero() && (b.deadline.IsZero() || snapshot.Deadline.Before(b.deadline)) {
+				b.deadline = snapshot.Deadline
+			}
+			b.carriedSteps = max(b.carriedSteps, snapshot.UsedSteps)
+			b.sharedSteps = max(b.sharedSteps, b.carriedSteps)
+			b.carriedUnknownTokens = max(b.carriedUnknownTokens, saturatingUsageSum(snapshot.UnknownTokens, snapshot.ReservedTokens))
+			unknownCalls := snapshot.UnknownCalls
+			if snapshot.ReservedTokens > 0 {
+				unknownCalls++
+			}
+			b.carriedUnknownCalls = max(b.carriedUnknownCalls, unknownCalls)
+		}
 		b.successfulTools = max(b.successfulTools, c.SuccessfulTools)
 		b.lastCallError = c.LastCallError
 		b.mu.Unlock()

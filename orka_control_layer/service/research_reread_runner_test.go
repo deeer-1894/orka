@@ -39,7 +39,7 @@ func TestDeepRunnerEvidenceFirstReadPerAgentExecution(t *testing.T) {
 			)
 			var calls atomic.Int32
 			fileTool := rereadFileTool(func() (string, error) { calls.Add(1); return read() }, path)
-			ag, err := BuildEinoDeepOrchestrator(ctx, model, "main", model, "mini", "Read the source and delegate verification.", []agent.BaseTool{fileTool}, []config.SubAgentConfig{{Name: "researcher", Description: "verify sources", Tools: []string{"file_read"}}}, 16, false)
+			ag, err := BuildEinoDeepOrchestrator(ctx, model, "main", "Read the source and delegate verification.", []agent.BaseTool{fileTool}, []config.SubAgentConfig{{Name: "researcher", Description: "verify sources", Tools: []string{"file_read"}}}, 16, false)
 			if err != nil {
 				t.Fatal(err)
 			}

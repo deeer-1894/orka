@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"github.com/orka-oss/orka_control_layer/db"
 	"io"
 	"strconv"
 
@@ -9,7 +11,6 @@ import (
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 
 	"github.com/orka-oss/orka_control_layer/service"
-	"github.com/orka-oss/orka_core/messages"
 	"github.com/orka-oss/orka_core/pathsafe"
 )
 
@@ -34,21 +35,34 @@ func (a *API) ChatRun(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	req.UserEmail = conv.OwnerEmail
+	// Task aliases affect execution cancellation and persistent outcomes, so a
+	// caller may only bind a task owned by this exact conversation's owner.
+	if req.TaskID != "" {
+		task, taskErr := a.Store.GetTask(ctx, req.TaskID)
+		if taskErr != nil || task == nil || task.OwnerEmail != conv.OwnerEmail || task.ConversationID != conv.ConversationID {
+			fail(c, consts.StatusNotFound, "task not found in conversation")
+			return
+		}
+	}
 	if _, err := pathsafe.EnsureSession(a.BaseStorage, req.UserEmail, req.ConversationID); err != nil {
 		workspaceFail(c, err)
 		return
 	}
 
+	runCtx, release, err := a.Chat.AdmitExecution(context.Background(), req.UserEmail, req.ConversationID, req.TaskID)
+	if err != nil {
+		fail(c, consts.StatusConflict, err.Error())
+		return
+	}
 	runID := firstNonEmptyStr(req.ConversationID, req.TaskID)
-	rs := a.hub.start(runID)
+	rs := a.hub.start(runID, service.ExecutionID(runCtx))
 
 	go func() {
 		// Detach from the Hertz request context (which ends when the handler
 		// returns); the run is cancelled via /chat/kill instead.
-		a.Chat.Run(context.Background(), req, func(m messages.Message) {
-			a.hub.publish(runID, m)
-		})
-		a.hub.finish(runID)
+		defer release()
+		a.Chat.Run(runCtx, req, rs.publish)
+		a.hub.finishStream(runID, rs)
 	}()
 
 	a.streamRun(c, rs, 0)
@@ -83,13 +97,29 @@ func (a *API) ChatAttach(ctx context.Context, c *app.RequestContext) {
 	if v := string(c.Query("last_event_id")); v != "" {
 		from, _ = strconv.ParseInt(v, 10, 64)
 	}
-	a.streamRun(c, rs, from)
+	reconcile := string(c.Query("reconcile")) == "1"
+	if expected := string(c.Query("run_id")); expected != "" && expected != rs.executionID {
+		if !reconcile {
+			c.JSON(consts.StatusConflict, map[string]any{"code": 409, "msg": "execution changed", "data": map[string]any{"reconcile": true, "run_id": rs.executionID}})
+			return
+		}
+		from = 0
+	}
+	a.streamRunChecked(c, rs, from, reconcile)
 }
 
 // streamRun writes SSE frames (with id: lines for reconnect) from a runStream,
 // starting after fromSeq, until the run finishes or the client disconnects.
 func (a *API) streamRun(c *app.RequestContext, rs *runStream, fromSeq int64) {
-	ch, replay, done, cancel := rs.subscribe(fromSeq)
+	a.streamRunChecked(c, rs, fromSeq, true)
+}
+
+func (a *API) streamRunChecked(c *app.RequestContext, rs *runStream, fromSeq int64, reconcile bool) {
+	ch, replay, done, cancel, gap := rs.subscribeChecked(fromSeq, reconcile)
+	if gap {
+		c.JSON(consts.StatusConflict, map[string]any{"code": 409, "msg": "stream history gap", "data": map[string]any{"reconcile": true, "run_id": rs.executionID}})
+		return
+	}
 
 	pr, pw := io.Pipe()
 	c.SetStatusCode(consts.StatusOK)
@@ -167,21 +197,43 @@ func (a *API) ChatKill(ctx context.Context, c *app.RequestContext) {
 	fail(c, consts.StatusNotFound, "no running session for id")
 }
 
-// Followups returns up to 3 suggested next questions for the last Q&A turn.
+// Followups returns suggestions bound to one authenticated, persisted run.
 func (a *API) Followups(ctx context.Context, c *app.RequestContext) {
+	owner := authEmail(c)
+	if owner == "" {
+		fail(c, consts.StatusUnauthorized, "authentication required")
+		return
+	}
+	c.Response.Header.Set("Cache-Control", "no-store")
+	if len(c.Request.Body()) > 128<<10 {
+		fail(c, consts.StatusRequestEntityTooLarge, "request too large")
+		return
+	}
 	var req struct {
-		Prompt          string `json:"prompt"`
-		SelectedVersion string `json:"selected_version"`
-		ModelProfile    string `json:"model_profile"`
-		Answer          string `json:"answer"`
+		ConversationID string `json:"conversation_id"`
+		RunID          string `json:"run_id"`
+		ModelProfile   string `json:"model_profile"`
 	}
 	if err := bind(c, &req); err != nil {
 		fail(c, consts.StatusBadRequest, "bad request")
 		return
 	}
-	suggestions, err := a.Chat.SuggestFollowupsForUser(ctx, authEmail(c), req.SelectedVersion, req.ModelProfile, req.Prompt, req.Answer)
+	if a.Chat == nil {
+		fail(c, consts.StatusServiceUnavailable, "followups unavailable")
+		return
+	}
+	suggestions, err := a.Chat.SuggestFollowupsForRun(ctx, owner, req.ConversationID, req.RunID, req.ModelProfile)
 	if err != nil {
-		settingsError(c, err)
+		switch {
+		case errors.Is(err, db.ErrNotFound):
+			fail(c, consts.StatusNotFound, "run not found")
+		case errors.Is(err, service.ErrFollowupRunPending):
+			fail(c, consts.StatusConflict, err.Error())
+		case errors.Is(err, service.ErrFollowupStorage):
+			fail(c, consts.StatusServiceUnavailable, err.Error())
+		default:
+			settingsError(c, err)
+		}
 		return
 	}
 	ok(c, map[string]any{"suggestions": suggestions})
@@ -241,14 +293,24 @@ func (a *API) ResumeRun(ctx context.Context, c *app.RequestContext) {
 		workspaceFail(c, err)
 		return
 	}
-	a.hub.start(conv)
+	runCtx, release, admissionErr := a.Chat.AdmitExecution(context.Background(), email, conv, rec.TaskID)
+	if admissionErr != nil {
+		fail(c, consts.StatusConflict, admissionErr.Error())
+		return
+	}
+	prepared, prepareErr := a.Chat.PrepareResumeRun(runCtx, req.RunID, email)
+	if prepareErr != nil {
+		release()
+		fail(c, consts.StatusConflict, prepareErr.Error())
+		return
+	}
+	rs := a.hub.start(conv, service.ExecutionID(runCtx))
 	go func() {
-		if _, err := a.Chat.ResumeRun(context.Background(), req.RunID, email, func(m messages.Message) {
-			a.hub.publish(conv, m)
-		}); err != nil && a.Log != nil {
+		defer release()
+		if _, err := prepared(runCtx, rs.publish); err != nil && a.Log != nil {
 			a.Log.Warn("resume run failed", "run_id", req.RunID, "err", err)
 		}
-		a.hub.finish(conv)
+		a.hub.finishStream(conv, rs)
 	}()
 	ok(c, map[string]any{"resumed": true, "conversation_id": conv, "steps": rec.ResumeSteps})
 }
@@ -289,12 +351,16 @@ func (a *API) ConfirmAction(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusNotFound, "no pending confirmation (expired?)")
 		return
 	}
-	a.hub.start(conv)
+	runCtx, release, admissionErr := a.Chat.AdmitExecution(context.Background(), authEmail(c), conv, "")
+	if admissionErr != nil {
+		fail(c, consts.StatusConflict, admissionErr.Error())
+		return
+	}
+	rs := a.hub.start(conv, service.ExecutionID(runCtx))
 	go func() {
-		a.Chat.ResumeConfirm(context.Background(), conv, req.Approve, req.Always, func(m messages.Message) {
-			a.hub.publish(conv, m)
-		})
-		a.hub.finish(conv)
+		defer release()
+		a.Chat.ResumeConfirm(runCtx, conv, req.Approve, req.Always, rs.publish)
+		a.hub.finishStream(conv, rs)
 	}()
 	ok(c, map[string]bool{"resolved": true, "resumed": true})
 }

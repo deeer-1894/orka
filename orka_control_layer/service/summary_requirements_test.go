@@ -159,7 +159,7 @@ func TestRealRunnerPreservesTaskAfterRepeatedSummaries(t *testing.T) {
 	mini.FallbackMsg = "Only a work summary, no task formulas."
 	calls := 0
 	ctx := context.Background()
-	ag, err := BuildEinoAgent(ctx, main, "m", "sys", []agent.BaseTool{echoTool{calls: &calls}}, 100, nil, summarizationHandlers(ctx, mini, "mini")...)
+	ag, err := BuildEinoAgent(ctx, main, "m", "sys", []agent.BaseTool{echoTool{calls: &calls}}, 100, summarizationHandlers(ctx, mini, "mini")...)
 	if err != nil {
 		t.Fatal(err)
 	}

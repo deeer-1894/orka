@@ -12,6 +12,8 @@ import (
 // The service chooses policy; the adapter owns transport and response integrity.
 // A zero policy preserves the adapter's original streaming behavior.
 type CallLimits struct {
+	// ForContext resolves an immutable run policy without mutating a shared model.
+	ForContext     func(context.Context, string) CallLimits
 	FirstMaxTokens int
 	MaxTokens      int
 	Timeout        time.Duration
@@ -73,13 +75,17 @@ func (l CallLimits) apply(req Request) Request {
 // the existing metered client accounts every provider-reported attempt.
 func (m *EinoModel) limitedResponse(ctx context.Context, req Request, stream bool) (Response, error) {
 	ctx = withAgent(ctx, m.agent)
+	limits := m.limits
+	if limits.ForContext != nil {
+		limits = limits.ForContext(ctx, req.Model)
+	}
 	callCtx := ctx
-	if m.limits.Timeout > 0 {
+	if limits.Timeout > 0 {
 		var cancel context.CancelFunc
-		callCtx, cancel = context.WithTimeout(ctx, m.limits.Timeout)
+		callCtx, cancel = context.WithTimeout(ctx, limits.Timeout)
 		defer cancel()
 	}
-	req = m.limits.apply(req)
+	req = limits.apply(req)
 	for attempt := 0; attempt < 2; attempt++ {
 		var resp Response
 		var err error

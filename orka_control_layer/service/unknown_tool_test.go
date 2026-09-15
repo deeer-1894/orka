@@ -19,9 +19,9 @@ func TestUnknownToolReturnsReceiptAndValidBatchStillRuns(t *testing.T) {
 				{ID: "valid", Name: "file_read", Arguments: `{"path":"report.md"}`},
 			}}, llm.Response{Content: "recovered", FinishReason: "stop"})
 			ts := []agent.BaseTool{retrievalFixture{"file_read", func(context.Context, map[string]any) (string, error) { calls++; return "actual report", nil }}}
-			ag, err := BuildEinoAgent(ctx, model, "test", "read file", ts, 10, nil)
+			ag, err := BuildEinoAgent(ctx, model, "test", "read file", ts, 10)
 			if deepMode {
-				ag, err = BuildEinoDeepOrchestrator(ctx, model, "test", model, "test", "read file", ts, nil, 10, false)
+				ag, err = BuildEinoDeepOrchestrator(ctx, model, "test", "read file", ts, nil, 10, false)
 			}
 			if err != nil {
 				t.Fatal(err)

@@ -1,9 +1,11 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { ActionChip } from './ActionChip';
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { modelSettings, type ModelSettingsData, type ModelSettingsInput } from "../api";
 import { exportModelProfile, importModelProfile } from "../lib/modelSettings";
 import { Button } from "./ui/button";
 
+const ModelProfilesDialog = lazy(() => import("./ModelProfilesDialog"));
 const PROVIDERS = [
   { id: "custom", label: "自定义 / OpenAI 兼容", url: "" },
   { id: "openai", label: "OpenAI", url: "https://api.openai.com/v1" },
@@ -19,10 +21,13 @@ const EMPTY: ModelSettingsData = { provider: "custom", base_url: "", api_key_set
 const inputStyle = "w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm outline-none focus:border-accent";
 
 export function ModelSettings({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [profilesOpen, setProfilesOpen] = useState(false);
   const [config, setConfig] = useState<ModelSettingsData>(EMPTY);
   const [key, setKey] = useState("");
   const [savedBase, setSavedBase] = useState("");
   const [modelText, setModelText] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [loadRevision, setLoadRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<"save" | "discover" | null>(null);
   const [error, setError] = useState("");
@@ -30,15 +35,17 @@ export function ModelSettings({ onClose, onSaved }: { onClose: () => void; onSav
   const [profileText, setProfileText] = useState("");
   useEffect(() => {
     let alive = true;
+    setLoading(true); setError(""); setLoaded(false);
     modelSettings.get().then(c => {
-      if (alive) { setConfig({ ...c, provider: (!c.provider || c.provider === "openai-compatible") ? "custom" : c.provider }); setSavedBase(c.base_url); setModelText((c.models || []).join("\n")); }
+      if (alive) { setLoaded(true); setConfig({ ...c, provider: (!c.provider || c.provider === "openai-compatible") ? "custom" : c.provider }); setSavedBase(c.base_url); setModelText((c.models || []).join("\n")); }
     }).catch(e => { if (alive) setError(e.message); }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, []);
+  }, [loadRevision]);
   const patch = (p: Partial<ModelSettingsData>) => { setConfig(c => ({ ...c, ...p })); setNotice(""); };
   const payload = (): ModelSettingsInput => ({
     provider: config.provider, base_url: config.base_url.trim(), enabled: config.enabled,
     models: [...new Set(modelText.split(/[\n,]/).map(m => m.trim()).filter(Boolean))],
+    ...(config.policies ? { policies: config.policies } : {}),
     ...(key ? { api_key: key } : {}),
   });
   const discover = async () => {
@@ -53,6 +60,7 @@ export function ModelSettings({ onClose, onSaved }: { onClose: () => void; onSav
     finally { setBusy(null); }
   };
   const save = async () => {
+    if (!loaded) return;
     setBusy("save"); setError(""); setNotice("");
     try {
       const saved = await modelSettings.save(payload());
@@ -61,6 +69,7 @@ export function ModelSettings({ onClose, onSaved }: { onClose: () => void; onSav
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(null); }
   };
+  if (profilesOpen) return <Suspense fallback={<p role="status">正在加载连接配置…</p>}><ModelProfilesDialog onClose={() => { setProfilesOpen(false); setLoadRevision(n => n + 1); }} onSaved={onSaved} /></Suspense>;
   return <Dialog.Root open onOpenChange={open => { if (!open && !busy) onClose(); }}>
     <Dialog.Portal>
       <Dialog.Overlay className="fixed inset-0 z-50 bg-black/30" />
@@ -70,7 +79,8 @@ export function ModelSettings({ onClose, onSaved }: { onClose: () => void; onSav
           <Dialog.Close asChild><Button variant="ghost" size="sm" disabled={!!busy} aria-label="关闭模型配置">关闭</Button></Dialog.Close>
         </div>
         <Dialog.Description className="mt-2 text-sm text-muted">配置你的模型服务。支持 OpenAI 兼容接口，也可手动填写模型名称。</Dialog.Description>
-        {loading ? <p className="py-8 text-muted">正在读取配置…</p> : <form className="mt-5 flex flex-col gap-4" onSubmit={e => { e.preventDefault(); void save(); }}>
+        <ActionChip className="mt-3" disabled={!!busy} onClick={() => setProfilesOpen(true)} icon="gear">命名连接与能力检测</ActionChip>
+        {loading ? <p className="py-8 text-muted">正在读取配置…</p> : !loaded ? <Button variant="outline" onClick={() => setLoadRevision(n => n + 1)}>重新读取配置</Button> : <form className="mt-5 flex flex-col gap-4" onSubmit={e => { e.preventDefault(); void save(); }}>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={config.enabled} onChange={e => patch({ enabled: e.target.checked })} disabled={!!busy} />使用我的模型配置（关闭时使用系统默认）</label>
           <fieldset disabled={!!busy} className="flex min-w-0 flex-col gap-4">
             <SettingField label="厂商" id="model-provider"><select id="model-provider" className={inputStyle} value={config.provider} onChange={e => {

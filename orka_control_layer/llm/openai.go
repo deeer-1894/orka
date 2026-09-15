@@ -115,24 +115,6 @@ type streamOpts struct {
 	IncludeUsage bool `json:"include_usage"`
 }
 
-type wireUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-	// OpenAI-compatible providers nest the reasoning split here; absent on
-	// non-reasoning models, which correctly yields zero.
-	CompletionTokensDetails *struct {
-		ReasoningTokens int `json:"reasoning_tokens"`
-	} `json:"completion_tokens_details"`
-}
-
-func (u *wireUsage) reasoning() int {
-	if u == nil || u.CompletionTokensDetails == nil {
-		return 0
-	}
-	return u.CompletionTokensDetails.ReasoningTokens
-}
-
 type wireResponse struct {
 	Choices []struct {
 		Message      wireMessage `json:"message"`
@@ -209,20 +191,20 @@ func (c *OpenAIClient) Chat(ctx context.Context, req Request) (Response, error) 
 	}
 	defer resp.Body.Close()
 	raw, readErr := io.ReadAll(resp.Body)
-	if resp.StatusCode/100 != 2 {
-		return Response{}, &APIError{Status: resp.StatusCode, Body: string(raw)}
-	}
-
-	if readErr != nil {
-		return Response{}, fmt.Errorf("read response: %w", readErr)
-	}
 	var wresp wireResponse
-	if err := json.Unmarshal(raw, &wresp); err != nil {
-		return Response{}, fmt.Errorf("decode response: %w", err)
+	decodeErr := json.Unmarshal(raw, &wresp)
+	out := Response{Usage: wresp.Usage.asUsage()}
+	if readErr != nil || decodeErr != nil {
+		out.Usage.Known, out.Usage.Incomplete = false, true
 	}
-	out := Response{}
-	if u := wresp.Usage; u != nil {
-		out.Usage = Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens, ReasoningTokens: u.reasoning()}
+	if resp.StatusCode/100 != 2 {
+		return out, &APIError{Status: resp.StatusCode, Body: string(raw)}
+	}
+	if readErr != nil {
+		return out, fmt.Errorf("read response: %w", readErr)
+	}
+	if decodeErr != nil {
+		return out, fmt.Errorf("decode response: %w", decodeErr)
 	}
 	if wresp.Error != nil {
 		return out, fmt.Errorf("llm error: %s", wresp.Error.Message)
@@ -316,8 +298,14 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-		return Response{}, &APIError{Status: resp.StatusCode, Body: string(raw)}
+		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		var failure wireResponse
+		decodeErr := json.Unmarshal(raw, &failure)
+		usage := failure.Usage.asUsage()
+		if readErr != nil || decodeErr != nil {
+			usage.Known, usage.Incomplete = false, true
+		}
+		return Response{Usage: usage}, &APIError{Status: resp.StatusCode, Body: string(raw)}
 	}
 
 	var content, reasoning strings.Builder
@@ -329,7 +317,7 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 	toolAcc := map[int]*tcAcc{}
 	var order []int
 	finish := ""
-	var usage Usage
+	usage := Usage{Incomplete: true}
 
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -347,13 +335,15 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 			continue // empty SSE keepalive
 		}
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			usage = mergeStreamUsage(usage, chunk.Usage.asUsage())
+			usage.Known, usage.Incomplete = false, true
 			return Response{Usage: usage}, fmt.Errorf("decode stream chunk: %w", err)
 		}
-		if chunk.Error != nil {
-			return Response{}, fmt.Errorf("llm error: %s", chunk.Error.Message)
+		if chunk.Usage != nil {
+			usage = mergeStreamUsage(usage, chunk.Usage.asUsage())
 		}
-		if u := chunk.Usage; u != nil { // final usage chunk (stream_options)
-			usage = Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens, ReasoningTokens: u.reasoning()}
+		if chunk.Error != nil {
+			return Response{Usage: usage}, fmt.Errorf("llm error: %s", chunk.Error.Message)
 		}
 		if len(chunk.Choices) == 0 {
 			continue
@@ -391,7 +381,7 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, req Request, onDelta func
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return Response{}, fmt.Errorf("stream read: %w", err)
+		return Response{Usage: usage}, fmt.Errorf("stream read: %w", err)
 	}
 
 	if finish == "" {

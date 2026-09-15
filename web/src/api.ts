@@ -1,3 +1,4 @@
+import { clearSessionRecovery } from './lib/sessionRecovery';
 import type {
   Artifact,
   ArtifactVersion,
@@ -23,7 +24,7 @@ const TOKEN_KEY = "orka.token";
 export const auth = {
   token: () => localStorage.getItem(TOKEN_KEY) || "",
   set: (t: string) => localStorage.setItem(TOKEN_KEY, t),
-  clear: () => localStorage.removeItem(TOKEN_KEY),
+  clear: () => { clearSessionRecovery(); localStorage.removeItem(TOKEN_KEY); },
 };
 
 let unauthorizedHandler: (() => void) | null = null;
@@ -64,11 +65,11 @@ async function post<T>(path: string, body: unknown, silent = false): Promise<T> 
   const j = await res.json().catch(() => ({}));
   if (j && typeof j.code === "number" && j.code !== 0) {
     if (!silent) toastError(j.msg || `请求失败 (${res.status})`);
-    throw new Error(j.msg || "request failed");
+    throw Object.assign(new Error(j.msg || "request failed"), { status: res.status });
   }
-  if (res.status >= 500) {
+  if (!res.ok) {
     if (!silent) toastError("服务暂时不可用，请稍后再试");
-    throw new Error("server " + res.status);
+    throw Object.assign(new Error("server " + res.status), { status: res.status });
   }
   return (j.data ?? j) as T;
 }
@@ -87,6 +88,9 @@ async function get<T>(path: string): Promise<T> {
     throw new Error("unauthorized");
   }
   const j = await res.json().catch(() => ({}));
+  if (!res.ok || (typeof j.code === "number" && j.code !== 0)) {
+    throw new Error(j.msg || `请求失败 (${res.status})`);
+  }
   return (j.data ?? j) as T;
 }
 
@@ -206,8 +210,8 @@ export const api = {
   unscheduleTask: (task_id: string) => post("/task/unschedule", { task_id }),
   enableWebhook: (task_id: string) => post<{ token: string; path: string }>("/task/webhook/enable", { task_id }),
   disableWebhook: (task_id: string) => post("/task/webhook/disable", { task_id }),
-  listRuns: (filter: { conversation_id?: string; status?: string } = {}) =>
-    post<{ runs: RunRecord[] }>("/run/list", { ...filter, size: 50 }),
+  listRuns: (filter: { conversation_id?: string; status?: string; statuses?: string[]; offset?: number; size?: number } = {}) =>
+    post<{ runs: RunRecord[]; has_more?: boolean }>("/run/list", { size: 50, ...filter }),
   getRun: (run_id: string) => post<RunRecord>("/run/get", { run_id }),
   rerunRun: (run_id: string) => post<{ status: string }>("/run/rerun", { run_id }),
   // Continue a run that died mid-flight from its surviving transcript, rather
@@ -228,11 +232,16 @@ export const api = {
   createWorkflow: (name: string, steps: WorkflowStep[]) => post<Workflow>("/workflow/create", { name, steps }),
   deleteWorkflow: (workflow_id: string) => post("/workflow/delete", { workflow_id }),
   runWorkflow: (workflow_id: string) => post<{ conversation_id: string }>("/workflow/run", { workflow_id }),
-  followups: (prompt: string, answer: string, selectedVersion = "auto", modelProfile = "") => post<{ suggestions: string[] }>("/chat/followups", { prompt, answer, selected_version: selectedVersion, model_profile: modelProfile }),
+  followups: (prompt: string, answer: string, selectedVersion = "auto", modelProfile = "", conversationID = "", runID = "") => post<{ suggestions: string[] }>("/chat/followups", { prompt, answer, selected_version: selectedVersion, model_profile: modelProfile, conversation_id: conversationID, run_id: runID }, true),
   listSkills: () => post<{ skills: { name: string; description: string }[] }>("/skill/list", {}),
   getSkill: (name: string) => post<{ name: string; description: string; prompt: string }>("/skill/get", { name }),
   installSkill: (url: string) => post<{ name: string }>("/skill/install", { url }),
   deleteSkill: (name: string) => post("/skill/delete", { name }),
+  runBudget: (run_id: string) => get<import("./lib/runBudget").RunBudget>(`/run/${encodeURIComponent(run_id)}/budget`),
+  runAcceptance: (run_id: string) => post<import('./lib/runEvidence').RunAcceptance>("/run/acceptance", { run_id }),
+  listDeliveries: (conversation_id: string) => post<{ deliveries: import('./lib/runEvidence').DeliverySnapshot[] }>("/delivery/list", { conversation_id }),
+  deliveryDownloadURL: (conversation_id: string, run_id: string, path: string) => `${BASE}/delivery/download?${new URLSearchParams({ conversation_id, run_id, path, token: auth.token() })}`,
+  systemStatus: () => get<SystemStatus>("/system/status"),
   metrics: async (): Promise<MetricsSnapshot> => {
     const res = await fetch(BASE + "/metrics", { headers: headers(false) });
     const j = await res.json();
@@ -297,6 +306,7 @@ function blobToB64(b: Blob): Promise<string> {
 }
 
 export interface ModelSettingsData {
+  policies?: Record<string,import("./lib/modelPolicies").ModelPolicy>;
   provider: string;
   base_url: string;
   api_key_set: boolean;
@@ -310,3 +320,12 @@ export const modelSettings = {
   discover: (data: { provider: string; base_url: string; api_key?: string }) =>
     post<{ models: string[]; source?: "remote" | "preset"; notice?: string }>("/model-settings/discover", data, true),
 };
+
+export const modelProfiles = {
+ get: () => post<import('./lib/modelProfiles').ModelProfiles>('/model-profiles/get', {}),
+ save: (data: {active_profile_id:string;profiles:ReturnType<typeof import('./lib/modelProfiles').profileInput>[]}) => post<import('./lib/modelProfiles').ModelProfiles>('/model-profiles/save', data),
+ discover: (data: {profile_id:string;protocol:string;provider:string;base_url:string;api_key?:string}) => post<{models:string[];source?:string;notice?:string}>('/model-settings/discover', data, true),
+ probe: (data: {profile_id:string;model:string;capabilities:import('./lib/modelProfiles').Capability[]}) => post<import('./lib/modelProfiles').ModelVerification>('/model-profiles/probe', data, true),
+};
+
+export interface SystemStatus {version:string;build_time:string;modified:boolean;started_at:string;ready:boolean;services:{name:string;status:string;detail:string}[];model_probe:string}

@@ -10,9 +10,12 @@ const guiEvidenceLimit = 24
 // guiEvidence consumes only execution/observation frames, never planner claims.
 // Keep a rolling window and an absolute receive sequence even for legacy agents.
 type guiEvidence struct {
-	events  []map[string]any
-	total   int
-	actions int
+	events     []map[string]any
+	total      int
+	actions    int
+	usage      *guiUsageLedger
+	phase      string
+	taskMemory map[string]any
 }
 
 func guiClip(s string, limit int) string {
@@ -24,6 +27,9 @@ func guiClip(s string, limit int) string {
 }
 
 func (e *guiEvidence) add(frame map[string]any) {
+	if memory := guiTaskMemory(frame); memory != nil {
+		e.taskMemory = memory
+	}
 	kind, _ := frame["type"].(string)
 	if kind != "action" && kind != "observe" {
 		return
@@ -84,6 +90,13 @@ func (e *guiEvidence) result(status, summary string) string {
 		"recorded_actions": e.actions,
 		"omitted_events":   e.total - len(events),
 		"evidence":         events,
+	}
+	if e.taskMemory != nil {
+		result["task_memory"] = e.taskMemory
+	}
+	if e.usage != nil {
+		result["usage"] = e.usage.summary()
+		result["phase"] = e.phase
 	}
 	data, err := json.Marshal(result)
 	if err != nil {

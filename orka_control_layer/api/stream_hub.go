@@ -19,7 +19,7 @@ type streamHub struct {
 func newStreamHub() *streamHub { return &streamHub{runs: map[string]*runStream{}} }
 
 const (
-	streamBufferSize = 256             // events retained for replay per run
+	streamBufferSize = 256              // events retained for replay per run
 	streamLinger     = 30 * time.Second // keep a finished run around for late reconnects
 )
 
@@ -29,18 +29,22 @@ type seqFrame struct {
 }
 
 type runStream struct {
-	mu   sync.Mutex
-	seq  int64
-	buf  []seqFrame
-	subs map[chan seqFrame]struct{}
-	done bool
+	executionID string
+	mu          sync.Mutex
+	seq         int64
+	buf         []seqFrame
+	subs        map[chan seqFrame]struct{}
+	done        bool
 }
 
 // start (re)initializes the stream for a run id and returns it.
-func (h *streamHub) start(id string) *runStream {
+func (h *streamHub) start(id string, executionIDs ...string) *runStream {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	rs := &runStream{subs: map[chan seqFrame]struct{}{}}
+	if len(executionIDs) > 0 {
+		rs.executionID = executionIDs[0]
+	}
 	h.runs[id] = rs
 	return rs
 }
@@ -57,11 +61,20 @@ func (h *streamHub) publish(id string, m messages.Message) {
 	if rs == nil {
 		return
 	}
+	rs.publish(m)
+}
+
+// publish belongs to an execution instance, never a conversation lookup.
+func (rs *runStream) publish(m messages.Message) {
 	frame, err := m.SSE()
 	if err != nil {
 		return
 	}
 	rs.mu.Lock()
+	if rs.done {
+		rs.mu.Unlock()
+		return
+	}
 	rs.seq++
 	sf := seqFrame{seq: rs.seq, data: frame}
 	rs.buf = append(rs.buf, sf)
@@ -85,6 +98,10 @@ func (h *streamHub) finish(id string) {
 	if rs == nil {
 		return
 	}
+	h.finishStream(id, rs)
+}
+
+func (h *streamHub) finishStream(id string, rs *runStream) {
 	rs.mu.Lock()
 	rs.done = true
 	for ch := range rs.subs {
@@ -105,15 +122,29 @@ func (h *streamHub) finish(id string) {
 // fromSeq, then receives live frames. The bool reports whether the run is
 // already finished (caller should drain replay then stop). cancel detaches.
 func (rs *runStream) subscribe(fromSeq int64) (ch chan seqFrame, replay []seqFrame, done bool, cancel func()) {
+	ch, replay, done, cancel, _ = rs.subscribeChecked(fromSeq, true)
+	return
+}
+
+// Gap detection and subscription share one lock, so rollover cannot occur
+// between deciding a cursor is valid and collecting its replay.
+func (rs *runStream) subscribeChecked(fromSeq int64, reconcile bool) (ch chan seqFrame, replay []seqFrame, done bool, cancel func(), gap bool) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
+	gap = rs.gapLocked(fromSeq)
+	if gap && !reconcile {
+		return nil, nil, false, func() {}, true
+	}
+	if gap {
+		fromSeq = 0
+	}
 	for _, sf := range rs.buf {
 		if sf.seq > fromSeq {
 			replay = append(replay, sf)
 		}
 	}
 	if rs.done {
-		return nil, replay, true, func() {}
+		return nil, replay, true, func() {}, false
 	}
 	ch = make(chan seqFrame, 512)
 	rs.subs[ch] = struct{}{}
@@ -125,5 +156,16 @@ func (rs *runStream) subscribe(fromSeq int64) (ch chan seqFrame, replay []seqFra
 		}
 		rs.mu.Unlock()
 	}
-	return ch, replay, false, cancel
+	return ch, replay, false, cancel, false
+}
+
+// A missing interval or cursor from a different execution requires durable
+// history reconciliation instead of silently skipping deltas.
+func (rs *runStream) hasGap(from int64) bool {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return rs.gapLocked(from)
+}
+func (rs *runStream) gapLocked(from int64) bool {
+	return from < 0 || from > rs.seq || (len(rs.buf) > 0 && from < rs.buf[0].seq-1)
 }

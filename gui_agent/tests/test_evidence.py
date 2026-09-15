@@ -2,10 +2,13 @@
 import json
 import unittest
 from types import SimpleNamespace
+from unittest.mock import MagicMock
+from service.browser_runtime import BrowserRuntime
 from unittest.mock import AsyncMock, patch
 
 from agent.graph import build
 from agent.model import Planner
+from agent.config import ModelConfig
 from test_som_planner import FakeClient, response
 
 
@@ -86,7 +89,7 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
         evidence = [{"seq": 1, "kind": "action", "action": "type", "text": "15", "result": "operator returned"},
                     {"seq": 2, "kind": "observation", "content": "Observed amount 15"}]
         with patch("openai.AsyncOpenAI", return_value=fake):
-            await Planner()._som_predict({"evidence": evidence, "history": [{"action": {"action": "type", "text": "private-raw"}}]})
+            await Planner(ModelConfig("http://fake.test/v1", "fake-key", "test-model", False), mode="llm")._som_predict({"evidence": evidence, "history": [{"action": {"action": "type", "text": "private-raw"}}]})
         content = fake.request["messages"][1]["content"]
         self.assertIn('"text": "15"', content)
         self.assertIn("Observed amount 15", content)
@@ -101,32 +104,31 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
     async def test_uitars_receives_actual_receipts_on_latest_observation(self):
         from agent.model import UITarsPlanner
         from test_uitars import b64_png
-        planner = UITarsPlanner()
+        planner = UITarsPlanner(ModelConfig("http://fake.test/v1", "fake-key", "test-model", True))
         with patch.object(planner, "_chat", return_value="Action: finished(content='done')") as chat:
             await planner.predict({"shots": [b64_png(100, 100)], "evidence": [
                 {"kind": "action", "action": "type", "text": "15"}]})
         latest = chat.call_args.args[0][-1]["content"]
         self.assertIn('"text": "15"', latest[-1]["text"])
 
-    async def test_ws_preserves_partial_outcome_and_does_not_cache_it(self):
+    async def test_ws_preserves_partial_outcome_without_macro_replay(self):
         from service.web_socket import server
+        from service.runtime import ExecutionQueue
         from starlette.websockets import WebSocketState
         ws = SimpleNamespace(client_state=WebSocketState.CONNECTED, send_json=AsyncMock())
-        op = SimpleNamespace(page=SimpleNamespace(goto=AsyncMock()))
+        pool = SimpleNamespace(get=AsyncMock(return_value=(SimpleNamespace(page=MagicMock(close=AsyncMock())), True)))
         graph = SimpleNamespace(ainvoke=AsyncMock(return_value={
             "status": "END", "outcome": "partial", "result": "budget exhausted",
-            "history": [{"action": {"action": "navigate", "url": "https://example.test"}}],
         }))
-        with patch.object(server, "get_operator", AsyncMock(return_value=op)), \
-             patch.object(server, "build", return_value=graph), \
-             patch.object(server, "replay_macro", AsyncMock(return_value=False)), \
-             patch.object(server, "_MACRO_ENABLED", True), \
-             patch.object(server._macros, "put") as put:
-            await server.run_task(ws, {"instruction": "offline", "max_steps": 1})
+        with patch.object(server, "_runtime", BrowserRuntime(pool,ExecutionQueue())), \
+             patch.object(server, "build", return_value=graph), patch.dict("os.environ", {"GUI_PLANNER":"rule", "MACRO_ENABLE":"1"}):
+            await server.run_task(ws, {"instruction": "offline", "max_steps": 1,
+                "session_id":"call", "identity":{"owner_id":"a", "conversation_id":"c", "run_id":"r"},
+                "model_config":{"base_url":"http://fake.test/v1", "api_key":"fake-key", "model":"chosen", "vision_verified":True}})
         terminal = ws.send_json.call_args.args[0]
         self.assertEqual(terminal["type"], "done")
         self.assertEqual(terminal["outcome"], "partial")
-        put.assert_not_called()
+        graph.ainvoke.assert_awaited_once()
 
 
 class BrowserPrivacyTests(unittest.IsolatedAsyncioTestCase):

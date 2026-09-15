@@ -1,6 +1,7 @@
+import { RunActions, resumableRun } from './runActions';
 import type { Message, RunRecord } from '../types';
 
-export type ChatStatus = 'idle' | 'streaming' | 'paused' | 'error' | 'done' | 'partial';
+export type ChatStatus = 'idle' | 'streaming' | 'paused' | 'error' | 'done' | 'partial' | 'stopped';
 export interface RecoveryContext { conversationID: string; messages: Message[]; status: ChatStatus; enabled?: boolean; historyLoaded?: boolean }
 export interface RecoverySnapshot { key: string; run?: RunRecord; recoverable: boolean; checking: boolean; busy: boolean; error: string }
 export interface RecoveryDependencies {
@@ -9,6 +10,7 @@ export interface RecoveryDependencies {
   resume?: (runID: string) => Promise<{ resumed: boolean; conversation_id: string }>;
   attach?: (cid: string) => void | Promise<ChatStatus | void>;
   now?: () => number;
+  actions?: RunActions;
 }
 
 function identity(c: RecoveryContext) {
@@ -57,12 +59,13 @@ export function canResumeRun(c: RecoveryContext, run?: RunRecord): boolean {
   // Token allowance survives resume; per-attempt limits are rebuilt by the
   // backend. Do not infer a new token allowance from done/partial presentation.
   return c.enabled !== false && isIncompleteRun(c, run) &&
-    run?.conversation_id === c.conversationID && run.resumable === true && run.budget_hit !== 'tokens';
+    run?.conversation_id === c.conversationID && resumableRun(run);
 }
 
 export function terminalStatus(m: Message): ChatStatus | undefined {
   if (m.type === 'confirm' || m.type === 'clarify') return 'paused';
   if (m.type !== 'task') return undefined;
+  if (m.action === 'stopped' || m.action === 'killed') return 'stopped';
   if (m.action === 'failed') return 'error';
   if (m.action === 'partial') return 'partial';
   if (m.action === 'done') return 'done';
@@ -96,7 +99,10 @@ export class RecoveryController {
   private pendingConversations = new Set<string>();
   private consumed = new Set<string>();
   private attachments = new Map<string, { attempts: number; inFlight: boolean; retryAt: number }>();
-  constructor(private deps: RecoveryDependencies, private changed: () => void = () => {}) {}
+  private actions: RunActions;
+  constructor(private deps: RecoveryDependencies, private changed: () => void = () => {}) {
+    this.actions = deps.actions || new RunActions({ list: deps.list, get: deps.get!, resume: deps.resume! });
+  }
   setContext(context: RecoveryContext) {
     const key = recoveryKey(context);
     this.context = context;
@@ -105,12 +111,12 @@ export class RecoveryController {
     this.query++;
     this.state = { key, recoverable: false, checking: false, busy: this.isBusy(context.conversationID), error: '' };
   }
-  isBusy(cid: string): boolean { return this.pendingConversations.has(cid); }
+  isBusy(cid: string): boolean { return this.pendingConversations.has(cid) || this.actions.isBusy(cid); }
   snapshot(): RecoverySnapshot { return this.state; }
   private publish(update: Partial<RecoverySnapshot>) {
     this.state = { ...this.state, ...update };
     this.state.busy = this.pendingConversations.has(this.context.conversationID);
-    this.state.recoverable = canResumeRun(this.context, this.state.run) && !this.consumed.has(this.state.run!.run_id);
+    this.state.recoverable = canResumeRun(this.context, this.state.run) && this.actions.canResume(this.state.run!) && !this.consumed.has(this.state.run!.run_id);
     this.changed();
   }
   private attachRunning(run: RunRecord) {
@@ -135,7 +141,7 @@ export class RecoveryController {
   }
   async refresh() {
     const c = this.context, revision = this.revision, query = ++this.query;
-    if (!c.conversationID || c.enabled === false || c.status === 'streaming' || this.isBusy(c.conversationID)) return;
+    if (!c.conversationID || c.enabled === false || this.isBusy(c.conversationID)) return;
     this.publish({ checking: true });
     try {
       const runs = await this.deps.list(c.conversationID);
@@ -159,15 +165,8 @@ export class RecoveryController {
     this.query++; // a pre-click query must not restore this offer
     this.publish({ busy: true, error: '' });
     try {
-      const [runs, exact] = await Promise.all([this.deps.list(c.conversationID), this.deps.get!(offered.run_id)]);
-      if (revision !== this.revision) return;
-      const latest = currentRun(c, runs);
-      if (latest?.run_id !== offered.run_id || exact.run_id !== offered.run_id || !canResumeRun(c, latest) || !canResumeRun(c, exact)) {
-        this.publish({ run: undefined });
-        throw new Error('运行状态已变化，请刷新后重试');
-      }
-      const response = await this.deps.resume!(offered.run_id);
-      if (!response.resumed || response.conversation_id !== c.conversationID) throw new Error('服务未确认该任务继续运行');
+      const response = await this.actions.resume(offered, () => revision === this.revision);
+      if (!response) return;
       this.consumed.add(offered.run_id);
       if (revision === this.revision) this.publish({ run: undefined });
       // Attaching is conversation-scoped and does not navigate. Switching away
@@ -177,7 +176,7 @@ export class RecoveryController {
         void Promise.resolve(this.deps.attach?.(c.conversationID)).catch(() => {});
       }
     } catch (error) {
-      if (revision === this.revision) this.publish({ error: error instanceof Error ? error.message : '无法继续该任务' });
+      if (revision === this.revision) this.publish({ ...(error instanceof Error && error.message === '运行状态已变化，请刷新后重试' ? {run: undefined} : {}), error: error instanceof Error ? error.message : '无法继续该任务' });
     } finally {
       this.pending.delete(offered.run_id);
       this.pendingConversations.delete(c.conversationID);

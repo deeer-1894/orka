@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { auth, files as fileApi, type FileVersion } from "../api";
 import { lineDiff, diffStats } from "../lib/diff";
 import { useOverlay } from "../lib/useOverlay";
 import { Markdown } from "./Markdown";
 import { CSV_MAX_COLUMNS, CSV_MAX_ROWS, PREVIEW_MAX_BYTES, highlightCode, languageForFile, parseDelimited, readBoundedText } from "../lib/filePreview";
+
+const XlsxPreview = lazy(() => import("./XlsxPreview"));
 
 // fetchText pulls a workspace file's text content (auth via Bearer header).
 async function fetchText(path: string, conv: string) {
@@ -32,7 +34,7 @@ export function resolveWorkspaceImage(mdPath: string, conv: string) {
 
 // FilePreview renders a workspace file inline by type: images as <img>, PDFs in
 // an <iframe> (native browser viewer), text/markdown fetched and rendered, and
-// any other binary (docx, xlsx, zip…) as a download card — never dumped as raw
+// other unsupported binary files (zip…) as a download card — never dumped as raw
 // bytes, which is what produced the "乱码" for PDFs. Shared by the Files panel
 // and the chat thread so a filename is clickable anywhere it appears.
 export function FilePreview(props: { name: string; onClose: () => void; conv: string; readOnly?: boolean; initialHistory?: boolean }) {
@@ -47,6 +49,7 @@ function FilePreviewContent({ name, onClose, conv, readOnly = false, initialHist
   const [showHistory, setShowHistory] = useState(!!initialHistory && !readOnly);
   const [versions, setVersions] = useState<FileVersion[] | null>(null);
   const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
+  const isXlsx = /\.xlsx$/i.test(name);
   const isPdf = /\.pdf$/i.test(name);
   const isMd = /\.(md|markdown)$/i.test(name);
   // Allowlist of extensions safe to show as text; anything else binary.
@@ -102,7 +105,7 @@ function FilePreviewContent({ name, onClose, conv, readOnly = false, initialHist
           <FileHistory name={name} versions={versions} isText={isText} conv={conv} onRestored={() => { setVersions(null); setContent(null); setRevision(n => n + 1); setShowHistory(false); }} />
         ) : (
         <div className={isPdf ? "overflow-hidden" : "overflow-y-auto px-4 py-3"}>
-          {isImage ? (
+          {isXlsx ? <Suspense fallback={<p role="status">正在加载表格预览…</p>}><XlsxPreview url={url} /></Suspense> : isImage ? (
             <img src={url} alt={name} className="mx-auto max-w-full rounded" />
           ) : isPdf ? (
             <iframe src={fileApi.previewURL(name, conv)} title={name} className="h-[70vh] w-full border-0 bg-white" />

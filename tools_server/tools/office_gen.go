@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,19 +13,14 @@ import (
 
 	"github.com/orka-oss/orka_core/pathsafe"
 	"github.com/orka-oss/tools_server/identity"
+	"github.com/orka-oss/tools_server/runner"
 )
 
 // These two tools shell out to pandoc / python+matplotlib, which are installed in
 // the tools-gateway container image. They run confined to the per-user workspace.
 
 func runInWorkspace(ctx context.Context, root, name string, args []string, extraEnv []string) (string, error) {
-	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	c := exec.CommandContext(cctx, name, args...)
-	c.Dir = root
-	c.Env = append(os.Environ(), append([]string{"HOME=" + root}, extraEnv...)...)
-	out, err := c.CombinedOutput()
-	return string(out), err
+	return runner.FromEnv().Run(ctx, runner.Request{Root: root, Program: name, Args: args, Env: extraEnv, Timeout: 60 * time.Second})
 }
 
 // docExport converts a workspace Markdown file to HTML / DOCX / PDF via pandoc.
@@ -68,8 +62,12 @@ func docExport(base string) mcpserver.ToolHandlerFunc {
 		if ext == "pdf" {
 			args = append(args, "--pdf-engine=wkhtmltopdf")
 		}
-		if msg, err := runInWorkspace(ctx, root, "pandoc", args, nil); err != nil {
-			return mcp.NewToolResultText("export failed (is pandoc available? this tool runs in the containerized gateway): " + err.Error() + "\n" + trunc(msg, 600)), nil
+		if msg, err := generateWorkspaceFile(root, out, func(temp string) (string, error) {
+			staged := append([]string(nil), args...)
+			staged[2] = temp
+			return runInWorkspace(ctx, root, "pandoc", staged, nil)
+		}); err != nil {
+			return mcp.NewToolResultError("export failed (is pandoc available? this tool runs in the containerized gateway): " + err.Error() + "\n" + trunc(msg, 600)), nil
 		}
 		if fi, err := os.Stat(filepath.Join(root, out)); err == nil {
 			return mcp.NewToolResultText(fmt.Sprintf("%s → %s (%s, %s) saved to your workspace", in, out, strings.ToUpper(ext), humanBytes(fi.Size()))), nil
@@ -130,8 +128,8 @@ func chartGenerate(base string) mcpserver.ToolHandlerFunc {
 			"CHART_TITLE=" + req.GetString("title", ""),
 			"CHART_OUT=" + out,
 		}
-		if msg, err := runInWorkspace(ctx, root, "python3", []string{"-c", chartScript}, env); err != nil {
-			return mcp.NewToolResultText("chart failed (needs python3+matplotlib in the containerized gateway): " + err.Error() + "\n" + trunc(msg, 600)), nil
+		if msg, err := runPython(ctx, root, chartScript, env); err != nil {
+			return mcp.NewToolResultError("chart failed (needs python3+matplotlib in the containerized gateway): " + err.Error() + "\n" + trunc(msg, 600)), nil
 		}
 		return mcp.NewToolResultText("chart (" + kind + ") saved to " + out), nil
 	}

@@ -76,9 +76,11 @@ func (a *API) DiscoverModels(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	var req struct {
-		Provider string `json:"provider"`
-		BaseURL  string `json:"base_url"`
-		APIKey   string `json:"api_key"`
+		ProfileID string `json:"profile_id"`
+		Protocol  string `json:"protocol"`
+		Provider  string `json:"provider"`
+		BaseURL   string `json:"base_url"`
+		APIKey    string `json:"api_key"`
 	}
 	if len(c.Request.Body()) > 128<<10 {
 		fail(c, consts.StatusRequestEntityTooLarge, "request too large")
@@ -88,7 +90,99 @@ func (a *API) DiscoverModels(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "invalid model discovery request")
 		return
 	}
-	result, err := store.DiscoverWithMetadata(ctx, authEmail(c), req.BaseURL, req.APIKey)
+	if err := modelsettings.RequireSupportedProtocol(req.Protocol); err != nil {
+		settingsError(c, err)
+		return
+	}
+	var result modelsettings.DiscoverResult
+	var err error
+	if req.ProfileID != "" {
+		result, err = store.DiscoverProfile(ctx, authEmail(c), req.ProfileID, req.BaseURL, req.APIKey, req.Protocol)
+	} else {
+		result, err = store.DiscoverWithMetadata(ctx, authEmail(c), req.BaseURL, req.APIKey)
+	}
+	if err != nil {
+		settingsError(c, err)
+		return
+	}
+	ok(c, result)
+}
+
+// Named profiles share owner authentication and private storage with legacy settings.
+func (a *API) GetModelProfiles(_ context.Context, c *app.RequestContext) {
+	store := a.settingsStore(c)
+	if store == nil {
+		return
+	}
+	profiles, err := store.GetProfiles(authEmail(c))
+	if err != nil {
+		settingsError(c, err)
+		return
+	}
+	ok(c, profiles.Public())
+}
+func (a *API) SaveModelProfiles(_ context.Context, c *app.RequestContext) {
+	store := a.settingsStore(c)
+	if store == nil {
+		return
+	}
+	if len(c.Request.Body()) > 128<<10 {
+		fail(c, consts.StatusRequestEntityTooLarge, "request too large")
+		return
+	}
+	var req struct {
+		Profiles []struct {
+			modelsettings.Config
+			APIKey string `json:"api_key"`
+		} `json:"profiles"`
+		ActiveProfileID string `json:"active_profile_id"`
+	}
+	if bind(c, &req) != nil || req.Profiles == nil {
+		fail(c, consts.StatusBadRequest, "invalid model profiles request")
+		return
+	}
+	p := modelsettings.Profiles{Profiles: []modelsettings.Config{}, ActiveProfileID: req.ActiveProfileID}
+	keys := map[string]string{}
+	for _, profile := range req.Profiles {
+		p.Profiles = append(p.Profiles, profile.Config)
+		keys[profile.ID] = profile.APIKey
+	}
+	saved, err := store.SaveProfiles(authEmail(c), p, keys)
+	if err != nil {
+		settingsError(c, err)
+		return
+	}
+	ok(c, saved.Public())
+}
+func (a *API) ProbeModelProfile(ctx context.Context, c *app.RequestContext) {
+	store := a.settingsStore(c)
+	if store == nil {
+		return
+	}
+	if len(c.Request.Body()) > 128<<10 {
+		fail(c, consts.StatusRequestEntityTooLarge, "request too large")
+		return
+	}
+	var req struct {
+		ProfileID    string   `json:"profile_id"`
+		Model        string   `json:"model"`
+		Capabilities []string `json:"capabilities"`
+	}
+	if bind(c, &req) != nil {
+		fail(c, consts.StatusBadRequest, "invalid model probe request")
+		return
+	}
+	if len(req.Capabilities) == 0 {
+		fail(c, consts.StatusBadRequest, "choose at least one capability to probe")
+		return
+	}
+	budgetCtx, cancelBudget, budgetErr := a.Chat.AuxiliaryBudgetContext(ctx, authEmail(c), "probe")
+	if budgetErr != nil {
+		fail(c, consts.StatusServiceUnavailable, "用量账本暂不可用，未执行模型探测")
+		return
+	}
+	defer cancelBudget()
+	result, err := store.Probe(budgetCtx, authEmail(c), req.ProfileID, req.Model, req.Capabilities)
 	if err != nil {
 		settingsError(c, err)
 		return

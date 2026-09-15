@@ -10,20 +10,22 @@ import (
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/orka-oss/orka_core/agent"
-	"github.com/orka-oss/orka_core/config"
-	"github.com/orka-oss/orka_core/state"
-	"github.com/orka-oss/orka_core/trace"
 	"github.com/orka-oss/orka_control_layer/api"
+	"github.com/orka-oss/orka_control_layer/browsertool"
 	"github.com/orka-oss/orka_control_layer/checkpoint"
 	"github.com/orka-oss/orka_control_layer/connectors"
-	"github.com/orka-oss/orka_control_layer/scheduled_task"
 	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_control_layer/llm"
 	"github.com/orka-oss/orka_control_layer/message_utils"
 	"github.com/orka-oss/orka_control_layer/obs"
+	"github.com/orka-oss/orka_control_layer/scheduled_task"
 	"github.com/orka-oss/orka_control_layer/service"
 	"github.com/orka-oss/orka_control_layer/service/middlewares"
+	"github.com/orka-oss/orka_core/agent"
+	"github.com/orka-oss/orka_core/config"
+	"github.com/orka-oss/orka_core/messages"
+	"github.com/orka-oss/orka_core/state"
+	"github.com/orka-oss/orka_core/trace"
 )
 
 // waitReady polls an HTTP endpoint until it accepts connections (or timeout),
@@ -91,7 +93,7 @@ func main() {
 	if cfg.LLM.OpenAIAPIKey == "" {
 		logger.Warn("LLM api key is empty; chat requests will fail until OPENAI_API_KEY is set")
 	}
-	var mainLLM, miniLLM llm.Client
+	var modelClient llm.Client
 	// Wrap the provider client in bounded exponential-backoff retry so a transient
 	// 429/5xx/network blip doesn't fail a whole agentic run (or a sub-agent).
 	// Shape traffic BEFORE retry: the pipeline runs calls in parallel, which is
@@ -101,19 +103,18 @@ func main() {
 	// Timed sits INSIDE the limiter on purpose: it then measures the provider
 	// exchange alone, so queue time is the difference between a call's observed
 	// spacing and its logged duration rather than being folded into it.
-	mainLLM = llm.NewLimiterFromEnv(llm.NewMetered(llm.NewRetry(
-		llm.NewOpenAIClient(cfg.LLM.OpenAIBaseURL, cfg.LLM.OpenAIAPIKey),
-		llm.RetryConfig{
-			MaxAttempts: cfg.LLM.MaxRetries,
-			OnRetry: func(attempt int, delay time.Duration, err error) {
-				logger.Warn("llm transient error; retrying", "attempt", attempt, "delay", delay.String(), "err", err.Error())
-			},
+	modelClient = llm.NewLimiterFromEnv(llm.NewRetry(llm.NewMetered(
+		llm.NewAccounted(llm.NewOpenAIClient(cfg.LLM.OpenAIBaseURL, cfg.LLM.OpenAIAPIKey)),
+		func(ctx context.Context) string { return agent.MetaFrom(ctx).AgentID },
+	), llm.RetryConfig{
+		MaxAttempts: cfg.LLM.MaxRetries,
+		OnRetry: func(attempt int, delay time.Duration, err error) {
+			logger.Warn("llm transient error; retrying", "attempt", attempt, "delay", delay.String(), "err", err.Error())
 		},
-	), func(ctx context.Context) string { return agent.MetaFrom(ctx).AgentID }))
-	miniLLM = mainLLM
+	}))
 
 	msg := message_utils.New(store, cfg.Obs.PersistSampling, logger)
-	chat := service.NewChatService(cfg, mainLLM, miniLLM, cpStore, msg, metrics, logger)
+	chat := service.NewChatService(cfg, modelClient, cpStore, msg, metrics, logger)
 	// Close out runs orphaned by the previous process before serving, then keep
 	// sweeping. A run's registry lives in memory and dies with the process, so
 	// without this the run log fills with executions that are "running" forever.
@@ -130,23 +131,31 @@ func main() {
 	// bound to the workspace storage root.
 	service.QuantTools = service.BuildQuantTools(cfg.Storage.BaseStoragePath)
 
-	// Load Claude-Code-style SKILL.md packages from the global skills dir, merged
-	// over the built-in catalog; skill_create writes new ones here.
+	// Load read-only system SKILL.md packages. Personal skills use the owner store.
 	if n, err := middlewares.LoadSkills(cfg.Agent.SkillsDir); err != nil {
 		logger.Warn("skills load failed", "dir", cfg.Agent.SkillsDir, "err", err)
 	} else if n > 0 {
 		logger.Info("skills loaded", "dir", cfg.Agent.SkillsDir, "count", n)
 	}
 
-	// Wire the real GUI executor (run_agent) when configured; else keep the mock.
+	// Bind GUI and DOM browser tools to this provider instance. Missing
+	// configuration stays unavailable in both local and MCP fallback paths.
+	toolOptions := service.ToolsProviderOptions{}
 	if wsURL := cfg.Agent.GUIAgentWSURL; wsURL != "" {
 		guiToken := os.Getenv("GUI_AUTH_TOKEN")
-		service.GUITool = connectors.NewRunAgentTool(wsURL, guiToken)
+		toolOptions.GUI = connectors.NewRunAgentTool(wsURL, guiToken)
+		if endpoint, err := browserEndpoint(wsURL); err != nil {
+			logger.Warn("browser endpoint is invalid; DOM browser unavailable")
+		} else {
+			toolOptions.Browser = browsertool.New(connectors.NewBrowserDialer(endpoint, guiToken), cfg.Storage.BaseStoragePath)
+		}
 		if guiToken == "" {
-			logger.Warn("gui agent has no GUI_AUTH_TOKEN; the executor is unauthenticated (dev only)")
+			logger.Warn("gui agent has no GUI_AUTH_TOKEN; GUI requests will be rejected until a shared token is configured")
 		}
 		logger.Info("gui agent enabled", "ws", wsURL)
 	}
+
+	chat.ToolsFor = service.LocalToolsProvider(cfg.Storage.BaseStoragePath, toolOptions)
 
 	// Optionally source tools from a remote tools_server over MCP. When unset,
 	// the control layer uses the local filesystem tools directly.
@@ -157,7 +166,7 @@ func main() {
 			ttl, []string{"file:read", "file:write", "web:search"},
 			func(ctx context.Context, email string) ([]db.Connector, error) {
 				return store.EnabledConnectors(ctx, email)
-			},
+			}, toolOptions,
 		)
 		chat.ToolsFor = prov
 		chat.InvalidateTools = inval
@@ -190,23 +199,14 @@ func main() {
 	// Optional cron scheduler: render task templates and trigger chat runs.
 	if os.Getenv("SCHEDULER_ENABLE") == "1" {
 		sched := &scheduled_task.Scheduler{
-			Source: scheduled_task.CronSource(store),
+			Source: scheduled_task.CronSource(store), Claims: store,
 			Trigger: func(ctx context.Context, task db.TaskMeta, content string) error {
-				// Dispatch asynchronously: a scheduled run can take minutes, and the
-				// scheduler has already claimed the task (advanced next_run_at), so
-				// the loop must not block on it — otherwise other due tasks wait.
-				go chat.RunHeadless(context.Background(), service.ChatRunRequest{
-					Message: content, ConversationID: task.ConversationID,
-					TaskID: task.TaskID, UserEmail: task.OwnerEmail,
-					Trigger: "schedule",
-				})
-				return nil
+				status := chat.Run(ctx, service.ChatRunRequest{
+					Message: content, ConversationID: task.ConversationID, TaskID: task.TaskID, UserEmail: task.OwnerEmail, Trigger: "schedule",
+				}, func(messages.Message) {})
+				return scheduled_task.OutcomeError(status)
 			},
-			Advance: func(ctx context.Context, taskID string, nextRunAt int64) error {
-				return store.AdvanceTaskRun(ctx, taskID, nextRunAt, "")
-			},
-			Interval: 20 * time.Second,
-			Log:      logger,
+			Interval: 20 * time.Second, Log: logger,
 		}
 		go sched.Start(context.Background())
 		logger.Info("scheduler enabled")

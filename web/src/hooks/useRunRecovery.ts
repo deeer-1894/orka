@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
+import type { RunActions } from '../lib/runActions';
 import { api } from '../api';
 import { RecoveryController, recoveryKey, type RecoveryContext, type ChatStatus } from '../lib/runRecovery';
 
-export function useRunRecovery(context: RecoveryContext, attach: (cid: string) => Promise<ChatStatus | void>, runRevision: number) {
+export function useRunRecovery(context: RecoveryContext, attach: (cid: string) => Promise<ChatStatus | void>, runRevision: number, actions?: RunActions) {
   const [, update] = useState(0);
   const attachRef = useRef(attach);
   attachRef.current = attach;
   const [controller] = useState(() => new RecoveryController({
+    actions,
     list: async cid => (await api.listRuns({ conversation_id: cid })).runs || [],
     get: id => api.getRun(id),
     resume: id => api.resumeRun(id),
@@ -17,7 +19,7 @@ export function useRunRecovery(context: RecoveryContext, attach: (cid: string) =
   controller.setContext(context);
   const key = recoveryKey(context);
   useEffect(() => {
-    if (!context.conversationID || context.enabled === false || context.status === 'streaming') return;
+    if (!context.conversationID || context.enabled === false) return;
     const refresh = () => { if (!document.hidden) void controller.refresh(); };
     refresh();
     const timer = window.setInterval(refresh, 3000); // settlement can follow the terminal SSE frame

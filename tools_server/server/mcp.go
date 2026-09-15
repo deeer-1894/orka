@@ -32,6 +32,9 @@ func New(cfg Config) *mcpserver.MCPServer {
 		// tools/list filter: drop tools the caller's scopes don't grant.
 		mcpserver.WithToolFilter(func(ctx context.Context, ts []mcp.Tool) []mcp.Tool {
 			id := identity.From(ctx)
+			if id.AuthErr == nil && id.CatalogOnly() {
+				return ts
+			}
 			out := make([]mcp.Tool, 0, len(ts))
 			for _, t := range ts {
 				m := reg[t.Name]
