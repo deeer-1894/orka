@@ -102,6 +102,8 @@ export const tools = {
 };
 
 export const chat = {
+  steer: (conversation_id: string, run_id: string, request_id: string, message: string, file_ids: string[]) =>
+    post<{ message: Message; run_id: string }>("/chat/steer", { conversation_id, run_id, request_id, message, file_ids }),
   // Approve/reject a paused side-effecting tool call.
   confirm: (id: string, approve: boolean, always = false, conversation_id = "") =>
     post<{ resolved: boolean; resumed?: boolean }>("/chat/confirm", { id, approve, always, conversation_id }),

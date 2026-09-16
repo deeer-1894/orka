@@ -20,6 +20,7 @@ type executionEntry struct {
 	id, parentID, owner, conversation, task string
 	ctx                                     context.Context
 	cancel                                  context.CancelFunc
+	steering                                *steeringInbox
 }
 type executionRegistry struct {
 	mu      sync.Mutex
@@ -62,7 +63,7 @@ func (s *ChatService) AdmitExecution(parent context.Context, owner, conversation
 		identity.ID = "run_" + messages.NewID()
 	}
 	ctx, cancel := context.WithCancel(WithExecutionIdentity(parent, identity.ID, identity.ParentID))
-	entry := &executionEntry{id: identity.ID, parentID: identity.ParentID, owner: owner, conversation: conversation, task: task, ctx: ctx, cancel: cancel}
+	entry := &executionEntry{id: identity.ID, parentID: identity.ParentID, owner: owner, conversation: conversation, task: task, ctx: ctx, cancel: cancel, steering: newSteeringInbox()}
 	r := &s.executions
 	r.mu.Lock()
 	if r.entries == nil {

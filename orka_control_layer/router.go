@@ -59,6 +59,7 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/task/webhook/disable", a.DisableWebhook)
 
 	g.POST("/chat/run", a.ChatRun)
+	g.POST("/chat/steer", a.ChatSteer)
 	g.GET("/chat/attach", a.ChatAttach) // reconnect + replay missed SSE events
 	g.POST("/chat/kill", a.ChatKill)
 	g.POST("/internal/chat/run", a.ChatRun)

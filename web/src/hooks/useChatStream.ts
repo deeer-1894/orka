@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../types";
 import { hydrateConversation, terminalStatus, type ChatStatus } from "../lib/runRecovery";
 import { invalidateSessionFiles } from "./useFileRevision";
-import { api, auth } from "../api";
+import { api, auth, chat } from "../api";
 
 export type RunStatus = ChatStatus;
 
@@ -114,6 +114,7 @@ export function useChatStreams(session?: SessionRecoveryStore) {
         ]);
       }
 
+      if (!p.attachOnly) delete lastRunIDs.current[cid];
       const state = { terminal: "streaming" as RunStatus, lastSeq: 0, runID: p.attachOnly ? lastRunIDs.current[cid] || "" : "" };
       // Per-run token buffer, flushed on the next animation frame (see below).
       const pending: { buf: Record<string, string>; proto: Record<string, Message>; raf: number } = { buf: {}, proto: {}, raf: 0 };
@@ -331,6 +332,24 @@ export function useChatStreams(session?: SessionRecoveryStore) {
     [patch, readInput, saveInput],
   );
 
+  // Retain the request ID after a lost response so retries cannot duplicate an
+  // instruction the server already accepted. Never replace the active SSE reader.
+  const steeringRetries = useRef(new Map<string, { key: string; id: string }>());
+  const steer = useCallback(async (cid: string, message: string, fileIDs: string[]) => {
+    const runID = lastRunIDs.current[cid];
+    if (!runID || !abortRefs.current[cid]) throw new Error("当前任务尚未连接，请稍后重试");
+    const key = JSON.stringify([runID, message, fileIDs]);
+    let request = steeringRetries.current.get(cid);
+    if (!request || request.key !== key) {
+      request = { key, id: crypto.randomUUID() };
+      steeringRetries.current.set(cid, request);
+    }
+    const result = await chat.steer(cid, runID, request.id, message, fileIDs);
+    steeringRetries.current.delete(cid);
+    patch(cid, c => c.messages.some(m => m.id === result.message.id)
+      ? c : { ...c, messages: [...c.messages, result.message] });
+  }, [patch]);
+
   const stopping = useRef(new Set<string>());
   const kill = useCallback(async (cid: string) => {
     if (!cid || stopping.current.has(cid)) return;
@@ -349,5 +368,5 @@ export function useChatStreams(session?: SessionRecoveryStore) {
   const statusOf = useCallback((cid: string): RunStatus => streams[cid]?.status ?? "idle", [streams]);
   const runningIds = Object.keys(streams).filter((cid) => streams[cid].status === "streaming");
 
-  return { run, kill, connectionOf: (cid: string) => streams[cid]?.connection, errorOf: (cid: string) => streams[cid]?.error, inputOf: readInput, setConvMessages, hydrateMessages, messagesOf, statusOf, runningIds };
+  return { run, steer, kill, connectionOf: (cid: string) => streams[cid]?.connection, errorOf: (cid: string) => streams[cid]?.error, inputOf: readInput, setConvMessages, hydrateMessages, messagesOf, statusOf, runningIds };
 }

@@ -515,6 +515,7 @@ function ComposerForm({
             onChange={(e) => { setText(e.target.value); syncAt(e.target.value, e.target.selectionStart); }}
             onPaste={onPaste}
             onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing) return;
               if (atOpen && atMatches.length) {
                 if (e.key === "ArrowDown") { e.preventDefault(); setAtSel((s) => Math.min(s + 1, atMatches.length - 1)); return; }
                 if (e.key === "ArrowUp") { e.preventDefault(); setAtSel((s) => Math.max(s - 1, 0)); return; }
@@ -537,7 +538,7 @@ function ComposerForm({
             placeholder="给 Orka 发消息…"
             className="block max-h-[200px] flex-1 resize-none bg-transparent px-1 py-2 text-[15px] outline-none placeholder:text-faint"
           />
-          {busy ? (
+          {busy && !text.trim() && attachments.length === 0 ? (
             <button
               onClick={onKill}
               className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-ink text-bg hover:opacity-80 transition"

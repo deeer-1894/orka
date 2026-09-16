@@ -92,7 +92,7 @@ test('history resume rejects unconfirmed response and exhausted budget',async t=
  await a.page.getByRole('button',{name:'继续任务',exact:true}).first().click(); await a.page.getByText('服务未确认该任务继续运行',{exact:false}).first().waitFor(); assert.equal(a.requests.filter(r=>r.path==='/chat/resume_run').length,1); assert.equal(await a.page.getByRole('button',{name:'继续任务',exact:true}).count(),1); a.check();
 });
 test('stop failure is visible and does not claim idle',async t=>{
- const a=await app(t,{handle:async({path,route})=>{if(path==='/chat/run'){await route.fulfill({contentType:'text/event-stream',body:''});return true;} }}); await a.select('a'); await a.page.locator('textarea').fill('long task'); await a.page.locator('textarea').press('Enter'); await a.page.getByTitle('Stop',{exact:true}).click(); await a.page.getByText('停止失败',{exact:false}).first().waitFor(); await a.page.getByRole('button',{name:'重新连接',exact:true}).waitFor(); a.check();
+ const a=await app(t,{handle:async({path,route})=>{if(path==='/chat/run'){await route.fulfill({contentType:'text/event-stream',body:''});return true;} }}); await a.select('a'); await a.page.locator('textarea').fill('long task'); await a.page.locator('textarea').press('Enter'); await a.page.getByRole('button',{name:'停止',exact:true}).click(); await a.page.getByText('停止失败',{exact:false}).first().waitFor(); await a.page.getByRole('button',{name:'重新连接',exact:true}).waitFor(); a.check();
 });
 
 test('named profiles isolate discovery and explicitly probe saved capabilities',async t=>{
@@ -119,7 +119,7 @@ test('a stream gap reconciles persisted history once and resumes without duplica
    assert.equal(url.searchParams.get('reconcile'),'1');assert.equal(url.searchParams.get('last_event_id'),'0');
    const events=[msg('s3','stream','',{action:'snapshot',payload:{run_id:'run-a',cursor:3}}),msg('d4','task','',{action:'done'})];await route.fulfill({contentType:'text/event-stream',body:events.map((m,i)=>`id: ${i+3}\ndata: ${JSON.stringify(m)}\n\n`).join('')});return true;
   }
- }});await a.select('a');await a.page.locator('textarea').fill('recover gap');await a.page.locator('textarea').press('Enter');await a.page.getByTitle('Stop',{exact:true}).waitFor({state:'hidden'});assert.equal(gaps,1);assert.equal(await a.page.getByText('Persisted answer',{exact:true}).count(),1);a.check();
+ }});await a.select('a');await a.page.locator('textarea').fill('recover gap');await a.page.locator('textarea').press('Enter');await a.page.waitForResponse(r=>r.url().includes('reconcile=1'));assert.equal(gaps,1);assert.equal(await a.page.getByText('Persisted answer',{exact:true}).count(),1);a.check();
 });
 
 test('retry retains original attachment, model and confirmation settings',async t=>{
@@ -162,8 +162,8 @@ test('stop waits for confirmation and settles without reattaching a stopped task
  const a=await app(t,{handle:async({path,route,json})=>{
   if(path==='/chat/run'){await route.fulfill({contentType:'text/event-stream',body:''});return true;}
   if(path==='/chat/kill'){await gate;await json({status:'killed'});return true;}
- }});await a.select('a');await a.page.locator('textarea').fill('stop after confirmation');await a.page.locator('textarea').press('Enter');await a.page.getByTitle('Stop',{exact:true}).click();await a.page.getByText('正在停止，等待服务确认…',{exact:true}).waitFor();
- await a.page.waitForTimeout(750);await a.page.getByText('正在停止，等待服务确认…',{exact:true}).waitFor();release();await a.page.getByText('正在停止，等待服务确认…',{exact:true}).waitFor({state:'hidden'});await a.page.getByTitle('Stop',{exact:true}).waitFor({state:'hidden'});a.check();
+ }});await a.select('a');await a.page.locator('textarea').fill('stop after confirmation');await a.page.locator('textarea').press('Enter');await a.page.getByRole('button',{name:'停止',exact:true}).click();await a.page.getByText('正在停止，等待服务确认…',{exact:true}).waitFor();
+ await a.page.waitForTimeout(750);await a.page.getByText('正在停止，等待服务确认…',{exact:true}).waitFor();release();await a.page.getByText('正在停止，等待服务确认…',{exact:true}).waitFor({state:'hidden'});await a.page.getByRole('button',{name:'停止',exact:true}).waitFor({state:'hidden'});a.check();
 });
 test('produced file event refreshes the already open files panel',async t=>{
  let generated=false;
@@ -255,7 +255,7 @@ test('complete product path from named connection and capability to budget, priv
   if(path==='/delivery/download'){await route.fulfill({headers:{'content-disposition':'attachment; filename="final.txt"'},body:'frozen'});return true;}
  }});
  await a.page.getByRole('button',{name:'模型配置',exact:true}).click();await a.page.getByRole('button',{name:'命名连接与能力检测'}).click();await a.page.getByRole('button',{name:'保存所有连接'}).click();await a.page.getByText('连接配置已保存',{exact:true}).waitFor();await a.page.getByRole('button',{name:'检测 工具调用 model-a'}).click();await a.page.getByText('工具调用：已验证',{exact:false}).waitFor();await a.page.getByRole('button',{name:'关闭命名连接'}).click();await a.page.getByRole('button',{name:'关闭模型配置'}).click();
- await a.select('a');await openBudget(a);await a.page.getByLabel('Token 上限').fill('1200');await a.page.locator('textarea').fill('Complete delivery');await a.page.locator('textarea').press('Enter');await a.page.getByTitle('Stop',{exact:true}).waitFor({state:'hidden'});await a.page.getByText('交付快照 · 版本 1',{exact:true}).waitFor();await a.page.getByRole('button',{name:/查看 · 1 步/}).click();await a.page.getByAltText('本次运行截图').waitFor();assert.equal(await a.page.locator('iframe').count(),0);
+ await a.select('a');await openBudget(a);await a.page.getByLabel('Token 上限').fill('1200');await a.page.locator('textarea').fill('Complete delivery');await a.page.locator('textarea').press('Enter');await a.page.getByRole('button',{name:'停止',exact:true}).waitFor({state:'hidden'});await a.page.getByText('交付快照 · 版本 1',{exact:true}).waitFor();await a.page.getByRole('button',{name:/查看 · 1 步/}).click();await a.page.getByAltText('本次运行截图').waitFor();assert.equal(await a.page.locator('iframe').count(),0);
  await openWorkbench(a,'运营台');await a.page.getByRole('button',{name:'验收证据',exact:true}).click();await a.page.getByText('检查通过',{exact:true}).waitFor();await openWorkbench(a,'成果');await a.page.getByRole('button',{name:'交付快照',exact:true}).click();await a.page.getByText('当前工作区',{exact:true}).waitFor();const download=a.page.waitForEvent('download');await a.page.getByRole('link',{name:'下载快照 final.txt'}).click();assert.equal((await download).suggestedFilename(),'final.txt');a.check();
 });
 
@@ -408,4 +408,44 @@ test('existing tool picker separates DOM browser from visual GUI without authori
  }});await a.select('a');await a.page.getByRole('button',{name:'工具范围'}).click();const dom=a.page.getByRole('button',{name:'🌐 网页 DOM',exact:true}),gui=a.page.getByRole('button',{name:'🖥️ GUI 视觉',exact:true});await dom.waitFor();await gui.waitFor();assert.match(await dom.getAttribute('title'),/DOM/);assert.match(await gui.getAttribute('title'),/截图/);
  await dom.click();await a.page.getByRole('button',{name:'工具范围'}).click();let sent=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/chat/run'));await a.page.locator('textarea').fill('DOM only');await a.page.locator('textarea').press('Enter');assert.deepEqual((await sent).postDataJSON().enabled_tools,['browser']);await a.page.getByText('发送失败',{exact:false}).first().waitFor();
  await a.page.getByRole('button',{name:'工具范围'}).click();await dom.click();await gui.click();await a.page.reload();await a.select('a');await a.page.getByRole('button',{name:'工具范围'}).click();assert.equal(await dom.getAttribute('aria-pressed'),'false');assert.equal(await gui.getAttribute('aria-pressed'),'true');await a.page.getByRole('button',{name:'工具范围'}).click();sent=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/chat/run'));await a.page.locator('textarea').fill('Visual GUI only');await a.page.locator('textarea').press('Enter');assert.deepEqual((await sent).postDataJSON().enabled_tools,['gui_agent']);assert.equal(await a.page.locator('header').getByRole('button',{name:/网页 DOM|GUI 视觉/}).count(),0);a.check();
+});
+
+test('one composer control switches with input and steers the live run without a second run', async t => {
+ let finish;
+ const completion = new Promise(resolve => { finish=resolve; });
+ t.after(()=>finish());
+ let fail=true;
+ const a=await app(t,{handle:async({path,body,route,json})=>{
+  if(path==='/chat/run') {
+   await route.fulfill({contentType:'text/event-stream',body:`id: 1\ndata: ${JSON.stringify(msg('start1','task','',{action:'start'}))}\n\n`});return true;
+  }
+  if(path==='/chat/attach') {
+   await completion;
+   await route.fulfill({contentType:'text/event-stream',body:`id: 3\ndata: ${JSON.stringify(msg('done3','task','',{action:'done'}))}\n\n`}).catch(()=>{});return true;
+  }
+  if(path==='/chat/steer') {
+   if(fail) await route.fulfill({status:503,json:{code:503,msg:'temporary failure'}});
+   else await json({run_id:body.run_id,message:msg('steer2','chat',body.message)});
+   return true;
+  }
+ }});
+ await a.select('a');
+ const send=a.page.getByRole('button',{name:'发送',exact:true}), stop=a.page.getByRole('button',{name:'停止',exact:true}), input=a.page.locator('textarea');
+ assert.equal(await send.count(),1);assert.equal(await stop.count(),0);assert.equal(await send.isDisabled(),true);
+ await input.fill('long running task');await send.click();await stop.waitFor();
+ assert.equal(await send.count(),0);
+ await input.fill('change the plan now');await send.waitFor();assert.equal(await stop.count(),0);
+ await input.fill('   ');await stop.waitFor();assert.equal(await send.count(),0);
+ await input.fill('change the plan now');await send.click();
+ await a.page.getByText('temporary failure',{exact:false}).first().waitFor();assert.equal(await input.inputValue(),'change the plan now');
+ fail=false;await send.click();await stop.waitFor();assert.equal(await input.inputValue(),'');
+ const submissions=a.requests.filter(r=>r.path==='/chat/steer');
+ assert.equal(submissions.length,2);assert.equal(submissions[0].body.request_id,submissions[1].body.request_id);assert.equal(submissions[1].body.run_id,'run-a');
+ assert.equal(a.requests.filter(r=>r.path==='/chat/run').length,1);
+ assert.equal(a.requests.filter(r=>r.path==='/chat/kill').length,0);
+ await a.page.locator('input[type=file]').setInputFiles({name:'extra.txt',mimeType:'text/plain',buffer:Buffer.from('new data')});
+ await a.page.getByRole('button',{name:'移除 extra.txt'}).waitFor();await send.waitFor();assert.equal(await stop.count(),0);
+ await send.click();await stop.waitFor();
+ assert.ok(a.requests.filter(r=>r.path==='/chat/steer').at(-1).body.file_ids.length);
+ finish();await send.waitFor();assert.equal(await stop.count(),0);a.check();
 });

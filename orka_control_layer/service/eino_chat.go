@@ -519,17 +519,27 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 	defer journal.flush()
 
 	var iter *adk.AsyncIterator[*adk.AgentEvent]
+	inbox := steeringFrom(ctx)
+	defer inbox.close()
+	newOptions := func() []adk.AgentRunOption {
+		opt, cancel := adk.WithCancel()
+		if store != nil && ckptID != "" {
+			inbox.bind(cancel)
+		}
+		return []adk.AgentRunOption{opt}
+	}
+	opts := newOptions()
 	if rs := resumeFrom(ctx); rs != nil && store != nil && ckptID != "" {
 		var err error
 		iter, err = runner.ResumeWithParams(ctx, ckptID,
-			&adk.ResumeParams{Targets: map[string]any{rs.Target: rs.Data}})
+			&adk.ResumeParams{Targets: map[string]any{rs.Target: rs.Data}}, opts...)
 		if err != nil {
 			return err
 		}
 	} else if store != nil && ckptID != "" {
-		iter = runner.Run(ctx, input, adk.WithCheckPointID(ckptID))
+		iter = runner.Run(ctx, input, append(opts, adk.WithCheckPointID(ckptID))...)
 	} else {
-		iter = runner.Run(ctx, input)
+		iter = runner.Run(ctx, input, opts...)
 	}
 
 	type pendingCall struct {
@@ -547,10 +557,34 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 		}
 	}()
 
+	transcript := append([]*schema.Message(nil), input...)
+	cancelled := false
 	for {
 		ev, ok := iter.Next()
 		if !ok {
-			break
+			if cancelled {
+				var err error
+				iter, err = runner.Resume(ctx, ckptID, newOptions()...)
+				if err != nil {
+					return err
+				}
+				cancelled = false
+				continue
+			}
+			if inbox.finish() {
+				break
+			}
+			// A message arrived during the final model call. Continue under the
+			// same execution, transcript and budget before emitting task.done.
+			if t := inbox.transcript(); len(t) > 0 {
+				transcript = t
+			}
+			opts := newOptions()
+			if store != nil && ckptID != "" {
+				opts = append(opts, adk.WithCheckPointID(ckptID))
+			}
+			iter = runner.Run(ctx, transcript, opts...)
+			continue
 		}
 		// A danger tool asked for approval: the Runner has checkpointed the run,
 		// so surface the request and RETURN. Nothing is blocked — /chat/confirm
@@ -566,6 +600,11 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 			}
 		}
 		if ev.Err != nil {
+			var stopped *adk.CancelError
+			if errors.As(ev.Err, &stopped) && ctx.Err() == nil && inbox != nil && store != nil {
+				cancelled = true
+				continue // drain fully before resuming the saved native state
+			}
 			// Graceful degradation: hitting the iteration cap shouldn't hard-fail
 			// a long, expensive run — surface a note and return what we have so the
 			// run is recorded as done-with-partial rather than failed.
@@ -621,6 +660,7 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 		// The parent result contains the delegate's handoff. Keep the parent
 		// transcript coherent; delegate events remain in the event store.
 		if ev.AgentName == "" || ev.AgentName == einoOrchestratorName {
+			transcript = append(transcript, m)
 			journal.append(m)
 		} else {
 			journal.appendDelegate(ev.AgentName, m)
@@ -749,6 +789,9 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	// the summarization backstop.
 	maxIters := executionIterationLimit(ctx)
 	ctxMW := contextHandlers(ctx, s.Cfg.Storage.BaseStoragePath, runUserEmail(rc), einoOrchestratorName, tools, s.Cfg.Agent.SubAgents)
+	if steering := s.prepareSteering(ctx, rc); steering != nil {
+		ctxMW = append([]adk.ChatModelAgentMiddleware{steering}, ctxMW...)
+	}
 	if s.Cfg.Agent.MultiAgent {
 		if instruction == "" {
 			instruction = OrchestratorPrompt

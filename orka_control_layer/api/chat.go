@@ -14,6 +14,27 @@ import (
 	"github.com/orka-oss/orka_core/pathsafe"
 )
 
+// ChatSteer delivers instructions to an exact active execution without opening
+// another SSE stream, releasing its lease, or changing its budget/grants.
+func (a *API) ChatSteer(ctx context.Context, c *app.RequestContext) {
+	var req service.SteeringRequest
+	if err := bind(c, &req); err != nil {
+		fail(c, consts.StatusBadRequest, "bad request: "+err.Error())
+		return
+	}
+	conv, err := a.authorizedConversation(ctx, c, req.ConversationID, true)
+	if err != nil {
+		workspaceFail(c, err)
+		return
+	}
+	m, err := a.Chat.Steer(ctx, conv.OwnerEmail, req)
+	if err != nil {
+		fail(c, consts.StatusConflict, err.Error())
+		return
+	}
+	ok(c, map[string]any{"message": m, "run_id": req.RunID})
+}
+
 // ChatRun handles POST /chat/run, streaming events as Server-Sent Events.
 //
 // Events are published to a per-conversation streamHub (which assigns sequence

@@ -314,10 +314,16 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	if req.resumeFrom != nil {
 		rc.Ctx = withRunResume(rc.Ctx, req.resumeFrom)
 	}
-	rc.Ctx = withAcceptance(rc.Ctx, s.Cfg.Storage.BaseStoragePath, req.UserEmail, req.ConversationID, runRecID)
+	contractRunID := runRecID
+	if contractRunID == "" && s.Cfg.Storage.BaseStoragePath != "" && req.UserEmail != "" && req.ConversationID != "" {
+		contractRunID = ExecutionID(ctx)
+	}
+	rc.Ctx = withAcceptance(rc.Ctx, s.Cfg.Storage.BaseStoragePath, req.UserEmail, req.ConversationID, contractRunID)
 	journal.trackState(rc.Ctx)
 
 	ctx = rc.Ctx
+	s.prepareSteering(ctx, rc)
+	defer steeringFrom(ctx).close()
 	if req.ResumeKey != "" {
 		err = s.resume(ctx, rc, req, raw, deps, tools, model, modelName)
 		// All exits share finish/finalize/journal settlement, including call limits
@@ -344,7 +350,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		// and 2.6s/651 direct, and 28% of runs make no tool calls at all. The
 		// attempt is skipped unless a free heuristic likes the request, and the
 		// model can bail out to the agent if it turns out to need tools.
-		if !s.tryFastPath(rc.Ctx, rc, req, model, modelName, raw) {
+		if !s.tryFastPath(rc.Ctx, rc, req, model, modelName, raw) || !steeringFrom(ctx).finish() {
 			err = s.runEino(ctx, rc, deps, tools, model, modelName, raw)
 		}
 	}

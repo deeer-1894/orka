@@ -119,11 +119,14 @@ function Workbench({
 }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [shared, setShared] = useState<Conversation[]>([]); // conversations others shared with me
+  const [ownedListLoaded, setOwnedListLoaded] = useState(false);
+  const [sharedListLoaded, setSharedListLoaded] = useState(false);
   const [shareFor, setShareFor] = useState<Conversation | null>(null); // open share dialog
   const [drawerArtifact, setDrawerArtifact] = useState<string | null>(null); // artifact to open inline in the drawer
   const openArtifactInDrawer = useCallback((id: string) => { setDrawerArtifact(id); setDrawerOpen(true); setDrawerTab("artifacts"); }, []);
   const activeStorageKey = `orka.activeConversation.${user.email}`;
   const [activeID, setActiveID] = useState(() => localStorage.getItem(activeStorageKey) || "");
+  const restoreSelection = useRef<string | null>(activeID);
   useEffect(() => {
     if (activeID) localStorage.setItem(activeStorageKey, activeID);
     else localStorage.removeItem(activeStorageKey);
@@ -159,7 +162,7 @@ function Workbench({
   // conversation_ids that have a scheduled (cron) task → marked 🔁 in the sidebar.
   const [scheduledIds, setScheduledIds] = useState<Set<string>>(new Set());
 
-  const { run, kill, hydrateMessages, messagesOf, statusOf, runningIds, connectionOf, errorOf, inputOf } = useChatStreams(sessionRecovery);
+  const { run, steer, kill, hydrateMessages, messagesOf, statusOf, runningIds, connectionOf, errorOf, inputOf } = useChatStreams(sessionRecovery);
   const [runRevision, setRunRevision] = useState(0);
   const messages = messagesOf(activeID);
   const status = statusOf(activeID);
@@ -235,8 +238,8 @@ function Workbench({
   }, []);
 
   const refreshConversations = useCallback(() => {
-    api.listConversations().then((c) => setConversations(c || [])).catch(() => {});
-    api.sharedWithMe().then((c) => setShared(c || [])).catch(() => {});
+    api.listConversations().then((c) => { setConversations(c || []); setOwnedListLoaded(true); }).catch(() => {});
+    api.sharedWithMe().then((c) => { setShared(c || []); setSharedListLoaded(true); }).catch(() => {});
   }, []);
 
   // load conversation list + tasks on mount (persists across refresh)
@@ -297,14 +300,18 @@ function Workbench({
     [hydrateMessages],
   );
 
-  // Restore the last conversation after the list arrives. A deleted or revoked
-  // conversation is cleared instead of leaving the UI pointing at a blank id.
+  // Restore once, after BOTH lists arrive. Refreshes must never clear a newly
+  // created conversation, and a late shared list must not erase its selection.
   useEffect(() => {
-    if (!activeID || (!conversations.length && !shared.length)) return;
+    const initialID = restoreSelection.current;
+    if (!initialID) return;
+    if (activeID !== initialID) { restoreSelection.current = null; return; }
+    if (!ownedListLoaded || !sharedListLoaded) return;
+    restoreSelection.current = null;
     const exists = conversations.some(c => c.conversation_id === activeID) || shared.some(c => c.conversation_id === activeID);
     if (exists) void selectConversation(activeID);
     else setActiveID("");
-  }, [activeID, conversations, shared, selectConversation]);
+  }, [activeID, conversations, shared, selectConversation, ownedListLoaded, sharedListLoaded]);
 
   const setTools = (next: Set<string>) => conversationSettings.patch({ enabledTools: [...next] });
 
@@ -348,9 +355,6 @@ function Workbench({
 
 
   const lastMsgRef = useRef("");
-  type QueuedSend = { message: string; fileIDs: string[]; budget: RunBudgetLimits; conversationID: string };
-  const queuedSends = useRef(new Map<string, QueuedSend[]>());
-  const [queuedRevision, setQueuedRevision] = useState(0);
   const onSend = useCallback(
     async (msg: string, fileIDs: string[] = [], budget?: RunBudgetLimits, conversationID?: string) => {
       // Capture the request before any asynchronous conversation creation. The
@@ -360,11 +364,7 @@ function Workbench({
       const request = { message: msg, userEmail: user.email, enabledTools: [...toolGroups], selectedVersion: version, activeSkill: activeSkill ?? "", fileIDs: [...fileIDs], confirmRisky, budget: sendBudget };
       const id = conversationID || activeID || await ensureConversation();
       if (statusOf(id) === "streaming" || recovery.isBusy(id) || runActions.actions.isBusy(id)) {
-        const queue = queuedSends.current.get(id) || [];
-        queue.push({ message: msg, fileIDs: [...fileIDs], budget: sendBudget, conversationID: id });
-        queuedSends.current.set(id, queue);
-        setQueuedRevision((n) => n + 1);
-        toast("已加入当前任务，完成后自动继续", "success");
+        await steer(id, msg, fileIDs);
         return;
       }
       lastMsgRef.current = msg;
@@ -375,25 +375,8 @@ function Workbench({
       });
       refreshTasks();
     },
-    [ensureConversation, run, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill, confirmRisky, recovery.isBusy, runActions.actions, activeID, conversationDraft.budget, statusOf],
+    [ensureConversation, run, steer, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill, confirmRisky, recovery.isBusy, runActions.actions, activeID, conversationDraft.budget, statusOf],
   );
-
-  // Drain messages added while a task was running. They become ordinary turns
-  // only after the active execution releases its conversation lease.
-  useEffect(() => {
-    if (!queuedRevision) return;
-    for (const [cid, queue] of queuedSends.current) {
-      if (!queue.length || statusOf(cid) === "streaming" || runActions.actions.isBusy(cid)) continue;
-      const next = queue.shift()!;
-      if (!queue.length) queuedSends.current.delete(cid);
-      void run({
-        message: next.message, conversationID: cid, userEmail: user.email,
-        enabledTools: [...toolGroups], selectedVersion: version, activeSkill: activeSkill ?? "",
-        fileIDs: next.fileIDs, confirmRisky, budget: next.budget,
-        onRejected: (error) => toast("追加消息发送失败：" + error.message, "error"),
-      });
-    }
-  }, [queuedRevision, runningIds, statusOf, runActions.actions, run, user.email, toolGroups, version, activeSkill, confirmRisky]);
 
   // Re-send the last user message after a failure (network drop, sandbox down…).
   const onRetry = useCallback(() => {

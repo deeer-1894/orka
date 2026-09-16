@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/orka-oss/orka_core/acceptance"
+	"github.com/orka-oss/orka_core/messages"
 )
 
 type acceptanceScope struct {
@@ -105,6 +106,71 @@ func writeNewAcceptance(path string, body []byte) error {
 	}
 	return closeErr
 }
+
+// Append-only human amendments leave the original contract intact. These files
+// also retain accepted messages if the process stops before the next model call.
+func persistSteeringRequest(ctx context.Context, m messages.Message) error {
+	scope, _ := ctx.Value(acceptanceScopeKey{}).(acceptanceScope)
+	if scope.base == "" {
+		return nil
+	}
+	dir, err := acceptanceDir(scope)
+	if err != nil {
+		return err
+	}
+	if err = os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	body, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return writeNewAcceptance(filepath.Join(dir, fmt.Sprintf("steering-%019d-%s.json", time.Now().UnixNano(), m.ID)), body)
+}
+
+func loadSteeringRequests(ctx context.Context) ([]messages.Message, error) {
+	scope, _ := ctx.Value(acceptanceScopeKey{}).(acceptanceScope)
+	if scope.base == "" || scope.owner == "" || scope.conversation == "" || scope.runID == "" {
+		return nil, nil
+	}
+	var out []messages.Message
+	for _, id := range append(append([]string(nil), scope.inherited...), scope.runID) {
+		scope.runID = id
+		dir, err := acceptanceDir(scope)
+		if err != nil {
+			return nil, err
+		}
+		entries, err := os.ReadDir(dir)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasPrefix(e.Name(), "steering-") || !strings.HasSuffix(e.Name(), ".json") {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil {
+				return nil, err
+			}
+			if info.Size() > 1<<20 {
+				return nil, errors.New("steering record exceeds limit")
+			}
+			body, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			if err != nil {
+				return nil, err
+			}
+			var m messages.Message
+			if err := json.Unmarshal(body, &m); err != nil {
+				return nil, err
+			}
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
 func saveAcceptanceCheck(ctx context.Context, record AcceptanceRecord) error {
 	scope, _ := ctx.Value(acceptanceScopeKey{}).(acceptanceScope)
 	dir, err := acceptanceDir(scope)
@@ -160,6 +226,14 @@ func readAcceptanceRun(scope acceptanceScope) (AcceptanceHistory, error) {
 			if err = json.Unmarshal(body, &history.Contract); err != nil {
 				return history, err
 			}
+			continue
+		}
+		if strings.HasPrefix(entry.Name(), "steering-") {
+			var m messages.Message
+			if err = json.Unmarshal(body, &m); err != nil {
+				return history, err
+			}
+			history.Contract.Requests = append(history.Contract.Requests, m.Content)
 			continue
 		}
 		var record AcceptanceRecord
