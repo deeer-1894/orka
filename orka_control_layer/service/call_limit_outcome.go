@@ -82,6 +82,7 @@ func (b *runBudget) toolProgress() int {
 
 type runOutcome struct {
 	status, errorDetail, budgetHit string
+	interruptionNotice             string
 	unfinished                     []string
 }
 
@@ -98,11 +99,27 @@ func assessRunOutcome(rc *agent.RunContext, runErr, ctxErr error) runOutcome {
 		out.status, out.errorDetail = db.RunFailed, "cancelled"
 	case runErr != nil:
 		out.status, out.errorDetail = db.RunFailed, runErr.Error()
+		var accounting *llm.AccountingError
+		if errors.As(runErr, &accounting) {
+			// Admission/settlement share the non-retryable call-limit envelope,
+			// but are not output truncation or a generation deadline.
+			switch {
+			case errors.Is(accounting, ErrRunBudgetExceeded):
+				out.errorDetail = "model call blocked: task budget cannot admit the next request"
+				out.interruptionNotice = "剩余任务预算无法容纳下一次模型请求的预留用量，或任务时长/轮次已达上限。预留用量包含上下文和最大输出，因此剩余 tokens 大于 0 时也可能暂停。"
+			case errors.Is(accounting, ErrDailyQuotaExceeded):
+				out.errorDetail = "model call blocked: daily token quota insufficient"
+				out.interruptionNotice = "每日 token 配额不足，无法预留下一次模型请求的用量。"
+			default:
+				out.errorDetail = "model call blocked: usage accounting " + accounting.Operation + " failed"
+				out.interruptionNotice = "模型用量记账未完成，已停止后续请求；请检查记账服务后再继续。"
+			}
+		}
 		if llm.IsCallLimit(runErr) && rc.Ctx != nil {
 			b := budgetFrom(rc.Ctx)
 			if b != nil {
 				b.mu.Lock()
-				b.lastCallError = runErr.Error()
+				b.lastCallError = out.errorDetail
 				b.mu.Unlock()
 			}
 			if b.toolProgress() > 0 {
@@ -132,6 +149,9 @@ func assessRunOutcome(rc *agent.RunContext, runErr, ctxErr error) runOutcome {
 
 func callLimitNotice(out runOutcome) string {
 	text := "模型单次调用达到输出或时间限额，本轮已停止，不会自动重试。"
+	if out.interruptionNotice != "" {
+		text = out.interruptionNotice + "本轮已停止，不会自动重试。"
+	}
 	if out.status == db.RunPartial {
 		text += "已记录实际工具进度，已有成果不会被本次限额处理删除；这不代表成果已验证或任务完成。恢复应使用保留的执行记录和剩余累计预算，从一个小步骤继续，不从头重做。"
 	} else {

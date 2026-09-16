@@ -8,7 +8,7 @@ import { api, chat as chatApi, files as fileApi } from "../api";
 import type { ConfirmPayload, PlanPayload } from "../types";
 import { normalizeWorkspacePath, workspaceLinkPath } from "../lib/sessionFiles";
 import { useSessionFiles } from "../hooks/useSessionFiles";
-import { isIncompleteRun, type RecoverySnapshot } from "../lib/runRecovery";
+import { isIncompleteRun, pendingConfirmationID, type RecoverySnapshot } from "../lib/runRecovery";
 import { Markdown } from "./Markdown";
 import { FilePreview } from "./FilePreview";
 import { FollowUps } from "./FollowUps";
@@ -168,6 +168,7 @@ export function Thread({
     if (nearBottom) el.scrollTop = el.scrollHeight;
   }, [messages.length, status]);
   const blocks = useMemo(() => group(messages), [messages]);
+  const pendingConfirm = useMemo(() => pendingConfirmationID(messages, conversationID), [messages, conversationID]);
   const thinking =
     status === "streaming" &&
     (blocks.length === 0 || blocks[blocks.length - 1].kind !== "assistant");
@@ -282,7 +283,7 @@ export function Thread({
             )}
             {b.kind === "reasoning" && <Reasoning m={b.m} />}
             {b.kind === "clarify" && <Clarify m={b.m} onResume={onResume} />}
-            {b.kind === "confirm" && <ConfirmCard m={b.m} onResumed={onResumed} />}
+            {b.kind === "confirm" && <ConfirmCard m={b.m} active={b.m.id === pendingConfirm} onResumed={onResumed} />}
             {b.kind === "plan" && <StructuredPlan plan={(b.m.payload as PlanPayload) ?? { steps: [] }} live={status === "streaming" && i >= lastUser} />}
             {b.kind === "weather" && <WeatherCard data={b.data} />}
             {b.kind === "steps" && <Steps items={b.items} live={status === "streaming" && i === lastSteps} />}
@@ -1094,13 +1095,13 @@ const TOOL_LABEL: Record<string, string> = { shell: "终端命令", run_agent: "
 
 // ConfirmCard is the human-in-the-loop gate: a side-effecting tool call is
 // paused until the user approves or rejects it.
-function ConfirmCard({ m, onResumed }: { m: Message; onResumed?: (cid: string) => void }) {
+function ConfirmCard({ m, active, onResumed }: { m: Message; active: boolean; onResumed?: (cid: string) => void }) {
   const p = m.payload as ConfirmPayload;
   const [done, setDone] = useState<"" | "once" | "always" | "reject">("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const decide = async (approve: boolean, always: boolean) => {
-    if (done || submitting) return;
+    if (!active || done || submitting) return;
     setSubmitting(true);
     setError("");
     try {
@@ -1122,11 +1123,13 @@ function ConfirmCard({ m, onResumed }: { m: Message; onResumed?: (cid: string) =
   return (
     <div className="mb-6 ml-[42px] rounded-xl border border-accent/40 bg-accentsoft/40 p-3.5">
       <div className="mb-1 flex items-center gap-1.5 text-[13px] font-medium text-ink">
-        <Icon name="shield" size={14} className="text-accent" /> 需要你确认 · {TOOL_LABEL[p.tool] || p.tool}
+        <Icon name="shield" size={14} className="text-accent" /> {active && !done ? "需要你确认" : "操作确认记录"} · {TOOL_LABEL[p.tool] || p.tool}
       </div>
       <div className="mb-2.5 break-words rounded-lg bg-surface/70 px-2.5 py-1.5 font-mono text-[12px] text-muted">{p.summary}</div>
       {done ? (
         <div className="text-[12.5px] text-faint">{doneLabel}</div>
+      ) : !active ? (
+        <div className="text-[12.5px] text-faint">此确认已不再待处理</div>
       ) : (
         <div className="flex flex-wrap gap-2">
           <button disabled={submitting} onClick={() => decide(true, false)} className="rounded-lg bg-accent px-3 py-1.5 text-[12.5px] text-white hover:opacity-90 disabled:opacity-50">{submitting ? "处理中…" : "允许一次"}</button>
@@ -1134,7 +1137,7 @@ function ConfirmCard({ m, onResumed }: { m: Message; onResumed?: (cid: string) =
           <button disabled={submitting} onClick={() => decide(false, false)} className="rounded-lg border border-border bg-surface px-3 py-1.5 text-[12.5px] text-muted hover:border-accent/40 disabled:opacity-50">拒绝</button>
         </div>
       )}
-      {error && <p role="alert" className="mt-2 text-[12px] text-accent">{error}</p>}
+      {active && error && <p role="alert" className="mt-2 text-[12px] text-accent">{error}</p>}
     </div>
   );
 }

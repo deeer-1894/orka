@@ -87,6 +87,43 @@ func TestWrappedCancellationRemainsCancelled(t *testing.T) {
 	}
 }
 
+func TestAccountingAdmissionNoticeDoesNotClaimGenerationLimit(t *testing.T) {
+	for _, kind := range []string{"run", "daily", "storage"} {
+		t.Run(kind, func(t *testing.T) {
+			ledger := &fakeLedger{}
+			s := budgetSession(t, ledger, "notice", "run", 1000, 1000)
+			if kind == "daily" {
+				s.dailyLimit = 1
+			}
+			if kind == "storage" {
+				ledger.fail = true
+			}
+			provider := &budgetInvocationProvider{run: func(context.Context, int) (llm.Response, error) {
+				t.Fatal("rejected request reached provider")
+				return llm.Response{}, nil
+			}}
+			limit := 20
+			if kind == "run" {
+				limit = 2000
+			}
+			ctx := s.Context(context.Background())
+			_, err := llm.NewAccountedClient(provider).Chat(ctx, llm.Request{MaxTokens: limit})
+			if !llm.IsCallLimit(err) {
+				t.Fatalf("not a non-retryable admission failure: %v", err)
+			}
+			out := assessRunOutcome(&agent.RunContext{Ctx: ctx}, err, nil)
+			notice := callLimitNotice(out)
+			want := map[string]string{"run": "任务预算", "daily": "每日", "storage": "用量记账"}[kind]
+			if !strings.Contains(notice, want) || strings.Contains(notice, "输出或时间限额") || strings.Contains(out.errorDetail, "split the work") {
+				t.Fatalf("wrong admission diagnosis: %s / %s", notice, out.errorDetail)
+			}
+			if provider.calls != 0 || s.Snapshot().UsedTokens != 0 {
+				t.Fatal("admission failure spent tokens")
+			}
+		})
+	}
+}
+
 func TestBudgetExhaustedIncludesLastFailedCallUsage(t *testing.T) {
 	b := newRunBudget(100, 1000, 0)
 	b.carried = 700

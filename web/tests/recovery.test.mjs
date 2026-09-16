@@ -2,11 +2,25 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
-const { currentRun, canResumeRun, restoredStatus, lastUserPrompt, RecoveryController } = createRequire(import.meta.url)(join(process.env.ORKA_TEST_BUILD, 'lib/runRecovery.js'));
+const { currentRun, canResumeRun, restoredStatus, lastUserPrompt, pendingConfirmationID, RecoveryController } = createRequire(import.meta.url)(join(process.env.ORKA_TEST_BUILD, 'lib/runRecovery.js'));
 const event = (run = 'new', action = 'failed', extra = {}) => ({ id: `event-${run}-${action}`, type: 'task', action, role: 'system', ts: 20, meta: { conversation_id: 'c', run_id: run, trace_id: `trace-${run}` }, ...extra });
 const record = (id = 'new', extra = {}) => ({ run_id: id, conversation_id: 'c', created_at: id === 'new' ? 20 : 10, status: 'failed', resumable: true, trace_id: `trace-${id}`, ...extra });
 const context = (extra = {}) => ({ conversationID: 'c', messages: [event()], status: 'error', enabled: true, ...extra });
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
+
+test('restored confirmations expire on continuation, terminal state or a newer gate', () => {
+  const gate = event('old', '', {id:'gate',type:'confirm',payload:{id:'approval',tool:'python',summary:'test'}});
+  const paused = event('old','paused');
+  assert.equal(pendingConfirmationID([gate, paused], 'c'), 'gate');
+  for (const action of ['start','running','done','failed','partial','stopped'])
+    assert.equal(pendingConfirmationID([gate,paused,event('new',action)], 'c'), undefined);
+  const next = {...gate,id:'next',payload:{...gate.payload,id:'next-approval'}};
+  assert.equal(pendingConfirmationID([gate,paused,next], 'c'), 'next');
+  assert.equal(pendingConfirmationID([gate,paused,event('old','', {type:'tool'})], 'c'), 'gate');
+  assert.equal(pendingConfirmationID([gate,paused,event('old','', {type:'chat',role:'assistant'})], 'c'), undefined);
+  assert.equal(pendingConfirmationID([gate,paused,event('new','done',{meta:{conversation_id:'other'}})], 'c'), 'gate');
+  assert.equal(pendingConfirmationID([gate,paused,event('old','human_input',{type:'chat',role:'user'})], 'c'), 'gate');
+});
 
 test('failure and page reload identify the exact latest run, never old resumable runs', () => {
   assert.equal(currentRun(context(), [record('old'), record()])?.run_id, 'new');

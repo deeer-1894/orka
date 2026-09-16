@@ -357,7 +357,7 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 
 	if codeEnabled {
 		add(mcp.NewTool("python",
-			mcp.WithDescription("Run Python in the sandboxed workspace and capture its output — for writing code, computing, and data analysis. pandas/numpy/matplotlib/openpyxl are preinstalled; files read/written are relative to your workspace. Args: code (a snippet) OR path (a .py file to run), and optional argv. Returns JSON with ok, exit_code, stdout, stderr, timed_out, canceled; failures set isError."),
+			mcp.WithDescription("Run Python in the sandboxed workspace and capture its output — for writing code, computing, and data analysis. pandas/numpy/matplotlib/openpyxl are preinstalled; files read/written are relative to your workspace. Each call starts a fresh process and temporary filesystem: /tmp and in-memory variables do not persist between calls. Save scripts, extracted projects, and intermediate results needed by later calls under a workspace-relative directory. Args: code (a snippet) OR path (a .py file to run), and optional argv. Returns JSON with ok, exit_code, stdout, stderr, timed_out, canceled; failures set isError."),
 			mcp.WithString("code", mcp.Description("Python source to execute (use this or path)")),
 			mcp.WithString("path", mcp.Description("a workspace .py file to run instead of inline code")),
 			mcp.WithString("argv", mcp.Description("optional space-separated args passed to the script")),

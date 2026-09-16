@@ -84,6 +84,26 @@ export function restoredStatus(messages: Message[]): ChatStatus {
   return 'idle';
 }
 
+// A confirmation is actionable only until execution advances. The decision
+// itself may have happened in another tab; local button state is insufficient
+// when restoring persisted history. Human steering and heartbeat events do not
+// resolve a gate, while actual execution or a newer run supersedes it.
+export function pendingConfirmationID(messages: Message[], conversationID: string): string | undefined {
+  let pending: Message | undefined;
+  for (const m of messages) {
+    if (m.meta?.conversation_id !== conversationID || m.type === 'heartbeat') continue;
+    if (m.type === 'confirm') { pending = m; continue; }
+    if (!pending) continue;
+    const changedRun = m.meta?.run_id && pending.meta?.run_id && m.meta.run_id !== pending.meta.run_id;
+    // A sibling tool can finish while this gate still waits. Tool/agent events
+    // alone are not evidence that the confirmation was resolved.
+    if (changedRun || (m.type === 'task' && ['start','running','done','failed','partial','stopped','killed'].includes(m.action || '')) ||
+        m.type === 'clarify' ||
+        (m.type === 'chat' && m.role === 'assistant')) pending = undefined;
+  }
+  return pending?.id;
+}
+
 export function lastUserPrompt(messages: Message[], cid: string): string {
   return [...messages].reverse().find(m => m.meta?.conversation_id === cid && m.type === 'chat' && m.role === 'user')?.content || '';
 }
