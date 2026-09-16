@@ -1,8 +1,9 @@
+import { MetricsPanel, type MetricsRunContext } from './MetricsPanel';
 import { BudgetFields } from './BudgetFields';
 import type { RunBudgetLimits } from '../lib/runBudget';
 import { useEffect, useState } from "react";
 import { api, artifacts as artifactApi, files as fileApi } from "../api";
-import type { Artifact, MetricsSnapshot, RunRecord } from "../types";
+import type { Artifact, RunRecord } from "../types";
 import { Icon, type IconName } from "./Icon";
 import { PanelEmpty as Blank } from "./PanelEmpty";
 import type { WorkbenchTab as Tab } from "../lib/workbenchTabs";
@@ -10,9 +11,8 @@ const ARTKIND_ICON: Record<string, string> = {
   pr_review: "🔀", architecture: "🗺️", incident: "🚨", checklist: "✅", audit: "🔍", custom: "📊",
 };
 
-export function DashboardPanel({ conversationID, onJumpToConversation, goTab, onOpenArtifact, budget, onBudgetChange, budgetDisabled }: { budget?: RunBudgetLimits; onBudgetChange?: (budget: RunBudgetLimits) => void; budgetDisabled?: boolean; conversationID: string; onJumpToConversation: (cid: string) => void; goTab: (t: Tab) => void; onOpenArtifact: (id: string) => void }) {
+export function DashboardPanel({ conversationID, onJumpToConversation, goTab, onOpenArtifact, budget, onBudgetChange, budgetDisabled, runContext }: { runContext?: MetricsRunContext; budget?: RunBudgetLimits; onBudgetChange?: (budget: RunBudgetLimits) => void; budgetDisabled?: boolean; conversationID: string; onJumpToConversation: (cid: string) => void; goTab: (t: Tab) => void; onOpenArtifact: (id: string) => void }) {
   const [runs, setRuns] = useState<RunRecord[]>([]);
-  const [metrics, setMetrics] = useState<MetricsSnapshot | null>(null);
   const [arts, setArts] = useState<Artifact[]>([]);
   const [fileCount, setFileCount] = useState(0);
   const [taskCount, setTaskCount] = useState(0);
@@ -21,18 +21,17 @@ export function DashboardPanel({ conversationID, onJumpToConversation, goTab, on
     let alive = true;
     Promise.all([
       api.listRuns({}).catch(() => ({ runs: [] })),
-      api.metrics().catch(() => null),
       artifactApi.list().then((r) => r.artifacts || []).catch(() => []),
       (conversationID ? fileApi.scopedList(".", conversationID, true).then((items) => items.filter((i) => !i.dir && !i.name.startsWith(".")).length) : Promise.resolve(0)).catch(() => 0),
       api.getTasks().then((r) => (r.tasks || []).filter((t) => t.cron_status === "on").length).catch(() => 0),
     ])
-      .then(([r, m, a, fc, tc]) => { if (!alive) return; setRuns(r.runs || []); setMetrics(m); setArts(a); setFileCount(fc); setTaskCount(tc); })
+      .then(([r, a, fc, tc]) => { if (!alive) return; setRuns(r.runs || []); setArts(a); setFileCount(fc); setTaskCount(tc); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [conversationID]);
 
   const budgetFields = budget && onBudgetChange ? <BudgetFields value={budget} onChange={onBudgetChange} disabled={budgetDisabled} /> : null;
-  if (loading) return <div className="p-3">{budgetFields}<Blank>加载中…</Blank></div>;
+  if (loading) return <div className="p-3">{budgetFields}<MetricsPanel runContext={runContext} /><Blank>加载中…</Blank></div>;
 
   // Workspace summary + recent pages render even before the first run, so the
   // panel reveals what's inside (pages / files / tasks) at a glance.
@@ -46,6 +45,7 @@ export function DashboardPanel({ conversationID, onJumpToConversation, goTab, on
   const workspace = (
     <>
       {budgetFields}
+      <MetricsPanel runContext={runContext} />
       <div className="grid grid-cols-3 gap-2">
         <NavTile icon="image" label="页面" value={arts.length} onClick={() => goTab("artifacts")} />
         <NavTile icon="folder" label="文件" value={fileCount} onClick={() => goTab("files")} />
@@ -90,8 +90,6 @@ export function DashboardPanel({ conversationID, onJumpToConversation, goTab, on
   const interrupted = runs.filter((r) => r.status === "interrupted").length;
   const finished = done + failed + partial;
   const successRate = finished ? Math.round((done / finished) * 100) : 0;
-  const totalTokens = runs.reduce((a, r) => a + (r.tokens || 0), 0);
-  const totalTools = runs.reduce((a, r) => a + (r.tool_calls || 0), 0);
   const durs = runs.filter((r) => r.duration_ms > 0).map((r) => r.duration_ms);
   const avgDur = durs.length ? Math.round(durs.reduce((a, b) => a + b, 0) / durs.length / 1000) : 0;
   const triggers = runs.reduce((acc, r) => { const k = r.trigger || "manual"; acc[k] = (acc[k] || 0) + 1; return acc; }, {} as Record<string, number>);
@@ -117,14 +115,13 @@ export function DashboardPanel({ conversationID, onJumpToConversation, goTab, on
     <div className="space-y-3 p-3">
       {workspace}
       <div className="text-[11px] font-medium uppercase tracking-wide text-faint">运行概况</div>
+      <Stat
+        label="近期运行数"
+        value={String(runs.length)}
+        sub={[`${done} 成功`, partial ? `${partial} 部分` : "", `${failed} 失败`, interrupted ? `${interrupted} 中断` : ""].filter(Boolean).join(" · ")}
+      />
       <div className="grid grid-cols-2 gap-2">
-        <Stat
-          label="总运行"
-          value={String(runs.length)}
-          sub={[`${done} 成功`, partial ? `${partial} 部分` : "", `${failed} 失败`, interrupted ? `${interrupted} 中断` : ""].filter(Boolean).join(" · ")}
-        />
         <Stat label="成功率" value={successRate + "%"} sub={`${finished} 个有结论${interrupted ? ` · ${interrupted} 个中断不计` : ""}`} />
-        <Stat label="累计 Token" value={fmtNum(totalTokens)} sub={`${fmtNum(totalTools)} 次工具调用`} />
         <Stat label="平均耗时" value={avgDur + "s"} sub={durs.length ? `基于 ${durs.length} 个运行` : "—"} />
       </div>
 
@@ -161,17 +158,6 @@ export function DashboardPanel({ conversationID, onJumpToConversation, goTab, on
         </div>
       </div>
 
-      {metrics && (
-        <div className="rounded-xl border border-border bg-surface p-3 text-[12px] text-muted">
-          <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-faint">实时指标</div>
-          <div className="grid grid-cols-2 gap-y-1">
-            <span>活跃会话 <b className="text-ink">{metrics.active_sessions}</b></span>
-            <span>检查点 <b className="text-ink">{metrics.checkpoints}</b></span>
-            <span>LLM 调用 <b className="text-ink">{metrics.llm_calls}</b></span>
-            <span>工具调用 <b className="text-ink">{metrics.tool_calls}</b></span>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

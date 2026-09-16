@@ -9,7 +9,7 @@ export function MetricsPanel({ runContext }: { runContext?: MetricsRunContext })
   const runID = [...ownMessages].reverse().find(message => message.meta?.run_id)?.meta.run_id || ownRun?.run_id;
   const run = ownRun?.run_id === runID ? ownRun : undefined;
   const model = [...ownMessages].reverse().find(message => message.meta?.run_id === runID && message.meta?.model_version)?.meta.model_version;
-  // Global metrics remain in the existing workbench metrics view.
+  // Overview composes this section; one shared resource owns live usage counters.
   const m = useResource("metrics", api.metrics, { interval: 4000 }) ?? null;
   const fmt = (n: number) => (n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n));
   const stats = [
@@ -23,7 +23,7 @@ export function MetricsPanel({ runContext }: { runContext?: MetricsRunContext })
     { k: "输出 tokens", v: fmt(m?.completion_tokens ?? 0) },
   ];
   return (
-    <div className="space-y-3 p-3">
+    <div className="flex flex-col gap-3">
       {runID && <section aria-label="当前运行统计" className="space-y-2 rounded-xl border border-border p-3 text-xs">
         <strong>当前会话运行</strong><p className="break-all text-muted">{runID}</p>
         {model && <p>模型：{model}</p>}

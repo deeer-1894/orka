@@ -10,7 +10,6 @@ import { ArtifactGallery, ArtifactPane } from "./Artifacts";
 import type { RunsPanelProps } from './RunsPanel';
 const SystemStatusPanel = lazy(() => import("./SystemStatusPanel").then(m => ({default:m.SystemStatusPanel})));
 const RunsPanel = lazy(() => import('./RunsPanel'));
-const MetricsPanel = lazy(() => import('./MetricsPanel').then(m => ({default:m.MetricsPanel})));
 const WorkflowsPanel = lazy(() => import('./WorkflowsPanel').then(m => ({default:m.WorkflowsPanel})));
 const ConnectorsPanel = lazy(() => import('./ConnectorsPanel').then(m => ({default:m.ConnectorsPanel})));
 const FactorsPanel = lazy(() => import('./FactorsPanel').then(m => ({default:m.FactorsPanel})));
@@ -23,7 +22,7 @@ const FilesPanel = lazy(() => import("./FilesPanel").then(m => ({ default: m.Fil
 // their own (execution log? workflow definition? schedule?), so the tooltip
 // disambiguates them.
 const TAB_META: Record<Tab, { label: string; tip: string }> = {
-  overview: { label: "概览", tip: "工作区概览与近期活动" },
+  overview: { label: "概览", tip: "工作区、运行统计与近期活动" },
   artifacts: { label: "页面", tip: "实时、可分享的可视化页面(Artifacts)" },
   files: { label: "文件", tip: "工作区里的文件" },
   runs: { label: "运行", tip: "执行历史:每次任务运行的记录" },
@@ -32,20 +31,19 @@ const TAB_META: Record<Tab, { label: string; tip: string }> = {
   factors: { label: "因子", tip: "量化因子库:研报 → 因子流水线的产出" },
   integrations: { label: "集成", tip: "外部工具 / MCP 连接器" },
   system: { label: "服务状态", tip: "运行版本与服务就绪状态" },
-  metrics: { label: "指标", tip: "用量与性能指标" },
 };
 // Nine tabs is a back-office crammed into a chat sidebar. Collapse them into 4
 // semantic FACES; multi-tab faces (舞台/运营台) get an inline sub-nav. runs/flows/
-// tasks/integrations/metrics are all "execution & observability" → one 运营台.
+// tasks/integrations are all "execution & observability" → one 运营台.
 type Face = "overview" | "stage" | "files" | "ops";
 const FACES: { id: Face; label: string; tip: string; icon: IconName; subs: Tab[] }[] = [
-  { id: "overview", label: "概览", tip: "工作区概览与近期活动", icon: "chart", subs: ["overview"] },
+  { id: "overview", label: "概览", tip: "工作区、运行统计与近期活动", icon: "chart", subs: ["overview"] },
   { id: "stage", label: "成果", tip: "会话文件与可分享页面", icon: "folder", subs: ["files", "artifacts"] },
-  { id: "ops", label: "运营台", tip: "执行与可观测:运行 / 流程 / 任务 / 因子 / 集成 / 指标", icon: "gear", subs: ["runs", "flows", "tasks", "factors", "integrations", "metrics", "system"] },
+  { id: "ops", label: "运营台", tip: "执行与可观测:运行 / 流程 / 任务 / 因子 / 集成 / 服务状态", icon: "gear", subs: ["runs", "flows", "tasks", "factors", "integrations", "system"] },
 ];
 // Icons for the 运营台 sub-tabs, so the dense sub-nav scans at a glance.
 const SUB_ICON: Partial<Record<Tab, IconName>> = {
-  runs: "play", flows: "share", tasks: "clock", factors: "table", integrations: "plug", metrics: "chart",
+  runs: "play", flows: "share", tasks: "clock", factors: "table", integrations: "plug",
 };
 function faceOf(tab: Tab): Face {
   return (FACES.find((f) => f.subs.includes(tab)) || FACES[0]).id;
@@ -212,14 +210,13 @@ export function ArtifactDrawer({
           </div>
         )}
         <div id="workbench-content" className="min-h-0 min-w-0 flex-1 overflow-auto [overflow-wrap:anywhere]"><Suspense fallback={<p role="status" className="p-3 text-sm">正在加载面板…</p>}>
-          {tab === "overview" && <DashboardPanel budget={budget} onBudgetChange={onBudgetChange} budgetDisabled={budgetDisabled} key={conversationID} conversationID={conversationID} onJumpToConversation={onJumpToConversation} goTab={setTab} onOpenArtifact={(id) => { setFocusArt(id); setTab("artifacts"); }} />}
+          {tab === "overview" && <DashboardPanel runContext={runContext} budget={budget} onBudgetChange={onBudgetChange} budgetDisabled={budgetDisabled} key={conversationID} conversationID={conversationID} onJumpToConversation={onJumpToConversation} goTab={setTab} onOpenArtifact={(id) => { setFocusArt(id); setTab("artifacts"); }} />}
           {tab === "artifacts" && (focusArt ? <ArtifactPane artifactId={focusArt} onBack={() => setFocusArt(null)} /> : <ArtifactGallery onOpen={setFocusArt} />)}
           {tab === "files" && <FilesPanel key={email + ":" + conversationID} email={email} conversationID={conversationID} />}
           {tab === "runs" && <RunsPanel onJumpToConversation={onJumpToConversation} onResumeRun={onResumeRun} isRunBusy={isRunBusy} runRevision={runRevision} canResumeRun={canResumeRun} />}
           {tab === "flows" && <WorkflowsPanel onJumpToConversation={onJumpToConversation} />}
           {tab === "integrations" && <ConnectorsPanel />}
           {tab === "system" && <SystemStatusPanel />}
-          {tab === "metrics" && <MetricsPanel runContext={runContext} />}
           {tab === "tasks" && <TasksPanel onJumpToConversation={onJumpToConversation} />}
           {tab === "factors" && <FactorsPanel />}
         </Suspense></div>
@@ -228,6 +225,5 @@ export function ArtifactDrawer({
   );
 }
 
-// DashboardPanel is the at-a-glance overview: it aggregates the run history and
-// live metrics into headline stats, a recent-activity strip, and trigger mix —
-// so the platform's activity is visible without digging through the run list.
+// DashboardPanel summarizes workspace content and recent run outcomes.
+// Overview owns usage and live counters; operations focuses on managing runs.

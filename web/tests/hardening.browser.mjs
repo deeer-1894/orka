@@ -310,10 +310,8 @@ async function openBudget(a) {
  if(!await a.page.getByLabel('Token 上限').isVisible())await a.page.getByRole('complementary',{name:'工作台'}).getByText('任务预算',{exact:true}).click();
 }
 async function openMetrics(a) {
- await openWorkbench(a,'运营台');
- const metrics=a.page.getByRole('button',{name:'指标',exact:true});
- if(!await metrics.isVisible())await a.page.getByRole('button',{name:'专业功能 展开'}).click();
- await metrics.click();
+ await openWorkbench(a,'概览');
+ await a.page.getByText('累计指标',{exact:true}).waitFor();
 }
 
 test('pending conversation creation cannot retarget the captured send or its model and tools',async t=>{
