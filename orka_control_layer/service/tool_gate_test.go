@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/adk"
@@ -327,5 +328,27 @@ func TestGateExplicitNamesRespectScopeAndSharedUnlocks(t *testing.T) {
 	}
 	if hits := worker.search("pdf_extract CSV"); len(hits) != 1 || hits[0].Name != "pdf_extract" {
 		t.Fatalf("already-unlocked explicit name lost: %v", hits)
+	}
+}
+
+func TestExecutionDiscoveryDoesNotSuggestUnrelatedToolsWhenDisabled(t *testing.T) {
+	g := newToolGate()
+	g.remember(infos("find_tools", "calculator", "file_write", "hash_text"))
+	ctx := withToolGate(context.Background(), g)
+	for _, query := range []string{"python", "execute python code", "run scripts"} {
+		got, err := (findTools{}).Invoke(ctx, map[string]any{"query": query})
+		if err != nil || !strings.Contains(got, "无须逐项勾选") || strings.Contains(got, "已启用") {
+			t.Fatalf("%s: %s %v", query, got, err)
+		}
+	}
+	for _, ti := range g.visible() {
+		if ti.Name == "find_tools" && !strings.Contains(ti.Desc, "Code execution") {
+			t.Fatal("missing capability silently hidden")
+		}
+	}
+	g.all = append(g.all, infos("python")...)
+	got, err := (findTools{}).Invoke(ctx, map[string]any{"query": "python"})
+	if err != nil || !strings.Contains(got, "已启用 1") {
+		t.Fatal(got, err)
 	}
 }

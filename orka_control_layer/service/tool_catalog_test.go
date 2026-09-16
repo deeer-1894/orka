@@ -37,7 +37,7 @@ func TestToolCatalogDoesNotCreateOrAuthorizeAConversation(t *testing.T) {
 	svc.ToolCatalog(context.Background(), "owner")
 }
 func TestExecutionIterationLimitUsesTaskPolicy(t *testing.T) {
-	if got := executionIterationLimit(withBudget(context.Background(), newRunBudget(450, 2000000, runMaxWall))); got != 450 {
+	if got := executionIterationLimit(withBudget(context.Background(), newRunBudget(450, 2000000, 0))); got != 450 {
 		t.Fatal(got)
 	}
 	if got := executionIterationLimit(context.Background()); got != einoMaxIters {

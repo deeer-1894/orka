@@ -85,7 +85,7 @@ func TestBudgetInvocationKnownZeroVersusMissingUsage(t *testing.T) {
 	}
 }
 
-func TestBudgetChatRunInstallsRealAccountingAndRejectsOverspend(t *testing.T) {
+func TestUsageChatRunAccountsWithoutLegacyQuota(t *testing.T) {
 	calls := 0
 	svc, _ := testService(t, &budgetInvocationProvider{run: func(ctx context.Context, n int) (llm.Response, error) {
 		calls++
@@ -97,8 +97,8 @@ func TestBudgetChatRunInstallsRealAccountingAndRejectsOverspend(t *testing.T) {
 	svc.Client = llm.NewAccounted(svc.Client)
 	svc.UsageLedger = &fakeLedger{}
 	svc.Run(context.Background(), ChatRunRequest{Message: "hi", UserEmail: "fake", Budget: TaskBudgetRequest{MaxTokens: 1}}, func(messages.Message) {})
-	if calls != 0 {
-		t.Fatal("budget rejection still dispatched")
+	if calls == 0 {
+		t.Fatal("legacy budget blocked dispatch")
 	}
 }
 
@@ -116,14 +116,14 @@ func TestBudgetCheckpointPreservesPolicyAndOriginalToolAuthorization(t *testing.
 	if err = json.Unmarshal(raw, &restored); err != nil {
 		t.Fatal(err)
 	}
-	if restored.BudgetPolicy == nil || restored.BudgetPolicy.MaxTokens != 500 || len(restored.EnabledTools) != 2 || restored.EnabledTools[0] != "code" {
+	if restored.BudgetPolicy == nil || restored.BudgetPolicy.MaxTokens != 0 || len(restored.EnabledTools) != 2 || restored.EnabledTools[0] != "code" {
 		t.Fatalf("snapshot lost policy/auth: %+v", restored)
 	}
 	req := ChatRunRequest{Budget: TaskBudgetRequest{MaxTokens: 999999}, EnabledTools: []string{"injected"}}
 	if err := applyResumeBudget(config.AgentConfig{}, &req, &restored); err != nil {
 		t.Fatal(err)
 	}
-	if req.Budget.MaxTokens != 500 || req.EnabledTools[0] != "code" {
+	if req.Budget.MaxTokens != 0 || req.EnabledTools[0] != "code" {
 		t.Fatalf("resume replaced original authority: %+v", req)
 	}
 }
@@ -166,10 +166,10 @@ func TestBudgetInvocationCountsSharedStepsWithoutChargingRetriesTwice(t *testing
 		t.Fatal(err)
 	}
 	req.Messages[0].Content = "new cycle"
-	if _, err = c.Chat(ctx, req); !errors.Is(err, ErrRunBudgetExceeded) {
+	if _, err = c.Chat(ctx, req); err != nil {
 		t.Fatalf("step allowance not shared: %v", err)
 	}
-	if p.calls != 2 {
+	if p.calls != 3 {
 		t.Fatalf("denied step was dispatched %d", p.calls)
 	}
 }

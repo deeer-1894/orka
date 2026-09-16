@@ -75,9 +75,7 @@ func restoreCheckpoint(c *runCheckpoint, b *runBudget, p *planTracker, d *delive
 		b.carried = max(b.carried, c.SpentTokens)
 		if c.BudgetSnapshot != nil {
 			snapshot := c.BudgetSnapshot
-			if !snapshot.Deadline.IsZero() && (b.deadline.IsZero() || snapshot.Deadline.Before(b.deadline)) {
-				b.deadline = snapshot.Deadline
-			}
+			// Restore accounting and progress, never the retired task deadline.
 			b.carriedSteps = max(b.carriedSteps, snapshot.UsedSteps)
 			b.sharedSteps = max(b.sharedSteps, b.carriedSteps)
 			b.carriedUnknownTokens = max(b.carriedUnknownTokens, saturatingUsageSum(snapshot.UnknownTokens, snapshot.ReservedTokens))

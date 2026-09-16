@@ -1,3 +1,4 @@
+import { HomeWelcome } from "./HomeWelcome";
 import { ActionChip } from './ActionChip';
 import { useDeliveryManifest } from '../hooks/useDeliveryManifest';
 import type { DeliverySnapshot } from '../lib/runEvidence';
@@ -8,7 +9,7 @@ import { api, chat as chatApi, files as fileApi } from "../api";
 import type { ConfirmPayload, PlanPayload } from "../types";
 import { normalizeWorkspacePath, workspaceLinkPath } from "../lib/sessionFiles";
 import { useSessionFiles } from "../hooks/useSessionFiles";
-import { isIncompleteRun, pendingConfirmationID, type RecoverySnapshot } from "../lib/runRecovery";
+import { executionIdentity, isIncompleteRun, pendingConfirmationID, type RecoverySnapshot } from "../lib/runRecovery";
 import { Markdown } from "./Markdown";
 import { FilePreview } from "./FilePreview";
 import { FollowUps } from "./FollowUps";
@@ -112,6 +113,7 @@ export function Thread({
   onResumed,
   bottomInset = 0,
   onPick,
+  onExample,
   onRetry,
   onSchedule,
   onFork,
@@ -136,6 +138,7 @@ export function Thread({
   // message can always be scrolled clear of it.
   bottomInset?: number;
   onPick: (text: string) => void;
+  onExample?: (text: string) => void;
   onRetry: () => void;
   onSchedule: (prompt: string) => void;
   onFork?: (messageID: string) => void;
@@ -189,7 +192,7 @@ export function Thread({
     if (b.kind === "steps") lastSteps = i;
   });
   const lastUserPrompt = [...blocks].reverse().find((b) => b.kind === "user")?.m.content || "";
-  const hasPlan = blocks.some((b) => b.kind === "plan");
+  const activeExecution = executionIdentity({ conversationID, messages, status });
   const canAct = status !== "streaming" && !recovery.busy;
   const failed = isIncompleteRun({ conversationID, messages, status }, recovery.run);
 
@@ -237,7 +240,7 @@ export function Thread({
 
   // Early return AFTER every hook above — otherwise the empty state and a loaded
   // conversation would run a different number of hooks (Rules of Hooks).
-  if (messages.length === 0) return <Empty onPick={onPick} />;
+  if (messages.length === 0) return <HomeWelcome onPick={onExample || onPick} bottomInset={bottomInset} />;
 
   return (
     <FileScopeCtx.Provider value={{ conversationID: fileConv, ownerEmail, readOnly: readOnlyFiles }}>
@@ -276,7 +279,6 @@ export function Thread({
               <Assistant
                 m={b.m}
                 live={status === "streaming" && i > lastUser}
-                suppressPlan={hasPlan}
                 onRegenerate={canAct && canRetry && i === lastAssistant ? onRetry : undefined}
                 onSchedule={canAct && i === lastAssistant && lastUserPrompt ? () => onSchedule(lastUserPrompt) : undefined}
               />
@@ -286,7 +288,7 @@ export function Thread({
             {b.kind === "confirm" && <ConfirmCard m={b.m} active={b.m.id === pendingConfirm} onResumed={onResumed} />}
             {b.kind === "plan" && <StructuredPlan plan={(b.m.payload as PlanPayload) ?? { steps: [] }} live={status === "streaming" && i >= lastUser} />}
             {b.kind === "weather" && <WeatherCard data={b.data} />}
-            {b.kind === "steps" && <Steps items={b.items} live={status === "streaming" && i === lastSteps} />}
+            {b.kind === "steps" && <Steps items={b.items} live={status === "streaming" && i === lastSteps && (activeExecution?.run ? b.items.some(m => m.meta?.run_id === activeExecution.run) : i > lastUser)} />}
           </div>
           );
         })}
@@ -312,7 +314,7 @@ export function Thread({
               )}
             </div>
             <p className="text-[12px] text-faint">
-              {recovery.error || (recovery.busy ? "正在连接续跑，请稍候。" : recovery.recoverable ? "继续任务会保留已完成的进度。" : recovery.run?.budget_hit === "tokens" ? "本次任务预算已用尽，已有进度保留。" : recovery.checking ? "正在检查是否可以继续任务…" : "本次执行未完成。")}
+              {recovery.error || (recovery.busy ? "正在连接续跑，请稍候。" : recovery.recoverable ? "继续任务会保留已完成的进度。" : recovery.checking ? "正在检查是否可以继续任务…" : "本次执行未完成。")}
             </p>
           </div>
         )}
@@ -502,67 +504,6 @@ function UserBubble({ m, onEdit, onFork }: { m: Message; onEdit?: (text: string)
   );
 }
 
-// parsePlan detects the agent's opening numbered plan ("**计划：**\n1. …\n2. …")
-// so it can be rendered as a live checklist instead of plain markdown. It only
-// fires when a plan-marker header (计划/规划/步骤/方案/plan/steps) is followed by
-// ≥2 numbered items, so a final answer that merely contains a numbered list is
-// left untouched.
-function parsePlan(content: string): { lead: string; steps: string[]; tail: string } | null {
-  const lines = (content || "").split("\n");
-  let hi = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const bare = lines[i].replace(/[*#>`]/g, "").trim();
-    if (/(^|[^a-zA-Z])(计划|规划|步骤|方案|plan|steps)\s*[:：]?\s*$/i.test(bare)) { hi = i; break; }
-  }
-  if (hi === -1) return null;
-  const steps: string[] = [];
-  let last = hi;
-  for (let j = hi + 1; j < lines.length; j++) {
-    const mm = lines[j].match(/^\s*\d+[.、)]\s+(.*\S)\s*$/);
-    if (mm) { steps.push(mm[1].trim()); last = j; }
-    else if (lines[j].trim() === "") { if (!steps.length) { last = j; continue; } }
-    else if (steps.length) break;
-  }
-  if (steps.length < 2) return null;
-  return {
-    lead: lines.slice(0, hi).join("\n").trim(),
-    steps,
-    tail: lines.slice(last + 1).join("\n").trim(),
-  };
-}
-
-function PlanChecklist({ steps, live }: { steps: string[]; live: boolean }) {
-  return (
-    <div className="my-2 rounded-xl border border-border bg-surface2/40 p-3">
-      <div className="mb-2 flex items-center gap-2 text-[12.5px] font-medium text-ink">
-        <span>🗂️ 执行计划</span>
-        {live ? (
-          <span className="inline-flex items-center gap-1 text-accent">
-            <span className="dot h-1.5 w-1.5 rounded-full bg-accent" /> 进行中
-          </span>
-        ) : (
-          <span className="text-ok">已完成</span>
-        )}
-      </div>
-      <ol className="space-y-1.5">
-        {steps.map((s, i) => (
-          <li key={i} className="flex items-start gap-2 text-[13px]">
-            <span
-              className={
-                "mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full text-[9px] font-medium " +
-                (live ? "border border-faint text-faint" : "bg-ok text-white")
-              }
-            >
-              {live ? i + 1 : "✓"}
-            </span>
-            <span className={live ? "text-muted" : "text-ink"}>{s}</span>
-          </li>
-        ))}
-      </ol>
-    </div>
-  );
-}
-
 // StructuredPlan renders a first-class plan event (the agent's `update_plan`
 // tool calls) as a live checklist with real per-step status — pending / active
 // (currently working) / done — instead of inferring progress from prose.
@@ -661,7 +602,7 @@ function Citations({ text }: { text: string }) {
   );
 }
 
-function Assistant({ m, live, onRegenerate, onSchedule, suppressPlan }: { m: Message; live?: boolean; onRegenerate?: () => void; onSchedule?: () => void; suppressPlan?: boolean }) {
+function Assistant({ m, live, onRegenerate, onSchedule }: { m: Message; live?: boolean; onRegenerate?: () => void; onSchedule?: () => void }) {
   const scope = useContext(FileScopeCtx);
   const snapshots = useContext(DeliveryManifestCtx);
   const snapshotFor = useCallback((path: string) => !live && m.type === "chat" && m.meta?.run_id
@@ -679,24 +620,13 @@ function Assistant({ m, live, onRegenerate, onSchedule, suppressPlan }: { m: Mes
     const snapshot = snapshotFor(path);
     return snapshot ? `交付快照 · 版本 ${snapshot.version}` : "当前工作区 · 未关联交付快照";
   }, [scope.conversationID, scope.ownerEmail, snapshotFor]);
-  // When the agent emitted a structured plan event, don't also regex a prose
-  // plan out of the answer — the StructuredPlan block already shows it.
-  const plan = suppressPlan ? null : parsePlan(m.content ?? "");
   return (
     <div className="group mb-7 flex gap-3.5">
       <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent text-white font-serif text-[13px] leading-none">
         O
       </div>
       <div className="min-w-0 flex-1 pt-0.5">
-        {plan ? (
-          <>
-            {plan.lead && <Markdown resolveLink={resolveLink} linkLabel={linkLabel}>{plan.lead}</Markdown>}
-            <PlanChecklist steps={plan.steps} live={!!live} />
-            {plan.tail && <Markdown resolveLink={resolveLink} linkLabel={linkLabel}>{plan.tail}</Markdown>}
-          </>
-        ) : (
-          <Markdown resolveLink={resolveLink} linkLabel={linkLabel}>{m.content ?? ""}</Markdown>
-        )}
+        <Markdown resolveLink={resolveLink} linkLabel={linkLabel}>{m.content ?? ""}</Markdown>
         {!live && <Citations text={m.content ?? ""} />}
         <div className="mt-1 flex gap-1 opacity-0 transition group-hover:opacity-100">
           <CopyButton text={m.content || ""} />
@@ -1231,156 +1161,6 @@ function Reasoning({ m }: { m: Message }) {
 // style); clicking one sends it. Generated automatically after completion and
 // cached by owner, conversation, run and the answered model revision.
 
-const EXAMPLES = [
-  {
-    icon: "🔭",
-    cat: "深度调研",
-    title: "调研 + 引用报告",
-    desc: "多源交叉验证,产出带引用的对比报告",
-    steps: ["联网搜索", "读网页", "写报告"],
-    prompt: "用 researcher 技能调研主流 AI Agent 框架(LangGraph、Eino、AutoGen)的设计差异,交叉验证至少两个来源,写一份带引用的对比报告并存为 report.md",
-    tint: ["#b48ee6", "#8b5cf6"],
-  },
-  {
-    icon: "📊",
-    cat: "数据分析",
-    title: "数据分析 + 图表",
-    desc: "跑 Python 处理数据,产出图表与结论",
-    steps: ["写脚本", "运行", "出图表"],
-    prompt: "用 Python 生成 12 个月的模拟销售数据,分析月度趋势和环比增长,画一张折线图保存为 png,再把发现写成 sales-report.md",
-    tint: ["#4a9d8e", "#2f8f7a"],
-  },
-  {
-    icon: "🕸️",
-    cat: "浏览器",
-    title: "浏览器实时抓取",
-    desc: "打开真实站点,抓取榜单并归纳要点",
-    steps: ["开浏览器", "抓取", "归纳"],
-    prompt: "用浏览器打开 https://news.ycombinator.com 抓取首页前 10 条标题,挑出与 AI 相关的,逐条总结要点",
-    tint: ["#7db4f0", "#3f7fd8"],
-  },
-  {
-    icon: "📑",
-    cat: "办公文档",
-    title: "一键生成 PPT",
-    desc: "把主题整理成可下载的演示文稿",
-    steps: ["拟提纲", "生成", "导出 pptx"],
-    prompt: "帮我做一份 6 页 PPT 介绍「什么是 AI Agent」,包含定义、核心架构、典型应用三部分,导出为 pptx",
-    tint: ["#e0976a", "#c45c3e"],
-  },
-  {
-    icon: "🔗",
-    cat: "自动化管线",
-    title: "多步管线一条龙",
-    desc: "多城市抓取 → 单位换算 → 整理成表",
-    steps: ["天气 ×3", "单位换算", "写文件"],
-    prompt: "查北京、上海、西安今天的天气,把温度换算成华氏度,整理成一张 Markdown 表格存到工作区 weather.md",
-    tint: ["#3f9d5a", "#7bc88f"],
-    more: true,
-  },
-  {
-    icon: "🔮",
-    cat: "创意分析",
-    title: "玄学 × 大数据",
-    desc: "传统五行生肖结合真实数据的趣味推演",
-    steps: ["联网检索", "数据分析", "生成报告"],
-    prompt: "结合中国传统算命理论(五行、生肖)和近几届世界杯的真实数据,分析本届夺冠热门球队,给出一份有理有据又有趣的预测报告",
-    tint: ["#e8943f", "#d4674a"],
-    more: true,
-  },
-];
-
-function Empty({ onPick }: { onPick: (text: string) => void }) {
-  const [showMore, setShowMore] = useState(false);
-  // Lead with the four headline scenarios; keep the rest behind 探索更多.
-  const shown = EXAMPLES.filter((e) => showMore || !(e as { more?: boolean }).more);
-  const hiddenCount = EXAMPLES.filter((e) => (e as { more?: boolean }).more).length;
-  return (
-    <div className="relative flex h-full items-center justify-center overflow-hidden px-6 py-10">
-      {/* animated aurora backdrop */}
-      <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="aurora absolute left-[12%] top-[8%] h-72 w-72 rounded-full bg-accent/25 blur-[90px]" />
-        <div className="aurora-2 absolute right-[10%] top-[22%] h-80 w-80 rounded-full bg-[#e8943f]/20 blur-[100px]" />
-        <div className="aurora-3 absolute bottom-[6%] left-[34%] h-72 w-72 rounded-full bg-[#8b5cf6]/12 blur-[100px]" />
-      </div>
-
-      <div className="relative w-full max-w-2xl text-center">
-        <div className="rise mx-auto mb-4 inline-flex items-center gap-1.5 rounded-full border border-border bg-surface/70 px-3 py-1 text-[11px] font-medium text-muted backdrop-blur">
-          <span className="text-accent">⚡</span> AI 自动化执行平台
-        </div>
-        <div className="halo rise mx-auto mb-5 grid h-16 w-16 place-items-center rounded-[22px] bg-gradient-to-br from-[#e07a52] to-[#c45c3e] font-serif text-[28px] text-white ring-1 ring-black/5">
-          O
-        </div>
-        <h1 className="grad-text rise font-serif text-[38px] font-medium leading-tight">交给 Orka 去执行</h1>
-        <p className="rise mx-auto mt-3 max-w-lg text-[14px] leading-relaxed text-muted">
-          描述一个目标,它会<span className="text-ink">自己拆解步骤、联网调研、调用工具</span>,
-          跑完整条链路再把结果交给你。挑一个复杂任务试试:
-        </p>
-        {/* The caveat used to sit under the input on every screen; it belongs
-            here, where a new conversation actually reads it once. */}
-        <p className="rise mx-auto mt-2 max-w-lg text-[12px] text-faint">
-          它会直接读写你的工作区,也可能出错 —— 高危操作默认会先征求你确认。
-        </p>
-
-        <div className="mt-8 grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-          {shown.map((e, i) => (
-            <button
-              key={e.title}
-              onClick={() => onPick(e.prompt)}
-              style={{ animationDelay: `${100 + i * 60}ms` }}
-              className="rise group relative flex items-start gap-3.5 overflow-hidden rounded-2xl border border-border bg-surface/70 px-4 py-4 text-left shadow-sm backdrop-blur transition-all duration-300 hover:-translate-y-1 hover:border-accent/30 hover:shadow-[0_14px_36px_rgba(40,38,32,0.12)]"
-            >
-              <span className="sheen" />
-              {/* category accent bar that grows on hover */}
-              <span
-                aria-hidden
-                className="absolute left-0 top-1/2 h-8 w-[3px] -translate-y-1/2 rounded-r-full opacity-60 transition-all duration-300 group-hover:h-16 group-hover:opacity-100"
-                style={{ background: `linear-gradient(${e.tint[0]}, ${e.tint[1]})` }}
-              />
-              <span
-                className="relative grid h-11 w-11 shrink-0 place-items-center rounded-xl text-[20px] text-white shadow-sm transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6"
-                style={{ background: `linear-gradient(135deg, ${e.tint[0]}, ${e.tint[1]})`, boxShadow: `0 6px 16px ${e.tint[1]}44` }}
-              >
-                <span className="drop-shadow-sm">{e.icon}</span>
-              </span>
-              <span className="relative min-w-0 flex-1">
-                {/* category kicker above the title — keeps the title on one line */}
-                <span className="block text-[10px] font-medium uppercase tracking-wide" style={{ color: e.tint[1] }}>
-                  {e.cat}
-                </span>
-                <span className="mt-0.5 block truncate text-[14.5px] font-semibold text-ink">{e.title}</span>
-                <span className="mt-1 block text-[12.5px] leading-snug text-muted">{e.desc}</span>
-                <span className="mt-2 flex flex-wrap items-center gap-1">
-                  {e.steps.map((s, j) => (
-                    <span key={s} className="flex items-center gap-1">
-                      {j > 0 && <span className="text-[9px] text-faint">→</span>}
-                      <span className="rounded-md bg-surface2/80 px-1.5 py-0.5 text-[10px] text-faint transition-colors group-hover:text-muted">
-                        {s}
-                      </span>
-                    </span>
-                  ))}
-                </span>
-              </span>
-              <span className="relative mt-0.5 shrink-0 translate-x-1 text-[14px] text-faint opacity-0 transition-all duration-300 group-hover:translate-x-0 group-hover:text-accent group-hover:opacity-100">
-                →
-              </span>
-            </button>
-          ))}
-        </div>
-
-        {hiddenCount > 0 && !showMore && (
-          <button onClick={() => setShowMore(true)} className="rise mt-4 text-[12px] text-faint hover:text-accent" style={{ animationDelay: "440ms" }}>
-            探索更多示例 →
-          </button>
-        )}
-
-        <p className="rise mt-6 text-[12px] text-faint" style={{ animationDelay: "480ms" }}>
-          点卡片直接跑,或在下方描述你自己的任务
-        </p>
-      </div>
-    </div>
-  );
-}
 
 function trunc(s: string | undefined, n: number) {
   if (!s) return "";

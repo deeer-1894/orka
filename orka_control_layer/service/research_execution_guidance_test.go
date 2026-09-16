@@ -23,7 +23,7 @@ func TestExecutionRuntimeGuidanceRestoredWithoutResearchSession(t *testing.T) {
 		for _, m := range state.Messages {
 			if m.Extra[researchStateTag] == true {
 				count++
-				if !isRuntimeInput(m) || !strings.Contains(m.Content, "write and run") || !strings.Contains(m.Content, "before charts and reports") {
+				if !isRuntimeInput(m) || !strings.Contains(m.Content, "write and run") || !strings.Contains(m.Content, "For browsing, news summaries") {
 					t.Errorf("lost provenance or verification guidance: %+v", m)
 				}
 			}

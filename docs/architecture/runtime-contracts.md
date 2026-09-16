@@ -10,7 +10,7 @@
 | 流序号、缓存、订阅 | `api/stream_hub.go` | 按执行实例发布和结束；游标缺口先补历史，禁止静默跳过 |
 | 工作流与调度状态 | `workflow/`、`scheduled_task/`、对应 DB store | 只有 done 放行依赖；租约令牌控制续租与完成，旧执行不可影响新执行 |
 | 模型连接、密钥、能力与调用策略 | `modelsettings/`、`core/modelprofile/` | 每次执行冻结所选配置；密钥不出现在响应、导出和普通日志中 |
-| 调用预留、结算、任务及日额度 | `service/budget_*`、`db/usage*`、`llm/call_accounting.go` | 每次真实 provider attempt 先预留再结算，所有分支共享父任务 allowance |
+| 调用用量预估与结算 | `service/budget_*`、`db/usage*`、`llm/call_accounting.go` | 每次真实 provider attempt 先记录在途预估再结算，所有分支共享用量账本；累计用量不限制执行 |
 | 文件写入意图和历史 | `core/workspaceio/` | 本地与 MCP 适配器复用，不再各自实现覆盖语义 |
 | 程序运行边界 | `tools_server/runner/` | 清洁环境、当前会话挂载、限时、输出限额、取消整个执行；隔离不可用则拒绝 |
 | GUI 浏览器状态 | `gui_agent/operators/sessions.py`、`service/runtime.py` | 信任身份只来自认证后的控制服务；按 owner/conversation 分配上下文，事件带 run/invocation ID |
@@ -78,3 +78,19 @@ CSV 支持 count/min/max/sum，精确匹配 where/exclude，eq/gte/lte；数字�
 - 严格执行沙箱测试设置 `ORKA_REQUIRE_SANDBOX_TEST=1`，不能把跳过当作通过。
 
 运行状态和健康检查只代表它们明确检测过的范围。服务状态页面的 GUI health 可达不代表模型已验证，模型列表可发现也不代表账号有额度或访问权限。
+
+## 无任务及账号 Token 配额（2026-09-16）
+
+Orka 不再按任务累计 tokens、任务总时长、轮次或账号每日 tokens 拒绝执行。旧客户端的 budget 参数、旧 YAML/环境中的额度项、历史检查点的额度和截止时间仅用于兼容读取，不恢复为执行限制。前端不保存或发送预算，旧草稿迁移时保留文本和附件并丢弃预算字段。
+
+`BudgetSession` 和 `/run/:id/budget` 暂留历史名称以兼容检查点及读取客户端，其职责为用量记账。新运行 limits 为空，deadline 为零值；remaining_tokens 不表示可消费余额，前端只显示用量。保留来源分类、在途预估、未知用量、幂等结算和所有者隔离。厂商单次请求限制、传输超时、用户取消、工具授权与定时任务失败熔断各自独立。
+
+Eino 当前 ChatModelAgent 把零/负 MaxIterations 当成默认 20 轮，适配层使用平台整数范围避免引入产品轮次预算；主任务及委派任务不再有独立 token/轮次额度。恢复保留累计用量、计划、成果和原工具授权，不继承已取消的任务 deadline。
+
+### Continuation and proportional verification (2026-09-16)
+
+- `POST /chat/resume_run` accepts optional `enabled_tools`. Omission retains the recorded selection; an explicit array replaces it for the authenticated owner's new continuation. Empty means automatic access to all available tools, including code execution. Parked approval checkpoints retain their original capability scope. The UI resolves selection for the resumed conversation, never the currently viewed unrelated conversation.
+- Agent generations use provider output defaults unless an explicit model profile policy sets an output cap. A five-minute default request deadline and bounded integrity recovery remain; neither is an account/session usage quota. Incomplete tool batches are never executed.
+- Unselected tools are filtered before progressive disclosure. The model sees common schemas plus names of discoverable tools, then loads the remaining schemas as needed. Code execution is included in automatic mode. Manual selection can narrow the catalog; an unavailable service is reported explicitly. Gateway scopes, session isolation and operation confirmation remain; metadata-only credentials never grant execution.
+- Verification follows the requested outcome: source/date/support checks for prose research; actual execution and meaningful tests for software/computed data. No mandatory second report renderer or generated verification project for news summaries.
+- Acceptance CSV `count` counts rows and rejects `column`; `count_nonempty` and `count_rfc3339` count valid cells in a required column; `value` compares exactly one filtered numeric cell. None proves original requirement completeness or provenance. Stable requirement IDs survive continuation and spec edits.

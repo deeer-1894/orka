@@ -14,16 +14,18 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
+const legacyResearchTestTokens = 2_000_000
+
 func TestResearchAndDeliveryShareCumulativeTokenBoundary(t *testing.T) {
 	// Expensive non-research work must not deny the first required source until
 	// the delivery reserve starts at three quarters of the configured single-run cap.
-	reserve := runMaxTokens * 3 / 4
-	for _, spent := range []int{reserve - 1, reserve, reserve + 1, runMaxTokens} {
+	reserve := legacyResearchTestTokens * 3 / 4
+	for _, spent := range []int{reserve - 1, reserve, reserve + 1, legacyResearchTestTokens} {
 		t.Run(fmt.Sprint(spent), func(t *testing.T) {
-			b := newRunBudget(100, runMaxTokens, 0)
+			b := newRunBudget(100, legacyResearchTestTokens, 0)
 			b.AddUsage(spent, 0)
 			s := newResearchSession(nil, "", b, 0)
-			if s.maxCalls != 40 || b.maxTokens != runMaxTokens {
+			if s.maxCalls != 40 || b.maxTokens != legacyResearchTestTokens {
 				t.Fatal("default hard limits changed")
 			}
 			calls := 0
@@ -37,10 +39,10 @@ func TestResearchAndDeliveryShareCumulativeTokenBoundary(t *testing.T) {
 			if (len(state.ToolInfos) == 3) != limited || (len(state.DeferredToolInfos) == 1) != limited {
 				t.Fatalf("tool visibility disagrees with retrieval at %d: %v / %v", spent, toolInfoNames(state.ToolInfos), toolInfoNames(state.DeferredToolInfos))
 			}
-			if got := b.observe(nil); got != (spent >= runMaxTokens) {
+			if got := b.observe(nil); got != (spent >= legacyResearchTestTokens) {
 				t.Fatalf("global hard limit changed at %d: hit=%v reason=%s", spent, got, b.exhausted())
 			}
-			if spent >= runMaxTokens && b.exhausted() != "tokens" {
+			if spent >= legacyResearchTestTokens && b.exhausted() != "tokens" {
 				t.Fatal("single-run hard stop lost")
 			}
 		})
@@ -48,8 +50,8 @@ func TestResearchAndDeliveryShareCumulativeTokenBoundary(t *testing.T) {
 }
 
 func TestResearchReserveStillAllowsCachedAndLocalEvidence(t *testing.T) {
-	b := newRunBudget(100, runMaxTokens, 0)
-	b.AddUsage(runMaxTokens*3/4-1, 0)
+	b := newRunBudget(100, legacyResearchTestTokens, 0)
+	b.AddUsage(legacyResearchTestTokens*3/4-1, 0)
 	s := newResearchSession(nil, "", b, 0)
 	ctx := context.Background()
 	args := map[string]any{"url": "https://docs.example.test/required"}
@@ -58,7 +60,7 @@ func TestResearchReserveStillAllowsCachedAndLocalEvidence(t *testing.T) {
 	if out, err := s.invoke(ctx, "fetch_url", args, call); err != nil || !strings.Contains(out, "required source body") {
 		t.Fatalf("source unavailable before reserve: %s %v", out, err)
 	}
-	for _, spent := range []int{runMaxTokens * 3 / 4, runMaxTokens} {
+	for _, spent := range []int{legacyResearchTestTokens * 3 / 4, legacyResearchTestTokens} {
 		b.AddUsage(spent-b.totalSpentTokens(), 0)
 		out, err := s.invoke(ctx, "fetch_url", args, call)
 		if err != nil || calls != 1 || !strings.Contains(out, "cached evidence") {
@@ -80,8 +82,8 @@ func TestResearchReserveStillAllowsCachedAndLocalEvidence(t *testing.T) {
 }
 
 func TestResearchConcurrentReservationsAtDeliveryBoundary(t *testing.T) {
-	b := newRunBudget(100, runMaxTokens, 0)
-	b.AddUsage(runMaxTokens*3/4-1, 0)
+	b := newRunBudget(100, legacyResearchTestTokens, 0)
+	b.AddUsage(legacyResearchTestTokens*3/4-1, 0)
 	s := newResearchSession(nil, "", b, 0)
 	s.calls = 39
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -131,12 +133,12 @@ func TestResearchConcurrentReservationsAtDeliveryBoundary(t *testing.T) {
 		}
 	}
 	cp := checkpointFrom(withResearchSession(withBudget(ctx, b), s))
-	if cp.ResearchCalls != 40 || cp.SpentTokens != runMaxTokens*3/4-1 {
+	if cp.ResearchCalls != 40 || cp.SpentTokens != legacyResearchTestTokens*3/4-1 {
 		t.Fatalf("in-flight reservation absent from checkpoint: %+v", cp)
 	}
 	// A restart must not reclaim an already reserved remote call, even below
 	// the token reserve. Restore the same fields used by runEino.
-	restoredBudget := newRunBudget(100, runMaxTokens, 0)
+	restoredBudget := newRunBudget(100, legacyResearchTestTokens, 0)
 	restoreCheckpoint(cp, restoredBudget, nil, nil)
 	restored := newResearchSession(nil, "", restoredBudget, 0)
 	restored.calls = cp.ResearchCalls
@@ -178,8 +180,8 @@ func TestResearchConcurrentReservationsAtDeliveryBoundary(t *testing.T) {
 }
 
 func TestResearchCheckpointCarriesBudgetThroughDeliveryBoundary(t *testing.T) {
-	b := newRunBudget(100, runMaxTokens, 0)
-	b.AddUsage(runMaxTokens/4, 0)
+	b := newRunBudget(100, legacyResearchTestTokens, 0)
+	b.AddUsage(legacyResearchTestTokens/4, 0)
 	original := newResearchSession(nil, "", b, 0)
 	original.calls = 4
 	raw, err := json.Marshal(checkpointFrom(withResearchSession(withBudget(context.Background(), b), original)))
@@ -190,17 +192,17 @@ func TestResearchCheckpointCarriesBudgetThroughDeliveryBoundary(t *testing.T) {
 	if err = json.Unmarshal(raw, &cp); err != nil {
 		t.Fatal(err)
 	}
-	next := newRunBudget(100, runMaxTokens, 0)
+	next := newRunBudget(100, legacyResearchTestTokens, 0)
 	restoreCheckpoint(&cp, next, nil, nil)
 	resumed := newResearchSession(nil, "", next, 0)
 	resumed.calls = cp.ResearchCalls // runEino restores this count from the same checkpoint.
-	next.AddUsage(runMaxTokens/2-1, 0)
+	next.AddUsage(legacyResearchTestTokens/2-1, 0)
 	calls := 0
 	call := func() (string, error) { calls++; return "fifth required source", nil }
 	if out, err := resumed.invoke(context.Background(), "fetch_url", map[string]any{"url": "https://docs.example.test/fifth"}, call); err != nil || !strings.Contains(out, "fifth required source") {
 		t.Fatalf("resumed mandatory source blocked: %s %v", out, err)
 	}
-	if calls != 1 || resumed.calls != 5 || next.spentTokens() != runMaxTokens/2-1 || next.totalSpentTokens() != runMaxTokens*3/4-1 {
+	if calls != 1 || resumed.calls != 5 || next.spentTokens() != legacyResearchTestTokens/2-1 || next.totalSpentTokens() != legacyResearchTestTokens*3/4-1 {
 		t.Fatal("resumed accounting was reset or rebilled")
 	}
 	next.AddUsage(1, 0)
@@ -208,7 +210,7 @@ func TestResearchCheckpointCarriesBudgetThroughDeliveryBoundary(t *testing.T) {
 	if err != nil || out != researchLimitNotice || calls != 1 {
 		t.Fatalf("carried usage missed reserve: %s %v", out, err)
 	}
-	next.AddUsage(runMaxTokens/4, 0)
+	next.AddUsage(legacyResearchTestTokens/4, 0)
 	if !next.observe(nil) || next.exhausted() != "tokens" {
 		t.Fatal("checkpoint bypassed global single-run cap")
 	}

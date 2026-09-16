@@ -103,7 +103,7 @@ func TestBudgetEndpointUsesAuthenticatedOwnerAndLedger(t *testing.T) {
 			if err = json.Unmarshal(c.Response.Body(), &result); err != nil {
 				t.Fatal(err)
 			}
-			if result.Data.ReservedTokens != 60 || result.Data.RemainingTokens != 40 || len(result.Data.Sources) != 1 {
+			if result.Data.ReservedTokens != 60 || result.Data.RemainingTokens != 0 || result.Data.Limits.MaxTokens != 0 || len(result.Data.Sources) != 1 {
 				t.Fatalf("%s", c.Response.Body())
 			}
 		}

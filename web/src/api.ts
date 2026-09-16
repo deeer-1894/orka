@@ -218,8 +218,8 @@ export const api = {
   rerunRun: (run_id: string) => post<{ status: string }>("/run/rerun", { run_id }),
   // Continue a run that died mid-flight from its surviving transcript, rather
   // than paying for the completed work a second time.
-  resumeRun: (run_id: string) =>
-    post<{ resumed: boolean; conversation_id: string; steps: number }>("/chat/resume_run", { run_id }),
+  resumeRun: (run_id: string, enabled_tools?: string[]) =>
+    post<{ resumed: boolean; conversation_id: string; steps: number }>("/chat/resume_run", { run_id, enabled_tools }),
   listFactors: (status = "") => post<{ factors: Factor[] }>("/quant/factors", { status }),
   setFactorStatus: (factor_id: string, status: string) => post<{ status: string }>("/quant/factor/status", { factor_id, status }),
   listPortfolios: () => post<{ portfolios: WeightedPortfolio[] }>("/quant/portfolios", {}),

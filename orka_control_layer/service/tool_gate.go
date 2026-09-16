@@ -131,10 +131,15 @@ func (g *toolGate) visible() []*schema.ToolInfo {
 		if !coreTools[ti.Name] && !g.unlocked[ti.Name] {
 			continue
 		}
-		if ti.Name == findToolsName && len(hidden) > 0 {
+		if ti.Name == findToolsName {
 			// Copy: the entry is shared with the list captured in remember().
 			idx := *ti
-			idx.Desc = findToolsDesc(hidden)
+			if len(hidden) > 0 {
+				idx.Desc = findToolsDesc(hidden)
+			}
+			if !g.hasExecutionLocked() {
+				idx.Desc += "\nCode execution (python/shell) is absent from this run catalog. Automatic mode includes all available tools; a manually restricted range or an unavailable execution service can exclude it. Report the actual unavailable capability, not a universal requirement to enable code. Do not claim programs or tests ran."
+			}
 			out = append(out, &idx)
 			continue
 		}
@@ -367,6 +372,14 @@ func (findTools) Invoke(ctx context.Context, args map[string]any) (string, error
 		return "工具检索当前不可用。", nil
 	}
 	query, _ := args["query"].(string)
+	if needsExecution(query) {
+		g.mu.Lock()
+		available := g.hasExecutionLocked()
+		g.mu.Unlock()
+		if !available {
+			return "代码执行服务未提供给本轮工具目录。默认自动模式包含全部可用工具，无须逐项勾选；请检查是否手动限定了工具范围或执行服务不可用。明确报告实际阻塞原因，保留已有成果，不要用文件读写、模拟结果或计算器冒充执行，也不要重复检索。", nil
+		}
+	}
 	hits := g.search(query)
 	if len(hits) == 0 {
 		hidden := g.hiddenNames()
@@ -406,4 +419,27 @@ func withToolGate(ctx context.Context, g *toolGate) context.Context {
 func toolGateFrom(ctx context.Context) *toolGate {
 	g, _ := ctx.Value(toolGateKey{}).(*toolGate)
 	return g
+}
+
+// Called under the catalog mutex. This reflects actual registered tools, not
+// inferred provider/model capabilities.
+func (g *toolGate) hasExecutionLocked() bool {
+	for _, ti := range g.all {
+		if ti != nil && (ti.Name == "python" || ti.Name == "shell") {
+			return true
+		}
+	}
+	return false
+}
+func needsExecution(query string) bool {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q == "python" || q == "shell" || q == "code" {
+		return true
+	}
+	for _, phrase := range []string{"execute python", "run python", "run scripts", "execute code", "code execution", "execute shell", "run shell", "运行代码", "执行代码", "执行脚本", "运行测试"} {
+		if strings.Contains(q, phrase) {
+			return true
+		}
+	}
+	return false
 }

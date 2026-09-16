@@ -64,25 +64,15 @@ func budgetSession(t *testing.T, ledger db.UsageLedger, owner, run string, token
 	}
 	return s
 }
-func TestBudgetPolicyBoundsTaskOverrides(t *testing.T) {
-	a := config.AgentConfig{RunTokenCeiling: 3_000_000, RunWallSecondsCeiling: 9000, RunStepsCeiling: 400}
-	p, err := ResolveTaskBudget(a, TaskBudgetRequest{})
-	if err != nil || p.MaxTokens != 2_000_000 || p.MaxWallSeconds != 7200 || p.MaxSteps != 300 {
-		t.Fatalf("defaults %+v %v", p, err)
-	}
-	p, err = ResolveTaskBudget(a, TaskBudgetRequest{MaxTokens: 2_500_000, MaxWallSeconds: 60, MaxSteps: 5})
-	if err != nil || p.MaxTokens != 2_500_000 || p.MaxWallSeconds != 60 || p.MaxSteps != 5 {
-		t.Fatalf("override %+v %v", p, err)
-	}
-	for _, r := range []TaskBudgetRequest{{MaxTokens: -1}, {MaxTokens: 3_000_001}, {MaxSteps: 401}, {MaxWallSeconds: 9001}} {
-		if _, err := ResolveTaskBudget(a, r); err == nil {
-			t.Fatalf("accepted %+v", r)
+func TestLegacyBudgetPolicyIsIgnored(t *testing.T) {
+	for _, req := range []TaskBudgetRequest{{}, {MaxTokens: 1}, {MaxTokens: -1}, {MaxSteps: 1, MaxWallSeconds: 1}} {
+		p, err := ResolveTaskBudget(config.AgentConfig{RunMaxTokens: 1, UserDailyTokens: 1}, req)
+		if err != nil || p != (TaskBudgetRequest{}) {
+			t.Fatalf("legacy limit %+v %v", p, err)
 		}
 	}
-	if _, err := ResolveTaskBudget(config.AgentConfig{}, TaskBudgetRequest{MaxTokens: 2_000_001}); err == nil {
-		t.Fatal("unconfigured increase allowed")
-	}
 }
+
 func TestBudgetDailyReservationsAcrossConcurrentRuns(t *testing.T) {
 	f := &fakeLedger{}
 	var accepted atomic.Int32
@@ -97,15 +87,15 @@ func TestBudgetDailyReservationsAcrossConcurrentRuns(t *testing.T) {
 			err := s.ReserveUsage(context.Background(), "call", "main", 10)
 			if err == nil {
 				accepted.Add(1)
-			} else if !errors.Is(err, ErrDailyQuotaExceeded) {
+			} else if err != nil {
 				t.Errorf("reserve: %v", err)
 			}
 		}(i)
 	}
 	close(start)
 	wg.Wait()
-	if accepted.Load() != 10 {
-		t.Fatalf("accepted %d calls, want 10", accepted.Load())
+	if accepted.Load() != 64 {
+		t.Fatalf("accepted %d calls, want 64", accepted.Load())
 	}
 }
 func TestBudgetSharedParentAndAllUsageSources(t *testing.T) {
@@ -127,14 +117,14 @@ func TestBudgetSharedParentAndAllUsageSources(t *testing.T) {
 		}
 	}
 	got := s.Snapshot()
-	if got.UsedTokens != 60 || got.ReservedTokens != 0 || got.RemainingTokens != 40 || s.Budget().spentTokens() != 60 {
+	if got.UsedTokens != 60 || got.ReservedTokens != 0 || got.RemainingTokens != 0 || s.Budget().spentTokens() != 60 {
 		t.Fatalf("snapshot %+v", got)
 	}
 	a, _ := f.Load(ctx, "fake")
 	if len(a.Entries) != 6 {
 		t.Fatalf("sources lost: %+v", a)
 	}
-	if err := s.ReserveUsage(ctx, "over", "subagent", 41); !errors.Is(err, ErrRunBudgetExceeded) {
+	if err := s.ReserveUsage(ctx, "over", "subagent", 41); err != nil {
 		t.Fatalf("child overspent parent: %v", err)
 	}
 }
@@ -153,11 +143,11 @@ func TestBudgetUnknownSettlementAndReconciliation(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := s.Snapshot()
-	if got.UsedTokens != 80 || got.UnknownCalls != 1 || got.UnknownTokens != 80 || got.RemainingTokens != 20 {
+	if got.UsedTokens != 80 || got.UnknownCalls != 1 || got.UnknownTokens != 80 || got.RemainingTokens != 0 {
 		t.Fatalf("unknown became free: %+v", got)
 	}
 	other := budgetSession(t, f, "fake", "other", 100, 100)
-	if err := other.ReserveUsage(ctx, "call", "main", 21); !errors.Is(err, ErrDailyQuotaExceeded) {
+	if err := other.ReserveUsage(ctx, "call", "main", 21); err != nil {
 		t.Fatalf("unknown daily charge lost: %v", err)
 	}
 	known := UsageSettlement{Status: UsageKnown, PromptTokens: 12, CompletionTokens: 8}
@@ -168,7 +158,7 @@ func TestBudgetUnknownSettlementAndReconciliation(t *testing.T) {
 		t.Fatal(err)
 	}
 	got = s.Snapshot()
-	if got.UsedTokens != 20 || got.UnknownCalls != 0 || got.RemainingTokens != 80 {
+	if got.UsedTokens != 20 || got.UnknownCalls != 0 || got.RemainingTokens != 0 {
 		t.Fatalf("reconciliation %+v", got)
 	}
 	if err := s.SettleUsage(ctx, "call", UsageSettlement{Status: UsageKnown, PromptTokens: 1}); !errors.Is(err, ErrUsageConflict) {
@@ -252,7 +242,7 @@ func TestBudgetRecordsProviderOverrunWithoutClipping(t *testing.T) {
 	if got := s.Snapshot(); got.UsedTokens != 150 || got.RemainingTokens != 0 {
 		t.Fatal(got)
 	}
-	if err := s.ReserveUsage(ctx, "next", "main", 1); !errors.Is(err, ErrRunBudgetExceeded) {
+	if err := s.ReserveUsage(ctx, "next", "main", 1); err != nil {
 		t.Fatalf("overrun allowed next call %v", err)
 	}
 }
@@ -268,13 +258,13 @@ func TestBudgetSharedConcurrentReservationsAndIdempotentSettlement(t *testing.T)
 			err := s.ReserveUsage(ctx, fmt.Sprint(i), "subagent", 10)
 			if err == nil {
 				accepted.Add(1)
-			} else if !errors.Is(err, ErrRunBudgetExceeded) {
+			} else if err != nil {
 				t.Error(err)
 			}
 		}(i)
 	}
 	wg.Wait()
-	if accepted.Load() != 10 {
+	if accepted.Load() != 40 {
 		t.Fatal(accepted.Load())
 	}
 	s2 := budgetSession(t, &fakeLedger{}, "fake", "other", 100, 100)
@@ -305,7 +295,7 @@ func TestBudgetDailyWindowDoesNotExpireInflight(t *testing.T) {
 	if err := s.ReserveUsage(context.Background(), "new", "main", 60); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReserveUsage(context.Background(), "over", "main", 1); !errors.Is(err, ErrDailyQuotaExceeded) {
+	if err := s.ReserveUsage(context.Background(), "over", "main", 1); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -321,14 +311,14 @@ func TestBudgetStepsSurviveWindowCompactionAndRetries(t *testing.T) {
 		}
 	}
 	s.Budget().observe(nil)
-	if err := s.AdvanceStep(ctx, "3"); !errors.Is(err, ErrRunBudgetExceeded) {
+	if err := s.AdvanceStep(ctx, "3"); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.Snapshot(); got.UsedSteps != 2 {
+	if got := s.Snapshot(); got.UsedSteps != 3 {
 		t.Fatal(got)
 	}
 }
-func TestBudgetWallAndInputValidation(t *testing.T) {
+func TestUsageInputValidationWithoutTaskDeadline(t *testing.T) {
 	s := budgetSession(t, &fakeLedger{}, "fake", "root", 100, 100)
 	ctx := context.Background()
 	for _, u := range []UsageSettlement{{Status: UsageKnown, PromptTokens: -1}, {Status: "bogus"}, {Status: UsageKnown, PromptTokens: int(^uint(0) >> 1), CompletionTokens: 1}} {
@@ -340,19 +330,19 @@ func TestBudgetWallAndInputValidation(t *testing.T) {
 		}
 	}
 	s.Budget().deadline = time.Now().Add(-time.Second)
-	if err := s.ReserveUsage(ctx, "late", "main", 1); !errors.Is(err, ErrRunBudgetExceeded) {
+	if err := s.ReserveUsage(ctx, "late", "main", 1); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestBudgetSameRunSessionsCannotOverspend(t *testing.T) {
+func TestUsageSameRunSessionsCanContinuePastLegacyLimits(t *testing.T) {
 	f := &fakeLedger{}
 	a := budgetSession(t, f, "fake", "same", 100, 1000)
 	b := budgetSession(t, f, "fake", "same", 100, 1000)
 	if err := a.ReserveUsage(context.Background(), "first", "main", 80); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.ReserveUsage(context.Background(), "second", "main", 30); !errors.Is(err, ErrRunBudgetExceeded) {
+	if err := b.ReserveUsage(context.Background(), "second", "main", 30); err != nil {
 		t.Fatalf("separate handles bypass parent: %v", err)
 	}
 }
@@ -371,7 +361,7 @@ func TestBudgetDailySnapshotReportsUnknownAndInflight(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := s.DailySnapshot(ctx)
-	if err != nil || got.UsedTokens != 20 || got.ReservedTokens != 80 || got.RemainingTokens != 100 || got.UnknownCalls != 1 {
+	if err != nil || got.UsedTokens != 20 || got.ReservedTokens != 80 || got.RemainingTokens != 0 || got.UnknownCalls != 1 {
 		t.Fatalf("daily %+v %v", got, err)
 	}
 }
@@ -379,38 +369,27 @@ func TestBudgetDailySnapshotReportsUnknownAndInflight(t *testing.T) {
 func TestBudgetFreshRunAfterUnknownAgeStillCharged(t *testing.T) {
 	f := &fakeLedger{accounts: map[string]db.UsageAccount{"fake": {Version: 1, Entries: []db.UsageEntry{{RunID: "old", CallID: "unknown", Status: UsageUnknown, Tokens: 100, SettledAt: time.Now().Add(-48 * time.Hour).UnixMilli()}}}}}
 	s := budgetSession(t, f, "fake", "new", 100, 100)
-	if err := s.ReserveUsage(context.Background(), "first", "main", 1); !errors.Is(err, ErrDailyQuotaExceeded) {
+	if err := s.ReserveUsage(context.Background(), "first", "main", 1); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestBudgetContextDeadlineCanCancelInflight(t *testing.T) {
+func TestUsageContextPreservesParentCancellation(t *testing.T) {
 	s := budgetSession(t, &fakeLedger{}, "fake", "root", 100, 100)
-	s.Budget().deadline = time.Now().Add(-time.Second)
-	ctx, cancel := s.RunContext(context.Background())
+	parent, stop := context.WithCancel(context.Background())
+	ctx, cancel := s.RunContext(parent)
 	defer cancel()
-	if !errors.Is(ctx.Err(), context.DeadlineExceeded) || BudgetSessionFrom(ctx) != s {
-		t.Fatalf("context did not inherit deadline: %v", ctx.Err())
+	stop()
+	if !errors.Is(ctx.Err(), context.Canceled) || BudgetSessionFrom(ctx) != s {
+		t.Fatalf("cancellation/context %v", ctx.Err())
 	}
 }
 
 func TestBudgetResumePolicyRetainsSavedAllowanceAndCarry(t *testing.T) {
 	saved := TaskBudgetRequest{MaxTokens: 500, MaxSteps: 30, MaxWallSeconds: 120}
-	policy, err := ResolveResumeBudget(config.AgentConfig{}, &saved, 499)
-	if err != nil || policy != saved {
-		t.Fatalf("saved policy lost %+v %v", policy, err)
-	}
-	if _, err := ResolveResumeBudget(config.AgentConfig{}, &saved, 500); !errors.Is(err, ErrRunBudgetExceeded) {
-		t.Fatal(err)
-	}
-	raised := config.AgentConfig{RunMaxTokens: 4_000_000}
-	legacy, err := ResolveResumeBudget(raised, nil, 1_000_000)
-	if err != nil || legacy.MaxTokens != 2_000_000 {
-		t.Fatalf("legacy auto-increased %+v %v", legacy, err)
-	}
-	reduced := config.AgentConfig{RunMaxTokens: 200}
-	if _, err := ResolveResumeBudget(reduced, &saved, 200); !errors.Is(err, ErrRunBudgetExceeded) {
-		t.Fatalf("deployment ceiling bypassed: %v", err)
+	policy, err := ResolveResumeBudget(config.AgentConfig{}, &saved, 100_000_000)
+	if err != nil || policy != (TaskBudgetRequest{}) {
+		t.Fatalf("old limit restored %+v %v", policy, err)
 	}
 	s, err := NewBudgetSession(context.Background(), config.AgentConfig{}, policy, &fakeLedger{}, "fake", "resumed")
 	if err != nil {
@@ -503,7 +482,7 @@ func TestBudgetSnapshotActiveFinalAndSharedOwnerScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	active, err := ReadRunBudget(ctx, f, "alice", "root")
-	if err != nil || active.ReservedTokens != 80 || active.RemainingTokens != 20 || active.Limits.MaxTokens != 100 || len(active.Sources) != 1 {
+	if err != nil || active.ReservedTokens != 80 || active.RemainingTokens != 0 || active.Limits.MaxTokens != 0 || len(active.Sources) != 1 {
 		t.Fatalf("active %+v %v", active, err)
 	}
 	if _, err := ReadRunBudget(ctx, f, "bob", "root"); !errors.Is(err, db.ErrNotFound) {

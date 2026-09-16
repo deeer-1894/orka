@@ -1,6 +1,9 @@
 package service
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The run that motivated this produced all nine of its deliverables and then
 // called file_list five times with identical arguments, getting identical output
@@ -21,7 +24,7 @@ func TestLoopDetectorNudgesOnIdenticalRepeats(t *testing.T) {
 	if note == "" {
 		t.Fatal("no nudge after the loop became obvious")
 	}
-	for _, want := range []string{"完全相同", "已经成功", "换一种方式"} {
+	for _, want := range []string{"完全相同", "不代表操作成功", "换一种方式"} {
 		if !contains(note, want) {
 			t.Errorf("nudge is missing %q: %s", want, note)
 		}
@@ -67,5 +70,16 @@ func TestLoopDetectorNilIsInert(t *testing.T) {
 	var d *loopDetector
 	if note := d.observe("k", "v"); note != "" {
 		t.Fatalf("nil detector returned %q", note)
+	}
+}
+
+func TestRepeatedFailureNeverClaimsSuccess(t *testing.T) {
+	d := newLoopDetector()
+	var note string
+	for i := 0; i < repeatBeforeNudge; i++ {
+		note = d.observe("file_read", `{"error":"not found"}`)
+	}
+	if strings.Contains(note, "已经成功") {
+		t.Fatal("identical failures were presented as successful work")
 	}
 }

@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"sync"
 )
 
@@ -50,6 +52,8 @@ func (d *loopDetector) observe(key, result string) string {
 	if d == nil {
 		return ""
 	}
+	digest := sha256.Sum256([]byte(result))
+	result = hex.EncodeToString(digest[:])
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if prev, ok := d.last[key]; ok && prev != result {
@@ -64,7 +68,7 @@ func (d *loopDetector) observe(key, result string) string {
 	}
 	return "\n\n[系统] 你已经用完全相同的参数调用了这个工具 " + itoa(d.seen[key]) +
 		" 次,每次返回的内容都一样。再调一次不会得到新信息。" +
-		"如果你在确认某个操作是否成功:它已经成功了,请继续下一步。" +
+		"相同返回值不代表操作成功，也不代表验收通过。请根据返回结果修复失败或继续未完成步骤。" +
 		"如果你在找某样东西却没找到,换一种方式(更具体的路径、别的工具),不要重复同一个调用。"
 }
 

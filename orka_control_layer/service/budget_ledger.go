@@ -119,8 +119,8 @@ type DailyBudgetSnapshot struct {
 
 func ReadDailyBudget(ctx context.Context, ledger db.UsageLedger, owner string, limit int) (DailyBudgetSnapshot, error) {
 	out := DailyBudgetSnapshot{LimitTokens: limit}
-	if ledger == nil || owner == "" || limit <= 0 {
-		return out, errors.New("daily budget requires ledger, owner and positive limit")
+	if ledger == nil || owner == "" || limit < 0 {
+		return out, errors.New("usage requires ledger, owner and nonnegative legacy limit")
 	}
 	a, err := ledger.Load(ctx, owner)
 	if err != nil {

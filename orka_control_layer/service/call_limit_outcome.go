@@ -148,12 +148,17 @@ func assessRunOutcome(rc *agent.RunContext, runErr, ctxErr error) runOutcome {
 }
 
 func callLimitNotice(out runOutcome) string {
-	text := "模型单次调用达到输出或时间限额，本轮已停止，不会自动重试。"
+	text := "模型连续返回不完整的响应，本轮已暂停，不会继续自动重试；未执行不完整的工具调用。"
+	if strings.Contains(out.errorDetail, "output truncated") {
+		text = "模型连续两次返回截断输出，本轮已暂停，不会继续自动重试；这不是会话或账号 token 配额。未执行截断的工具调用。"
+	} else if strings.Contains(out.errorDetail, "generation deadline exceeded") {
+		text = "本次模型请求等待超时，本轮已暂停，不会继续自动重试；这不是会话或账号 token 配额。"
+	}
 	if out.interruptionNotice != "" {
 		text = out.interruptionNotice + "本轮已停止，不会自动重试。"
 	}
 	if out.status == db.RunPartial {
-		text += "已记录实际工具进度，已有成果不会被本次限额处理删除；这不代表成果已验证或任务完成。恢复应使用保留的执行记录和剩余累计预算，从一个小步骤继续，不从头重做。"
+		text += "已记录实际工具进度，已有成果已保留；这不代表成果已验证或任务完成。继续任务会保留执行记录，从未完成的步骤恢复，不从头重做。"
 	} else {
 		text += "尚无可确认的实际工具进度，本轮按失败记录；未声称产物已生成或已验证。"
 	}

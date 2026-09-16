@@ -6,69 +6,12 @@ import (
 	"time"
 
 	"github.com/orka-oss/orka_control_layer/db"
-	"github.com/orka-oss/orka_core/config"
 	"github.com/orka-oss/orka_core/messages"
 )
 
-// Cost guardrails. The per-run budget in run_budget.go stops one execution from
-// running away; this file stops the OTHER failure mode, which is many executions
-// each individually reasonable. A scheduled task that fails and retries on every
-// tick, or a loop that keeps re-asking, spends real money with nobody watching —
-// on this deployment a single run reached 627k tokens and nothing anywhere would
-// have objected.
-
-const (
-	// runMaxTokens caps one task including resumed attempts. Set well above normal work (measured p90
-	// here is ~144k) so it never interferes with a legitimately large job — it is
-	// a backstop against runaway loops, not a performance budget.
-	runMaxTokens = config.DefaultRunMaxTokens
-	// runMaxWall caps the task wall clock, including resumes. Long research legitimately
-	// takes tens of minutes; this only catches a run that has stopped making
-	// progress at all.
-	runMaxWall = config.DefaultRunMaxWallSeconds * time.Second
-	// userDailyTokens caps a single user's rolling 24h spend across all runs.
-	// Override with agent.user_daily_tokens / USER_DAILY_TOKENS.
-	//
-	// The default was 5M against a measured p90 run of ~144k — roughly 35 runs a
-	// day, which looked generous until a run of genuine multi-source research
-	// turned out to cost 1.3M on its own. Four of those exhaust a day. Sizing a
-	// DAILY ceiling off a p90 SINGLE run is the mistake: the ceiling has to clear
-	// the largest run the deployment intends to support, several times over, or
-	// it stops being a runaway guard and becomes a cap on ordinary work.
-	userDailyTokens = config.DefaultUserDailyTokens
-	// taskFailureLimit is how many consecutive failures disable a scheduled task.
-	// Three distinguishes a persistent fault from a transient one — a flaky
-	// network or a rate limit rarely repeats three times running.
-	taskFailureLimit = 3
-)
-
-// quotaExceeded reports why a user may not start a new run, or "" to proceed.
-// This is only an explanatory preflight. BudgetSession.ReserveUsage is the
-// atomic admission gate before EVERY paid attempt, including auxiliary calls.
-func (s *ChatService) quotaExceeded(ctx context.Context, email string) string {
-	if email == "" || s.Msg == nil || s.Msg.Store == nil {
-		return ""
-	}
-	limit := s.dailyTokenLimit()
-	usage, err := ReadDailyBudget(ctx, s.budgetLedger(), email, limit)
-	if err != nil {
-		return "暂时无法读取用量账本，已暂停新调用。请稍后重试。"
-	}
-	used := saturatingUsageSum(usage.UsedTokens, usage.ReservedTokens)
-	if used < limit {
-		return ""
-	}
-	return fmt.Sprintf("已达到 24 小时用量上限(%s / %s token)。请稍后再试,或在配置中调高上限(agent.user_daily_tokens)。",
-		humanCount(used), humanCount(limit))
-}
-
-// dailyTokenLimit is the configured 24h ceiling, or the built-in default.
-func (s *ChatService) dailyTokenLimit() int {
-	if s.Cfg != nil && s.Cfg.Agent.UserDailyTokens > 0 {
-		return s.Cfg.Agent.UserDailyTokens
-	}
-	return userDailyTokens
-}
+// Scheduled failures retain their circuit breaker; token usage does not
+// prevent a user from starting or continuing work.
+const taskFailureLimit = 3
 
 // recordTaskOutcome advances a scheduled task's circuit breaker and trips it
 // after taskFailureLimit consecutive failures. An unattended task that cannot

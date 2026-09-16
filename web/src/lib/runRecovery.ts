@@ -13,7 +13,7 @@ export interface RecoveryDependencies {
   actions?: RunActions;
 }
 
-function identity(c: RecoveryContext) {
+export function executionIdentity(c: RecoveryContext) {
   for (let i = c.messages.length - 1; i >= 0; i--) {
     const m = c.messages[i];
     if (m.meta?.conversation_id !== c.conversationID || m.type === 'heartbeat') continue;
@@ -25,13 +25,13 @@ function identity(c: RecoveryContext) {
 }
 
 export function recoveryKey(c: RecoveryContext): string {
-  const id = identity(c);
+  const id = executionIdentity(c);
   const user = [...c.messages].reverse().find(m => m.meta?.conversation_id === c.conversationID && m.type === 'chat' && m.role === 'user');
   return JSON.stringify([c.conversationID, c.enabled !== false, c.status, id?.run, id?.trace, user?.id, c.historyLoaded === true]);
 }
 
 export function currentRun(c: RecoveryContext, runs: RunRecord[]): RunRecord | undefined {
-  const id = identity(c);
+  const id = executionIdentity(c);
   if (!c.conversationID || c.enabled === false) return undefined;
   const own = runs.filter(r => r.conversation_id === c.conversationID);
   const newest = Math.max(...own.map(r => r.created_at));

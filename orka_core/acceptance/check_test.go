@@ -52,3 +52,35 @@ func TestAcceptanceNumericPrecisionAndResourceBounds(t *testing.T) {
 		t.Fatal("unknown contract field accepted")
 	}
 }
+
+func TestCountCannotPretendToValidateColumn(t *testing.T) {
+	spec := Spec{Kind: Kind, Requirements: []Requirement{{ID: "dates", Method: "csv", File: "data.csv", Operation: "count", Column: "published", Expected: "1"}}}
+	files := fstest.MapFS{"data.csv": {Data: []byte("published\nnot-a-date\n")}}
+	if got := Check(context.Background(), files, spec); got.OK {
+		t.Fatal("invalid date passed via row count with ignored column")
+	}
+}
+
+func TestCSVCellChecksUseActualValues(t *testing.T) {
+	files := fstest.MapFS{"data.csv": {Data: []byte("metric,value,published\nreleases,15,2026-09-16T00:00:00Z\nother,2,not-a-date\nempty,0,\n")}}
+	for _, tc := range []struct {
+		op, col, expected string
+		where             map[string]string
+		pass              bool
+	}{
+		{"count_rfc3339", "published", "3", nil, false},
+		{"count_rfc3339", "published", "1", nil, true},
+		{"count_nonempty", "published", "2", nil, true},
+		{"value", "value", "15", map[string]string{"metric": "releases"}, true},
+		{"value", "value", "1", map[string]string{"metric": "releases"}, false},
+		{"value", "value", "15", nil, false},
+		{"value", "value", "0", map[string]string{"metric": "absent"}, false},
+		{"count_rfc3339", "missing", "0", nil, false},
+		{"count", "", "3", nil, true},
+	} {
+		r := Check(context.Background(), files, Spec{Kind: Kind, Requirements: []Requirement{{ID: "check", Method: "csv", File: "data.csv", Operation: tc.op, Column: tc.col, Expected: tc.expected, Where: tc.where}}})
+		if r.OK != tc.pass {
+			t.Errorf("%+v: %+v", tc, r)
+		}
+	}
+}

@@ -19,12 +19,12 @@ import (
 // silently run with a publicly-known signing key.
 const DefaultDevSecret = "dev-only-change-me"
 
-// Historical task defaults remain the migration policy for old checkpoints.
+// Deprecated limit constants remain source-compatible. Zero means no quota.
 const (
-	DefaultRunMaxTokens           = 2_000_000
-	DefaultRunMaxWallSeconds      = 7200
-	DefaultRunMaxSteps            = 300
-	DefaultUserDailyTokens        = 50_000_000
+	DefaultRunMaxTokens           = 0
+	DefaultRunMaxWallSeconds      = 0
+	DefaultRunMaxSteps            = 0
+	DefaultUserDailyTokens        = 0
 	DefaultUsageReservationTokens = 32_768
 )
 
@@ -91,8 +91,7 @@ type StorageConfig struct {
 }
 
 type AgentConfig struct {
-	// Run defaults are deployment policy. A zero ceiling equals its default;
-	// an explicitly larger ceiling permits bounded per-task increases.
+	// Deprecated: accepted for old configuration files, ignored at runtime.
 	RunMaxTokens          int `yaml:"run_max_tokens"`
 	RunMaxWallSeconds     int `yaml:"run_max_wall_seconds"`
 	RunMaxSteps           int `yaml:"run_max_steps"`
@@ -108,9 +107,7 @@ type AgentConfig struct {
 	MultiAgent       bool             `yaml:"multi_agent"` // expose orchestrator sub-agents the model can delegate to
 	SubAgents        []SubAgentConfig `yaml:"sub_agents"`  // optional custom registry; empty = built-in researcher/writer/browser/engineer
 	SkillsDir        string           `yaml:"skills_dir"`  // global dir of Claude-Code-style SKILL.md packages (default ./skills)
-	// UserDailyTokens caps one user's rolling 24h spend. 0 uses the built-in
-	// default. Exposed because the refusal it produces tells the user to "raise
-	// it in config", which was not true of a hardcoded constant.
+	// Deprecated: account usage is measured without a token quota.
 	UserDailyTokens int `yaml:"user_daily_tokens"`
 }
 
@@ -224,13 +221,6 @@ func (c *Config) applyEnv() {
 	envInt(&c.Agent.CheckpointTTLSec, "CHECKPOINT_TTL_SEC")
 	envStr(&c.Agent.GUIAgentWSURL, "GUI_AGENT_WS_URL")
 	envStr(&c.Agent.SkillsDir, "SKILLS_DIR")
-	envInt(&c.Agent.UserDailyTokens, "USER_DAILY_TOKENS")
-	envInt(&c.Agent.RunMaxTokens, "RUN_MAX_TOKENS")
-	envInt(&c.Agent.RunMaxWallSeconds, "RUN_MAX_WALL_SECONDS")
-	envInt(&c.Agent.RunMaxSteps, "RUN_MAX_STEPS")
-	envInt(&c.Agent.RunTokenCeiling, "RUN_TOKEN_CEILING")
-	envInt(&c.Agent.RunWallSecondsCeiling, "RUN_WALL_SECONDS_CEILING")
-	envInt(&c.Agent.RunStepsCeiling, "RUN_STEPS_CEILING")
 	envInt(&c.Agent.UsageReservationTokens, "USAGE_RESERVATION_TOKENS")
 	if os.Getenv("MULTI_AGENT") == "1" {
 		c.Agent.MultiAgent = true
@@ -309,46 +299,24 @@ func splitComma(s string) []string {
 // WithBudgetDefaults also supports callers constructing Config directly in tests
 // or embedding Orka without the YAML loader.
 func (a AgentConfig) WithBudgetDefaults() AgentConfig {
-	setDefaultInt(&a.RunMaxTokens, DefaultRunMaxTokens)
-	setDefaultInt(&a.RunMaxWallSeconds, DefaultRunMaxWallSeconds)
-	setDefaultInt(&a.RunMaxSteps, DefaultRunMaxSteps)
-	setDefaultInt(&a.RunTokenCeiling, a.RunMaxTokens)
-	setDefaultInt(&a.RunWallSecondsCeiling, a.RunMaxWallSeconds)
-	setDefaultInt(&a.RunStepsCeiling, a.RunMaxSteps)
+	a.RunMaxTokens, a.RunMaxWallSeconds, a.RunMaxSteps = 0, 0, 0
+	a.RunTokenCeiling, a.RunWallSecondsCeiling, a.RunStepsCeiling = 0, 0, 0
+	a.UserDailyTokens = 0
 	setDefaultInt(&a.UsageReservationTokens, DefaultUsageReservationTokens)
-	setDefaultInt(&a.UserDailyTokens, DefaultUserDailyTokens)
 	return a
 }
 
-// ValidateBudget rejects policy mistakes instead of interpreting them as an
-// unlimited budget. Development mode must obey the same cost controls.
+// Only the fallback usage estimate still has configuration semantics.
 func (a AgentConfig) ValidateBudget() error {
-	a = a.WithBudgetDefaults()
-	for _, d := range []struct {
-		name           string
-		value, ceiling int
-	}{
-		{"run_max_tokens", a.RunMaxTokens, a.RunTokenCeiling},
-		{"run_max_wall_seconds", a.RunMaxWallSeconds, a.RunWallSecondsCeiling},
-		{"run_max_steps", a.RunMaxSteps, a.RunStepsCeiling},
-	} {
-		if d.value <= 0 || d.ceiling < d.value {
-			return fmt.Errorf("agent.%s must be positive and no greater than its deployment ceiling", d.name)
-		}
-	}
-	// Seconds must fit time.Duration, including ceilings selected by requests.
-	if int64(a.RunWallSecondsCeiling) > (1<<63-1)/1_000_000_000 {
-		return errors.New("agent.run_wall_seconds_ceiling overflows time.Duration")
-	}
-	if a.UserDailyTokens <= 0 || a.UsageReservationTokens <= 0 {
-		return errors.New("agent daily quota and usage reservation must be positive")
+	if a.UsageReservationTokens < 0 {
+		return errors.New("agent.usage_reservation_tokens must be nonnegative")
 	}
 	return nil
 }
 
-// Malformed cost limits must not silently fall back to a more permissive value.
+// Reject malformed fallback usage estimates; retired quota variables are ignored.
 func validateBudgetEnv() error {
-	for _, key := range []string{"RUN_MAX_TOKENS", "RUN_MAX_WALL_SECONDS", "RUN_MAX_STEPS", "RUN_TOKEN_CEILING", "RUN_WALL_SECONDS_CEILING", "RUN_STEPS_CEILING", "USAGE_RESERVATION_TOKENS", "USER_DAILY_TOKENS"} {
+	for _, key := range []string{"USAGE_RESERVATION_TOKENS"} {
 		if value, ok := os.LookupEnv(key); ok {
 			n, err := strconv.Atoi(value)
 			if err != nil || n < 0 {

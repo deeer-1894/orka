@@ -386,7 +386,12 @@ func (s *ChatService) ResumeRun(ctx context.Context, runID, email string, raw fu
 	return prepared(admitted, raw)
 }
 
-func (s *ChatService) PrepareResumeRun(ctx context.Context, runID, email string) (PreparedResume, error) {
+// ResumeOptions distinguishes omitted selection (preserve recorded tools) from
+// an explicit empty selection (automatic access to all available tools).
+// It applies only to a new continuation, never to a parked approval checkpoint.
+type ResumeOptions struct{ EnabledTools *[]string }
+
+func (s *ChatService) PrepareResumeRun(ctx context.Context, runID, email string, options ...ResumeOptions) (PreparedResume, error) {
 	if s.Msg == nil || s.Msg.Store == nil {
 		return nil, errors.New("run storage unavailable")
 	}
@@ -413,10 +418,13 @@ func (s *ChatService) PrepareResumeRun(ctx context.Context, runID, email string)
 	if f.Checkpoint == nil {
 		f.Checkpoint = &runCheckpoint{SpentTokens: rec.Tokens}
 	}
-	// A resume reuses the existing allowance; it never authorizes a new one.
-	if err := validateCheckpointDeadline(f.Checkpoint); err != nil {
-		return nil, err
+	if len(options) > 0 && options[0].EnabledTools != nil {
+		// The authenticated continuation explicitly selects a new capability set.
+		// Update this in-memory checkpoint before Run restores its tool scope.
+		f.Checkpoint.EnabledTools = append([]string{}, (*options[0].EnabledTools)...)
+		f.Checkpoint.toolsRecorded = true
 	}
+	// Resume keeps execution history while dropping legacy task limits.
 	policy, err := ResolveResumeBudget(s.budgetConfig(), f.Checkpoint.BudgetPolicy, f.Checkpoint.SpentTokens)
 	if err != nil {
 		return nil, fmt.Errorf("任务预算无法恢复，记录和产物已保留: %w", err)

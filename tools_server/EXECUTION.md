@@ -5,7 +5,7 @@
 ## 接入要求
 
 - 将部署的 `SHELL_TOOL=1` 迁移为 `CODE_EXECUTION=1`，统一启用 shell 和 python。旧开关不再授予代码执行能力；未启用时两者均不注册。
-- 签发 MCP 上下文 token 时，仅在本次请求明确选择 code/python/shell 后添加 `code:execute`，并把 scope 纳入连接池键；不要向所有任务的默认 scope 列表加执行权限。网关同时在 tools/list 与 tools/call 检查 scope；`file:write` 不自动包含代码执行权限。
+- 签发 MCP 上下文 token 时，自动模式（enabled_tools 为空）或手动范围包含 code/python/shell 时添加 `code:execute`，并把 scope 纳入连接池键。手动限定为其他工具时不添加。元数据目录请求仅有 `tools:catalog`，不授予执行权限。网关同时在 tools/list 与 tools/call 检查 scope；`file:write` 不自动包含代码执行权限。
 - tools 镜像已安装 bubblewrap，并保留非 root 运行（镜像默认 UID 10001，Compose 覆盖为工作区所有者 UID）。Linux runner 默认使用 `/usr/bin/bwrap`；可通过部署管理的绝对路径 `CODE_BWRAP_PATH` 指定二进制。已使用 Ubuntu bubblewrap 0.9.0 验证。
 - `CODE_SANDBOX_MODE` 默认为 `bwrap`。缺少二进制、命名空间被禁用、挂载失败、配置拼写错误都明确拒绝执行，绝不切换为宿主进程。
 - 容器内必须允许 bwrap 所需 user/mount/PID/network/IPC/UTS 命名空间及绑定挂载。需要在实际镜像和宿主机上验证 seccomp/AppArmor/userns 策略；不能仅因容器有 `no-new-privileges` 就认为沙箱可用。不要用 privileged 或挂载宿主根目录来规避测试失败。CPU、内存、进程数和磁盘配额仍应由部署的 cgroup/存储策略限制。
@@ -59,4 +59,4 @@ CODE_BWRAP_PATH=/usr/bin/bwrap ORKA_REQUIRE_SANDBOX_TEST=1 go test ./tools_serve
 
 复现：先构建项目 Dockerfile，再运行 `bash tools_server/test-image.sh`（`ORKA_TEST_IMAGE` 可选指定标签）。脚本只使用临时假账号和临时挂载数据，不读取 .env。Go 测试编译使用 GOPROXY=off，要求本地已有模块缓存。Docker legacy builder 不识别 Dockerfile 专属 ignore 文件，建议只打包 orka_core/tools_server 两模块作为构建上下文。最终验证构建使用本地缓存生成临时 vendor 并 `docker build --network none --build-arg GOPROXY=off`，没有访问第三方 Go 代理。
 
-tools 镜像保留默认 CODE_EXECUTION=0。启用 UI 真实 code 场景时，部署须显式设 CODE_EXECUTION=1，同时本次请求须有 code:execute；该开关不会向所有任务签发执行权限。office 不依赖任意代码开关，但仍依赖可用的严格沙箱。UID/GID 必须与挂载工作区所有者一致，Compose 默认1000，可通过 HOST_UID/HOST_GID 覆盖。
+tools 镜像保留默认 CODE_EXECUTION=0。启用 UI 真实 code 场景时，部署须显式设 CODE_EXECUTION=1，同时本次请求须有 code:execute；自动模式由控制层为当前会话签发执行 scope，手动受限范围与目录读取不因此扩大权限。office 不依赖任意代码开关，但仍依赖可用的严格沙箱。UID/GID 必须与挂载工作区所有者一致，Compose 默认1000，可通过 HOST_UID/HOST_GID 覆盖。

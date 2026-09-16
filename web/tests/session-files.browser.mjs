@@ -34,6 +34,11 @@ test('session file UI: folder navigation, safe previews, scoped requests and asy
     if (url.pathname.endsWith('/chat/run')) return route.fulfill({ contentType: 'text/event-stream', body: 'data: {"type":"done"}\n\n' });
     if (url.pathname.endsWith('/file/download')) {
       const name = url.searchParams.get('path');
+      if (name === 'page/index.html') return route.fulfill({ body: `<!doctype html><html><head><link rel="stylesheet" href="./theme.css"></head><body><h1>Interactive report</h1><button id="filter">Filter</button><output id="count">3</output><p id="isolation"></p><img src="chart.svg"><script src="./app.js"></script><script>try { parent.localStorage.setItem('preview-escape','bad'); } catch { document.getElementById('isolation').textContent='isolated'; }</script></body></html>` });
+      if (name === 'page/theme.css') return route.fulfill({ body: 'h1 { color: rgb(25, 100, 75); }', contentType: 'text/css' });
+      if (name === 'page/app.js') return route.fulfill({ body: "document.getElementById('filter').onclick=()=>document.getElementById('count').textContent='1';", contentType: 'text/javascript' });
+      if (name === 'page/chart.svg') return route.fulfill({ body: '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>', contentType: 'image/svg+xml' });
+      if (name === 'large.html') return route.fulfill({ body: '<h1>Incomplete</h1>' + ' '.repeat(2_000_001) });
       if (name === 'many-lines.txt') return route.fulfill({ body: '\n'.repeat(120_000) });
       if (name === 'slow.txt') { await pause(180); return route.fulfill({ body: 'OLD PREVIEW' }); }
       if (name === 'large.csv') return route.fulfill({ body: Array.from({ length: 240 }, () => Array.from({ length: 35 }, () => 'cell').join(',')).join('\n') });
@@ -112,6 +117,25 @@ test('session file UI: folder navigation, safe previews, scoped requests and asy
     assert.equal(await dialog.locator('thead th').count(), 30);
     await dialog.getByText(/表格预览已截断/).waitFor();
     if (process.env.ORKA_UI_SCREENSHOT) await page.screenshot({ path: process.env.ORKA_UI_SCREENSHOT });
+    await set({ name: 'page/index.html' });
+    const frame = page.frameLocator('iframe[title="HTML 页面：page/index.html"]');
+    await frame.getByRole('heading', {name:'Interactive report'}).waitFor();
+    await frame.getByText('isolated', {exact:true}).waitFor();
+    await frame.getByRole('button', {name:'Filter',exact:true}).click();
+    assert.equal(await frame.locator('#count').textContent(), '1');
+    assert.equal(await frame.locator('h1').evaluate(el=>getComputedStyle(el).color), 'rgb(25, 100, 75)');
+    await frame.locator('img').evaluate(img=>img.decode());
+    assert.equal(await page.locator('iframe').getAttribute('sandbox'), 'allow-scripts');
+    assert.ok(!(await page.locator('iframe').getAttribute('srcdoc')).includes('token='));
+    assert.ok(requests.filter(r=>['page/theme.css','page/app.js','page/chart.svg'].includes(r.query.path)).every(r=>r.query.conv==='A'));
+    await dialog.getByRole('button', {name:'源码',exact:true}).click();
+    await dialog.locator('code').waitFor(); assert.equal(await page.locator('iframe').count(),0);
+    assert.match(await dialog.locator('code').textContent(), /Interactive report/);
+    await dialog.getByRole('button', {name:'页面预览',exact:true}).click();
+    await frame.getByRole('heading', {name:'Interactive report'}).waitFor();
+    await set({ name: 'large.html' });
+    await dialog.getByText(/HTML 超出页面预览大小/).waitFor();
+    assert.equal(await page.locator('iframe').count(),0, 'never execute truncated HTML');
     await set({ name: 'many-lines.txt' });
     await dialog.getByText(/预览已截断：最多读取/).waitFor();
     await dialog.getByTitle('版本历史').click();

@@ -1,3 +1,6 @@
+import { HtmlPreview } from "./HtmlPreview";
+import { HTML_PREVIEW_MAX_BYTES } from "../lib/htmlPreview";
+import { ActionChip } from "./ActionChip";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { auth, files as fileApi, type FileVersion } from "../api";
 import { lineDiff, diffStats } from "../lib/diff";
@@ -44,6 +47,7 @@ export function FilePreview(props: { name: string; onClose: () => void; conv: st
 function FilePreviewContent({ name, onClose, conv, readOnly = false, initialHistory }: { name: string; onClose: () => void; conv: string; readOnly?: boolean; initialHistory?: boolean }) {
   const [content, setContent] = useState<string | null>(null);
   const [truncated, setTruncated] = useState(false);
+  const [htmlMode, setHtmlMode] = useState<"preview" | "source">("preview");
   const [revision, setRevision] = useState(0);
   const [err, setErr] = useState("");
   const [showHistory, setShowHistory] = useState(!!initialHistory && !readOnly);
@@ -51,6 +55,8 @@ function FilePreviewContent({ name, onClose, conv, readOnly = false, initialHist
   const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
   const isXlsx = /\.xlsx$/i.test(name);
   const isPdf = /\.pdf$/i.test(name);
+  const isHtml = /\.html?$/i.test(name);
+  const maxBytes = isHtml ? HTML_PREVIEW_MAX_BYTES : PREVIEW_MAX_BYTES;
   const isMd = /\.(md|markdown)$/i.test(name);
   // Allowlist of extensions safe to show as text; anything else binary.
   const isText =
@@ -65,11 +71,11 @@ function FilePreviewContent({ name, onClose, conv, readOnly = false, initialHist
     const controller = new AbortController();
     setContent(null); setErr(""); setTruncated(false);
     fetch(url, { headers: { Authorization: "Bearer " + auth.token() }, signal: controller.signal })
-      .then(readBoundedText)
+      .then(response => readBoundedText(response, maxBytes))
       .then((result) => { if (!controller.signal.aborted) { setContent(result.text); setTruncated(result.truncated); } })
       .catch((e) => { if (!controller.signal.aborted) setErr(String(e)); });
     return () => controller.abort();
-  }, [url, isText, revision]);
+  }, [url, isText, revision, maxBytes]);
 
   useEffect(() => {
     let alive = true;
@@ -83,7 +89,7 @@ function FilePreviewContent({ name, onClose, conv, readOnly = false, initialHist
     <div className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6" onClick={onClose}>
       <div
         role="dialog" aria-modal="true" aria-label={"预览 " + name}
-        className="pop-in flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl"
+        className={"pop-in flex max-h-[90vh] w-full flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl " + (isHtml ? "max-w-6xl" : "max-w-2xl")}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
@@ -101,10 +107,14 @@ function FilePreviewContent({ name, onClose, conv, readOnly = false, initialHist
           <a href={url} className="text-[12px] text-accent hover:underline">下载</a>
           <button onClick={onClose} aria-label="关闭预览" className="ml-1 text-faint hover:text-ink">✕</button>
         </div>
+        {isHtml && !showHistory && <div className="flex items-center gap-2 border-b border-border px-4 py-2" role="group" aria-label="HTML 视图">
+          <ActionChip icon="eye" aria-pressed={htmlMode === "preview"} onClick={() => setHtmlMode("preview")}>页面预览</ActionChip>
+          <ActionChip icon="code" aria-pressed={htmlMode === "source"} onClick={() => setHtmlMode("source")}>源码</ActionChip>
+        </div>}
         {showHistory ? (
           <FileHistory name={name} versions={versions} isText={isText} conv={conv} onRestored={() => { setVersions(null); setContent(null); setRevision(n => n + 1); setShowHistory(false); }} />
         ) : (
-        <div className={isPdf ? "overflow-hidden" : "overflow-y-auto px-4 py-3"}>
+        <div className={isPdf || (isHtml && htmlMode === "preview") ? "overflow-auto" : "overflow-y-auto px-4 py-3"}>
           {isXlsx ? <Suspense fallback={<p role="status">正在加载表格预览…</p>}><XlsxPreview url={url} /></Suspense> : isImage ? (
             <img src={url} alt={name} className="mx-auto max-w-full rounded" />
           ) : isPdf ? (
@@ -121,6 +131,8 @@ function FilePreviewContent({ name, onClose, conv, readOnly = false, initialHist
             <div className="text-[13px] text-accent">无法预览:{err}</div>
           ) : content === null ? (
             <div className="text-[13px] text-faint">加载中…</div>
+          ) : isHtml && htmlMode === "preview" ? (
+            truncated ? <p role="status" className="p-4 text-sm text-muted">HTML 超出页面预览大小，请下载完整文件查看，或切换源码。</p> : <HtmlPreview text={content} name={name} conv={conv} />
           ) : isCsv ? (
             <CsvPreview text={content} delimiter={/\.tsv$/i.test(name) ? "\t" : ","} />
           ) : isMd ? (
@@ -128,7 +140,7 @@ function FilePreviewContent({ name, onClose, conv, readOnly = false, initialHist
           ) : (
             <CodePreview text={content} name={name} />
           )}
-          {truncated && <p role="status" className="mt-2 text-[12px] text-muted">预览已截断：最多读取 {PREVIEW_MAX_BYTES.toLocaleString()} 字节。下载查看完整文件。</p>}
+          {truncated && <p role="status" className="mt-2 text-[12px] text-muted">预览已截断：最多读取 {maxBytes.toLocaleString()} 字节。下载查看完整文件。</p>}
         </div>
         )}
       </div>

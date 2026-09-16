@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestQuantToolsRequireExplicitCapability(t *testing.T) {
+func TestQuantToolsDefaultAndExplicitRange(t *testing.T) {
 	prior := QuantTools
 	QuantTools = []agent.BaseTool{validateFactorTool{}}
 	defer func() { QuantTools = prior }()
@@ -14,7 +14,7 @@ func TestQuantToolsRequireExplicitCapability(t *testing.T) {
 		ctx     context.Context
 		enabled []string
 		want    bool
-	}{{context.Background(), nil, false}, {WithQuantCapability(context.Background()), nil, true}, {context.Background(), []string{"quant"}, true}} {
+	}{{context.Background(), nil, true}, {context.Background(), []string{"web"}, false}, {WithQuantCapability(context.Background()), nil, true}, {context.Background(), []string{"quant"}, true}} {
 		found := false
 		for _, tool := range localCapabilityTools(tc.ctx, ChatRunRequest{EnabledTools: tc.enabled}) {
 			if tool.Name() == "validate_factor" {
@@ -33,13 +33,22 @@ func TestUnavailableGUINeverClaimsCompletion(t *testing.T) {
 	}
 }
 
-func TestCodeScopeRequiresExplicitTaskSelection(t *testing.T) {
+func TestCodeScopeAvailableByDefaultAndCanBeRestricted(t *testing.T) {
 	for _, tc := range []struct {
 		tools []string
 		want  bool
-	}{{nil, false}, {[]string{"file", "web"}, false}, {[]string{"code"}, true}, {[]string{"python"}, true}} {
+	}{{nil, true}, {[]string{}, true}, {[]string{"file", "web"}, false}, {[]string{"code"}, true}, {[]string{"python"}, true}} {
 		if got := requestedExecutionScope(withRequestedExecutionScope(context.Background(), ChatRunRequest{EnabledTools: tc.tools})); got != tc.want {
 			t.Fatalf("scope %v: %v", tc.tools, got)
+		}
+	}
+}
+
+func TestCatalogNeverReceivesCodeExecutionScope(t *testing.T) {
+	ctx := context.WithValue(context.Background(), catalogContextKey{}, true)
+	for _, selection := range [][]string{nil, {"code"}} {
+		if requestedExecutionScope(withRequestedExecutionScope(ctx, ChatRunRequest{EnabledTools: selection})) {
+			t.Fatal("metadata discovery received execution authority")
 		}
 	}
 }

@@ -14,7 +14,7 @@ import (
 	"github.com/orka-oss/orka_core/modelprofile"
 )
 
-func TestAgentFirstCallHasOutputLimit(t *testing.T) {
+func TestAgentFirstCallUsesProviderOutputDefault(t *testing.T) {
 	client := llm.NewMock(llm.Response{Content: "ok", FinishReason: "stop"})
 	ag, err := BuildEinoAgent(context.Background(), client, "m", "sys", nil, 4)
 	if err != nil {
@@ -23,8 +23,8 @@ func TestAgentFirstCallHasOutputLimit(t *testing.T) {
 	if _, err := RunEinoOnce(context.Background(), ag, "perform a complex task"); err != nil {
 		t.Fatal(err)
 	}
-	if got := client.Requests[0].MaxTokens; got != 4096 {
-		t.Fatalf("first call output cap = %d, want 4096", got)
+	if got := client.Requests[0].MaxTokens; got != 0 {
+		t.Fatalf("first call output cap = %d, want provider default", got)
 	}
 }
 
@@ -70,7 +70,7 @@ func TestTruncatedToolBatchNeverExecutes(t *testing.T) {
 					t.Fatal("discarded action entered tool history")
 				}
 			}
-			if client.Requests[2].MaxTokens != 8192 {
+			if client.Requests[2].MaxTokens != 0 {
 				t.Fatalf("later action cap = %d", client.Requests[2].MaxTokens)
 			}
 		})
@@ -169,7 +169,7 @@ func TestGLMReasoningCanReachFirstToolAction(t *testing.T) {
 				return llm.Response{Content: "done", FinishReason: "stop"}
 			}
 		}
-		if req.MaxTokens <= 6000 {
+		if req.MaxTokens > 0 && req.MaxTokens <= 6000 {
 			return llm.Response{Reasoning: "planning the implementation", FinishReason: "length"}
 		}
 		return gateCall("work", "echo", `{"text":"execute first action"}`)
@@ -192,8 +192,8 @@ func TestFlashFirstActionHasRoomAfterReasoning(t *testing.T) {
 	if _, err := m.Generate(context.Background(), []*schema.Message{schema.UserMessage("implement one small module")}); err != nil {
 		t.Fatal(err)
 	}
-	if got := client.Requests[0].MaxTokens; got != 8192 {
-		t.Fatalf("Flash first output cap=%d, want 8192", got)
+	if got := client.Requests[0].MaxTokens; got != 0 {
+		t.Fatalf("Flash first output cap=%d, want provider default", got)
 	}
 }
 
@@ -204,7 +204,7 @@ func TestNamedProfileDoesNotGuessReasoningPolicy(t *testing.T) {
 	if _, err := m.Generate(ctx, []*schema.Message{schema.UserMessage("action")}); err != nil {
 		t.Fatal(err)
 	}
-	if mock.Requests[0].ReasoningEffort != "" || mock.Requests[0].MaxTokens != 4096 {
+	if mock.Requests[0].ReasoningEffort != "" || mock.Requests[0].MaxTokens != 0 {
 		t.Fatal("model name invented provider policy", mock.Requests[0])
 	}
 }
@@ -223,7 +223,20 @@ func TestExplicitNamedModelPolicyOverridesLegacyDefaults(t *testing.T) {
 	if _, err := m.Generate(ctx, []*schema.Message{schema.UserMessage("action")}, model.WithModel("other")); err != nil {
 		t.Fatal(err)
 	}
-	if mock.Requests[1].ReasoningEffort != "" || mock.Requests[1].MaxTokens != 4096 {
+	if mock.Requests[1].ReasoningEffort != "" || mock.Requests[1].MaxTokens != 0 {
 		t.Fatal("policy crossed selected model")
+	}
+}
+
+func TestUnconfiguredModelDoesNotImposeOutputAllowance(t *testing.T) {
+	for _, name := range []string{"minimax-m3", "glm-5.3", "glm-5.3-flash", "custom"} {
+		c := llm.NewMock(llm.Response{Content: "ok", FinishReason: "stop"})
+		_, err := newAgentModel(c, name, "test").Generate(context.Background(), []*schema.Message{schema.UserMessage("implement")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Requests[0].MaxTokens != 0 {
+			t.Errorf("%s: forced output allowance %d", name, c.Requests[0].MaxTokens)
+		}
 	}
 }

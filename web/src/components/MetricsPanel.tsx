@@ -1,4 +1,4 @@
-import { BudgetEvidence } from './BudgetEvidence';
+import { UsageEvidence } from './UsageEvidence';
 import type { Message, RunRecord } from '../types';
 export interface MetricsRunContext { conversationID: string; messages: Message[]; run?: RunRecord | null }
 import { api } from "../api";
@@ -28,7 +28,7 @@ export function MetricsPanel({ runContext }: { runContext?: MetricsRunContext })
         <strong>当前会话运行</strong><p className="break-all text-muted">{runID}</p>
         {model && <p>模型：{model}</p>}
         {run && <p>{run.tokens || 0} tokens · {run.tool_calls || 0} 次工具调用</p>}
-        <BudgetEvidence key={runID} runID={runID}/>
+        <UsageEvidence key={runID} runID={runID}/>
       </section>}
       <p className="text-xs text-muted">累计指标</p>
       <div className="grid grid-cols-2 gap-2.5">

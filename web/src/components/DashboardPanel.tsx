@@ -1,6 +1,4 @@
 import { MetricsPanel, type MetricsRunContext } from './MetricsPanel';
-import { BudgetFields } from './BudgetFields';
-import type { RunBudgetLimits } from '../lib/runBudget';
 import { useEffect, useState } from "react";
 import { api, artifacts as artifactApi, files as fileApi } from "../api";
 import type { Artifact, RunRecord } from "../types";
@@ -11,7 +9,7 @@ const ARTKIND_ICON: Record<string, string> = {
   pr_review: "🔀", architecture: "🗺️", incident: "🚨", checklist: "✅", audit: "🔍", custom: "📊",
 };
 
-export function DashboardPanel({ conversationID, onJumpToConversation, goTab, onOpenArtifact, budget, onBudgetChange, budgetDisabled, runContext }: { runContext?: MetricsRunContext; budget?: RunBudgetLimits; onBudgetChange?: (budget: RunBudgetLimits) => void; budgetDisabled?: boolean; conversationID: string; onJumpToConversation: (cid: string) => void; goTab: (t: Tab) => void; onOpenArtifact: (id: string) => void }) {
+export function DashboardPanel({ conversationID, onJumpToConversation, goTab, onOpenArtifact, runContext }: { runContext?: MetricsRunContext; conversationID: string; onJumpToConversation: (cid: string) => void; goTab: (t: Tab) => void; onOpenArtifact: (id: string) => void }) {
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [arts, setArts] = useState<Artifact[]>([]);
   const [fileCount, setFileCount] = useState(0);
@@ -30,8 +28,7 @@ export function DashboardPanel({ conversationID, onJumpToConversation, goTab, on
     return () => { alive = false; };
   }, [conversationID]);
 
-  const budgetFields = budget && onBudgetChange ? <BudgetFields value={budget} onChange={onBudgetChange} disabled={budgetDisabled} /> : null;
-  if (loading) return <div className="p-3">{budgetFields}<MetricsPanel runContext={runContext} /><Blank>加载中…</Blank></div>;
+  if (loading) return <div className="p-3"><MetricsPanel runContext={runContext} /><Blank>加载中…</Blank></div>;
 
   // Workspace summary + recent pages render even before the first run, so the
   // panel reveals what's inside (pages / files / tasks) at a glance.
@@ -44,7 +41,6 @@ export function DashboardPanel({ conversationID, onJumpToConversation, goTab, on
 
   const workspace = (
     <>
-      {budgetFields}
       <MetricsPanel runContext={runContext} />
       <div className="grid grid-cols-3 gap-2">
         <NavTile icon="image" label="页面" value={arts.length} onClick={() => goTab("artifacts")} />

@@ -87,9 +87,9 @@ test('followups generate automatically after completion and cache across convers
 test('file reference picker navigates into directories',async t=>{
  const a=await app(t); await a.select('a'); await a.page.locator('textarea').fill('@'); await a.page.locator('textarea').press('ArrowRight'); await a.page.getByRole('button',{name:'打开目录 reports'}).click(); await a.page.getByRole('button',{name:'引用 reports/deep.txt'}).click(); await a.page.getByRole('button',{name:'移除 reports/deep.txt'}).waitFor(); a.check();
 });
-test('history resume rejects unconfirmed response and exhausted budget',async t=>{
+test('history resume rejects unconfirmed response but allows legacy exhausted runs',async t=>{
  const a=await app(t,{runs:[record(),record({run_id:'exhausted',budget_hit:'tokens',conversation_id:'b'})]}); await a.page.getByRole('button',{name:'切换工作台面板'}).click(); await a.page.getByRole('tab',{name:'运营台',exact:false}).first().click();
- await a.page.getByRole('button',{name:'继续任务',exact:true}).first().click(); await a.page.getByText('服务未确认该任务继续运行',{exact:false}).first().waitFor(); assert.equal(a.requests.filter(r=>r.path==='/chat/resume_run').length,1); assert.equal(await a.page.getByRole('button',{name:'继续任务',exact:true}).count(),1); a.check();
+ await a.page.getByRole('button',{name:'继续任务',exact:true}).first().click(); await a.page.getByText('服务未确认该任务继续运行',{exact:false}).first().waitFor(); assert.equal(a.requests.filter(r=>r.path==='/chat/resume_run').length,1); assert.equal(await a.page.getByRole('button',{name:'继续任务',exact:true}).count(),2); a.check();
 });
 test('stop failure is visible and does not claim idle',async t=>{
  const a=await app(t,{handle:async({path,route})=>{if(path==='/chat/run'){await route.fulfill({contentType:'text/event-stream',body:''});return true;} }}); await a.select('a'); await a.page.locator('textarea').fill('long task'); await a.page.locator('textarea').press('Enter'); await a.page.getByRole('button',{name:'停止',exact:true}).click(); await a.page.getByText('停止失败',{exact:false}).first().waitFor(); await a.page.getByRole('button',{name:'重新连接',exact:true}).waitFor(); a.check();
@@ -148,13 +148,13 @@ test('retry pins the answered model profile and shows a stale-profile rejection'
  }});await a.select('a');await a.page.locator('textarea').fill('original request');await a.page.locator('textarea').press('Enter');await a.page.getByRole('button',{name:'重新生成',exact:true}).click();await a.page.getByText('模型配置已变化，请重新选择模型',{exact:false}).first().waitFor();assert.equal(count,2);a.check();
 });
 
-test('code execution is explicitly enabled without creating a catalog conversation',async t=>{
+test('automatic tools require no selection and allow an optional restricted range',async t=>{
  const a=await app(t,{handle:async({path,body,json,route})=>{
   if(path==='/tools/catalog'){await json([{name:'python',group:'code',description:'Run Python',danger:true},{name:'file_read',group:'file',description:'Read file',danger:false}]);return true;}
   if(path==='/chat/run'){await route.fulfill({contentType:'text/event-stream',body:[msg('a2','chat','Tool result',{role:'assistant',meta:{conversation_id:body.conversation_id}}),msg('d3','task','',{action:'done',meta:{conversation_id:body.conversation_id}})].map(m=>`data: ${JSON.stringify(m)}\n\n`).join('')});return true;}
- }});await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.getByText('代码执行需主动启用',{exact:false}).waitFor();assert.equal(a.requests.filter(r=>r.path==='/conversation/create-conversation').length,0);
- await a.select('a');await a.page.locator('textarea').fill('no code by default');await a.page.locator('textarea').press('Enter');await a.page.getByText('Tool result',{exact:true}).waitFor();assert.deepEqual(a.requests.find(r=>r.path==='/chat/run').body.enabled_tools,[]);
- await a.page.getByRole('button',{name:'🐍 代码',exact:true}).click();await a.page.locator('textarea').fill('allow code now');await a.page.locator('textarea').press('Enter');await a.page.getByRole('button',{name:'重新生成',exact:true}).waitFor();assert.ok(a.requests.filter(r=>r.path==='/chat/run').at(-1).body.enabled_tools.includes('code'));assert.equal(await a.page.getByRole('dialog').count(),0);a.check();
+ }});await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.getByText('自动使用全部可用工具',{exact:false}).waitFor();assert.equal(a.requests.filter(r=>r.path==='/conversation/create-conversation').length,0);
+ await a.select('a');await a.page.locator('textarea').fill('use available tools automatically');await a.page.locator('textarea').press('Enter');await a.page.getByText('Tool result',{exact:true}).waitFor();assert.deepEqual(a.requests.find(r=>r.path==='/chat/run').body.enabled_tools,[]);
+ await a.page.getByRole('button',{name:'代码',exact:true}).click();await a.page.locator('textarea').fill('restrict this run to code');await a.page.locator('textarea').press('Enter');await a.page.getByRole('button',{name:'重新生成',exact:true}).waitFor();assert.ok(a.requests.filter(r=>r.path==='/chat/run').at(-1).body.enabled_tools.includes('code'));assert.equal(await a.page.getByRole('dialog').count(),0);a.check();
 });
 
 test('stop waits for confirmation and settles without reattaching a stopped task',async t=>{
@@ -229,14 +229,14 @@ test('live browser evidence never embeds a shared VNC desktop',async t=>{
  const a=await app(t,{handle:async({path,route})=>{if(path==='/chat/run'){await route.fulfill({contentType:'text/event-stream',body:`data: ${JSON.stringify(msg('s1','browser','',{payload:{data:frame,url:'https://example.invalid',action:'screenshot'}}))}\n\n`});return true;}}});await a.select('a');await a.page.locator('textarea').fill('browser task');await a.page.locator('textarea').press('Enter');await a.page.getByAltText('本次运行截图').waitFor();assert.equal(await a.page.locator('iframe').count(),0);assert.equal(await a.page.locator('a[href*="6080"]').count(),0);assert.equal(await a.page.getByAltText('本次运行截图').getAttribute('src'),'data:image/png;base64,'+frame);a.check();
 });
 
-test('budget evidence exposes unknown usage and retry retains original limits',async t=>{
+test('usage evidence exposes unknown usage and retries never send limits',async t=>{
  const a=await app(t,{runs:[record()],handle:async({path,body,json,route})=>{
   if(path==='/run/run-a/budget'){assert.equal(route.request().method(),'GET');await json({run_id:'run-a',budget_run_id:'workflow-parent',status:'partial',limits:{max_tokens:2000000,max_wall_seconds:7200,max_steps:300},used_tokens:110,reserved_tokens:20,remaining_tokens:1999870,unknown_calls:1,unknown_tokens:100,estimated_tokens:30,used_steps:2,deadline:'2026-09-15T18:00:00Z',sources:[{source:'gui',used_tokens:110,reserved_tokens:20,unknown_calls:1,unknown_tokens:100,estimated_tokens:30}]});return true;}
   if(path==='/chat/run'){await route.fulfill({contentType:'text/event-stream',body:[msg('a2','chat','Budget output',{role:'assistant'}),msg('d3','task','',{action:'partial'})].map(m=>`data: ${JSON.stringify(m)}\n\n`).join('')});return true;}
- }});await a.select('a');await openBudget(a);await a.page.getByLabel('Token 上限').fill('1200');await a.page.getByLabel('运行时长上限（秒）').fill('3600');await a.page.getByLabel('轮次上限').fill('40');await a.page.locator('textarea').fill('budgeted task');await a.page.locator('textarea').press('Enter');await a.page.getByText('Budget output',{exact:true}).waitFor();await openMetrics(a);await a.page.getByRole('button',{name:'预算明细'}).click();await a.page.getByText('未知用量：1 次调用，保守占用 100 tokens',{exact:true}).waitFor();await a.page.getByText('共享预算：workflow-parent',{exact:true}).waitFor();await openBudget(a);await a.page.getByLabel('Token 上限').fill('1800');await a.page.getByRole('button',{name:'重新生成',exact:true}).click();await a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/run/list')).catch(()=>{});const sends=a.requests.filter(r=>r.path==='/chat/run');assert.equal(sends.length,2);assert.deepEqual(sends[0].body.budget,{max_tokens:1200,max_wall_seconds:3600,max_steps:40});assert.deepEqual(sends[1].body.budget,sends[0].body.budget);a.check();
+ }});await a.select('a');await openBudget(a);await a.page.locator('textarea').fill('budgeted task');await a.page.locator('textarea').press('Enter');await a.page.getByText('Budget output',{exact:true}).waitFor();await openMetrics(a);await a.page.getByRole('button',{name:'用量明细'}).click();await a.page.getByText('未知用量：1 次调用，保守占用 100 tokens',{exact:true}).waitFor();await a.page.getByText('共享运行：workflow-parent',{exact:true}).waitFor();await openBudget(a);await a.page.getByRole('button',{name:'重新生成',exact:true}).click();await a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/run/list')).catch(()=>{});const sends=a.requests.filter(r=>r.path==='/chat/run');assert.equal(sends.length,2);assert.equal(sends[0].body.budget,undefined);assert.deepEqual(sends[1].body.budget,sends[0].body.budget);a.check();
 });
 
-test('complete product path from named connection and capability to budget, private GUI, delivery and acceptance',async t=>{
+test('complete product path from named connection and capability to metered execution, private GUI, delivery and acceptance',async t=>{
  let submitted=false;
  const profile={id:'chain',name:'Verified account',protocol:'openai-compatible',provider:'custom',base_url:'https://example.invalid/v1',models:['model-a'],enabled:true,api_key_set:true,verified:{}};
  const frame='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
@@ -245,7 +245,7 @@ test('complete product path from named connection and capability to budget, priv
   if(path==='/model-profiles/save'){assert.equal(body.active_profile_id,'chain');assert.ok(!('verified' in body.profiles[0]));await json({active_profile_id:'chain',profiles:[profile]});return true;}
   if(path==='/model-profiles/probe'){assert.equal(body.profile_id,'chain');assert.deepEqual(body.capabilities,['tools']);await json({tools:{verified:true,checked_at:'2026-09-15T10:00:00Z'}});return true;}
   if(path==='/chat/run'){
-   assert.deepEqual(body.budget,{max_tokens:1200});submitted=true;
+   assert.equal(body.budget,undefined);submitted=true;
    const meta={conversation_id:'a',run_id:'run-a',model_version:'model-a',model_profile:'chain-revision'};
    await route.fulfill({contentType:'text/event-stream',body:[msg('b2','browser','',{meta,payload:{data:frame,action:'screenshot'}}),msg('a3','chat','[Final report](final.txt)',{role:'assistant',meta}),msg('d4','task','',{action:'done',meta})].map(m=>`data: ${JSON.stringify(m)}\n\n`).join('')});return true;
   }
@@ -255,14 +255,14 @@ test('complete product path from named connection and capability to budget, priv
   if(path==='/delivery/download'){await route.fulfill({headers:{'content-disposition':'attachment; filename="final.txt"'},body:'frozen'});return true;}
  }});
  await a.page.getByRole('button',{name:'模型配置',exact:true}).click();await a.page.getByRole('button',{name:'命名连接与能力检测'}).click();await a.page.getByRole('button',{name:'保存所有连接'}).click();await a.page.getByText('连接配置已保存',{exact:true}).waitFor();await a.page.getByRole('button',{name:'检测 工具调用 model-a'}).click();await a.page.getByText('工具调用：已验证',{exact:false}).waitFor();await a.page.getByRole('button',{name:'关闭命名连接'}).click();await a.page.getByRole('button',{name:'关闭模型配置'}).click();
- await a.select('a');await openBudget(a);await a.page.getByLabel('Token 上限').fill('1200');await a.page.locator('textarea').fill('Complete delivery');await a.page.locator('textarea').press('Enter');await a.page.getByRole('button',{name:'停止',exact:true}).waitFor({state:'hidden'});await a.page.getByText('交付快照 · 版本 1',{exact:true}).waitFor();await a.page.getByRole('button',{name:/查看 · 1 步/}).click();await a.page.getByAltText('本次运行截图').waitFor();assert.equal(await a.page.locator('iframe').count(),0);
+ await a.select('a');await openBudget(a);await a.page.locator('textarea').fill('Complete delivery');await a.page.locator('textarea').press('Enter');await a.page.getByRole('button',{name:'停止',exact:true}).waitFor({state:'hidden'});await a.page.getByText('交付快照 · 版本 1',{exact:true}).waitFor();await a.page.getByRole('button',{name:/查看 · 1 步/}).click();await a.page.getByAltText('本次运行截图').waitFor();assert.equal(await a.page.locator('iframe').count(),0);
  await openWorkbench(a,'运营台');await a.page.getByRole('button',{name:'验收证据',exact:true}).click();await a.page.getByText('检查通过',{exact:true}).waitFor();await openWorkbench(a,'成果');await a.page.getByRole('button',{name:'交付快照',exact:true}).click();await a.page.getByText('当前工作区',{exact:true}).waitFor();const download=a.page.waitForEvent('download');await a.page.getByRole('link',{name:'下载快照 final.txt'}).click();assert.equal((await download).suggestedFilename(),'final.txt');a.check();
 });
 
-test('session drafts reload with attachments, budget and conversation-specific model and scope',async t=>{
+test('session drafts reload with attachments and conversation-specific model and scope',async t=>{
  const a=await app(t,{handle:async({path,json})=>{if(path==='/tools/catalog'){await json([{name:'python',group:'code',description:'Python',danger:true}]);return true;}}});
- await a.select('a');await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'model-a'}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.getByRole('button',{name:'🐍 代码',exact:true}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.locator('textarea').fill('persistent draft A');await a.page.locator('input[type=file]').setInputFiles({name:'reload.txt',mimeType:'text/plain',buffer:Buffer.from('fixture')});await a.page.getByRole('button',{name:'移除 reload.txt'}).waitFor();await openBudget(a);await a.page.getByLabel('Token 上限').fill('1234');await a.select('b');await a.page.locator('textarea').fill('persistent draft B');
- await a.page.reload();await a.select('a');assert.equal(await a.page.locator('textarea').inputValue(),'persistent draft A');await a.page.getByRole('button',{name:'移除 reload.txt'}).waitFor();assert.ok((await a.page.getByRole('button',{name:'选择模型'}).textContent()).includes('model-a'));await openBudget(a);assert.equal(await a.page.getByLabel('Token 上限').inputValue(),'1234');await a.page.locator('textarea').press('Enter');await a.page.getByText('发送失败',{exact:false}).first().waitFor();const sent=a.requests.filter(r=>r.path==='/chat/run').at(-1).body;assert.deepEqual(sent.file_ids,['reload.txt']);assert.deepEqual(sent.enabled_tools,['code']);assert.equal(sent.selected_version,'model-a');assert.equal(sent.budget.max_tokens,1234);
+ await a.select('a');await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'model-a'}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.getByRole('button',{name:'代码',exact:true}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.locator('textarea').fill('persistent draft A');await a.page.locator('input[type=file]').setInputFiles({name:'reload.txt',mimeType:'text/plain',buffer:Buffer.from('fixture')});await a.page.getByRole('button',{name:'移除 reload.txt'}).waitFor();await openBudget(a);await a.select('b');await a.page.locator('textarea').fill('persistent draft B');
+ await a.page.reload();await a.select('a');assert.equal(await a.page.locator('textarea').inputValue(),'persistent draft A');await a.page.getByRole('button',{name:'移除 reload.txt'}).waitFor();assert.ok((await a.page.getByRole('button',{name:'选择模型'}).textContent()).includes('model-a'));await openBudget(a);await a.page.locator('textarea').press('Enter');await a.page.getByText('发送失败',{exact:false}).first().waitFor();const sent=a.requests.filter(r=>r.path==='/chat/run').at(-1).body;assert.deepEqual(sent.file_ids,['reload.txt']);assert.deepEqual(sent.enabled_tools,['code']);assert.equal(sent.selected_version,'model-a');assert.equal(sent.budget,undefined);
  await a.page.reload();await a.select('a');assert.equal(await a.page.locator('textarea').inputValue(),'persistent draft A');await a.page.getByRole('button',{name:'移除 reload.txt'}).waitFor();await a.select('b');assert.equal(await a.page.locator('textarea').inputValue(),'persistent draft B');a.check();
 });
 
@@ -272,7 +272,7 @@ test('complete retry survives reload and remains separate from the newly edited 
   if(path==='/conversation/get-messages'){await json(history);return true;}
   if(path==='/tools/catalog'){await json([{name:'python',group:'code',description:'Python',danger:true}]);return true;}
   if(path==='/chat/run'){history=[msg('u1','chat',body.message),msg('a2','chat','Retry across reload',{role:'assistant',meta:{conversation_id:'a',run_id:'run-a',model_version:'model-a',model_profile:'immutable-revision'}}),msg('d3','task','',{action:'partial'})];await route.fulfill({contentType:'text/event-stream',body:history.slice(1).map(m=>`data: ${JSON.stringify(m)}\n\n`).join('')});return true;}
- }});await a.select('a');await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'model-a'}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.getByRole('button',{name:'🐍 代码',exact:true}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.locator('textarea').fill('Original exact input');await a.page.locator('input[type=file]').setInputFiles({name:'original.txt',mimeType:'text/plain',buffer:Buffer.from('fixture')});await a.page.getByRole('button',{name:'移除 original.txt'}).waitFor();await openBudget(a);await a.page.getByLabel('Token 上限').fill('1234');await a.page.locator('textarea').press('Enter');await a.page.getByText('Retry across reload',{exact:true}).waitFor();await a.page.locator('textarea').fill('Next unsent draft');await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'Auto'}).click();await a.page.getByLabel('Token 上限').fill('9999');
+ }});await a.select('a');await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'model-a'}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.getByRole('button',{name:'代码',exact:true}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.locator('textarea').fill('Original exact input');await a.page.locator('input[type=file]').setInputFiles({name:'original.txt',mimeType:'text/plain',buffer:Buffer.from('fixture')});await a.page.getByRole('button',{name:'移除 original.txt'}).waitFor();await openBudget(a);await a.page.locator('textarea').press('Enter');await a.page.getByText('Retry across reload',{exact:true}).waitFor();await a.page.locator('textarea').fill('Next unsent draft');await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'Auto'}).click();
  await a.page.reload();await a.select('a');await a.page.getByRole('button',{name:'重新生成',exact:true}).click();await a.page.getByText('Retry across reload',{exact:true}).waitFor();assert.equal(await a.page.locator('textarea').inputValue(),'Next unsent draft');const sends=a.requests.filter(r=>r.path==='/chat/run');assert.equal(sends.length,2);assert.deepEqual(sends[1].body,{...sends[0].body,model_profile:'immutable-revision'});const persisted=await a.page.evaluate(()=>Object.keys(sessionStorage).filter(k=>k.startsWith('orka.session.')).map(k=>[k,sessionStorage.getItem(k)]));assert.ok(persisted.length>0);assert.ok(!JSON.stringify(persisted).includes('isolated-hardening-test'));a.check();
 });
 
@@ -286,17 +286,17 @@ test('expired session drafts and retry snapshots are not restored by reload',asy
  await a.page.reload();await a.select('a');assert.equal(await a.page.locator('textarea').inputValue(),'');assert.equal(await a.page.getByRole('button',{name:'重新生成',exact:true}).count(),0);a.check();
 });
 
-test('budget controls and run statistics live only in existing workbench views',async t=>{
- const runs=[record({status:'done'}),record({run_id:'run-b',conversation_id:'b',status:'done',tokens:77,tool_calls:5})];
- const a=await app(t,{runs,handle:async({path,body,json,route})=>{
-  if(path==='/conversation/get-messages'){const cid=body.conversation_id;await json([msg('a1','chat','Saved answer',{role:'assistant',meta:{conversation_id:cid,run_id:cid==='a'?'run-a':'run-b',model_version:'model-a'}})]);return true;}
-  if(path==='/run/list'){await json({runs:body.conversation_id?runs.filter(r=>r.conversation_id===body.conversation_id):runs});return true;}
-  if(path==='/metrics'){await json({total_tokens:9876});return true;}
-  if(path==='/run/run-a/budget'||path==='/run/run-b/budget'){const runID=path.includes('run-a')?'run-a':'run-b';await json({run_id:runID,budget_run_id:runID,status:'done',limits:{max_tokens:runID==='run-a'?1234:2222,max_wall_seconds:7200,max_steps:300},used_tokens:11,reserved_tokens:0,remaining_tokens:1200,unknown_calls:0,unknown_tokens:0,estimated_tokens:0,used_steps:1,deadline:'2026-09-15T18:00:00Z',sources:[]});return true;}
-  if(path==='/chat/run'){await route.fulfill({status:503,json:{code:503,msg:'fixture rejected'}});return true;}
- }});await a.select('a');const main=a.page.getByRole('main');assert.equal(await main.getByText('任务预算',{exact:true}).count(),0);assert.equal(await main.getByRole('button',{name:'预算明细'}).count(),0);assert.equal(await a.page.getByTitle('本进程累计 token 用量').count(),0);assert.ok(!(await main.textContent()).includes('次工具调用'));
- await openBudget(a);await a.page.getByLabel('Token 上限').fill('1234');await a.select('b');await openBudget(a);await a.page.getByLabel('Token 上限').fill('2222');await a.select('a');await openBudget(a);assert.equal(await a.page.getByLabel('Token 上限').inputValue(),'1234');await a.page.reload();await a.select('a');await a.page.locator('textarea').fill('Use saved workspace budget');await a.page.locator('textarea').press('Enter');await a.page.getByText('发送失败',{exact:false}).first().waitFor();assert.equal(a.requests.filter(r=>r.path==='/chat/run').at(-1).body.budget.max_tokens,1234);
- await openMetrics(a);await a.page.getByRole('button',{name:'预算明细'}).click();await a.page.getByText('上限：1234 tokens · 7200 秒 · 300 轮',{exact:true}).waitFor();await a.select('b');await a.page.getByRole('button',{name:'预算明细'}).click();await a.page.getByText('上限：2222 tokens · 7200 秒 · 300 轮',{exact:true}).waitFor();assert.equal(await a.page.getByText('上限：1234 tokens · 7200 秒 · 300 轮',{exact:true}).count(),0);assert.deepEqual([...new Set(a.requests.filter(r=>r.path.endsWith('/budget')).map(r=>r.path))],['/run/run-a/budget','/run/run-b/budget']);assert.equal(await main.getByRole('region',{name:'运行预算'}).count(),0);a.check();
+test('overview retains usage but removes task limits, including historical snapshots',async t=>{
+ const a=await app(t,{runs:[record({status:'done'})],history:[msg('a1','chat','Saved answer',{role:'assistant',meta:{conversation_id:'a',run_id:'run-a',model_version:'model-a'}})],handle:async({path,json})=>{
+  if(path==='/run/run-a/budget'){await json({run_id:'run-a',budget_run_id:'run-a',status:'done',limits:{max_tokens:1234,max_steps:1},used_tokens:99,reserved_tokens:0,unknown_calls:0,unknown_tokens:0,estimated_tokens:0,used_steps:2,sources:[]});return true;}
+ }});await a.select('a');await openMetrics(a);
+ assert.equal(await a.page.getByText('任务预算',{exact:true}).count(),0);
+ assert.equal(await a.page.getByLabel('Token 上限').count(),0);
+ await a.page.getByRole('button',{name:'用量明细',exact:true}).click();
+ await a.page.getByText('已用（含保守占用）99 · 预留 0 tokens',{exact:true}).waitFor();
+ const details=a.page.getByRole('region',{name:'运行用量',exact:true});
+ assert.ok(!(await details.textContent()).includes('上限'));assert.ok(!(await details.textContent()).includes('剩余'));
+ a.check();
 });
 
 
@@ -305,10 +305,8 @@ async function openWorkbench(a, tab) {
  if(await toggle.getAttribute('aria-pressed')!=='true')await toggle.click();
  await a.page.getByRole('complementary',{name:'工作台'}).getByRole('tab',{name:tab,exact:false}).click();
 }
-async function openBudget(a) {
- await openWorkbench(a,'概览');
- if(!await a.page.getByLabel('Token 上限').isVisible())await a.page.getByRole('complementary',{name:'工作台'}).getByText('任务预算',{exact:true}).click();
-}
+// Existing workflows still visit the overview; it has no quota editor.
+async function openBudget(a) { await openWorkbench(a,'概览'); }
 async function openMetrics(a) {
  await openWorkbench(a,'概览');
  await a.page.getByText('累计指标',{exact:true}).waitFor();
@@ -321,8 +319,8 @@ test('pending conversation creation cannot retarget the captured send or its mod
   if(path==='/tools/catalog'){await json([{name:'python',group:'code',description:'Python',danger:true}]);return true;}
   if(path==='/chat/run'){await route.fulfill({status:503,json:{code:503,msg:'fixture rejection'}});return true;}
  }});
- await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'model-a'}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.getByRole('button',{name:'🐍 代码',exact:true}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.getByTitle(/^高危操作需确认/).click();await openBudget(a);await a.page.getByLabel('Token 上限').fill('1234');await a.page.locator('textarea').fill('Send to the new conversation');const pending=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/conversation/create-conversation'));await a.page.locator('textarea').press('Enter');await pending;
- await a.select('b');await a.page.locator('textarea').fill('Keep conversation B draft');const sent=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/chat/run'));release();const body=(await sent).postDataJSON();assert.equal(body.conversation_id,'new');assert.equal(body.message,'Send to the new conversation');assert.equal(body.selected_version,'model-a');assert.deepEqual(body.enabled_tools,['code']);assert.equal(body.confirm_risky,false);assert.equal(body.budget.max_tokens,1234);assert.equal(await a.page.locator('textarea').inputValue(),'Keep conversation B draft');a.check();
+ await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'model-a'}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.getByRole('button',{name:'代码',exact:true}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.getByTitle(/^高危操作需确认/).click();await openBudget(a);await a.page.locator('textarea').fill('Send to the new conversation');const pending=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/conversation/create-conversation'));await a.page.locator('textarea').press('Enter');await pending;
+ await a.select('b');await a.page.locator('textarea').fill('Keep conversation B draft');const sent=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/chat/run'));release();const body=(await sent).postDataJSON();assert.equal(body.conversation_id,'new');assert.equal(body.message,'Send to the new conversation');assert.equal(body.selected_version,'model-a');assert.deepEqual(body.enabled_tools,['code']);assert.equal(body.confirm_risky,false);assert.equal(body.budget,undefined);assert.equal(await a.page.locator('textarea').inputValue(),'Keep conversation B draft');a.check();
 });
 
 test('new actions match the compact neutral timeline capsules and keep explanations in tooltips',async t=>{
@@ -350,7 +348,7 @@ test('workbench left separator resizes by pointer and keyboard, restores prefere
  await a.page.setViewportSize({width:800,height:1000});await a.page.waitForFunction(()=>document.querySelector('[role=separator]')?.getAttribute('aria-valuenow')==='480');assert.ok((await panel.boundingBox()).width<=480);
  await a.page.setViewportSize({width:340,height:850});await a.page.waitForFunction(()=>document.querySelector('aside[aria-label="工作台"]').getBoundingClientRect().width<=324);assert.ok((await panel.boundingBox()).width<=324);
  await a.page.setViewportSize({width:1440,height:1000});await a.page.waitForFunction(()=>document.querySelector('[role=separator]')?.getAttribute('aria-valuenow')==='720');
- await openMetrics(a);const nav=a.page.getByRole('button',{name:'服务状态',exact:true});await nav.scrollIntoViewIfNeeded();await nav.click();await a.page.getByRole('region',{name:'服务状态'}).waitFor();a.check();
+ await openWorkbench(a,'运营台');await a.page.getByRole('button',{name:'专业功能 展开',exact:true}).click();const nav=a.page.getByRole('button',{name:'服务状态',exact:true});await nav.scrollIntoViewIfNeeded();await nav.click();await a.page.getByRole('region',{name:'服务状态'}).waitFor();a.check();
 });
 
 test('automatic followups bind delayed responses to conversation and run and deduplicate revisits', async t => {
@@ -372,8 +370,8 @@ test('automatic followups retry terminal settlement conflicts within a fixed bou
  }});await a.select('a');await a.page.getByRole('button',{name:'Ready after settlement',exact:true}).waitFor();assert.equal(calls,2);await a.select('b');await a.select('a');await a.page.getByRole('button',{name:'Ready after settlement',exact:true}).waitFor();assert.equal(calls,2);a.check();
 });
 
-test('automatic suggestion sends use the current workbench conversation budget',async t=>{
- const a=await app(t,{history:[msg('u1','chat','question'),msg('a2','chat','answer',{role:'assistant',meta:{conversation_id:'a',run_id:'run-a',model_version:'model-a',model_profile:'profile-one'}}),msg('d3','task','',{action:'done'})]});await a.select('a');await openBudget(a);await a.page.getByLabel('Token 上限').fill('1234');const sent=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/chat/run'));await a.page.getByRole('button',{name:'Follow up once',exact:true}).click();assert.deepEqual((await sent).postDataJSON().budget,{max_tokens:1234});a.check();
+test('automatic suggestion sends omit retired budget fields',async t=>{
+ const a=await app(t,{history:[msg('u1','chat','question'),msg('a2','chat','answer',{role:'assistant',meta:{conversation_id:'a',run_id:'run-a',model_version:'model-a',model_profile:'profile-one'}}),msg('d3','task','',{action:'done'})]});await a.select('a');await openBudget(a);const sent=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/chat/run'));await a.page.getByRole('button',{name:'Follow up once',exact:true}).click();assert.equal((await sent).postDataJSON().budget,undefined);a.check();
 });
 
 test('narrow workbench preserves long metrics, acceptance and file information', async t => {
@@ -383,9 +381,9 @@ test('narrow workbench preserves long metrics, acceptance and file information',
   if(apiPath==='/run/acceptance'){await json({contract:{run_id:'run-a',requests:[long]},checks:[{at:'2026-09-15',spec_path:path,report:{ok:false,scope:long,results:[{id:'long',description:long,method:'manual',status:'unverified',actual:long,expected:long,detail:long}]}}]});return true;}
   if(apiPath==='/delivery/list'){await json({deliveries:[{version:1,conversation_id:'a',run_id:'run-a',created_at:1,files:[{path,size:123,sha256:'a'.repeat(64)}]}]});return true;}
   if(apiPath==='/file/list'){await json([{name:path,dir:false,size:123}]);return true;}
- }});await a.select('a');await openMetrics(a);await a.page.setViewportSize({width:693,height:1000});await a.page.getByRole('separator',{name:'调整工作台宽度'}).press('Home');await a.page.getByRole('button',{name:'预算明细',exact:true}).click();await a.page.getByText('共享预算：'+long,{exact:true}).waitFor();
+ }});await a.select('a');await openMetrics(a);await a.page.setViewportSize({width:693,height:1000});await a.page.getByRole('separator',{name:'调整工作台宽度'}).press('Home');await a.page.getByRole('button',{name:'用量明细',exact:true}).click();await a.page.getByText('共享运行：'+long,{exact:true}).waitFor();
  const fits=async locator=>assert.equal(await locator.evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
- await fits(a.page.getByRole('region',{name:'当前运行统计'}));await fits(a.page.getByRole('region',{name:'运行预算',exact:true}));
+ await fits(a.page.getByRole('region',{name:'当前运行统计'}));await fits(a.page.getByRole('region',{name:'运行用量',exact:true}));
  await openWorkbench(a,'运营台');await a.page.getByRole('button',{name:'验收证据',exact:true}).click();await a.page.getByText('实际：'+long,{exact:true}).waitFor();await fits(a.page.getByRole('region',{name:'运行验收记录'}));
  await openWorkbench(a,'成果');await a.page.getByRole('button',{name:path,exact:true}).waitFor();await a.page.getByRole('button',{name:'交付快照',exact:true}).click();const link=a.page.getByRole('link',{name:'下载快照 '+path,exact:true});await link.waitFor();assert.ok((await link.boundingBox()).height<=28);await fits(link);await fits(a.page.getByRole('region',{name:'交付快照列表'}));
  if(process.env.ORKA_CAPTURE_SCREENSHOTS==='1')await a.page.screenshot({path:root+'tests/screenshots/workbench-long-files.png'});a.check();
@@ -403,7 +401,7 @@ test('existing tool picker separates DOM browser from visual GUI without authori
  const a=await app(t,{handle:async({path,json,route})=>{
   if(path==='/tools/catalog'){await json([{name:'browser',group:'browser',description:'DOM webpage actions',danger:true},{name:'gui_agent',group:'gui_agent',description:'Visual page actions',danger:true},{name:'python',group:'code',description:'Python execution',danger:true}]);return true;}
   if(path==='/chat/run'){await route.fulfill({status:503,json:{code:503,msg:'fixture rejection'}});return true;}
- }});await a.select('a');await a.page.getByRole('button',{name:'工具范围'}).click();const dom=a.page.getByRole('button',{name:'🌐 网页 DOM',exact:true}),gui=a.page.getByRole('button',{name:'🖥️ GUI 视觉',exact:true});await dom.waitFor();await gui.waitFor();assert.match(await dom.getAttribute('title'),/DOM/);assert.match(await gui.getAttribute('title'),/截图/);
+ }});await a.select('a');await a.page.getByRole('button',{name:'工具范围'}).click();const dom=a.page.getByRole('button',{name:'网页 DOM',exact:true}),gui=a.page.getByRole('button',{name:'GUI 视觉',exact:true});await dom.waitFor();await gui.waitFor();assert.match(await dom.getAttribute('title'),/DOM/);assert.match(await gui.getAttribute('title'),/截图/);
  await dom.click();await a.page.getByRole('button',{name:'工具范围'}).click();let sent=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/chat/run'));await a.page.locator('textarea').fill('DOM only');await a.page.locator('textarea').press('Enter');assert.deepEqual((await sent).postDataJSON().enabled_tools,['browser']);await a.page.getByText('发送失败',{exact:false}).first().waitFor();
  await a.page.getByRole('button',{name:'工具范围'}).click();await dom.click();await gui.click();await a.page.reload();await a.select('a');await a.page.getByRole('button',{name:'工具范围'}).click();assert.equal(await dom.getAttribute('aria-pressed'),'false');assert.equal(await gui.getAttribute('aria-pressed'),'true');await a.page.getByRole('button',{name:'工具范围'}).click();sent=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/chat/run'));await a.page.locator('textarea').fill('Visual GUI only');await a.page.locator('textarea').press('Enter');assert.deepEqual((await sent).postDataJSON().enabled_tools,['gui_agent']);assert.equal(await a.page.locator('header').getByRole('button',{name:/网页 DOM|GUI 视觉/}).count(),0);a.check();
 });
@@ -446,4 +444,65 @@ test('one composer control switches with input and steers the live run without a
  await send.click();await stop.waitFor();
  assert.ok(a.requests.filter(r=>r.path==='/chat/steer').at(-1).body.file_ids.length);
  finish();await send.waitFor();assert.equal(await stop.count(),0);a.check();
+});
+
+
+test('home scatter cards select without sending and keep mobile composer usable',async t=>{
+ const a=await app(t); await a.page.getByRole('region',{name:'Orka 首页'}).waitFor();
+ await a.page.getByRole('button',{name:'查看浏览器示例',exact:true}).click();
+ assert.equal(await a.page.getByRole('button',{name:'浏览器：打开网页，带回关键信息'}).getAttribute('aria-pressed'),'true');
+ assert.equal(a.requests.filter(r=>r.path==='/chat/run').length,0);
+ await a.page.getByRole('button',{name:'使用这个示例',exact:true}).click();
+ assert.match(await a.page.locator('textarea').inputValue(), /Hacker News/);
+ assert.equal(a.requests.filter(r=>r.path==='/chat/run').length,0,'example only fills the draft');
+ await a.page.getByRole('button',{name:'查看深度调研示例',exact:true}).click();
+ if(process.env.ORKA_HOME_SCREENSHOT) await a.page.screenshot({path:process.env.ORKA_HOME_SCREENSHOT,animations:"disabled"});
+ await a.page.getByRole('button',{name:'切换侧栏',exact:true}).click();
+ await a.page.setViewportSize({width:390,height:844});
+ await a.page.emulateMedia({reducedMotion:'reduce'});
+ const box=await a.page.locator('textarea').boundingBox(); assert.ok(box.width>250,'mobile text area is not squeezed by icons');
+ assert.ok(await a.page.getByRole('button',{name:'发送',exact:true}).isVisible());
+ const stage=a.page.getByRole('region',{name:'任务示例'}); await stage.scrollIntoViewIfNeeded();
+ assert.ok(await a.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'no horizontal page overflow');
+ if(process.env.ORKA_HOME_MOBILE_SCREENSHOT) await a.page.screenshot({path:process.env.ORKA_HOME_MOBILE_SCREENSHOT,animations:"disabled"});
+ await a.page.setViewportSize({width:1440,height:1000});await a.page.getByRole('button',{name:'切换到暗色模式'}).click();
+ if(process.env.ORKA_HOME_DARK_SCREENSHOT) await a.page.screenshot({path:process.env.ORKA_HOME_DARK_SCREENSHOT,animations:"disabled"});
+ a.check();
+});
+
+test('resume uses tools selected in its own conversation',async t=>{
+ const a=await app(t,{runs:[record()],handle:async({path,json})=>{
+  if(path==='/tools/catalog'){await json([{name:'python',description:'Run Python',group:'code',dangerous:true},{name:'fetch_url',description:'Read web',group:'web'}]);return true;}
+ }});
+ await a.select('a');
+ await a.page.getByRole('button',{name:'工具范围',exact:true}).click();
+ await a.page.getByRole('button',{name:'代码',exact:true}).click();
+ await a.page.getByRole('button',{name:'收起',exact:true}).click();
+ await a.select('b');
+ await a.page.getByRole('button',{name:'切换工作台面板'}).click();
+ await a.page.getByRole('tab',{name:'运营台',exact:false}).first().click();
+ await a.page.getByRole('button',{name:'继续任务',exact:true}).click();
+ await a.page.getByText('服务未确认该任务继续运行',{exact:false}).first().waitFor();
+ const sent=a.requests.find(r=>r.path==='/chat/resume_run');
+ assert.deepEqual(sent.body.enabled_tools,['code']);a.check();
+});
+
+test('starting a new run does not animate the previous run tool history',async t=>{
+ let finish; const completion=new Promise(resolve=>{finish=resolve});t.after(()=>finish());
+ const a=await app(t,{history:[msg('u1','chat','old task'),msg('t2','tool','',{action:'call',payload:{tool:'file_read',args:{path:'old.txt'},result:'old result'}}),msg('a3','chat','old answer',{role:'assistant'}),msg('d4','task','',{action:'done'})],handle:async({path,route})=>{
+  if(path==='/chat/run'){await route.fulfill({contentType:'text/event-stream',body:`id: 1\ndata: ${JSON.stringify(msg('start5','task','',{action:'start',meta:{conversation_id:'a',run_id:'run-new'}}))}\n\n`});return true;}
+  if(path==='/chat/attach'){await completion;await route.fulfill({contentType:'text/event-stream',body:`id: 2\ndata: ${JSON.stringify(msg('done6','task','',{action:'done',meta:{conversation_id:'a',run_id:'run-new'}}))}\n\n`}).catch(()=>{});return true;}
+ }});
+ await a.select('a');await a.page.getByRole('button',{name:'查看 · 1 步',exact:true}).waitFor();
+ await a.page.locator('textarea').fill('new task');await a.page.getByRole('button',{name:'发送',exact:true}).click();
+ await a.page.getByRole('button',{name:'停止',exact:true}).waitFor();
+ assert.equal(await a.page.getByRole('button',{name:'执行中 · 1 步',exact:true}).count(),0);
+ await a.page.getByRole('button',{name:'查看 · 1 步',exact:true}).waitFor();finish();a.check();
+});
+
+test('numbered alternatives remain prose, never a completed execution plan',async t=>{
+ const a=await app(t,{history:[msg('u1','chat','news'),msg('a2','chat','无法读取指定来源。\n\n后续方案：\n1. 稍后重试\n2. 换用其他来源\n3. 提供原文\n\n请选一种方式。',{role:'assistant'}),msg('d3','task','',{action:'done'})]});
+ await a.select('a');await a.page.getByText('稍后重试',{exact:true}).waitFor();
+ assert.equal(await a.page.getByText('已完成',{exact:true}).count(),0);
+ assert.equal(await a.page.getByText('🗂️ 执行计划',{exact:true}).count(),0);a.check();
 });

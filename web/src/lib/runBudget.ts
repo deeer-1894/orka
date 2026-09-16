@@ -10,8 +10,3 @@ export interface RunBudget extends BudgetUsage {
   deadline: string;
   sources: (BudgetUsage & { source: string })[];
 }
-export function validateBudget(budget: RunBudgetLimits) {
-  if (Object.values(budget).some(value => value !== undefined && (!Number.isSafeInteger(value) || value < 0))) {
-    throw new Error('预算须为非负整数，留空或 0 使用部署默认。');
-  }
-}

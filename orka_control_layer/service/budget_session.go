@@ -55,7 +55,8 @@ type BudgetSnapshot struct {
 	Deadline        time.Time         `json:"deadline"`
 }
 
-// BudgetSession owns run admission and shares its runBudget with the existing
+// BudgetSession retains its legacy name for checkpoint compatibility. It owns
+// usage metering, not execution quotas, and shares its runBudget with existing
 // middleware/checkpoint code. All paid attempts, including retries, reserve
 // BEFORE dispatch and settle after response/stream termination. Source labels
 // are open strings (main, summary, retry, subagent, gui, followup, ...).
@@ -63,15 +64,15 @@ type BudgetSnapshot struct {
 // The invocation adapter must use this reservation API instead of ALSO calling
 // the legacy AddUsage sink for that exchange, which would double-charge it.
 type BudgetSession struct {
-	association                    budgetAssociation
-	mu                             sync.Mutex
-	budget                         *runBudget
-	policy                         TaskBudgetRequest
-	ledger                         db.UsageLedger
-	owner, runID                   string
-	dailyLimit, defaultReservation int
-	entries                        map[string]db.UsageEntry
-	steps                          map[string]struct{}
+	association        budgetAssociation
+	mu                 sync.Mutex
+	budget             *runBudget
+	policy             TaskBudgetRequest
+	ledger             db.UsageLedger
+	owner, runID       string
+	defaultReservation int
+	entries            map[string]db.UsageEntry
+	steps              map[string]struct{}
 }
 
 func NewBudgetSession(ctx context.Context, a config.AgentConfig, req TaskBudgetRequest, ledger db.UsageLedger, owner, runID string) (*BudgetSession, error) {
@@ -86,13 +87,11 @@ func NewBudgetSession(ctx context.Context, a config.AgentConfig, req TaskBudgetR
 		if parent.owner != owner {
 			return nil, errors.New("child budget owner differs from parent")
 		}
-		if (req.MaxTokens != 0 && req.MaxTokens != parent.policy.MaxTokens) || (req.MaxSteps != 0 && req.MaxSteps != parent.policy.MaxSteps) || (req.MaxWallSeconds != 0 && req.MaxWallSeconds != parent.policy.MaxWallSeconds) {
-			return nil, errors.New("child must inherit the parent budget policy")
-		}
+
 		return parent, nil
 	}
 	a = a.WithBudgetDefaults()
-	s := &BudgetSession{budget: newRunBudget(policy.MaxSteps, policy.MaxTokens, time.Duration(policy.MaxWallSeconds)*time.Second), policy: policy, ledger: ledger, owner: owner, runID: runID, dailyLimit: a.UserDailyTokens, defaultReservation: a.UsageReservationTokens, entries: map[string]db.UsageEntry{}, steps: map[string]struct{}{}}
+	s := &BudgetSession{budget: newRunBudget(policy.MaxSteps, policy.MaxTokens, time.Duration(policy.MaxWallSeconds)*time.Second), policy: policy, ledger: ledger, owner: owner, runID: runID, defaultReservation: a.UsageReservationTokens, entries: map[string]db.UsageEntry{}, steps: map[string]struct{}{}}
 	s.association, _ = ctx.Value(budgetAssociationKey{}).(budgetAssociation)
 	account, err := ledger.Load(ctx, owner)
 	if err != nil {
@@ -111,9 +110,8 @@ func NewBudgetSession(ctx context.Context, a config.AgentConfig, req TaskBudgetR
 	return s, nil
 }
 
-// Budget returns the existing middleware budget for checkpoint restoration and
-// finalization. Carried checkpoint usage reduces run allowance but is not billed
-// to the daily ledger again. Restore checkpoints before admitting any new calls.
+// Budget returns the usage meter for checkpoint restoration and finalization.
+// Carried usage remains visible without charging it to the daily ledger again.
 func (s *BudgetSession) Budget() *runBudget { return s.budget }
 
 type budgetSessionKey struct{}
@@ -122,10 +120,10 @@ func (s *BudgetSession) Context(ctx context.Context) context.Context {
 	return llm.WithCallAccountant(context.WithValue(withBudget(ctx, s.budget), budgetSessionKey{}, s), &budgetCallAccountant{session: s})
 }
 
-// RunContext installs the shared allowance and enforces its wall deadline even
-// while a provider call is in flight. The caller owns and must defer cancel.
+// RunContext installs metering and preserves caller cancellation. It adds no
+// task deadline; individual transports retain their request timeouts.
 func (s *BudgetSession) RunContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithDeadline(s.Context(ctx), s.Snapshot().Deadline)
+	return context.WithCancel(s.Context(ctx))
 }
 
 func BudgetSessionFrom(ctx context.Context) *BudgetSession {
@@ -164,10 +162,7 @@ func (s *BudgetSession) AdvanceStep(ctx context.Context, stepID string) error {
 	if _, ok := s.steps[stepID]; ok {
 		return nil
 	}
-	snap := s.snapshot()
-	if !time.Now().Before(snap.Deadline) || snap.UsedSteps >= s.policy.MaxSteps {
-		return ErrRunBudgetExceeded
-	}
+
 	s.steps[stepID] = struct{}{}
 	s.budget.mu.Lock()
 	s.budget.sharedSteps = s.budget.carriedSteps + len(s.steps)
@@ -191,10 +186,7 @@ func (s *BudgetSession) ReserveUsage(ctx context.Context, callID, source string,
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	snap := s.snapshot()
-	if !time.Now().Before(snap.Deadline) {
-		return fmt.Errorf("%w: time", ErrRunBudgetExceeded)
-	}
+
 	entry, err := s.updateLedger(ctx, func(a *db.UsageAccount, now time.Time) (db.UsageEntry, error) {
 		if i := usageIndex(a.Entries, s.runID, callID); i >= 0 {
 			old := a.Entries[i]
@@ -203,28 +195,7 @@ func (s *BudgetSession) ReserveUsage(ctx context.Context, callID, source string,
 			}
 			return old, nil
 		}
-		// Enforce against durable entries as well as this handle: another
-		// process may have reattached the same run since our initial Load.
-		runCommitted := 0
-		for _, e := range a.Entries {
-			if e.RunID == s.runID {
-				runCommitted = saturatingUsageSum(runCommitted, e.Tokens)
-			}
-		}
-		s.budget.mu.Lock()
-		carried := s.budget.carried
-		s.budget.mu.Unlock()
-		remaining := max(0, s.policy.MaxTokens-saturatingUsageSum(carried, runCommitted))
-		if tokens > min(snap.RemainingTokens, remaining) {
-			return db.UsageEntry{}, fmt.Errorf("%w: tokens", ErrRunBudgetExceeded)
-		}
-		used, err := dailyUsage(a.Entries, now)
-		if err != nil {
-			return db.UsageEntry{}, err
-		}
-		if used > s.dailyLimit || tokens > s.dailyLimit-used {
-			return db.UsageEntry{}, ErrDailyQuotaExceeded
-		}
+
 		e := db.UsageEntry{RelatedConversationID: s.association.conversationID, RelatedRunID: s.association.runID, RunID: s.runID, CallID: callID, Source: source, Status: db.UsageReserved, Tokens: tokens, ReservedTokens: tokens, ReservedAt: now.UnixMilli()}
 		a.Entries = append(a.Entries, e)
 		return e, nil
@@ -240,7 +211,7 @@ func (s *BudgetSession) ReserveUsage(ctx context.Context, callID, source string,
 // SettleUsage is allowed after cancellation/deadline and uses a bounded detached
 // context. Storage errors are returned, leaving the durable reservation intact;
 // callers must retry settlement with the same ID. Actual overruns are fully
-// charged, even when they exceed a run/daily limit; later admissions are refused.
+// recorded without limiting subsequent calls.
 // Unknown/estimated charges may be reconciled to known usage later.
 func (s *BudgetSession) SettleUsage(ctx context.Context, callID string, u UsageSettlement) error {
 	if u.Status == "" {
@@ -341,5 +312,5 @@ func (s *BudgetSession) syncMeter() {
 }
 
 func (s *BudgetSession) DailySnapshot(ctx context.Context) (DailyBudgetSnapshot, error) {
-	return ReadDailyBudget(ctx, s.ledger, s.owner, s.dailyLimit)
+	return ReadDailyBudget(ctx, s.ledger, s.owner, 0)
 }

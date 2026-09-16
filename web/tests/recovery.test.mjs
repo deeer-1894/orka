@@ -148,9 +148,9 @@ test('legacy done SSE must defer to matching partial run record, but ordinary do
   assert.equal(canResumeRun(c, record('new', { status: 'done' })), false);
   assert.equal(isIncompleteRun(c, record('new', { status: 'done' })), false);
 });
-test('journal retention is not extra budget: exhausted partial runs never offer a resume loop', () => {
+test('retained partial runs can resume after legacy token quotas are removed', () => {
   for (const status of ['idle', 'error', 'partial', 'done']) {
-    assert.equal(canResumeRun(context({ status }), record('new', { status: 'partial', budget_hit: 'tokens' })), false);
+    assert.equal(canResumeRun(context({ status }), record('new', { status: 'partial', budget_hit: 'tokens' })), true);
     for (const budget_hit of ['steps', 'time']) assert.equal(canResumeRun(context({ status }), record('new', { status: 'partial', budget_hit })), true);
   }
 });

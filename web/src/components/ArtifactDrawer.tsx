@@ -1,6 +1,5 @@
 import { useWorkbenchWidth } from '../hooks/useWorkbenchWidth';
 import { ActionChip } from './ActionChip';
-import type { RunBudgetLimits } from '../lib/runBudget';
 import type { MetricsRunContext } from './MetricsPanel';
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { artifacts as artifactApi, files as fileApi } from "../api";
@@ -61,11 +60,8 @@ export function ArtifactDrawer({
   focusArtifact,
   onClearArtifact,
   onResumeRun, isRunBusy, runRevision, canResumeRun,
-  budget, onBudgetChange, budgetDisabled, runContext,
+  runContext,
 }: {
-  budget?: RunBudgetLimits;
-  onBudgetChange?: (budget: RunBudgetLimits) => void;
-  budgetDisabled?: boolean;
   runContext?: MetricsRunContext;
   canResumeRun: RunsPanelProps["canResumeRun"];
   onResumeRun: RunsPanelProps["onResumeRun"]; isRunBusy: RunsPanelProps["isRunBusy"]; runRevision: number;
@@ -210,7 +206,7 @@ export function ArtifactDrawer({
           </div>
         )}
         <div id="workbench-content" className="min-h-0 min-w-0 flex-1 overflow-auto [overflow-wrap:anywhere]"><Suspense fallback={<p role="status" className="p-3 text-sm">正在加载面板…</p>}>
-          {tab === "overview" && <DashboardPanel runContext={runContext} budget={budget} onBudgetChange={onBudgetChange} budgetDisabled={budgetDisabled} key={conversationID} conversationID={conversationID} onJumpToConversation={onJumpToConversation} goTab={setTab} onOpenArtifact={(id) => { setFocusArt(id); setTab("artifacts"); }} />}
+          {tab === "overview" && <DashboardPanel runContext={runContext} key={conversationID} conversationID={conversationID} onJumpToConversation={onJumpToConversation} goTab={setTab} onOpenArtifact={(id) => { setFocusArt(id); setTab("artifacts"); }} />}
           {tab === "artifacts" && (focusArt ? <ArtifactPane artifactId={focusArt} onBack={() => setFocusArt(null)} /> : <ArtifactGallery onOpen={setFocusArt} />)}
           {tab === "files" && <FilesPanel key={email + ":" + conversationID} email={email} conversationID={conversationID} />}
           {tab === "runs" && <RunsPanel onJumpToConversation={onJumpToConversation} onResumeRun={onResumeRun} isRunBusy={isRunBusy} runRevision={runRevision} canResumeRun={canResumeRun} />}

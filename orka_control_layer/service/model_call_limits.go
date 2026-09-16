@@ -15,32 +15,16 @@ func newAgentModel(client llm.Client, modelName, agentName string) *llm.EinoMode
 }
 
 func agentCallLimits(modelName string) llm.CallLimits {
-	limits := llm.CallLimits{
-		FirstMaxTokens: 4096, MaxTokens: 8192, Timeout: 180 * time.Second,
-		OnResponseRetry: emitStreamReset,
-		ReasoningEffort: executionReasoningEffort,
-	}
-	// GLM-5.3 spent the entire 4k first-call allowance on reasoning in a
-	// measured project run. Leave room for the first executable tool action.
-	switch modelName {
-	case "glm-5.3":
-		limits.FirstMaxTokens = 16384
-		limits.MaxTokens = 16384
-		limits.Timeout = 5 * time.Minute
-	case "glm-5.3-flash":
-		// Measured long-file generation reached the 180s deadline at the
-		// provider default max reasoning. Bound thinking and allow one small
-		// module to finish without expanding the whole-run token allowance.
-		limits.FirstMaxTokens = 8192
-		limits.Timeout = 5 * time.Minute
-	}
+	// Leave output length to the provider unless the user configured a policy.
+	// A transport deadline still bounds a stalled call; it is not a task quota.
+	limits := llm.CallLimits{Timeout: 5 * time.Minute, OnResponseRetry: emitStreamReset, ReasoningEffort: executionReasoningEffort}
 	legacy := limits
 	limits.ForContext = func(ctx context.Context, requested string) llm.CallLimits {
 		snapshot, ok := modelprofile.FromContext(ctx)
 		if !ok || snapshot.ProfileID == "deployment" {
 			return legacy
 		}
-		out := llm.CallLimits{FirstMaxTokens: 4096, MaxTokens: 8192, Timeout: 180 * time.Second, OnResponseRetry: emitStreamReset}
+		out := llm.CallLimits{Timeout: 5 * time.Minute, OnResponseRetry: emitStreamReset}
 		if snapshot.Model != requested {
 			return out
 		}

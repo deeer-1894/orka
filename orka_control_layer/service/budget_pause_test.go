@@ -70,7 +70,7 @@ func TestBudgetPausedRunPublishesMatchingStatus(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if snapshot.Status != status || snapshot.UsedTokens != 17948 || snapshot.ReservedTokens != 0 || snapshot.RemainingTokens != 1982052 {
+				if snapshot.Status != status || snapshot.UsedTokens != 17948 || snapshot.ReservedTokens != 0 || snapshot.RemainingTokens != 0 || snapshot.Limits.MaxTokens != 0 {
 					t.Fatalf("budget differs from paused run: %+v", snapshot)
 				}
 				resumed := &collector{}

@@ -59,7 +59,8 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 		}
 	}
 	name := t.base.Name()
-	cacheKey := name + "\x00" + argumentsInJSON
+	canonicalArgs, _ := json.Marshal(args)
+	cacheKey := name + "\x00" + string(canonicalArgs)
 	// Retry infrastructure failures before giving up. A dropped MCP socket is not
 	// a result the model should have to reason about, and it was the single
 	// biggest source of tool failures here.

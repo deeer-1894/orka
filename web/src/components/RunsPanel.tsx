@@ -1,5 +1,5 @@
 import { ActionChip } from './ActionChip';
-import { BudgetEvidence } from './BudgetEvidence';
+import { UsageEvidence } from './UsageEvidence';
 import { AcceptanceEvidence } from './AcceptanceEvidence';
 import { lazy, Suspense, useState } from 'react';
 import { api } from '../api';
@@ -61,12 +61,12 @@ export default function RunsPanel({
    <div className="flex justify-between text-xs text-muted"><span>{labels[r.status] || r.status}</span><time>{new Date(r.created_at).toLocaleString()}</time></div>
    <p className="text-sm">{r.prompt}</p><p className="line-clamp-3 text-xs text-muted">{r.error || r.output}</p>
    {!!r.unfinished?.length && <p className="text-xs text-muted">未完成：{r.unfinished.join(' · ')}</p>}
-   {r.budget_hit && <p className="text-xs text-muted">额度限制：{r.budget_hit === 'tokens' ? 'Token 预算已用尽' : r.budget_hit}</p>}
+   {r.budget_hit && <p className="text-xs text-muted">历史停止原因：{r.budget_hit === 'tokens' ? '旧 Token 限额（已取消）' : r.budget_hit}</p>}
    <p className="text-xs text-faint">{Math.round((r.duration_ms || 0) / 1000)} 秒 · {r.tokens || 0} tokens · {r.tool_calls || 0} 次工具调用</p>
    <div className="flex flex-wrap gap-3 text-sm"><ActionChip onClick={() => onJumpToConversation(r.conversation_id)} icon="share">查看对话</ActionChip>
    {resumableRun(r) && canResumeRun(r) && <ActionChip disabled={pending !== null || isRunBusy(r.conversation_id)} onClick={() => void execute(r, true)} icon="play">继续任务</ActionChip>}
    {!['running', 'paused'].includes(r.status) && <ActionChip disabled={pending !== null || isRunBusy(r.conversation_id)} onClick={() => void execute(r, false)} icon="refresh">重新执行</ActionChip>}</div>
-   <AcceptanceEvidence runID={r.run_id} /><BudgetEvidence runID={r.run_id} />
+   <AcceptanceEvidence runID={r.run_id} /><UsageEvidence runID={r.run_id} />
    {r.task_id && history.runs.slice(index + 1).some(p => p.task_id === r.task_id) && <><ActionChip onClick={() => setDiffOpen(id => id === r.run_id ? '' : r.run_id)} icon="chart">对比上次</ActionChip>{diffOpen === r.run_id && <Suspense fallback={<p>正在加载对比…</p>}><RunDiff cur={r} prev={history.runs.slice(index + 1).find(p => p.task_id === r.task_id)!} /></Suspense>}</>}
   </article>)}
   <div className="flex justify-between text-sm"><ActionChip disabled={history.page === 0 || history.loading} onClick={() => history.setPage(p => p - 1)}>上一页</ActionChip><ActionChip disabled={!history.hasMore || history.loading} onClick={() => history.setPage(p => p + 1)}>下一页</ActionChip></div>

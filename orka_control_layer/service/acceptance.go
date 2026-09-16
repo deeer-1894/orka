@@ -252,7 +252,7 @@ type acceptanceCheckTool struct{}
 
 func (acceptanceCheckTool) Name() string { return "check_acceptance" }
 func (acceptanceCheckTool) Description() string {
-	return `Verify explicit requirements from a *.acceptance.json file: {"kind":"orka.acceptance/v1","requirements":[{"id":"margin","description":"minimum gross margin","method":"csv","file":"pricing.csv","column":"margin","operation":"min","compare":"gte","expected":"0.65"}]}. Methods: contains (file/expected text), csv (count/min/max/sum; eq/gte/lte; exact where or exclude filters), manual (remains unverified). Checks use real files and exact rational arithmetic. Add requirements for changed constraints; never replace business validation with existence checks. Declared assertions do not prove completeness of original requests or source support. The spec becomes a required output; immutable audit records retain every check.`
+	return `Verify explicit requirements from a *.acceptance.json file: {"kind":"orka.acceptance/v1","requirements":[{"id":"margin","description":"minimum gross margin","method":"csv","file":"pricing.csv","column":"margin","operation":"min","compare":"gte","expected":"0.65"}]}. Methods: contains (file/expected text), csv (count rows WITHOUT column; count_nonempty or count_rfc3339 require column and count valid cells; value compares exactly one filtered numeric cell; min/max/sum aggregate numeric cells; eq/gte/lte; exact where or exclude filters), manual (remains unverified). Checks use real files and exact rational arithmetic. Add requirements for changed constraints; never replace business validation with existence checks. Declared assertions do not prove completeness of original requests or source support. The spec becomes a required output; immutable audit records retain every check.`
 }
 func (acceptanceCheckTool) Schema() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}}, "required": []string{"path"}}
@@ -314,7 +314,7 @@ func checkAcceptanceHistory(ctx context.Context, files fs.FS, path string, spec 
 			if !current[prior.ID] && !missing[prior.ID] {
 				report.OK = false
 				missing[prior.ID] = true
-				report.Results = append(report.Results, acceptance.Result{Requirement: prior.Requirement, Status: "failed", Detail: "Previously declared requirement was removed; retain it and record the changed expectation explicitly."})
+				report.Results = append(report.Results, acceptance.Result{Requirement: prior.Requirement, Status: "failed", Detail: "Previously declared requirement was removed. Restore this exact id in the same spec and update its assertion there; renaming/deleting the spec or id does not remove the original obligation. This is persisted requirement history, not a stale cache."})
 			}
 		}
 	}

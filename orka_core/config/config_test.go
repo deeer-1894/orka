@@ -98,41 +98,28 @@ func TestModelDefaultsUseOrderedList(t *testing.T) {
 	}
 }
 
-func TestRunBudgetPolicyDefaultsAndOverrides(t *testing.T) {
-	c := Config{}
-	c.applyDefaults()
-	if c.Agent.RunMaxTokens != 2_000_000 || c.Agent.RunMaxWallSeconds != 7200 || c.Agent.RunMaxSteps != 300 {
-		t.Fatalf("long task defaults changed: %+v", c.Agent)
-	}
-	t.Setenv("RUN_MAX_TOKENS", "1000000")
-	t.Setenv("RUN_TOKEN_CEILING", "3000000")
-	t.Setenv("RUN_MAX_WALL_SECONDS", "3600")
-	t.Setenv("RUN_MAX_STEPS", "120")
-	c.applyEnv()
-	if c.Agent.RunMaxTokens != 1000000 || c.Agent.RunTokenCeiling != 3000000 || c.Agent.RunMaxWallSeconds != 3600 || c.Agent.RunMaxSteps != 120 {
-		t.Fatal(c.Agent)
-	}
-}
-
-func TestBudgetValidationAlsoAppliesInDev(t *testing.T) {
-	t.Setenv("ORKA_DEV", "1")
-	for _, a := range []AgentConfig{
-		{RunMaxTokens: -1}, {RunMaxWallSeconds: -1}, {RunMaxSteps: -1},
-		{RunMaxTokens: 100, RunTokenCeiling: 99}, {RunMaxWallSeconds: 100, RunWallSecondsCeiling: 99},
-		{RunMaxSteps: 100, RunStepsCeiling: 99}, {UserDailyTokens: -1}, {UsageReservationTokens: -1},
-	} {
-		c := Config{Agent: a}
-		if err := c.Validate(); err == nil {
-			t.Fatalf("accepted invalid budget: %+v", a)
+func TestLegacyLimitsAreIgnoredAfterConfigLoad(t *testing.T) {
+	for _, value := range []string{"1", "-1", "oops", "99999999999999999999999"} {
+		t.Setenv("ORKA_DEV", "1")
+		t.Setenv("RUN_MAX_TOKENS", value)
+		t.Setenv("RUN_MAX_WALL_SECONDS", value)
+		t.Setenv("RUN_MAX_STEPS", value)
+		t.Setenv("USER_DAILY_TOKENS", value)
+		c, err := Load("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		a := c.Agent
+		if a.RunMaxTokens != 0 || a.RunMaxSteps != 0 || a.RunMaxWallSeconds != 0 || a.UserDailyTokens != 0 {
+			t.Fatalf("legacy quota %+v", a)
 		}
 	}
 }
-
-func TestLoadRejectsMalformedBudgetEnvironment(t *testing.T) {
+func TestUsageEstimateValidation(t *testing.T) {
 	for _, value := range []string{"oops", "-1", "99999999999999999999999"} {
-		t.Setenv("RUN_MAX_TOKENS", value)
+		t.Setenv("USAGE_RESERVATION_TOKENS", value)
 		if _, err := Load(""); err == nil {
-			t.Fatalf("silently ignored RUN_MAX_TOKENS=%s", value)
+			t.Fatalf("accepted invalid estimate %s", value)
 		}
 	}
 }

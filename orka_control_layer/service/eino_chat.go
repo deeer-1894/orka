@@ -150,7 +150,7 @@ func (b *bestEffortMiddleware) BeforeModelRewriteState(ctx context.Context, stat
 // Retries keep the selected model. Handlers supply optional context management middleware.
 func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction string, tools []agent.BaseTool, maxIters int, handlers ...adk.ChatModelAgentMiddleware) (adk.Agent, error) {
 	if maxIters <= 0 {
-		maxIters = 16
+		maxIters = einoMaxIters
 	}
 	handlers = append(handlers, newResearchGuidance(ctx))
 	return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
@@ -242,10 +242,7 @@ func BuildEinoSubAgents(ctx context.Context, client llm.Client, model string, at
 		} else {
 			prompt += " " + needInput
 		}
-		iters := sp.MaxIters
-		if iters <= 0 {
-			iters = 12
-		}
+		iters := einoMaxIters
 		sub, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 			Name:        sp.Name,
 			Description: sp.Description,
@@ -259,21 +256,11 @@ func BuildEinoSubAgents(ctx context.Context, client llm.Client, model string, at
 			// transient blip still fails the parent step.
 			ModelRetryConfig: modelRetryConfig(),
 
-			// A token budget as well as a step budget. MaxIterations bounds model
-			// CYCLES, and once the prompt encourages batching one cycle can emit
-			// several tool calls — so a researcher told to use "~6, at most ~10"
-			// calls was measured making 15. A soft instruction does not bound a
-			// delegate; four of them over-researching is how a run reaches 399k
-			// tokens and still ends unfinished.
-			// The budget bounds what a delegate may SPEND; the context handlers
-			// bound what it carries while spending it. Without the latter a
-			// delegate's own retrieval sat verbatim until the budget cut it off
-			// mid-work, which is the expensive way to learn a context is too big.
-			// Refresh shared research state after reduction. The delegate's own
-			// final budget notice comes last and retains its tool cutoff.
+			// Delegates retain context compaction and shared evidence guidance.
+			// They have no separate token or iteration allowance.
 			Handlers: append(subAgentContextHandlers(ctx, sp.Name, scoped),
 				newResearchGuidance(ctx),
-				newBudgetGuardFor(newDelegateBudget(iters, subAgentMaxTokens)),
+				newBudgetGuardFor(newDelegateBudget(0, 0)),
 			),
 		})
 		if err != nil {
@@ -362,7 +349,7 @@ func BuildEinoOrchestrator(ctx context.Context, client llm.Client, model, instru
 		return nil, err
 	}
 	if maxIters <= 0 {
-		maxIters = 16
+		maxIters = einoMaxIters
 	}
 	allTools := append(EinoTools(withFindTools(withPlan(withClarify(atomic)))), subTools...)
 	handlers := append([]adk.ChatModelAgentMiddleware{newBudgetGuardFor(agentBudget(ctx, maxIters)), newGateMiddleware(toolGateFrom(ctx))}, extra...)
@@ -390,48 +377,10 @@ func BuildEinoOrchestrator(ctx context.Context, client llm.Client, model, instru
 	})
 }
 
-// subAgentMaxTokens caps what ONE delegation may spend.
-//
-// The comment used to say this bounded "context growth", and the name still
-// suggests it. It does not: the budget sums TotalTokens per call, which is
-// prompt plus completion, and the prompt is re-counted in full every cycle. The
-// figure therefore grows super-linearly with the work done rather than tracking
-// how much context is being carried. Measured on one delegate: 1.4k per call for
-// the first four cycles, 6.2k by the fifth, 14.6k by the tenth, cumulative 62k —
-// so 80k buys about eleven cycles, not the open-ended research the name implies.
-//
-// Delegations were coming back as "工具已停用" status reports for exactly this
-// reason. Raised to a figure that lets a delegate finish while still stopping a
-// runaway well short of the run's own 800k, and named for what it measures.
-const subAgentMaxTokens = 250_000
-
-// einoMaxIters is the orchestrator/agent generation-cycle cap for the prod path.
-//
-// It was 16, which the budget guard turns into 15 usable cycles, and that was
-// the ceiling on how complex a task could BE. Measured across 333 runs, the
-// completion rate is flat at 67-71% up to 30 tool calls and collapses to 18%
-// beyond it — and 30 calls is exactly 15 cycles at the 2.1 calls-per-cycle the
-// batching prompt achieves. The runs that did finish real work spent 43 and 94
-// calls; under a 15-cycle budget neither could have.
-//
-// The number was sized for an orchestrator that delegates, spending its cycles
-// on fan-out rather than atomic work. Delegation runs at 1.17% of tool calls
-// (2.33% after the prompt rewrite in ff0141a), so in practice the orchestrator
-// does the atomic work itself and pays a cycle for every couple of tool calls.
-// Raising the ceiling is the honest response to what it actually does; the
-// prompt has already been tried.
-//
-// 40 was still a ceiling on task complexity rather than on cost. Every long run
-// measured afterwards ended the same way: exactly 40 cycles, then partial, with
-// the deliverable unwritten. A step count answers "how many moves may this take",
-// which is a property of the task and not something the platform should decide.
-//
-// So this is now a safety cliff and nothing else, and the binding limits are the
-// ones denominated in what a run actually spends: runMaxTokens (2M) and
-// runMaxWall (2h). A runaway loop still terminates — sooner, in fact, since a
-// loop burns tokens fast — while a task that genuinely needs sixty steps is no
-// longer cut off at forty for being complicated.
-const einoMaxIters = 300
+// Eino interprets zero/negative MaxIterations as its 20-cycle default.
+// Use the platform integer range only at this adapter boundary; Orka itself
+// has no task iteration quota and termination remains cancellable.
+const einoMaxIters = int(^uint(0) >> 1)
 
 // RunEinoOnce runs the agent to completion on a single user message and returns
 // the final assistant text. Tool steps and intermediate assistant turns are

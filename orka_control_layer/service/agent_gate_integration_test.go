@@ -166,7 +166,7 @@ func TestSpecialistResearchGuidanceFollowsSharedAllowance(t *testing.T) {
 	}
 }
 
-func TestSpecialistFinalBudgetNoticeRemainsLast(t *testing.T) {
+func TestSpecialistIgnoresLegacyIterationQuota(t *testing.T) {
 	b := newRunBudget(20, 1000, 0)
 	s := newResearchSession(nil, "", b, 10)
 	ctx := withResearchSession(withBudget(context.Background(), b), s)
@@ -179,11 +179,11 @@ func TestSpecialistFinalBudgetNoticeRemainsLast(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := model.Requests[len(model.Requests)-1]
-	if len(req.Tools) != 0 {
-		t.Fatal("delegate budget restored tools")
+	if len(req.Tools) == 0 {
+		t.Fatal("legacy delegate quota removed tools")
 	}
-	if !strings.Contains(req.Messages[len(req.Messages)-1].Content, "这是最后一次回复") {
-		t.Fatal("research guidance overrides final delegate budget notice")
+	if strings.Contains(req.Messages[len(req.Messages)-1].Content, "这是最后一次回复") {
+		t.Fatal("legacy delegate quota notice injected")
 	}
 }
 

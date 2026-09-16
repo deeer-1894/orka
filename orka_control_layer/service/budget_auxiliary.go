@@ -8,9 +8,9 @@ import (
 type budgetAssociation struct{ conversationID, runID string }
 type budgetAssociationKey struct{}
 
-// AuxiliaryBudgetContextForRun starts an independent, bounded auxiliary budget
+// AuxiliaryBudgetContextForRun starts an independent auxiliary usage scope
 // linked to a run already authorized by the caller. It never reopens that run's
-// allowance or changes its deadline/status. Every entry retains the association.
+// execution or changes its status. Every entry retains the association.
 func (s *ChatService) AuxiliaryBudgetContextForRun(ctx context.Context, owner, source, conversationID, runID string) (context.Context, context.CancelFunc, error) {
 	if conversationID == "" || runID == "" {
 		return ctx, nil, errors.New("auxiliary budget requires conversation and run identity")

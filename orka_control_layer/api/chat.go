@@ -291,7 +291,8 @@ func (a *API) ToolsCatalog(ctx context.Context, c *app.RequestContext) {
 // /chat/attach and sees a normal continuation.
 func (a *API) ResumeRun(ctx context.Context, c *app.RequestContext) {
 	var req struct {
-		RunID string `json:"run_id"`
+		RunID        string    `json:"run_id"`
+		EnabledTools *[]string `json:"enabled_tools,omitempty"`
 	}
 	if err := bind(c, &req); err != nil || req.RunID == "" {
 		fail(c, consts.StatusBadRequest, "run_id required")
@@ -319,7 +320,7 @@ func (a *API) ResumeRun(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusConflict, admissionErr.Error())
 		return
 	}
-	prepared, prepareErr := a.Chat.PrepareResumeRun(runCtx, req.RunID, email)
+	prepared, prepareErr := a.Chat.PrepareResumeRun(runCtx, req.RunID, email, service.ResumeOptions{EnabledTools: req.EnabledTools})
 	if prepareErr != nil {
 		release()
 		fail(c, consts.StatusConflict, prepareErr.Error())

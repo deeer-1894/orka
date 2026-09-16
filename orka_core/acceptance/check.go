@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const Kind = "orka.acceptance/v1"
@@ -30,7 +31,7 @@ type Requirement struct {
 	Method      string            `json:"method"` // contains, csv, manual
 	File        string            `json:"file,omitempty"`
 	Column      string            `json:"column,omitempty"`
-	Operation   string            `json:"operation,omitempty"` // count, min, max, sum
+	Operation   string            `json:"operation,omitempty"` // count, count_nonempty, count_rfc3339, value, min, max, sum
 	Where       map[string]string `json:"where,omitempty"`
 	Exclude     map[string]string `json:"exclude,omitempty"`
 	Compare     string            `json:"compare,omitempty"` // eq, gte, lte
@@ -99,8 +100,14 @@ func Validate(spec Spec) error {
 			return fmt.Errorf("contains assertion requires expected text")
 		}
 		if r.Method == "csv" {
-			if r.Operation != "count" && r.Operation != "min" && r.Operation != "max" && r.Operation != "sum" {
+			if r.Operation != "count" && r.Operation != "count_nonempty" && r.Operation != "count_rfc3339" && r.Operation != "value" && r.Operation != "min" && r.Operation != "max" && r.Operation != "sum" {
 				return fmt.Errorf("invalid CSV operation")
+			}
+			if r.Operation == "count" && r.Column != "" {
+				return fmt.Errorf("requirement %q: count counts rows only; omit column for row count, use count_nonempty/count_rfc3339 to validate cells, or value to compare one numeric cell", r.ID)
+			}
+			if r.Operation != "count" && r.Column == "" {
+				return fmt.Errorf("requirement %q: %s requires column", r.ID, r.Operation)
 			}
 			if r.Compare != "" && r.Compare != "eq" && r.Compare != "gte" && r.Compare != "lte" {
 				return fmt.Errorf("invalid comparison")
@@ -221,6 +228,7 @@ func aggregate(ctx context.Context, body []byte, r Requirement) (*big.Rat, error
 	}
 	value := new(big.Rat)
 	count := int64(0)
+	valid := int64(0)
 	for {
 		row, err := reader.Read()
 		if err == io.EOF {
@@ -250,11 +258,28 @@ func aggregate(ctx context.Context, body []byte, r Requirement) (*big.Rat, error
 		if r.Operation == "count" {
 			continue
 		}
+		if r.Operation == "count_nonempty" || r.Operation == "count_rfc3339" {
+			cell := strings.TrimSpace(row[index])
+			if r.Operation == "count_nonempty" && cell != "" {
+				valid++
+			}
+			if r.Operation == "count_rfc3339" {
+				if _, err := time.Parse(time.RFC3339Nano, cell); err == nil {
+					valid++
+				}
+			}
+			continue
+		}
 		number, ok := parseNumber(strings.TrimSpace(row[index]))
 		if !ok {
 			return nil, fmt.Errorf("non-numeric value in %s", r.Column)
 		}
 		switch r.Operation {
+		case "value":
+			if count > 1 {
+				return nil, fmt.Errorf("value requires exactly one matching row; refine where filters")
+			}
+			value.Set(number)
 		case "sum":
 			value.Add(value, number)
 		case "min":
@@ -269,6 +294,9 @@ func aggregate(ctx context.Context, body []byte, r Requirement) (*big.Rat, error
 	}
 	if r.Operation == "count" {
 		return value.SetInt64(count), nil
+	}
+	if r.Operation == "count_nonempty" || r.Operation == "count_rfc3339" {
+		return value.SetInt64(valid), nil
 	}
 	if count == 0 {
 		return nil, fmt.Errorf("no matching rows")

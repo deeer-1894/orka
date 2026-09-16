@@ -1,5 +1,4 @@
 import type { SessionRecoveryStore } from '../lib/sessionRecovery';
-import { validateBudget, type RunBudgetLimits } from '../lib/runBudget';
 import { useEffect, useRef, useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
 import {
@@ -15,15 +14,15 @@ import { api, files as fileApi, tools as toolsApi, type ToolInfo } from "../api"
 import { invalidateSessionFiles, useFileRevision } from "../hooks/useFileRevision";
 import { useConversationDraft } from "../hooks/useConversationDraft";
 import { toast, toastError } from "../lib/toast";
-import { Icon } from "./Icon";
+import { Icon, type IconName } from "./Icon";
 
 // Icons/labels for the built-in skills; installed/custom skills get a default.
-const SKILL_ICON: Record<string, { icon: string; label: string }> = {
-  researcher: { icon: "🔎", label: "调研" },
-  writer: { icon: "✍️", label: "写作" },
-  coder: { icon: "💻", label: "编程" },
-  analyst: { icon: "📊", label: "分析" },
-  translator: { icon: "🌐", label: "翻译" },
+const SKILL_ICON: Record<string, { icon: IconName; label: string }> = {
+  researcher: { icon: "search", label: "调研" },
+  writer: { icon: "rename", label: "写作" },
+  coder: { icon: "code", label: "编程" },
+  analyst: { icon: "chart", label: "分析" },
+  translator: { icon: "globe", label: "翻译" },
 };
 
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
@@ -31,11 +30,11 @@ const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
 // Mirrors the built-in skills registered in the control layer (skills_registry.go).
 // Selecting one prepends a directive the model honours via apply_skill.
 export const SKILLS = [
-  { name: "researcher", label: "调研", icon: "🔎", desc: "多来源交叉验证 + 引用" },
-  { name: "writer", label: "写作", icon: "✍️", desc: "结构化专业文案" },
-  { name: "coder", label: "编程", icon: "💻", desc: "可运行代码 + 设计权衡" },
-  { name: "analyst", label: "分析", icon: "📊", desc: "结构化拆解 + 建议" },
-  { name: "translator", label: "翻译", icon: "🌐", desc: "自然地道的翻译" },
+  { name: "researcher", label: "调研", icon: "search", desc: "多来源交叉验证 + 引用" },
+  { name: "writer", label: "写作", icon: "rename", desc: "结构化专业文案" },
+  { name: "coder", label: "编程", icon: "code", desc: "可运行代码 + 设计权衡" },
+  { name: "analyst", label: "分析", icon: "chart", desc: "结构化拆解 + 建议" },
+  { name: "translator", label: "翻译", icon: "globe", desc: "自然地道的翻译" },
 ];
 
 interface ComposerProps {
@@ -43,7 +42,7 @@ interface ComposerProps {
   draftState?: ReturnType<typeof useConversationDraft>;
   status: RunStatus;
   blocked?: boolean;
-  onSend: (msg: string, fileIDs?: string[], budget?: RunBudgetLimits, conversationID?: string) => void | Promise<unknown>;
+  onSend: (msg: string, fileIDs?: string[], conversationID?: string) => void | Promise<unknown>;
   onKill: () => void;
   enabledTools: Set<string>;
   onSetTools: (next: Set<string>) => void;
@@ -278,9 +277,8 @@ function ComposerForm({
     const sent = { text, attachments };
     sendingRef.current = true; setSending(true); setSendError(null);
     try {
-      validateBudget(draft.budget);
       if (!cid) { cid = await ensureConversation(); draft.move("", cid); }
-      await onSend(text.trim(), attachments.map(a => a.path), { ...draft.budget }, cid);
+      await onSend(text.trim(), attachments.map(a => a.path), cid);
       draft.clearAccepted(cid, sent); setMenu(false);
     } catch (error) {
       setSendError({ cid, message: "发送失败：" + (error instanceof Error ? error.message : "请重试") });
@@ -296,7 +294,7 @@ function ComposerForm({
     setText((t) => t.replace(/^\/\w*\s*/, ""));
     requestAnimationFrame(() => taRef.current?.focus());
   };
-  const skill = activeSkill ? { icon: SKILL_ICON[activeSkill]?.icon || "🧩", label: SKILL_ICON[activeSkill]?.label || activeSkill } : null;
+  const skill: { icon: IconName; label: string } | null = activeSkill ? { icon: SKILL_ICON[activeSkill]?.icon || "sparkle", label: SKILL_ICON[activeSkill]?.label || activeSkill } : null;
 
   return (
     <div className="px-5 pb-5">
@@ -317,7 +315,7 @@ function ComposerForm({
                         onClick={() => pickSkill(s.name)}
                         className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left"
                       >
-                        <span className="text-[18px]">{meta?.icon || "🧩"}</span>
+                        <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface2 text-muted"><Icon name={meta?.icon || "sparkle"} size={18} /></span>
                         <span className="min-w-0">
                           <span className="block text-[13px] text-ink">
                             {meta?.label || s.name} <span className="text-faint">/{s.name}</span>
@@ -422,7 +420,7 @@ function ComposerForm({
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
           {skill && (
             <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-accentsoft px-2 py-1 text-[12px] text-accent">
-              {skill.icon} {skill.label} 模式
+              <Icon name={skill.icon} size={13} /> {skill.label} 模式
               <button onClick={() => onPickSkill(null)} aria-label="退出技能模式" className="hover:text-ink"><Icon name="close" size={12} /></button>
             </span>
           )}
@@ -447,7 +445,7 @@ function ComposerForm({
           onDragLeave={(e) => { if (e.currentTarget === e.target) setDragging(false); }}
           onDrop={onDrop}
           className={
-            "relative flex items-end gap-2 rounded-[26px] border bg-surface px-2 py-2 shadow-[0_2px_18px_rgba(40,38,32,0.06)] transition " +
+            "composer-input-shell relative flex items-end gap-2 rounded-[26px] border bg-surface px-2 py-2 shadow-[0_2px_18px_rgba(40,38,32,0.06)] transition " +
             (dragging ? "border-accent border-dashed bg-accentsoft/30" : "border-border")
           }
         >
@@ -456,9 +454,10 @@ function ComposerForm({
               松开即可上传文件 / 图片
             </div>
           )}
+          <div className="composer-toolbar" role="group" aria-label="消息附件与能力">
           <button
             onClick={() => fileRef.current?.click()}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-muted hover:bg-surface2 transition"
+            className="composer-icon"
             title="上传文件 / 图片（也可拖拽或粘贴）"
             aria-label="上传文件或图片"
           >
@@ -474,8 +473,9 @@ function ComposerForm({
           />
           {/* Surface the two hidden affordances as real buttons (discoverability) */}
           <button
-            onClick={() => { setMenu(true); taRef.current?.focus(); }}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-muted hover:bg-surface2 transition"
+            onClick={() => { setMenu(v => !v); setToolsOpen(false); taRef.current?.focus(); }}
+            aria-expanded={menu}
+            className="composer-icon"
             title="选技能(也可输入 /)"
             aria-label="选技能"
           >
@@ -488,28 +488,26 @@ function ComposerForm({
               taRef.current?.focus();
               syncAt(v, v.length);
             }}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-muted hover:bg-surface2 transition"
+            className="composer-icon"
             title="引用工作区文件(也可输入 @)"
             aria-label="引用文件"
           >
             <Icon name="at" size={17} />
           </button>
           <button
-            onClick={() => setToolsOpen((o) => !o)}
-            className={
-              "grid h-10 shrink-0 place-items-center rounded-full transition " +
-              (enabledTools.size > 0
-                ? "w-auto gap-1 px-2.5 text-[12px] text-accent bg-accentsoft"
-                : "w-10 text-muted hover:bg-surface2") +
-              (toolsOpen ? " bg-surface2" : "")
-            }
-            title={enabledTools.size === 0 ? "默认按任务自动选择非代码工具；代码执行需主动启用" : `已限定 ${enabledTools.size} 类工具，点击调整`}
+            onClick={() => { setToolsOpen(o => !o); setMenu(false); }}
+            aria-expanded={toolsOpen}
+            data-selected={enabledTools.size > 0}
+            className="composer-icon"
+            title={enabledTools.size === 0 ? "自动模式：按任务使用全部可用工具，无需逐项勾选" : `已限定 ${enabledTools.size} 类工具，点击调整`}
             aria-label="工具范围"
           >
             <Icon name="wrench" size={17} />
-            {enabledTools.size > 0 && <span>{enabledTools.size}</span>}
+            {enabledTools.size > 0 && <span className="composer-tool-count">{enabledTools.size}</span>}
           </button>
+          </div>
           <textarea
+            id="chat-input"
             ref={taRef}
             value={text}
             onChange={(e) => { setText(e.target.value); syncAt(e.target.value, e.target.selectionStart); }}
@@ -536,12 +534,12 @@ function ComposerForm({
             }}
             rows={1}
             placeholder="给 Orka 发消息…"
-            className="block max-h-[200px] flex-1 resize-none bg-transparent px-1 py-2 text-[15px] outline-none placeholder:text-faint"
+            className="block min-w-0 max-h-[200px] flex-1 resize-none bg-transparent px-1 py-2 text-[15px] outline-none placeholder:text-faint"
           />
           {busy && !text.trim() && attachments.length === 0 ? (
             <button
               onClick={onKill}
-              className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-ink text-bg hover:opacity-80 transition"
+              className="composer-primary-action grid h-10 w-10 shrink-0 place-items-center rounded-full bg-ink text-bg hover:opacity-80 transition"
               title="停止"
               aria-label="停止"
             >
@@ -551,7 +549,7 @@ function ComposerForm({
             <button
               onClick={send}
               disabled={sending || blocked || (!text.trim() && attachments.length === 0) || uploading > 0}
-              className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-accent text-white hover:brightness-105 disabled:opacity-30 transition"
+              className="composer-primary-action grid h-10 w-10 shrink-0 place-items-center rounded-full bg-accent text-white hover:brightness-105 disabled:opacity-30 transition"
               title="发送"
               aria-label="发送"
             >
@@ -584,9 +582,9 @@ function ToolPicker({
   return (
     <div className="rounded-xl border border-border bg-surface p-2">
       <div className="mb-1.5 flex items-center gap-2 px-1">
-        <span className="text-[11px] text-faint">默认自动选择非代码工具 · 代码执行需主动启用</span>
+        <span className="text-[11px] text-faint">自动使用全部可用工具 · 手动选择可限定范围</span>
         {selected.size > 0 && (
-          <button onClick={() => onSet(new Set())} className="text-[11px] text-faint hover:text-accent" title="恢复默认（不授权代码执行）">重置为自动</button>
+          <button onClick={() => onSet(new Set())} className="text-[11px] text-faint hover:text-accent" title="恢复自动使用全部可用工具">重置为自动</button>
         )}
         <button onClick={onClose} className="ml-auto text-[11px] text-faint hover:text-ink">收起</button>
       </div>
@@ -606,14 +604,14 @@ function ToolPicker({
                     aria-pressed={on}
                     title={g.desc}
                     className={
-                      "rounded-full border px-2 py-0.5 text-[12px] transition " +
+                      "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[12px] transition " +
                       (on ? "border-accent/40 bg-accentsoft text-accent" : partial ? "border-accent/30 text-accent" : "border-border text-faint hover:bg-surface2")
                     }
                   >
-                    {g.icon} {g.label}
+                    <Icon name={g.icon} size={13} /> {g.label}
                     {partial && <span className="ml-1 text-[10px]">部分</span>}
                   </button>
-                  <span className="truncate text-[11px] text-faint">{g.tools.length} 个工具{["code", "shell"].includes(g.id) && " · 需主动启用"}</span>
+                  <span className="truncate text-[11px] text-faint">{g.tools.length} 个工具</span>
                   <button onClick={() => onExpand(open ? null : g.id)} className="ml-auto px-1 text-[11px] text-faint hover:text-ink">
                     {open ? "▾" : "▸"}
                   </button>

@@ -1,9 +1,9 @@
 import { useRef, useState } from 'react';
 import type { DraftSnapshot, DraftAttachment, SessionRecoveryStore } from '../lib/sessionRecovery';
 export type Attachment = DraftAttachment;
-const empty = (): DraftSnapshot => ({ text: '', attachments: [], budget: {} });
+const empty = (): DraftSnapshot => ({ text: '', attachments: [] });
 
-// The conversation owns composer edits and workbench budget. Storage is a reload checkpoint, with
+// The conversation owns composer edits. Storage is a reload checkpoint, with
 // synchronous writes so navigation cannot race a delayed persistence effect.
 export function useConversationDraft(conversationID: string, session?: SessionRecoveryStore) {
   const drafts = useRef(new Map<string, DraftSnapshot>());
@@ -22,7 +22,6 @@ export function useConversationDraft(conversationID: string, session?: SessionRe
   const setText = (text: string | ((previous: string) => string)) => patch(conversationID, d => ({ ...d, text: typeof text === 'function' ? text(d.text) : text }));
   const setAttachments = (fn: (previous: Attachment[]) => Attachment[]) => patch(conversationID, d => ({ ...d, attachments: fn(d.attachments) }));
   const addAttachment = (a: Attachment) => patch(a.conversationID, d => ({ ...d, attachments: [...d.attachments.filter(item => item.path !== a.path), a] }));
-  const setBudget = (budget: DraftSnapshot['budget']) => patch(conversationID, d => ({ ...d, budget }));
   const clearAccepted = (cid: string, sent: Pick<DraftSnapshot, 'text' | 'attachments'>) => patch(cid, d => ({ ...d, text: d.text === sent.text ? '' : d.text, attachments: d.attachments.filter(a => !sent.attachments.includes(a)) }));
   const move = (from: string, to: string) => {
     const value = get(from);
@@ -30,5 +29,5 @@ export function useConversationDraft(conversationID: string, session?: SessionRe
     session?.writeDraft(to, value); session?.removeDraft(from);
     render(n => n + 1);
   };
-  return { ...draft, setBudget, setText, setAttachments, addAttachment, clearAccepted, move, get };
+  return { ...draft, setText, setAttachments, addAttachment, clearAccepted, move, get };
 }

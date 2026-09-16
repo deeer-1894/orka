@@ -68,7 +68,7 @@ func TestCallLimitRunOutcome(t *testing.T) {
 			if !strings.Contains(text, "模型单次调用") || strings.Contains(text, "检查工具") {
 				t.Errorf("wrong diagnosis: %s", text)
 			}
-			if tc.want == db.RunPartial && (!strings.Contains(text, "未完成") || !strings.Contains(text, "不代表") || !strings.Contains(text, "不会自动重试")) {
+			if tc.want == db.RunPartial && (!strings.Contains(text, "未完成") || !strings.Contains(text, "不代表") || !strings.Contains(text, "不会继续自动重试")) {
 				t.Errorf("dishonest or unhelpful partial: %s", text)
 			}
 		})
@@ -87,14 +87,11 @@ func TestWrappedCancellationRemainsCancelled(t *testing.T) {
 	}
 }
 
-func TestAccountingAdmissionNoticeDoesNotClaimGenerationLimit(t *testing.T) {
-	for _, kind := range []string{"run", "daily", "storage"} {
+func TestAccountingStorageFailureDoesNotClaimGenerationLimit(t *testing.T) {
+	for _, kind := range []string{"storage"} {
 		t.Run(kind, func(t *testing.T) {
 			ledger := &fakeLedger{}
 			s := budgetSession(t, ledger, "notice", "run", 1000, 1000)
-			if kind == "daily" {
-				s.dailyLimit = 1
-			}
 			if kind == "storage" {
 				ledger.fail = true
 			}

@@ -1,4 +1,3 @@
-import type { RunBudgetLimits } from './runBudget';
 
 export const SESSION_PREFIX = 'orka.session.';
 export const SESSION_SCHEMA = 1;
@@ -10,7 +9,7 @@ const OWNER_KEY = SESSION_PREFIX + 'owner';
 let generation = 0;
 
 export interface DraftAttachment { name: string; path: string; image: boolean; conversationID: string }
-export interface DraftSnapshot { text: string; attachments: DraftAttachment[]; budget: RunBudgetLimits }
+export interface DraftSnapshot { text: string; attachments: DraftAttachment[] }
 export interface ConversationSettings { enabledTools: string[]; selectedVersion: string; activeSkill: string | null; confirmRisky: boolean }
 export interface RetrySnapshot {
   message: string;
@@ -22,7 +21,6 @@ export interface RetrySnapshot {
   activeSkill?: string;
   fileIDs?: string[];
   confirmRisky?: boolean;
-  budget?: RunBudgetLimits;
 }
 type Kind = 'draft' | 'settings' | 'retry';
 type Payload = DraftSnapshot | ConversationSettings | RetrySnapshot;
@@ -37,17 +35,6 @@ export function clearSessionRecovery(storage = browserStorage()) {
   generation++; // Invalidates handles held by requests that finish after logout.
   try { if (storage) keys(storage).forEach(key => storage.removeItem(key)); } catch { /* storage may be disabled */ }
 }
-function budget(value: unknown): RunBudgetLimits | undefined {
-  if (!object(value)) return;
-  const result: RunBudgetLimits = {};
-  for (const key of ['max_tokens', 'max_wall_seconds', 'max_steps'] as const) {
-    const n = value[key];
-    if (n === undefined) continue;
-    if (typeof n !== 'number' || !Number.isSafeInteger(n) || n < 0) return;
-    result[key] = n;
-  }
-  return result;
-}
 // Both writes and reads pass through the same whitelist. Never serialize an API
 // config, auth token, arbitrary message metadata, callback or credential field.
 function clean(kind: Kind, value: unknown, owner: string, cid: string): Payload | undefined {
@@ -59,9 +46,8 @@ function clean(kind: Kind, value: unknown, owner: string, cid: string): Payload 
       if (!object(item) || item.conversationID !== cid || typeof item.name !== 'string' || typeof item.path !== 'string' || typeof item.image !== 'boolean') return;
       attachments.push({ name: item.name, path: item.path, image: item.image, conversationID: cid });
     }
-    const limits = budget(value.budget);
-    if (!limits) return;
-    return { text: value.text, attachments, budget: limits };
+    // Legacy budget fields are intentionally discarded; keep the user draft.
+    return { text: value.text, attachments };
   }
   if (!strings(value.enabledTools)) return;
   if (kind === 'settings') {
@@ -77,7 +63,6 @@ function clean(kind: Kind, value: unknown, owner: string, cid: string): Payload 
   }
   if (value.fileIDs !== undefined) { if (!strings(value.fileIDs)) return; result.fileIDs = [...value.fileIDs]; }
   if (value.confirmRisky !== undefined) { if (typeof value.confirmRisky !== 'boolean') return; result.confirmRisky = value.confirmRisky; }
-  if (value.budget !== undefined) { const limits = budget(value.budget); if (!limits) return; result.budget = limits; }
   return result;
 }
 

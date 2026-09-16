@@ -1,9 +1,7 @@
-import { validateBudget } from './lib/runBudget';
 import { ActionChip } from './components/ActionChip';
 import { useConversationDraft } from './hooks/useConversationDraft';
 import { SessionRecoveryStore } from './lib/sessionRecovery';
 import { useConversationSettings } from './hooks/useConversationSettings';
-import type { RunBudgetLimits } from './lib/runBudget';
 import { Suspense, lazy, useMemo, useCallback, useSyncExternalStore, useEffect, useRef, useState } from "react";
 import { api, auth, setOnUnauthorized } from "./api";
 import { useChatStreams } from "./hooks/useChatStream";
@@ -350,18 +348,16 @@ function Workbench({
     [run, user.email],
   );
 
-  const runActions = useRunActions(onResumed);
+  const runActions = useRunActions(onResumed, cid => sessionRecovery.readSettings(cid)?.enabledTools);
   const recovery = useRunRecovery({ conversationID: activeID, messages, status, enabled: !isShared, historyLoaded: historyLoaded.has(activeID) }, onResumed, runRevision, runActions.actions);
 
 
   const lastMsgRef = useRef("");
   const onSend = useCallback(
-    async (msg: string, fileIDs: string[] = [], budget?: RunBudgetLimits, conversationID?: string) => {
+    async (msg: string, fileIDs: string[] = [], conversationID?: string) => {
       // Capture the request before any asynchronous conversation creation. The
       // composer may already have created its target while the user navigated.
-      const sendBudget = { ...(budget ?? conversationDraft.budget) };
-      validateBudget(sendBudget);
-      const request = { message: msg, userEmail: user.email, enabledTools: [...toolGroups], selectedVersion: version, activeSkill: activeSkill ?? "", fileIDs: [...fileIDs], confirmRisky, budget: sendBudget };
+      const request = { message: msg, userEmail: user.email, enabledTools: [...toolGroups], selectedVersion: version, activeSkill: activeSkill ?? "", fileIDs: [...fileIDs], confirmRisky };
       const id = conversationID || activeID || await ensureConversation();
       if (statusOf(id) === "streaming" || recovery.isBusy(id) || runActions.actions.isBusy(id)) {
         await steer(id, msg, fileIDs);
@@ -375,7 +371,7 @@ function Workbench({
       });
       refreshTasks();
     },
-    [ensureConversation, run, steer, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill, confirmRisky, recovery.isBusy, runActions.actions, activeID, conversationDraft.budget, statusOf],
+    [ensureConversation, run, steer, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill, confirmRisky, recovery.isBusy, runActions.actions, activeID, statusOf],
   );
 
   // Re-send the last user message after a failure (network drop, sandbox down…).
@@ -497,7 +493,7 @@ function Workbench({
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 items-center gap-3 px-4">
+        <header className="flex h-14 shrink-0 items-center gap-1 px-2 sm:gap-3 sm:px-4">
           <button
             onClick={() => setSidebarOpen((o) => !o)}
             className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-surface2"
@@ -518,7 +514,7 @@ function Workbench({
             {isShared && <span className="shrink-0 text-[11px] text-faint" title={`由 ${activeConv?.owner_email} 分享`}>· 共享</span>}
           </div>
           <ModelSelect value={version} onChange={setVersion} models={models} />
-          <ActionChip variant="headerChip" size="headerChip" icon="gear" onClick={() => setModelSettingsOpen(true)} className="shrink-0">模型配置</ActionChip>
+          <ActionChip variant="headerChip" size="headerChip" icon="gear" onClick={() => setModelSettingsOpen(true)} aria-label="模型配置" className="shrink-0"><span className="hidden sm:inline">模型配置</span></ActionChip>
           {/* Run-mode safety switch. It belongs beside the model picker rather
               than under the input: both answer "how will this behave when I
               send", both are persistent session state, and keeping it in the
@@ -555,7 +551,7 @@ function Workbench({
             aria-pressed={drawerOpen}
             title="工作台:概览 · 页面 · 文件 · 运营台"
             className="shrink-0"
-          >工作台</ActionChip>
+          ><span className="hidden sm:inline">工作台</span></ActionChip>
         </header>
 
         {persistenceWarning && <p role="alert" className="mx-5 mb-2 text-xs text-accent">{persistenceWarning}</p>}
@@ -570,7 +566,7 @@ function Workbench({
             </>}
           </div>
         )}
-        <Thread conversationID={activeID} ownerEmail={activeConv?.owner_email || user.email} recovery={recovery} onContinue={() => void recovery.resume()} canRetry={!readOnly && !!inputOf(activeID) && recovery.run?.status !== "running"} messages={messages} status={status} onResume={onResume} onResumed={onResumed} onPick={msg => { void onSend(msg).catch(e => toast(e.message || "发送失败", "error")); }} onRetry={onRetry} onSchedule={setScheduleFor} onFork={onFork} fileConv={isShared ? activeID : undefined} bottomInset={composerH} />
+        <Thread onExample={text => { conversationDraft.setText(text); document.getElementById("chat-input")?.focus(); }} conversationID={activeID} ownerEmail={activeConv?.owner_email || user.email} recovery={recovery} onContinue={() => void recovery.resume()} canRetry={!readOnly && !!inputOf(activeID) && recovery.run?.status !== "running"} messages={messages} status={status} onResume={onResume} onResumed={onResumed} onPick={msg => { void onSend(msg).catch(e => toast(e.message || "发送失败", "error")); }} onRetry={onRetry} onSchedule={setScheduleFor} onFork={onFork} fileConv={isShared ? activeID : undefined} bottomInset={composerH} />
         {/* The composer floats OVER the thread (its height is fed back as the
             thread's bottom padding), so the conversation scrolls clear of it
             instead of the last lines being clipped behind the tool row. */}
@@ -596,9 +592,6 @@ function Workbench({
         canResumeRun={record => runActions.actions.canResume(record)}
         isRunBusy={cid => runActions.actions.isBusy(cid)}
         runRevision={runRevision}
-        budget={conversationDraft.budget}
-        onBudgetChange={conversationDraft.setBudget}
-        budgetDisabled={readOnly}
         runContext={{ conversationID: activeID, messages, run: recovery.run }}
         conversationID={activeID}
         open={drawerOpen}

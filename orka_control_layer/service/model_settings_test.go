@@ -647,3 +647,69 @@ func TestUserProviderErrorCannotLeakEncodedCredential(t *testing.T) {
 		t.Fatal("encoded provider credential retained")
 	}
 }
+
+func TestResumeRunAppliesExplicitToolsBeforeRestoringCheckpoint(t *testing.T) {
+	mt := mtest.New(t, mtest.NewOptions().ClientType(mtest.Mock))
+	for _, tc := range []struct {
+		name      string
+		selection *[]string
+		want      []string
+		recorded  []string
+	}{
+		{"omitted preserves", nil, []string{"web", "code"}, []string{"web", "code"}},
+		{"explicit enables code", ptrTools([]string{"web", "code"}), []string{"web", "code"}, []string{"web"}},
+		{"explicit empty restores automatic tools", ptrTools([]string{}), []string{}, []string{"web", "code"}},
+	} {
+		mt.Run(tc.name, func(mt *mtest.T) {
+			ts, calls, mu := modelFixture(mt.T, func(int, string) llm.Response { return llm.Response{Content: "resumed", FinishReason: "stop"} })
+			svc := configuredModelService(mt.T, ts.URL)
+			svc.Msg.Store = &db.Storage{Runs: mt.Coll}
+			mt.AddMockResponses(
+				mtest.CreateCursorResponse(0, mt.DB.Name()+"."+mt.Coll.Name(), mtest.FirstBatch, bson.D{
+					{Key: "run_id", Value: "recorded"}, {Key: "owner_email", Value: "owner"},
+					{Key: "conversation_id", Value: "conv"}, {Key: "prompt", Value: "continue work"},
+					{Key: "model", Value: "manual"}, {Key: "resumable", Value: true}, {Key: "status", Value: db.RunFailed},
+				}),
+				mtest.CreateCursorResponse(0, mt.DB.Name()+"."+mt.Coll.Name(), mtest.FirstBatch, bson.D{
+					{Key: "run_id", Value: "recorded"}, {Key: "owner_email", Value: "owner"},
+					{Key: "conversation_id", Value: "conv"}, {Key: "prompt", Value: "continue work"},
+					{Key: "model", Value: "manual"}, {Key: "resumable", Value: true}, {Key: "status", Value: db.RunFailed},
+				}),
+				mtest.CreateSuccessResponse(bson.E{Key: "n", Value: 1}, bson.E{Key: "nModified", Value: 1}),
+			)
+			j := newRunJournal(svc.Cfg.Storage.BaseStoragePath, "recorded", []*schema.Message{schema.UserMessage("continue work")})
+			j.checkpoint = func() *runCheckpoint { return &runCheckpoint{EnabledTools: tc.recorded, toolsRecorded: true} }
+			j.append(schema.AssistantMessage("earlier progress", nil))
+			if !j.flush() {
+				mt.Fatal("journal persistence failed")
+			}
+			svc.ToolsFor = func(_ context.Context, req ChatRunRequest) ([]agent.BaseTool, func(), error) {
+				if strings.Join(req.EnabledTools, ",") != strings.Join(tc.want, ",") {
+					mt.Fatalf("tools=%v want %v", req.EnabledTools, tc.want)
+				}
+				// Recovery storage was exercised above; the new execution uses the usual
+				// in-memory service fixture so unrelated persistence is outside this test.
+				svc.Msg.Store = nil
+				return nil, nil, nil
+			}
+			// Preparation reads the record once; the existing fixture also supplies a
+			// read for the ResumeRun wrapper. Consume that explicitly here.
+			_, _ = svc.Msg.Store.GetRun(context.Background(), "recorded")
+			prepared, err := svc.PrepareResumeRun(context.Background(), "recorded", "owner", ResumeOptions{EnabledTools: tc.selection})
+			if err != nil {
+				mt.Fatal(err)
+			}
+			status, err := prepared(context.Background(), (&collector{}).sink)
+			if err != nil || status != db.RunDone {
+				mt.Fatalf("status=%s err=%v", status, err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(*calls) != 1 || (*calls)[0] != "manual" {
+				mt.Fatalf("recovery called %v, want recorded manual model", *calls)
+			}
+		})
+	}
+}
+
+func ptrTools(v []string) *[]string { return &v }

@@ -1,5 +1,4 @@
 import type { SessionRecoveryStore } from '../lib/sessionRecovery';
-import type { RunBudgetLimits } from '../lib/runBudget';
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../types";
 import { hydrateConversation, terminalStatus, type ChatStatus } from "../lib/runRecovery";
@@ -21,7 +20,6 @@ export interface RunParams {
   userEmail: string;
   enabledTools: string[];
   resumeKey?: string;
-  budget?: RunBudgetLimits;
   modelProfile?: string; // opaque revision: retries reject stale model configuration
   selectedVersion?: string; // "auto" or an explicit model ID
   activeSkill?: string; // user-locked skill mode (researcher / writer / …)
@@ -95,7 +93,7 @@ export function useChatStreams(session?: SessionRecoveryStore) {
       };
       const updateStatus = (status: RunStatus) => patch(cid, c => current() ? { ...c, status } : c);
       updateStatus("streaming");
-      if (!p.attachOnly && !p.resumeKey) saveInput(cid, { ...p, ...(p.budget ? { budget: { ...p.budget } } : {}), onAccepted: undefined, onRejected: undefined, fileIDs: [...(p.fileIDs || [])], enabledTools: [...p.enabledTools] });
+      if (!p.attachOnly && !p.resumeKey) saveInput(cid, { ...p, onAccepted: undefined, onRejected: undefined, fileIDs: [...(p.fileIDs || [])], enabledTools: [...p.enabledTools] });
       patch(cid, c => ({ ...c, connection: 'connecting', error: '', input: readInput(cid) }));
       let accepted = !!p.attachOnly;
 
@@ -301,7 +299,6 @@ export function useChatStreams(session?: SessionRecoveryStore) {
             active_skill: p.activeSkill ?? "",
             file_ids: p.fileIDs ?? [],
             confirm_risky: p.confirmRisky ?? false,
-            ...(p.budget ? { budget: p.budget } : {}),
           }),
           signal: ctrl.signal,
         });

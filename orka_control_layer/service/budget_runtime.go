@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_control_layer/llm"
@@ -32,7 +31,7 @@ func (s *ChatService) budgetLedger() db.UsageLedger {
 
 // AuxiliaryBudgetContext is for authenticated, paid API operations that have no
 // active chat (followup suggestions and profile probes). Existing parent scopes
-// are inherited; otherwise a bounded, independently named run shares the owner's
+// are inherited; otherwise an independently named run shares the owner's
 // durable daily ledger. It never touches model selection or credentials.
 func (s *ChatService) AuxiliaryBudgetContext(ctx context.Context, owner, source string) (context.Context, context.CancelFunc, error) {
 	if owner == "" || source == "" {
@@ -40,10 +39,7 @@ func (s *ChatService) AuxiliaryBudgetContext(ctx context.Context, owner, source 
 	}
 	policy := TaskBudgetRequest{}
 	ownsScope := BudgetSessionFrom(ctx) == nil
-	if ownsScope {
-		a := s.budgetConfig().WithBudgetDefaults()
-		policy = TaskBudgetRequest{MaxTokens: min(a.RunMaxTokens, 64_000), MaxSteps: min(a.RunMaxSteps, 6), MaxWallSeconds: min(a.RunMaxWallSeconds, 60)}
-	}
+
 	session, err := NewBudgetSession(ctx, s.budgetConfig(), policy, s.budgetLedger(), owner, "aux_"+messages.NewID())
 	if err != nil {
 		return ctx, nil, err
@@ -64,9 +60,6 @@ func applyResumeBudget(a config.AgentConfig, req *ChatRunRequest, saved *runChec
 	if saved == nil {
 		return nil
 	}
-	if err := validateCheckpointDeadline(saved); err != nil {
-		return err
-	}
 	policy, err := ResolveResumeBudget(a, saved.BudgetPolicy, saved.SpentTokens)
 	if err != nil {
 		return err
@@ -80,9 +73,8 @@ func applyResumeBudget(a config.AgentConfig, req *ChatRunRequest, saved *runChec
 	return nil
 }
 
-// prepareRunBudget resolves recovery policy BEFORE discovering tools or making
-// any auxiliary model call. The later Claim still owns atomic consumption of a
-// clarify checkpoint; this read leaves rejected/exhausted checkpoints intact.
+// prepareRunBudget restores progress and attaches accounting before tool discovery
+// or auxiliary calls. Legacy limits are ignored at this compatibility boundary.
 func (s *ChatService) prepareRunBudget(ctx context.Context, req *ChatRunRequest) (context.Context, *BudgetSession, context.CancelFunc, error) {
 	saved := req.resumeCheckpoint
 	if saved == nil && req.resumeFrom != nil {
@@ -160,16 +152,4 @@ func waitBudgetAuxiliary(ctx context.Context) {
 	if group, _ := ctx.Value(budgetAuxiliaryKey{}).(*sync.WaitGroup); group != nil {
 		group.Wait()
 	}
-}
-
-// A task's wall boundary includes its manual/clarify resumes. Only checkpoints
-// predating budget snapshots may establish a new deadline once.
-func validateCheckpointDeadline(saved *runCheckpoint) error {
-	if saved != nil && saved.BudgetSnapshot != nil {
-		deadline := saved.BudgetSnapshot.Deadline
-		if !deadline.IsZero() && !time.Now().Before(deadline) {
-			return fmt.Errorf("%w: 原任务截止时间已过（%s），无法继续；记录和产物已保留", ErrRunBudgetExceeded, deadline.Format(time.RFC3339))
-		}
-	}
-	return nil
 }

@@ -1,18 +1,18 @@
+import type { IconName } from "../components/Icon";
 // Tool groups mirror the backend's groupForName() in tools_provider.go: the
 // chat run's enabled_tools accepts either exact tool names OR these group ids,
-// and an empty set means automatic non-code tools. code/python/shell require
-// explicit selection to authorize execution. Chips let
+// and an empty set means automatic access to all available tools. Chips let
 // the user narrow the toolset per conversation without flooding the UI with all
 // ~11 individual tools.
 export const TOOL_GROUPS = [
-  { id: "web", label: "联网", icon: "🔎", desc: "搜索 / 抓网页 / 天气 / HTTP" },
-  { id: "file", label: "文件", icon: "📄", desc: "读写你的工作区" },
-  { id: "browser", label: "网页 DOM", icon: "🌐", desc: "按网页 DOM 读取、点击、填表与页面脚本操作" },
-  { id: "gui_agent", label: "GUI 视觉", icon: "🖥️", desc: "根据截图识别页面并进行视觉操作，与网页 DOM 共用本会话浏览器" },
-  { id: "shell", label: "终端", icon: "⌨️", desc: "在工作区执行命令 / 脚本 / 代码" },
-  { id: "util", label: "工具", icon: "🧮", desc: "时间 / 计算 / 换算" },
-  { id: "office", label: "办公", icon: "📊", desc: "汇率 / 时区 / 二维码 / CSV / Excel / 文档读写 / 图表 / SQL / PPT" },
-  { id: "code", label: "代码", icon: "🐍", desc: "在沙箱里运行 Python(含 pandas/numpy)" },
+  { id: "web", label: "联网", icon: "search", desc: "搜索 / 抓网页 / 天气 / HTTP" },
+  { id: "file", label: "文件", icon: "file", desc: "读写你的工作区" },
+  { id: "browser", label: "网页 DOM", icon: "globe", desc: "按网页 DOM 读取、点击、填表与页面脚本操作" },
+  { id: "gui_agent", label: "GUI 视觉", icon: "deck", desc: "根据截图识别页面并进行视觉操作，与网页 DOM 共用本会话浏览器" },
+  { id: "shell", label: "终端", icon: "keyboard", desc: "在工作区执行命令 / 脚本 / 代码" },
+  { id: "util", label: "工具", icon: "calc", desc: "时间 / 计算 / 换算" },
+  { id: "office", label: "办公", icon: "chart", desc: "汇率 / 时区 / 二维码 / CSV / Excel / 文档读写 / 图表 / SQL / PPT" },
+  { id: "code", label: "代码", icon: "code", desc: "在沙箱里运行 Python(含 pandas/numpy)" },
 ] as const;
 
 export type ToolGroupId = (typeof TOOL_GROUPS)[number]["id"];
@@ -21,18 +21,18 @@ import type { ToolInfo } from "../api";
 
 // Display metadata for a group id, falling back for groups the static list
 // doesn't name (e.g. the gateway's skill tools).
-const GROUP_META: Record<string, { label: string; icon: string; desc: string }> = Object.fromEntries(
+const GROUP_META: Record<string, { label: string; icon: IconName; desc: string }> = Object.fromEntries(
   TOOL_GROUPS.map((g) => [g.id, { label: g.label, icon: g.icon, desc: g.desc }]),
 );
-const FALLBACK_META: Record<string, { label: string; icon: string; desc: string }> = {
-  skill: { label: "技能", icon: "✨", desc: "查找 / 创建 / 安装可复用技能" },
-  "": { label: "其他", icon: "🔧", desc: "未分类工具" },
+const FALLBACK_META: Record<string, { label: string; icon: IconName; desc: string }> = {
+  skill: { label: "技能", icon: "sparkle", desc: "查找 / 创建 / 安装可复用技能" },
+  "": { label: "其他", icon: "wrench", desc: "未分类工具" },
 };
-export function groupMeta(id: string): { label: string; icon: string; desc: string } {
-  return GROUP_META[id] || FALLBACK_META[id] || { label: id, icon: "🔧", desc: "" };
+export function groupMeta(id: string): { label: string; icon: IconName; desc: string } {
+  return GROUP_META[id] || FALLBACK_META[id] || { label: id, icon: "wrench", desc: "" };
 }
 
-export type CatalogGroup = { id: string; label: string; icon: string; desc: string; tools: ToolInfo[] };
+export type CatalogGroup = { id: string; label: string; icon: IconName; desc: string; tools: ToolInfo[] };
 
 // groupCatalog buckets the flat tool catalog into ordered, labelled groups,
 // preserving TOOL_GROUPS' order and appending any unknown groups after.

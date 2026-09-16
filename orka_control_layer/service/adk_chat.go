@@ -284,15 +284,6 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	if req.ResumeKey != "" {
 		trigger = "resume"
 	}
-	// Refuse a run that would exceed the caller's rolling cost ceiling. Checked
-	// here, after the run context exists but before any model call, so nothing is
-	// spent discovering the limit.
-	if over := s.quotaExceeded(ctx, req.UserEmail); over != "" {
-		s.Msg.Deliver(rc, raw, messages.Chat(messages.RoleAssistant, over, meta), true)
-		s.Msg.Deliver(rc, raw, messages.Task("failed", meta), true)
-		return db.RunFailed
-	}
-
 	runRecID := s.createRun(ctx, req, meta, trigger)
 	// Keep the run's record alive while it executes, so a record left at
 	// "running" reliably means "abandoned" rather than "we never cleaned up".

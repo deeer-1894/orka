@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"github.com/orka-oss/orka_core/config"
 	"testing"
 	"time"
 
@@ -13,41 +14,22 @@ import (
 	"github.com/orka-oss/orka_core/modelprofile"
 )
 
-func TestBudgetResumeRetainsDeadlineAndRejectsExpiredBeforeDispatch(t *testing.T) {
-	for _, mode := range []string{"saved", "expired", "legacy"} {
-		t.Run(mode, func(t *testing.T) {
-			svc, _ := testService(t, llm.NewMock())
-			saved := &runCheckpoint{BudgetSnapshot: &BudgetSnapshot{Deadline: time.Now().Add(time.Minute)}}
-			if mode == "expired" {
-				saved.BudgetSnapshot.Deadline = time.Now().Add(-time.Second)
-			}
-			if mode == "legacy" {
-				saved.BudgetSnapshot = nil
-			}
-			req := ChatRunRequest{UserEmail: "alice", resumeCheckpoint: saved}
-			ctx, session, cancel, err := svc.prepareRunBudget(WithExecutionIdentity(context.Background(), "resume", ""), &req)
-			if mode == "expired" {
-				if cancel != nil {
-					cancel()
-				}
-				if !errors.Is(err, ErrRunBudgetExceeded) {
-					t.Fatalf("expired checkpoint accepted: %v", err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer cancel()
-			deadline, _ := ctx.Deadline()
-			if mode == "saved" && !deadline.Equal(saved.BudgetSnapshot.Deadline) {
-				t.Fatalf("wall allowance reset: %v != %v", deadline, saved.BudgetSnapshot.Deadline)
-			}
-			next := checkpointFrom(session.Context(ctx))
-			if next.BudgetSnapshot.Deadline.IsZero() || !next.BudgetSnapshot.Deadline.Equal(deadline) {
-				t.Fatalf("deadline lost from next checkpoint: %+v", next)
-			}
-		})
+func TestUsageResumeDiscardsHistoricalDeadline(t *testing.T) {
+	s := budgetSession(t, &fakeLedger{}, "alice", "root", 100, 100)
+	old := time.Now().Add(-time.Hour)
+	saved := &runCheckpoint{SpentTokens: 200, BudgetPolicy: &TaskBudgetRequest{MaxTokens: 100}, BudgetSnapshot: &BudgetSnapshot{Deadline: old, UsedSteps: 20}}
+	req := &ChatRunRequest{}
+	if err := applyResumeBudget(config.AgentConfig{}, req, saved); err != nil {
+		t.Fatal(err)
+	}
+	restoreCheckpoint(saved, s.Budget(), nil, nil)
+	ctx, cancel := s.RunContext(context.Background())
+	defer cancel()
+	if _, has := ctx.Deadline(); has {
+		t.Fatal("restored retired deadline")
+	}
+	if err := s.ReserveUsage(ctx, "next", "main", 1000); err != nil {
+		t.Fatal(err)
 	}
 }
 
