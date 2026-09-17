@@ -9,13 +9,14 @@ import (
 // the process did not start or terminated by signal. Error explains refusal or
 // termination without mixing runner diagnostics into the process's stderr.
 type Outcome struct {
-	OK       bool   `json:"ok"`
-	ExitCode int    `json:"exit_code"`
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
-	TimedOut bool   `json:"timed_out"`
-	Canceled bool   `json:"canceled"`
-	Error    string `json:"error,omitempty"`
+	FileChanges *FileChanges `json:"file_changes,omitempty"`
+	OK          bool         `json:"ok"`
+	ExitCode    int          `json:"exit_code"`
+	Stdout      string       `json:"stdout"`
+	Stderr      string       `json:"stderr"`
+	TimedOut    bool         `json:"timed_out"`
+	Canceled    bool         `json:"canceled"`
+	Error       string       `json:"error,omitempty"`
 }
 
 // Execute returns machine-readable status and a Go error for failed/refused

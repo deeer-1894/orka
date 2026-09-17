@@ -194,8 +194,12 @@ func (l *browserLease) write(ctx context.Context, f browserEnvelope) error {
 	if err != nil {
 		return browserFailure("invalid_params", "cannot encode browser command", err)
 	}
-	if len(data) > 128<<10 {
-		return browserFailure("output_limit", "browser command exceeds 128 KiB", nil)
+	limit := 128 << 10
+	if f.Type == "command" && f.Method == "Orka.previewHTML" {
+		limit = 1408 << 10
+	}
+	if len(data) > limit {
+		return browserFailure("output_limit", "browser command exceeds message limit", nil)
 	}
 	deadline := time.Now().Add(browserCleanupTimeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
@@ -259,7 +263,11 @@ func (l *browserLease) Execute(ctx context.Context, method string, params, resul
 	if err != nil {
 		return browserFailure("invalid_params", "cannot encode CDP parameters", err)
 	}
-	if len(encoded) > 120<<10 {
+	limit := 120 << 10
+	if method == "Orka.previewHTML" {
+		limit = 1400 << 10
+	}
+	if len(encoded) > limit {
 		return browserFailure("output_limit", "CDP parameters exceed message limit", nil)
 	}
 	l.nextID++
@@ -357,7 +365,8 @@ func (l *browserLease) finish(kind string) error {
 }
 
 var browserMethods = map[string]bool{
-	"Page.enable": true, "Page.getFrameTree": true, "Page.createIsolatedWorld": true, "Page.navigate": true, "Page.captureScreenshot": true,
+	"Orka.previewHTML": true,
+	"Page.enable":      true, "Page.getFrameTree": true, "Page.createIsolatedWorld": true, "Page.navigate": true, "Page.captureScreenshot": true,
 	"Runtime.enable": true, "Runtime.evaluate": true, "Runtime.callFunctionOn": true, "Runtime.getProperties": true, "Runtime.releaseObject": true, "Runtime.releaseObjectGroup": true,
 	"DOM.getDocument": true, "DOM.querySelector": true, "DOM.describeNode": true, "DOM.resolveNode": true, "DOM.scrollIntoViewIfNeeded": true, "DOM.getBoxModel": true,
 	"Input.dispatchMouseEvent": true, "Input.dispatchKeyEvent": true, "Input.insertText": true,

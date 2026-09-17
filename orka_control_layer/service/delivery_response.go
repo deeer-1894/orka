@@ -39,6 +39,12 @@ func deliveryResponse(ctx context.Context, m *schema.Message) *schema.Message {
 		label := strings.NewReplacer("\\", "\\\\", "[", "\\[", "]", "\\]", "\n", " ", "\r", " ").Replace(f.Path)
 		text.WriteString("- [" + label + "](./" + strings.Join(parts, "/") + ")\n")
 	}
+	if len(report.Warnings) > 0 {
+		text.WriteString("\n包内引用待核对（提示不等于执行失败，也不等于内容已验证）：\n\n")
+		for _, warning := range report.Warnings {
+			text.WriteString("- " + warning + "\n")
+		}
+	}
 	text.WriteString("\n验收结果：以上文件通过非空及适用的格式、资源引用检查。业务规则、数据结论和引用依据的验证结果及限制，请查看报告；文件检查不代表内容已全部核实。")
 	copy := *m
 	copy.Content = text.String()

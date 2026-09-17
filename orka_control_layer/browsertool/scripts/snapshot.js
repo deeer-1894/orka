@@ -71,6 +71,15 @@ function(q) {
     return {x,y};
   };
   const remember = value => {if(value){slot.redactions.push(String(value));slot.redactions=slot.redactions.slice(-32);}};
+  const rememberInput = (node, value) => {
+    // Numeric filters are public page data; masking "5" globally corrupts dates
+    // and statistics. Credential-labelled numeric controls still hide echoes.
+    if(node.tagName==='INPUT' && node.type==='number') {
+      const purpose=[node.autocomplete,node.id,node.name,node.getAttribute('aria-label'),node.placeholder,node.title,Array.from(node.labels||[]).map(label=>label.textContent).join(' ')].join(' ');
+      if(!/password|passcode|secret|token|auth|pin|otp|one-time|cc-|card|account|ssn|密码|口令|验证码|密钥|账号|帐号|卡号|证件/i.test(purpose))return;
+    }
+    remember(value);
+  };
   const snapshot = () => {
     slot.refs=new Map(); slot.nonce=q.nonce;
     const elements=[],frames=[],texts=[];
@@ -153,7 +162,7 @@ function(q) {
     if(q.operation==='press'){node.focus();return {ok:true};}
     if(q.operation==='fill'){
       if(node.readOnly)fail('not_interactable','Target is read-only.');
-      remember(q.text);
+      rememberInput(node,q.text);
       node.focus();
       if(node.isContentEditable)node.textContent=q.text;
       else {

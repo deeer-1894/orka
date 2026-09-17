@@ -49,7 +49,9 @@ async function app(t, options = {}) {
    case '/chat/attach': return route.fulfill({status:404,body:''});
    case '/chat/followups': return json({suggestions:['Follow up once']});
    case '/chat/run': return route.fulfill({status:503,body:''});
-   default: throw new Error('Unexpected API '+path);
+   default:
+    if (/^\/run\/[^/]+\/budget$/.test(path)) return route.fulfill({status:404,json:{code:404,msg:'usage unavailable'}});
+    throw new Error('Unexpected API '+path);
   }
  });
  const page=await context.newPage(); page.setDefaultTimeout(2000); page.setDefaultNavigationTimeout(10000); page.on('pageerror',e=>errors.push(e.message)); await page.goto(origin); await page.getByText('Conversation a',{exact:true}).waitFor();
@@ -233,7 +235,7 @@ test('usage evidence exposes unknown usage and retries never send limits',async 
  const a=await app(t,{runs:[record()],handle:async({path,body,json,route})=>{
   if(path==='/run/run-a/budget'){assert.equal(route.request().method(),'GET');await json({run_id:'run-a',budget_run_id:'workflow-parent',status:'partial',limits:{max_tokens:2000000,max_wall_seconds:7200,max_steps:300},used_tokens:110,reserved_tokens:20,remaining_tokens:1999870,unknown_calls:1,unknown_tokens:100,estimated_tokens:30,used_steps:2,deadline:'2026-09-15T18:00:00Z',sources:[{source:'gui',used_tokens:110,reserved_tokens:20,unknown_calls:1,unknown_tokens:100,estimated_tokens:30}]});return true;}
   if(path==='/chat/run'){await route.fulfill({contentType:'text/event-stream',body:[msg('a2','chat','Budget output',{role:'assistant'}),msg('d3','task','',{action:'partial'})].map(m=>`data: ${JSON.stringify(m)}\n\n`).join('')});return true;}
- }});await a.select('a');await openBudget(a);await a.page.locator('textarea').fill('budgeted task');await a.page.locator('textarea').press('Enter');await a.page.getByText('Budget output',{exact:true}).waitFor();await openMetrics(a);await a.page.getByRole('button',{name:'用量明细'}).click();await a.page.getByText('未知用量：1 次调用，保守占用 100 tokens',{exact:true}).waitFor();await a.page.getByText('共享运行：workflow-parent',{exact:true}).waitFor();await openBudget(a);await a.page.getByRole('button',{name:'重新生成',exact:true}).click();await a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/run/list')).catch(()=>{});const sends=a.requests.filter(r=>r.path==='/chat/run');assert.equal(sends.length,2);assert.equal(sends[0].body.budget,undefined);assert.deepEqual(sends[1].body.budget,sends[0].body.budget);a.check();
+ }});await a.select('a');await openBudget(a);await a.page.locator('textarea').fill('budgeted task');await a.page.locator('textarea').press('Enter');await a.page.getByText('Budget output',{exact:true}).waitFor();await openMetrics(a);await a.page.getByText('累计用量 110 tokens（含未知调用的保守占用） · 在途 20',{exact:true}).waitFor();await a.page.getByRole('button',{name:'用量明细'}).click();await a.page.getByText('未知用量：1 次调用，保守占用 100 tokens',{exact:true}).waitFor();await a.page.getByText('共享运行：workflow-parent',{exact:true}).waitFor();await openBudget(a);await a.page.getByRole('button',{name:'重新生成',exact:true}).click();await a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/run/list')).catch(()=>{});const sends=a.requests.filter(r=>r.path==='/chat/run');assert.equal(sends.length,2);assert.equal(sends[0].body.budget,undefined);assert.deepEqual(sends[1].body.budget,sends[0].body.budget);a.check();
 });
 
 test('complete product path from named connection and capability to metered execution, private GUI, delivery and acceptance',async t=>{
@@ -505,4 +507,88 @@ test('numbered alternatives remain prose, never a completed execution plan',asyn
  await a.select('a');await a.page.getByText('稍后重试',{exact:true}).waitFor();
  assert.equal(await a.page.getByText('已完成',{exact:true}).count(),0);
  assert.equal(await a.page.getByText('🗂️ 执行计划',{exact:true}).count(),0);a.check();
+});
+
+test('live overview uses ledger while run counters remain zero; terminal archive is downloadable', async t => {
+ const a=await app(t,{runs:[record({status:'running',tokens:0,tool_calls:0})],history:[msg('tool1','tool','',{payload:{tool:'shell',args:{command:'build'},result:JSON.stringify({ok:true,exit_code:0,stdout:'',stderr:'',file_changes:{paths:['bundle.zip'],partial:false}})}})],handle:async({path,json})=>{
+  if(path==='/run/run-a/budget'){await json({run_id:'run-a',budget_run_id:'run-a',status:'running',used_tokens:12345,reserved_tokens:500,unknown_calls:0,unknown_tokens:0,estimated_tokens:0,used_steps:2,sources:[]});return true;}
+  if(path==='/file/list'){await json([{name:'bundle.zip',dir:false,size:10}]);return true;}
+ }});
+ await a.select('a');
+ const download=a.page.getByRole('link',{name:'下载 bundle.zip',exact:true});await download.waitFor();
+ const href=new URL(await download.getAttribute('href'),origin);assert.equal(href.searchParams.get('conversation_id'),'a');assert.equal(href.searchParams.get('path'),'bundle.zip');
+ await openMetrics(a);await a.page.getByText('累计用量 12345 tokens（含未知调用的保守占用） · 在途 500',{exact:true}).waitFor();
+ assert.equal(await a.page.getByText('0 tokens · 0 次工具调用',{exact:true}).count(),0);a.check();
+});
+
+
+test('failed process receipt is displayed as failed even without legacy error field', async t => {
+ const result='tool error (shell, recoverable — adjust the arguments, try another tool, or proceed without this result): tool "shell" error: '+JSON.stringify({ok:false,exit_code:7,stdout:'',stderr:'trace'})+'\n[Execution evidence id: exit_code=7.]';
+ const a=await app(t,{history:[msg('t1','tool','',{payload:{tool:'shell',args:{command:'verify'},result}})]});
+ await a.select('a');await a.page.getByRole('button',{name:'查看 · 1 步',exact:true}).click();
+ await a.page.getByTitle('失败',{exact:true}).waitFor();await a.page.getByText('执行失败（退出码 7）',{exact:false}).waitFor();a.check();
+});
+
+test('sandbox Markdown downloads survive URL sanitizing without enabling unsafe links', async t => {
+ const content='下载：[最终包](sandbox:?path=/workspace/report.zip)\n\n[普通链接](https://example.org/docs) [危险链接](javascript:alert%281%29) [越界链接](sandbox:/workspace/../other.zip)';
+ const a=await app(t,{history:[msg('a1','chat',content,{role:'assistant'}),msg('d2','task','',{action:'done'})]});
+ await a.select('a');
+ const link=a.page.getByRole('link',{name:'最终包',exact:false});await link.waitFor();
+ const url=new URL(await link.getAttribute('href'),origin);
+ assert.equal(url.pathname,BASE+'/file/download');assert.equal(url.searchParams.get('conversation_id'),'a');assert.equal(url.searchParams.get('path'),'report.zip');
+ assert.equal(await a.page.getByRole('link',{name:'普通链接',exact:true}).getAttribute('href'),'https://example.org/docs');
+ for(const name of ['危险链接','越界链接'])assert.equal(await a.page.getByRole('link',{name,exact:true}).getAttribute('href'),'');
+ a.check();
+});
+
+test('declared release remains downloadable without expanding intermediate files', async t => {
+ const history=Array.from({length:12},(_,i)=>msg(`t${i}`,'tool','',{payload:{tool:'file_write',args:{path:`source-${i}.py`},result:'saved successfully'}}));
+ history.push(msg('p20','plan','',{payload:{outputs:['release.zip','validation.md'],steps:[]}}));
+ history.push(msg('u21','chat','补充发布回归',{role:'user',action:'human_input'}));
+ const a=await app(t,{history,handle:async({path,json})=>{
+  if(path==='/file/list'){await json([...Array.from({length:12},(_,i)=>({name:`source-${i}.py`,dir:false,size:10})),{name:'release.zip',dir:false,size:100}]);return true;}
+ }});
+ await a.select('a');await a.page.getByRole('link',{name:'下载 release.zip',exact:true}).waitFor();
+ assert.equal(await a.page.getByRole('link',{name:'下载 validation.md',exact:true}).count(),0);
+ await a.page.getByRole('button',{name:'查看全部 13 个文件',exact:true}).waitFor();a.check();
+});
+
+test('execution evidence exposes stale file versions without claiming acceptance', async t => {
+ const a=await app(t,{runs:[record()],handle:async({path,json})=>{
+  if(path==='/run/acceptance'){await json({contract:{run_id:'run-a',requests:[]},checks:[],executions:[{id:'exec-1',run_id:'run-a',at:1,tool:'shell',command:'run tests',ok:true,exit_code:0,stdout:'OK',stderr:'',files:[{path:'bundle.zip',sha256:'old-sha'}],changed_since:['bundle.zip'],revisions_partial:true}]});return true;}
+ }});
+ await a.select('a');await openWorkbench(a,'运营台');await a.page.getByRole('button',{name:'验收证据',exact:true}).click();await a.page.getByText('实际执行记录 · 1',{exact:true}).click();
+ await a.page.getByText('旧结果不能作为当前版本的验收结论。',{exact:false}).waitFor();
+ await a.page.getByText('文件版本记录不完整，不能据此判定全部文件未变化。',{exact:true}).waitFor();
+ assert.equal(await a.page.getByText('检查通过',{exact:true}).count(),0);a.check();
+});
+
+test('many produced files stay compact but can all be expanded and downloaded',async t=>{
+ const paths=Array.from({length:20},(_,i)=>`report-${i}.txt`);
+ const a=await app(t,{history:[msg('t1','tool','',{payload:{tool:'shell',args:{command:'build'},result:JSON.stringify({ok:true,exit_code:0,stdout:'',stderr:'',file_changes:{paths,partial:false}})}})],handle:async({path,json})=>{
+  if(path==='/file/list'){await json(paths.map(name=>({name,dir:false,size:1})));return true;}
+ }});
+ await a.select('a');await a.page.getByRole('button',{name:'查看全部 20 个文件',exact:true}).waitFor();
+ assert.equal(await a.page.getByRole('link',{name:/^下载 report-/}).count(),8);
+ await a.page.getByRole('button',{name:'查看全部 20 个文件',exact:true}).click();assert.equal(await a.page.getByRole('link',{name:/^下载 report-/}).count(),20);
+ await a.page.getByRole('button',{name:'收起文件',exact:true}).click();assert.equal(await a.page.getByRole('link',{name:/^下载 report-/}).count(),8);a.check();
+});
+
+test('historical run usage loads only when its detail is opened',async t=>{
+ let reads=[];
+ const a=await app(t,{runs:Array.from({length:20},(_,i)=>record({run_id:`history-${i}`,status:'done'})),handle:async({path,json})=>{
+  if(/^\/run\/history-\d+\/budget$/.test(path)){reads.push(path);await json({run_id:path.split('/')[2],used_tokens:1,reserved_tokens:0,status:'done',sources:[]});return true;}
+ }});
+ await a.select('a');await openWorkbench(a,'运营台');await a.page.getByRole('button',{name:'用量明细',exact:true}).first().waitFor();assert.equal(reads.length,0);
+ await a.page.getByRole('button',{name:'用量明细',exact:true}).first().click();await a.page.getByText('已用（含保守占用）1 · 预留 0 tokens',{exact:true}).waitFor();
+ assert.equal(reads.length,1);a.check();
+});
+
+test('workspace provenance stays distinct from declared deliverables and refusal reason stays visible',async t=>{
+ const a=await app(t,{runs:[record()],handle:async({path,json})=>{
+  if(path==='/run/acceptance'){await json({contract:{run_id:'run-a',requests:[]},checks:[],executions:[{id:'e1',run_id:'run-a',tool:'shell',at:1,ok:false,exit_code:-1,stdout:'',stderr:'',error:'command refused',command:'verify',revision_scope:'workspace_sample',files:[{path:'report.zip',sha256:'observed-sha'}]}]});return true;}
+ }});
+ await a.select('a');await openWorkbench(a,'运营台');await a.page.getByRole('button',{name:'验收证据',exact:true}).click();await a.page.getByText('实际执行记录 · 1',{exact:true}).click();
+ await a.page.getByText('工作区文件抽样，未登记交付清单；这些文件不代表正式交付物，也不代表全部被本命令验证。',{exact:true}).waitFor();
+ await a.page.getByText('command refused',{exact:true}).waitFor();assert.equal(await a.page.getByText('检查通过',{exact:true}).count(),0);a.check();
 });

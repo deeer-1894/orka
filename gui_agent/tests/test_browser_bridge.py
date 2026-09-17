@@ -1,5 +1,6 @@
 """Wire-level CDP contracts using a real, isolated Chromium (no providers)."""
 import asyncio
+import base64
 import json
 import unittest
 from playwright.async_api import async_playwright
@@ -78,6 +79,38 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         async with self.runtime.lease(self.identity, "gui", 1, 1, "gui") as lease:
             self.assertEqual(await lease.operator.page.locator("input").count(), 1)
             self.assertGreater(lease.state.epoch, info["page_epoch"])
+
+    async def test_workspace_preview_runs_real_html_without_previous_origin_or_network(self):
+        await self.connect()
+        old_world = await self.world()
+        html = """<!doctype html><title>Preview contract</title>
+        <input id='query'><output id='result'>initial</output>
+        <script>document.querySelector('#query').oninput=e=>document.querySelector('#result').textContent=e.target.value;
+        fetch('https://example.test/secret').then(()=>document.body.dataset.network='leaked').catch(()=>document.body.dataset.network='blocked');
+        try { localStorage.setItem('test','bad'); document.body.dataset.storage='leaked'; } catch { document.body.dataset.storage='blocked'; }
+        </script>""" + '<!--' + 'x' * 150000 + '-->'
+        reply = await self.command("Orka.previewHTML", {"html_base64":base64.b64encode(html.encode()).decode()})
+        self.assertIn("result", reply, reply)
+        self.assertNotIn("result", await self.command("Runtime.evaluate", {"contextId":old_world,"expression":"1"}))
+        operator, _ = await self.pool.get("alice", "one")
+        page = operator.page
+        await page.locator('#query').fill('real interaction')
+        self.assertEqual(await page.locator('#result').text_content(), 'real interaction')
+        self.assertEqual(await page.evaluate('location.origin'), 'null')
+        self.assertEqual(await page.locator('body').get_attribute('data-network'), 'blocked')
+        self.assertEqual(await page.locator('body').get_attribute('data-storage'), 'blocked')
+        context = await self.world()
+        observed = await self.command("Runtime.evaluate", {"contextId":context,"expression":"document.querySelector('#result').textContent","returnByValue":True,"allowUnsafeEvalBlockedByCSP":False})
+        self.assertEqual(observed['result']['result']['value'], 'real interaction')
+
+    async def test_bad_preview_does_not_replace_page(self):
+        await self.connect()
+        operator, _ = await self.pool.get("alice", "one")
+        await operator.page.set_content('<h1>Keep this page</h1>')
+        for value in ('bad base64!', base64.b64encode(b'\xff').decode(), base64.b64encode(b'x'*(1024*1024+1)).decode()):
+            reply = await self.command('Orka.previewHTML', {'html_base64':value})
+            self.assertIn('error',reply)
+            self.assertEqual(await operator.page.locator('h1').text_content(),'Keep this page')
 
     async def test_forged_scope_and_root_or_main_world_never_dispatch(self):
         await self.connect()

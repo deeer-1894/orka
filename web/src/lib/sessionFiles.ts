@@ -1,3 +1,4 @@
+import { executionResult } from './executionResult';
 import type { Message, ToolPayload } from '../types';
 
 export interface FileContext { conversationID: string; ownerEmail: string }
@@ -65,6 +66,7 @@ function outputPaths(text: string, allowFullLine = false): string[] {
 
 export function sessionFileCandidates(messages: Message[], context: FileContext): string[] {
   const out = new Set<string>(), planned = new Set<string>();
+  let planRunID: string | undefined;
   const add = (raw: unknown, target = out) => {
     if (typeof raw !== 'string') return;
     const path = normalizeWorkspacePath(raw, context.ownerEmail, context.conversationID);
@@ -72,17 +74,34 @@ export function sessionFileCandidates(messages: Message[], context: FileContext)
   };
   for (const m of messages) {
     if (m.meta?.conversation_id !== context.conversationID) continue;
-    if (m.type === 'chat' && m.role === 'user') { planned.clear(); continue; }
+    if (m.type === 'chat' && m.role === 'user') {
+      // Both new prompts and steering use human_input. Only an exact run match
+      // establishes that this input continues the current delivery plan.
+      if (!m.meta.run_id || m.meta.run_id !== planRunID) planned.clear();
+      continue;
+    }
     if (m.type === 'plan') {
       const outputs = (m.payload as { outputs?: unknown } | undefined)?.outputs;
-      if (Array.isArray(outputs)) outputs.forEach(p => add(p, planned));
+      if (Array.isArray(outputs)) {
+        outputs.forEach(p => add(p, planned));
+        planRunID = m.meta.run_id;
+      }
     }
     if (m.type === 'tool') {
       const p = m.payload as ToolPayload | undefined;
-      if (!p || failedToolResult(p)) continue;
+      if (!p) continue;
+      // Runner receipts describe actual workspace changes, independently of
+      // whether a build succeeded. Existence is checked below before display.
+      const receipt = executionResult(p);
+      if (Array.isArray(receipt?.file_changes?.paths)) receipt.file_changes.paths.forEach(path => add(path));
+      if (receipt?.ok && !receipt.file_changes && typeof receipt.stdout === 'string') outputPaths(receipt.stdout, true).forEach(path => add(path));
+      if (failedToolResult(p)) continue;
       const args = p.args || {};
       if (p.tool === 'update_plan') {
-        if (Array.isArray(args.outputs)) args.outputs.forEach(p => add(p, planned));
+        if (Array.isArray(args.outputs)) {
+          args.outputs.forEach(p => add(p, planned));
+          planRunID = m.meta.run_id;
+        }
       } else if (WRITERS.has(p.tool)) {
         // Conversion tools' path is an INPUT; their out is the output.
         add(args.out ?? args.output ?? (p.tool === 'file_write' ? args.path ?? args.filename ?? args.file : undefined));
@@ -95,13 +114,14 @@ export function sessionFileCandidates(messages: Message[], context: FileContext)
       for (const line of (m.content || '').split('\n')) {
         if (!/(?:已生成|已保存|已完成|交付|产物|下载|generated|created|saved|deliverable|download)/i.test(line) || /(?:考虑|可能|准备|将要|will|would|could)/i.test(line)) continue;
         for (const match of line.matchAll(/\[[^\]]*\]\((?:<([^>]+)>|([^\s)]+))\)/g)) {
-          try { add(decodeURIComponent(match[1] || match[2])); } catch { /* malformed URL */ }
+          add(workspaceLinkPath(match[1] || match[2], context));
         }
       }
     }
   }
-  planned.forEach(p => out.add(p));
-  return [...out];
+  // Put this turn's declared deliverables before intermediate source files.
+  // Existence is still checked below; a promised filename is not a download.
+  return [...new Set([...planned, ...out])];
 }
 
 // Query only declared parent directories. No workspace-wide basename map, walk
@@ -136,7 +156,20 @@ export async function existingSessionFiles(candidates: string[], list: (dir: str
 // credentials to an external URL, application route or another session's path.
 export function workspaceLinkPath(href: string, context: FileContext): string | undefined {
   if (!context.conversationID || !href || href.startsWith('#') || href.startsWith('?')) return undefined;
-  const path = href.split(/[?#]/, 1)[0];
-  try { return normalizeWorkspacePath(decodeURIComponent(path), context.ownerEmail, context.conversationID); }
+  try {
+    let path: string;
+    if (href.startsWith('sandbox:?')) {
+      const query = new URLSearchParams(href.slice('sandbox:?'.length));
+      if (query.getAll('path').length !== 1 || [...query.keys()].some(key => key !== 'path')) return undefined;
+      path = query.get('path')!; // URLSearchParams has already decoded it once.
+    } else {
+      const raw = href.startsWith('sandbox:') ? href.slice('sandbox:'.length) : href;
+      path = decodeURIComponent(raw.split(/[?#]/, 1)[0]);
+    }
+    // /workspace is the execution sandbox's root for this conversation, not
+    // a host filesystem path. Never infer another absolute directory's scope.
+    if (path.startsWith('/workspace/')) path = path.slice('/workspace/'.length);
+    return normalizeWorkspacePath(path, context.ownerEmail, context.conversationID);
+  }
   catch { return undefined; }
 }

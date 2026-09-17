@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"html"
 	"regexp"
 	"strings"
@@ -12,6 +13,8 @@ var (
 	reMain            = regexp.MustCompile(`(?is)<main\b[^>]*>(.*?)</main\s*>`)
 	reArticle         = regexp.MustCompile(`(?is)<article\b[^>]*>(.*?)</article\s*>`)
 	reHeading         = regexp.MustCompile(`(?is)<h[1-6]\b[^>]*>(.*?)</h[1-6]\s*>`)
+	reDefinition      = regexp.MustCompile(`(?is)<dt\b[^>]*>(.*?)</dt\s*>`)
+	reDefinitionID    = regexp.MustCompile(`(?i)\bid=["']([^"']+)["']`)
 	reBlock           = regexp.MustCompile(`(?i)</?(?:p|div|section|li|ul|ol|pre|blockquote|tr|br|hr)\b[^>]*>`)
 	reHTMLPage        = regexp.MustCompile(`(?i)<(?:html|head|body|main|article|h[1-6]|p|div|pre)\b`)
 	reMarkdownHeading = regexp.MustCompile(`^#{1,6}\s+(.+?)\s*#*\s*$`)
@@ -43,6 +46,13 @@ func extractPage(p loadedPage) readablePage {
 		}
 		body = reChrome.ReplaceAllString(body, " ")
 		body = reHeading.ReplaceAllStringFunc(body, func(h string) string { return "\n\n## " + clean(reHeading.FindStringSubmatch(h)[1]) + "\n\n" })
+		body = reDefinition.ReplaceAllStringFunc(body, func(def string) string {
+			title := clean(reDefinition.FindStringSubmatch(def)[1])
+			if id := reDefinitionID.FindStringSubmatch(def); len(id) > 1 {
+				title = html.UnescapeString(id[1]) + " — " + title
+			}
+			return "\n\n## " + title + "\n\n"
+		})
 		body = reBlock.ReplaceAllString(body, "\n")
 		body = reTags.ReplaceAllString(body, "")
 		body = html.UnescapeString(body)
@@ -153,4 +163,10 @@ func markdownCodeLine(line string, fence *string) bool {
 // An empty Title header honestly represents a page without a discoverable title.
 func formatPageText(url, title, body string) string {
 	return "URL: " + url + "\nTitle: " + title + "\n\n" + body
+}
+
+// Coverage describes the returned text, never claims the original HTML is complete.
+func formatPageObservation(url, title, body, coverage string, extractedBytes int) string {
+	return "URL: " + url + "\nTitle: " + title + "\nCoverage: " + coverage +
+		fmt.Sprintf("\nExtracted-Bytes: %d\nReturned-Bytes: %d\n\n", extractedBytes, len(body)) + body
 }

@@ -35,7 +35,7 @@ func readSection() mcpserver.ToolHandlerFunc {
 		if text == "" {
 			return mcp.NewToolResultError("no readable section matched the query; try another term or use fetch_url"), nil
 		}
-		return mcp.NewToolResultText(formatPageText(page.URL.String(), readable.Title, text)), nil
+		return mcp.NewToolResultText(formatPageObservation(page.URL.String(), readable.Title, text, "selected_passages", len(readable.Text))), nil
 	}
 }
 

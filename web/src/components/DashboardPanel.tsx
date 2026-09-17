@@ -17,6 +17,7 @@ export function DashboardPanel({ conversationID, onJumpToConversation, goTab, on
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let alive = true;
+    setLoading(true);
     Promise.all([
       api.listRuns({}).catch(() => ({ runs: [] })),
       artifactApi.list().then((r) => r.artifacts || []).catch(() => []),
@@ -28,11 +29,9 @@ export function DashboardPanel({ conversationID, onJumpToConversation, goTab, on
     return () => { alive = false; };
   }, [conversationID]);
 
-  if (loading) return <div className="p-3"><MetricsPanel runContext={runContext} /><Blank>加载中…</Blank></div>;
-
   // Workspace summary + recent pages render even before the first run, so the
   // panel reveals what's inside (pages / files / tasks) at a glance.
-  const NavTile = ({ icon, label, value, onClick }: { icon: IconName; label: string; value: number; onClick: () => void }) => (
+  const NavTile = ({ icon, label, value, onClick }: { icon: IconName; label: string; value: number | string; onClick: () => void }) => (
     <button onClick={onClick} className="group flex flex-col items-start rounded-xl border border-border bg-surface px-3 py-2.5 text-left transition hover:border-accent/40">
       <span className="inline-flex items-center gap-1.5 text-[11px] text-faint"><Icon name={icon} size={12} /> {label}</span>
       <span className="mt-0.5 text-[20px] font-semibold leading-tight text-ink group-hover:text-accent">{value}</span>
@@ -43,9 +42,9 @@ export function DashboardPanel({ conversationID, onJumpToConversation, goTab, on
     <>
       <MetricsPanel runContext={runContext} />
       <div className="grid grid-cols-3 gap-2">
-        <NavTile icon="image" label="页面" value={arts.length} onClick={() => goTab("artifacts")} />
-        <NavTile icon="folder" label="文件" value={fileCount} onClick={() => goTab("files")} />
-        <NavTile icon="clock" label="定时任务" value={taskCount} onClick={() => goTab("tasks")} />
+        <NavTile icon="image" label="页面" value={loading ? "—" : arts.length} onClick={() => goTab("artifacts")} />
+        <NavTile icon="folder" label="根目录文件" value={loading ? "—" : fileCount} onClick={() => goTab("files")} />
+        <NavTile icon="clock" label="定时任务" value={loading ? "—" : taskCount} onClick={() => goTab("tasks")} />
       </div>
       {arts.length > 0 && (
         <div className="rounded-xl border border-border bg-surface p-3">
@@ -71,7 +70,7 @@ export function DashboardPanel({ conversationID, onJumpToConversation, goTab, on
     return (
       <div className="space-y-3 p-3">
         {workspace}
-        <div className="rounded-xl border border-dashed border-border p-5 text-center text-[12.5px] text-muted">还没有运行记录。跑一个任务后这里会出现执行统计。</div>
+        {loading ? <Blank>加载中…</Blank> : <div className="rounded-xl border border-dashed border-border p-5 text-center text-[12.5px] text-muted">还没有运行记录。跑一个任务后这里会出现执行统计。</div>}
       </div>
     );
 
@@ -110,7 +109,7 @@ export function DashboardPanel({ conversationID, onJumpToConversation, goTab, on
   return (
     <div className="space-y-3 p-3">
       {workspace}
-      <div className="text-[11px] font-medium uppercase tracking-wide text-faint">运行概况</div>
+      <div className="text-[11px] font-medium uppercase tracking-wide text-faint">账号近期运行</div>
       <Stat
         label="近期运行数"
         value={String(runs.length)}
@@ -128,7 +127,7 @@ export function DashboardPanel({ conversationID, onJumpToConversation, goTab, on
             <button
               key={r.run_id}
               onClick={() => r.conversation_id && onJumpToConversation(r.conversation_id)}
-              title={`${r.status} · ${fmtNum(r.tokens || 0)} tok · ${(r.prompt || "").slice(0, 40)}`}
+              title={`${r.status} · ${r.status === "running" ? "用量持续更新中" : fmtNum(r.tokens || 0) + " tok"} · ${(r.prompt || "").slice(0, 40)}`}
               className="h-7 flex-1 rounded-sm transition hover:opacity-70"
               style={{ background: dot(r.status), minWidth: 4 }}
             />

@@ -12,15 +12,18 @@ from urllib.parse import urlsplit
 
 from starlette.websockets import WebSocketDisconnect
 from service.runtime import QueueFull
+from service.preview_document import decode_document, open_document
 
 MAX_MESSAGE = 128 * 1024
 MAX_RESULT = 128 * 1024
 MAX_SCREENSHOT = 16 * 1024 * 1024
 MAX_COMMANDS = 256
+MAX_PREVIEW_MESSAGE = 1408 * 1024
 
 # An explicit parameter boundary also prevents new upstream CDP options from
 # silently granting browser-level privileges when dependencies are upgraded.
 PARAMETERS = {
+    "Orka.previewHTML": {"html_base64"},
     "Page.enable": {"enableFileChooserOpenedEvent"}, "Page.getFrameTree": set(),
     "Page.createIsolatedWorld": {"frameId", "worldName", "grantUniveralAccess"},
     "Page.navigate": {"url", "frameId", "referrer", "transitionType", "referrerPolicy"},
@@ -79,14 +82,19 @@ def acquire_request(message):
 
 async def receive(ws):
     text = await ws.receive_text()
-    if len(text.encode("utf-8")) > MAX_MESSAGE:
+    size = len(text.encode("utf-8"))
+    if size > MAX_PREVIEW_MESSAGE:
         fail("input_limit", "browser request exceeds 128 KiB")
     try:
         value = json.loads(text, parse_constant=lambda _: fail())
     except (ValueError, RecursionError):
+        if size > MAX_MESSAGE:
+            fail("input_limit", "browser request exceeds 128 KiB")
         fail(message="expected a JSON object")
     if not isinstance(value, dict):
         fail(message="expected a JSON object")
+    if size > MAX_MESSAGE and not (value.get("type") == "command" and value.get("method") == "Orka.previewHTML"):
+        fail("input_limit", "browser request exceeds 128 KiB")
     return value
 
 
@@ -198,11 +206,17 @@ class PageChannel:
             fail(message="CDP method required")
         params = dict(params) if isinstance(params, dict) else params
         await self._validate(method, params, cdp)
+        document = None
+        if method == "Orka.previewHTML":
+            try:
+                document = decode_document(params.get("html_base64"))
+            except ValueError as error:
+                fail("invalid_document", str(error))
         if method in ("Runtime.evaluate", "Runtime.callFunctionOn", "DOM.resolveNode"):
             params.setdefault("objectGroup", "orka-" + self.lease.lease_id)
         self.lease.uncertain = True
         try:
-            result = await cdp.send(method, params)
+            result = await open_document(self.lease.operator.page, document) if method == "Orka.previewHTML" else await cdp.send(method, params)
         except asyncio.CancelledError:
             raise
         except Exception:

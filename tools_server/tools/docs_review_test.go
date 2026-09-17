@@ -91,7 +91,7 @@ func TestPageToolsReturnResolvedSourceMetadata(t *testing.T) {
 			defer s.Close()
 			for _, name := range []string{"read_section", "fetch_url"} {
 				res, out := callDocsTool(t, name, map[string]any{"url": s.URL + "/old", "query": "retry", "max_chars": 1})
-				expected := "URL: " + s.URL + "/canonical?version=2\nTitle: " + tc.title + "\n\n"
+				expected := "URL: " + s.URL + "/canonical?version=2\nTitle: " + tc.title + "\nCoverage: "
 				if res.IsError || !strings.HasPrefix(out, expected) {
 					t.Errorf("%s wrong source headers: %q, want prefix %q", name, out, expected)
 					continue

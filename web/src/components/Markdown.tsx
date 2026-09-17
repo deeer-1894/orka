@@ -1,5 +1,5 @@
 import { memo } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -40,6 +40,10 @@ export const Markdown = memo(function Markdown({
     <div className="md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
+        // Custom workspace references must reach the scoped resolver before
+        // react-markdown discards their protocol. Keep its default protection
+        // for everything the resolver does not explicitly map, including images.
+        urlTransform={(url, key) => key === "href" && resolveLink && resolveLink(url) !== url ? url : defaultUrlTransform(url)}
         rehypePlugins={[[rehypeKatex, { throwOnError: false, errorColor: "var(--color-accent)" }]]}
         components={{
           a: ({ href, children, ...props }) => <a {...props} href={resolveLink && typeof href === "string" ? resolveLink(href) : href} target="_blank" rel="noreferrer">{children}{typeof href === "string" && linkLabel?.(href) && <small className="ml-1 text-muted">{linkLabel(href)}</small>}</a>,

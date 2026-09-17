@@ -1,42 +1,11 @@
 import { ActionChip, actionChipClass } from './ActionChip';
-import { useEffect, useState } from 'react';
-import { api } from '../api';
-import type { RunBudget } from '../lib/runBudget';
+import type { useRunUsage } from '../hooks/useRunUsage';
 const quantity = (value: number | undefined) => typeof value === 'number' && Number.isFinite(value) ? String(value) : '未知';
 export default function RunUsagePanel({
-  runID
-}: {
-  runID: string;
-}) {
-  const [data, setData] = useState<RunBudget>();
-  const [error, setError] = useState('');
-  const [refresh, setRefresh] = useState(0);
-  useEffect(() => {
-    let current = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    setData(undefined);
-    setError('');
-    const load = async () => {
-      try {
-        const result = await api.runBudget(runID);
-        if (!current) return;
-        setData(result);
-        setError('');
-        if (result.status === 'running' || result.status === 'paused') timer = setTimeout(() => {
-          if (current) void load();
-        }, 5000);
-      } catch (e) {
-        if (current) setError((e as Error).message);
-      }
-    };
-    void load();
-    return () => {
-      current = false;
-      clearTimeout(timer);
-    };
-  }, [runID, refresh]);
+  data, error, refresh
+}: ReturnType<typeof useRunUsage>) {
   return <section aria-label="运行用量" className="space-y-2 rounded-lg border border-border p-3 text-xs">
-    <div className="flex justify-between"><strong>运行用量</strong><ActionChip onClick={() => setRefresh(n => n + 1)} icon="refresh">刷新用量</ActionChip></div>
+    <div className="flex justify-between"><strong>运行用量</strong><ActionChip onClick={refresh} icon="refresh">刷新用量</ActionChip></div>
     {error && <p role="alert" className="text-accent">用量读取失败：{error}</p>}
     {!data && !error && <p role="status">正在读取用量…</p>}
     {data && <>

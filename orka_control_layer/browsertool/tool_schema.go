@@ -14,7 +14,7 @@ func toolSchema() map[string]any {
 		return map[string]any{"type": "string", "description": description, "maxLength": limit}
 	}
 	props := map[string]any{
-		"action":      map[string]any{"type": "string", "enum": []string{"open", "snapshot", "click", "fill", "select", "press", "scroll", "wait", "evaluate", "screenshot", "download"}},
+		"action":      map[string]any{"type": "string", "enum": []string{"open", "preview", "snapshot", "click", "fill", "select", "press", "scroll", "wait", "evaluate", "screenshot", "download"}},
 		"url":         str("HTTP(S) URL for open/download or wait:url; download also accepts current-page blob URLs.", 8192),
 		"ref":         str("Element ref from the same run/page snapshot; requires snapshot_id. Do not combine with selector.", 256),
 		"snapshot_id": str("Snapshot identifier paired with ref.", 512),
@@ -26,7 +26,7 @@ func toolSchema() map[string]any {
 		"amount":      map[string]any{"type": "number", "exclusiveMinimum": 0, "maximum": 10000, "description": "Scroll distance in pixels; default 600."},
 		"condition":   map[string]any{"type": "string", "enum": []string{"domcontentloaded", "load", "visible", "hidden", "enabled", "text", "url"}, "description": "open: domcontentloaded/load. wait: readiness without target; visible/hidden/enabled with target; text needs text and optional target; url needs url without target."},
 		"expression":  str("Page JavaScript script or expression for evaluate only; browser context, never host shell. Result is bounded.", MaxExpressionBytes),
-		"path":        str("Relative conversation-workspace output path for screenshot/download.", 1024),
+		"path":        str("Conversation-workspace path: existing self-contained UTF-8 .html/.htm input for preview (up to 1 MiB); output path for screenshot/download.", 1024),
 		"mode":        map[string]any{"type": "string", "enum": []string{"create", "replace"}, "description": "File write mode; default create, replace preserves history."},
 		"timeout_ms":  map[string]any{"type": "integer", "minimum": 1, "maximum": 60000, "description": "Bound this operation; default 45000 ms, maximum 60000 ms."},
 	}
@@ -50,6 +50,8 @@ func parseRequest(args map[string]any) (Request, error) {
 	}
 	target := false
 	switch req.Action {
+	case "preview":
+		add("path")
 	case "open":
 		add("url", "condition")
 	case "snapshot":
@@ -103,13 +105,17 @@ func parseRequest(args map[string]any) (Request, error) {
 		return req, errors.New("timeout_ms must be between 1 and 60000")
 	}
 	if has("ref") != has("snapshot_id") || (has("ref") && (!require("ref", req.Ref) || !require("snapshot_id", req.SnapshotID))) {
-		return req, errors.New("ref requires its nonempty snapshot_id")
+		return req, errors.New("use selector alone, or a nonempty ref + snapshot_id pair; omit snapshot_id when using selector")
 	}
 	if has("selector") && (!require("selector", req.Selector) || has("ref")) {
 		return req, errors.New("use one nonempty selector or a ref/snapshot_id pair")
 	}
 	hasTarget := has("ref") || has("selector")
 	switch req.Action {
+	case "preview":
+		if !require("path", req.Path) || !validPreviewPath(req.Path) {
+			return req, errors.New("preview requires a canonical workspace-relative .html/.htm path")
+		}
 	case "open", "download":
 		if !require("url", req.URL) || !validToolURL(req.URL, req.Action == "download") {
 			return req, errors.New("URL must be HTTP(S), or a current-page blob URL for download")

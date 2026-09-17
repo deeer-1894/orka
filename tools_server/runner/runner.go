@@ -35,9 +35,10 @@ type Request struct {
 	Root, Program string
 	Args, Env     []string // Env contains explicit tool data, never os.Environ().
 	Timeout       time.Duration
+	TrackFiles    bool // Include bounded workspace change observations.
 }
 
-func (cfg Config) execute(ctx context.Context, req Request) (Outcome, error) {
+func (cfg Config) execute(ctx context.Context, req Request) (out Outcome, runErr error) {
 	if cfg.Mode == "" {
 		cfg.Mode = "bwrap"
 	}
@@ -60,6 +61,21 @@ func (cfg Config) execute(ctx context.Context, req Request) (Outcome, error) {
 	if !info.IsDir() {
 		return Outcome{ExitCode: -1}, fmt.Errorf("workspace must be a directory")
 	}
+	if req.TrackFiles {
+		// OpenRoot pins the same validated directory for both inventories.
+		root, err := os.OpenRoot(rootPath)
+		if err != nil {
+			return Outcome{ExitCode: -1}, err
+		}
+		defer root.Close()
+		before := inventory(ctx, root)
+		defer func() {
+			scanCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+			defer cancel()
+			out.FileChanges = changedFiles(before, inventory(scanCtx, root))
+		}()
+	}
+
 	timeout := req.Timeout
 	if timeout <= 0 || timeout > 120*time.Second {
 		timeout = 60 * time.Second

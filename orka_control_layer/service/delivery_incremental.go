@@ -27,7 +27,8 @@ func revision(info os.FileInfo) artifactRevision {
 
 // inspectProduced adds early structural feedback, not a delivery verdict. Only
 // declared small files changed since the last inspection are read. Large files,
-// archives, dependencies and missing requirements remain check_delivery's job.
+// dependencies and missing requirements remain check_delivery's job. Small ZIPs
+// also receive advisory document-reference review, without enforcing prose as a contract.
 // Stat revisions are an optimization, never the final integrity authority.
 func (d *deliveryTracker) inspectProduced(ctx context.Context, tool string) string {
 	if d == nil || ctx.Err() != nil {
@@ -36,6 +37,28 @@ func (d *deliveryTracker) inspectProduced(ctx context.Context, tool string) stri
 	switch tool {
 	case "file_write", "file_patch", "file_edit", "shell", "python":
 	default:
+		return ""
+	}
+	return d.inspectFiles(ctx, d.snapshot())
+}
+
+// Runner receipts are observations of actual writes, not delivery declarations.
+// Reuse the same revision cache so a declared ZIP is not reviewed twice.
+func (d *deliveryTracker) inspectWrittenArchives(ctx context.Context, paths []string) string {
+	var archives []string
+	for _, p := range paths {
+		if artifacts.ValidPath(p) && strings.EqualFold(path.Ext(p), ".zip") {
+			archives = append(archives, p)
+			if len(archives) == artifacts.MaxFiles {
+				break
+			}
+		}
+	}
+	return d.inspectFiles(ctx, archives)
+}
+
+func (d *deliveryTracker) inspectFiles(ctx context.Context, paths []string) string {
+	if d == nil || len(paths) == 0 || ctx.Err() != nil {
 		return ""
 	}
 	d.mu.Lock()
@@ -51,12 +74,12 @@ func (d *deliveryTracker) inspectProduced(ctx context.Context, tool string) stri
 	var selected []string
 	revisions := map[string]artifactRevision{}
 	var bytes int64
-	for _, p := range d.outputs {
+	for _, p := range paths {
 		if ctx.Err() != nil {
 			return ""
 		}
 		switch strings.ToLower(path.Ext(p)) {
-		case ".json", ".csv", ".svg", ".html", ".htm":
+		case ".json", ".csv", ".svg", ".html", ".htm", ".zip":
 		default:
 			continue
 		}
@@ -85,8 +108,12 @@ func (d *deliveryTracker) inspectProduced(ctx context.Context, tool string) stri
 		if ctx.Err() != nil {
 			return ""
 		}
-		if len(report.Failures) > 0 {
-			message := strings.Join(report.Failures, "\n")
+		issues := append([]string(nil), report.Failures...)
+		for _, warning := range report.Warnings {
+			issues = append(issues, "Review (not a failed structural check): "+warning)
+		}
+		if len(issues) > 0 {
+			message := strings.Join(issues, "\n")
 			// Defer diagnostics that do not fit. Never cache an unseen failure.
 			if visibleBytes > 0 && visibleBytes+len(message)+1 > 2400 {
 				break
@@ -103,5 +130,5 @@ func (d *deliveryTracker) inspectProduced(ctx context.Context, tool string) stri
 	if len(failures) == 0 {
 		return ""
 	}
-	return "\n[Produced file structure issues]\n" + strings.Join(failures, "\n") + "\nRepair these files or finish their local dependencies before delivery. These checks do not establish business correctness; run task-specific assertions as well."
+	return "\n[Produced file structure issues and review notes]\n" + strings.Join(failures, "\n") + "\nRepair structural failures. Review advisory references against the actual request; do not create files merely because documentation describes an example. These checks do not establish business correctness."
 }

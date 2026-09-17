@@ -66,7 +66,7 @@ func shellExec(base string) mcpserver.ToolHandlerFunc {
 		cctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 
-		out, _ := runner.FromEnv().Execute(cctx, runner.Request{Root: root, Program: "sh", Args: []string{"-c", command}, Timeout: timeout})
+		out, _ := runner.FromEnv().Execute(cctx, runner.Request{Root: root, Program: "bash", Args: []string{"--noprofile", "--norc", "-e", "-o", "pipefail", "-c", command}, TrackFiles: true, Timeout: timeout})
 		return executionResult(out), nil
 	}
 }

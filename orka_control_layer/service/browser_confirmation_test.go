@@ -19,7 +19,7 @@ func TestBrowserConfirmationUsesOperation(t *testing.T) {
 			t.Errorf("read action %s required approval", action)
 		}
 	}
-	for _, action := range []string{"open", "click", "fill", "select", "press", "scroll", "evaluate", "download", "unknown"} {
+	for _, action := range []string{"open", "preview", "click", "fill", "select", "press", "scroll", "evaluate", "download", "unknown"} {
 		if !needsConfirm("browser", map[string]any{"action": action}) {
 			t.Errorf("mutating action %s bypassed approval", action)
 		}

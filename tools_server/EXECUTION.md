@@ -23,7 +23,7 @@ HOME 指向 `/workspace`；有独立 `/tmp`、`/dev`、`/proc`。严格模式无
 
 ## 执行结果契约
 
-shell 与 python 都返回 JSON 文本：`{ok, exit_code, stdout, stderr, timed_out, canceled}`；失败附加 `error` 说明。`exit_code=-1` 表示未启动或被信号终止，其他值是实际进程退出码。父进程先以 0 退出但后代持有输出管道直到超时的场景，exit_code 仍可为 0，必须依据 ok/timed_out 判断结果。非零退出、超时、取消、输入错误和沙箱拒绝均 `isError=true`；成功 `isError=false`。两路输出保留各自内容，不把 runner 诊断混进 stderr。Go 核心接口为 `runner.Config.Execute(ctx, Request) (Outcome, error)`，办公生成工具继续使用共用 runner 的文本适配 `Run`。
+shell 与 python 都返回 JSON 文本：`{ok, exit_code, stdout, stderr, timed_out, canceled, file_changes}`；失败附加 `error` 说明。`exit_code=-1` 表示未启动或被信号终止，其他值是实际进程退出码。父进程先以 0 退出但后代持有输出管道直到超时的场景，exit_code 仍可为 0，必须依据 ok/timed_out 判断结果。非零退出、超时、取消、输入错误和沙箱拒绝均 `isError=true`；成功 `isError=false`。两路输出保留各自内容，不把 runner 诊断混进 stderr。Go 核心接口为 `runner.Config.Execute(ctx, Request) (Outcome, error)`，办公生成工具继续使用共用 runner 的文本适配 `Run`。
 
 ## 无会话元数据目录
 
@@ -60,3 +60,11 @@ CODE_BWRAP_PATH=/usr/bin/bwrap ORKA_REQUIRE_SANDBOX_TEST=1 go test ./tools_serve
 复现：先构建项目 Dockerfile，再运行 `bash tools_server/test-image.sh`（`ORKA_TEST_IMAGE` 可选指定标签）。脚本只使用临时假账号和临时挂载数据，不读取 .env。Go 测试编译使用 GOPROXY=off，要求本地已有模块缓存。Docker legacy builder 不识别 Dockerfile 专属 ignore 文件，建议只打包 orka_core/tools_server 两模块作为构建上下文。最终验证构建使用本地缓存生成临时 vendor 并 `docker build --network none --build-arg GOPROXY=off`，没有访问第三方 Go 代理。
 
 tools 镜像保留默认 CODE_EXECUTION=0。启用 UI 真实 code 场景时，部署须显式设 CODE_EXECUTION=1，同时本次请求须有 code:execute；自动模式由控制层为当前会话签发执行 scope，手动受限范围与目录读取不因此扩大权限。office 不依赖任意代码开关，但仍依赖可用的严格沙箱。UID/GID 必须与挂载工作区所有者一致，Compose 默认1000，可通过 HOST_UID/HOST_GID 覆盖。
+
+## 2026-09 执行证据与产物发现
+
+- shell 使用 Bash `--noprofile --norc -e -o pipefail`：管道中的失败或普通命令失败会停止当前脚本，避免 `测试 | tee 日志; echo 成功` 吞掉退出码。预期失败应用 if/else 显式处理；脚本仍可自行捕获错误，所以退出 0 不等于业务验收通过。
+- 每次严格沙箱调用的 `/tmp` 和内存独立，后续调用需要的项目/解压文件应保存到工作区相对路径。依赖由运行镜像预装；压缩包可使用 Python 标准库 zipfile/shutil。
+- `file_changes.paths` 为执行前后文件大小/修改时间变化的观察结果；跳过链接、隐藏目录、node_modules 与 Python 缓存，最多扫描 4096 个条目、返回 256 个变化路径。不完整或取消时 `partial=true`。该列表不是内容哈希验收，也不是自动版本备份。
+- 文件存在性仍由会话文件接口验证。失败调用也可能已生成日志；前端保留其文件入口，同时明确显示失败状态。
+- 控制层在沙箱之外的验收目录保存执行记录（真实退出码、受限长度的命令及 stdout/stderr），可在工作台验收记录展开查看；它与业务规则/交互验收分开，不自动转换为“需求通过”。

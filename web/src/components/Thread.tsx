@@ -1,3 +1,4 @@
+import { executionError } from '../lib/executionResult';
 import { HomeWelcome } from "./HomeWelcome";
 import { ActionChip } from './ActionChip';
 import { useDeliveryManifest } from '../hooks/useDeliveryManifest';
@@ -333,6 +334,9 @@ export function Thread({
 // tied to the session instead of lost in the flat global file panel. Click a
 // chip to preview (image / pdf / md / text), reusing the shared FilePreview.
 function SessionFiles({ files, onOpen }: { files: string[]; onOpen: (name: string) => void }) {
+  const scope = useContext(FileScopeCtx);
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => setExpanded(false), [scope.conversationID]);
   const icon = (n: string) =>
     /\.(png|jpe?g|gif|webp|svg)$/i.test(n) ? "🖼️"
     : /\.pdf$/i.test(n) ? "📕"
@@ -344,19 +348,24 @@ function SessionFiles({ files, onOpen }: { files: string[]; onOpen: (name: strin
   return (
     <div className="mb-6 ml-[42px] rounded-xl border border-border bg-surface2/40 p-3">
       <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-faint">📎 本会话文件 · {files.length}</div>
-      <div className="flex flex-wrap gap-1.5">
-        {files.map((f) => (
+      <div className="flex max-h-64 flex-wrap gap-1.5 overflow-y-auto">
+        {(expanded ? files : files.slice(0, 8)).map((f) => (
+          <div key={f} className="flex max-w-full items-center rounded-full border border-border bg-surface">
           <button
-            key={f}
             onClick={() => onOpen(f)}
-            className="flex max-w-full items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-[12.5px] text-ink hover:border-accent/40 hover:text-accent transition"
+            className="flex min-w-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[12.5px] text-ink hover:border-accent/40 hover:text-accent transition"
             title={"预览 " + f}
           >
             <span className="shrink-0">{icon(f)}</span>
             <span className="truncate">{f}</span>
           </button>
+          <a className="shrink-0 p-2 text-muted hover:text-accent" href={fileApi.downloadURL(f, scope.conversationID)} aria-label={"下载 " + f}><Icon name="download" size={13}/></a>
+          </div>
         ))}
       </div>
+      {files.length > 8 && <ActionChip className="mt-2" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>
+        {expanded ? '收起文件' : `查看全部 ${files.length} 个文件`}
+      </ActionChip>}
     </div>
   );
 }
@@ -772,7 +781,7 @@ function groupRuns(items: Message[]): { key: string; items: Message[] }[] {
   for (const m of items) {
     const p = m.type === "tool" ? (m.payload as ToolPayload) : null;
     // errors and non-tool events are never folded away
-    const key = p && !p.error ? "tool:" + (p.tool || "") : "solo:" + m.id;
+    const key = p && !executionError(p) ? "tool:" + (p.tool || "") : "solo:" + m.id;
     const last = out[out.length - 1];
     if (last && last.key === key) last.items.push(m);
     else out.push({ key, items: [m] });
@@ -813,7 +822,7 @@ function CollapsedRun({ items, prev }: { items: Message[]; prev?: Message }) {
 // TimelineRow wraps one Step with a status node on the spine + elapsed time, so
 // the steps read as a timeline ("图标 + 动作 + 耗时 + 状态") not a flat list.
 function TimelineRow({ m, prev }: { m: Message; prev?: Message }) {
-  const err = m.type === "tool" && !!(m.payload as ToolPayload)?.error;
+  const err = m.type === "tool" && !!executionError((m.payload as ToolPayload) || { tool: "" });
   const dur = prev && m.ts && prev.ts ? m.ts - prev.ts : 0;
   return (
     <div className="relative flex items-start gap-2 py-0.5">
@@ -957,7 +966,8 @@ function Step({ m }: { m: Message }) {
   const openFile = useContext(OpenFileCtx);
   const [shotBroken, setShotBroken] = useState(false);
   if (m.type === "tool") {
-    const p = (m.payload as ToolPayload) || ({} as ToolPayload);
+    const raw = (m.payload as ToolPayload) || ({} as ToolPayload);
+    const p = { ...raw, error: executionError(raw) };
     const r = toolReceipt(p);
     return (
       <div className="text-[13px]">

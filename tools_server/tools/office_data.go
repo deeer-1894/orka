@@ -371,7 +371,7 @@ func pythonRun(base string) mcpserver.ToolHandlerFunc {
 		if argv := strings.Fields(req.GetString("argv", "")); len(argv) > 0 {
 			args = append(args, argv...)
 		}
-		out, _ := runner.FromEnv().Execute(ctx, runner.Request{Root: root, Program: "python3", Args: args})
+		out, _ := runner.FromEnv().Execute(ctx, runner.Request{Root: root, Program: "python3", TrackFiles: true, Args: args})
 		return executionResult(out), nil
 	}
 }

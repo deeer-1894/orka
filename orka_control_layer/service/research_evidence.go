@@ -23,6 +23,7 @@ type evidenceRecord struct {
 	URL            string `json:"url,omitempty"`
 	Query          string `json:"query,omitempty"`
 	Title          string `json:"title,omitempty"`
+	Coverage       string `json:"coverage,omitempty"`
 	RetrievedAt    string `json:"retrieved_at"`
 	Path           string `json:"path,omitempty"`
 	Excerpt        string `json:"excerpt,omitempty"`
@@ -60,6 +61,9 @@ func (s *evidenceStore) capture(ctx context.Context, key, tool string, args map[
 		if strings.HasPrefix(line, "URL: ") {
 			r.URL = strings.TrimPrefix(line, "URL: ")
 		}
+		if strings.HasPrefix(line, "Coverage: ") {
+			r.Coverage = strings.TrimPrefix(line, "Coverage: ")
+		}
 		if strings.HasPrefix(line, "Title: ") {
 			r.Title = strings.TrimPrefix(line, "Title: ")
 		}
@@ -78,7 +82,7 @@ func (s *evidenceStore) capture(ctx context.Context, key, tool string, args map[
 	s.records = append(s.records, r)
 	if r.Path != "" {
 		s.writeCatalogLocked(ctx)
-		return fmt.Sprintf("[Evidence %s; retrieved %s; full text: %s]\n%s", r.ID, r.RetrievedAt, r.Path, trunc(body, evidencePreviewChars))
+		return fmt.Sprintf("[Evidence %s; retrieved %s; saved tool response (may be partial): %s]\n%s", r.ID, r.RetrievedAt, r.Path, trunc(body, evidencePreviewChars))
 	}
 	// Do not truncate the only accessible copy if persistence is unavailable.
 	return body
@@ -154,7 +158,7 @@ type evidenceSearchTool struct{ s *researchSession }
 
 func (evidenceSearchTool) Name() string { return "search_evidence" }
 func (evidenceSearchTool) Description() string {
-	return "Search this run's already-read sources without network requests. Returns source URLs, retrieval dates, relevant excerpts and full-text file paths. Use before repeating searches or re-fetching pages. Empty query lists the first saved sources."
+	return "Search this run's already-read sources without network requests. Returns source URLs, retrieval dates, relevant excerpts and saved tool-response paths and coverage (a saved response may be a truncated page or selected passages). Use before repeating searches or re-fetching pages. Empty query lists the first saved sources."
 }
 func (evidenceSearchTool) Schema() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string", "description": "keywords, source URL, or evidence id"}, "limit": map[string]any{"type": "integer", "description": "maximum results, 1 to 10; default 5"}}}

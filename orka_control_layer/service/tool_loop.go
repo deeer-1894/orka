@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"strings"
 	"sync"
 )
 
@@ -52,7 +54,7 @@ func (d *loopDetector) observe(key, result string) string {
 	if d == nil {
 		return ""
 	}
-	digest := sha256.Sum256([]byte(result))
+	digest := sha256.Sum256([]byte(loopObservation(key, result)))
 	result = hex.EncodeToString(digest[:])
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -67,9 +69,36 @@ func (d *loopDetector) observe(key, result string) string {
 		return ""
 	}
 	return "\n\n[系统] 你已经用完全相同的参数调用了这个工具 " + itoa(d.seen[key]) +
-		" 次,每次返回的内容都一样。再调一次不会得到新信息。" +
+		" 次,每次返回的有效结果都一样。再调一次不会得到新信息。" +
 		"相同返回值不代表操作成功，也不代表验收通过。请根据返回结果修复失败或继续未完成步骤。" +
 		"如果你在找某样东西却没找到,换一种方式(更具体的路径、别的工具),不要重复同一个调用。"
+}
+
+// Timing jitter is not recovery evidence. Normalize only explicit browser
+// failures; preserve page identity/epoch, error details and all other results.
+func loopObservation(key, result string) string {
+	if !strings.HasPrefix(key, "browser\x00") {
+		return result
+	}
+	var value map[string]any
+	decoder := json.NewDecoder(strings.NewReader(result))
+	decoder.UseNumber()
+	if !json.Valid([]byte(result)) || decoder.Decode(&value) != nil || value["ok"] != false {
+		return result
+	}
+	failure, ok := value["error"].(map[string]any)
+	if !ok {
+		return result
+	}
+	if code, ok := failure["code"].(string); !ok || code == "" {
+		return result
+	}
+	delete(value, "elapsed_ms")
+	normalized, err := json.Marshal(value)
+	if err != nil {
+		return result
+	}
+	return string(normalized)
 }
 
 // ---- context carrier ----

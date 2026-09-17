@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,61 @@ import (
 
 //go:embed testdata/workbench.html
 var contractPage string
+
+func TestRealWorkspacePreview(t *testing.T) {
+	endpoint := os.Getenv("ORKA_BROWSER_TEST_WS")
+	if endpoint == "" {
+		t.Skip("set ORKA_BROWSER_TEST_WS for isolated Chromium")
+	}
+	base := t.TempDir()
+	who := connectors.GUIIdentity{OwnerID: "preview-contract", ConversationID: fmt.Sprintf("preview-%d", time.Now().UnixNano()), RunID: "preview-run"}
+	root, err := pathsafe.EnsureSession(base, who.OwnerID, who.ConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := `<!doctype html><title>Workspace contract</title><input id="name"><button id="apply">Apply</button><output id="result">Waiting</output><input type="number" id="threshold"><p>Median 5.05; date 2026-09-15</p><input type="number" id="pin" autocomplete="one-time-code"><output id="secret"></output><script>document.querySelector('#apply').onclick=()=>document.querySelector('#result').textContent='Applied: '+document.querySelector('#name').value;document.querySelector('#pin').oninput=e=>document.querySelector('#secret').textContent=e.target.value;</script><!--` + strings.Repeat("x", 150000) + `-->`
+	if err = os.WriteFile(filepath.Join(root, "dashboard.html"), []byte(html), 0600); err != nil {
+		t.Fatal(err)
+	}
+	tool := New(connectors.NewBrowserDialer(endpoint, os.Getenv("ORKA_BROWSER_TEST_TOKEN")), base)
+	ctx := connectors.WithGUIIdentity(context.Background(), who)
+	invoke := func(args map[string]any) Result {
+		t.Helper()
+		raw, err := tool.Invoke(ctx, args)
+		var r Result
+		if err != nil || json.Unmarshal([]byte(raw), &r) != nil || !r.OK {
+			t.Fatalf("%v: %s %v", args, raw, err)
+		}
+		return r
+	}
+	preview := invoke(map[string]any{"action": "preview", "path": "dashboard.html"})
+	if preview.Preview == nil || preview.Preview.Size != int64(len(html)) || preview.Title != "Workspace contract" {
+		t.Fatalf("wrong preview receipt: %+v", preview)
+	}
+	invoke(map[string]any{"action": "fill", "selector": "#name", "text": "Verified from workspace"})
+	result := invoke(map[string]any{"action": "click", "selector": "#apply"})
+	if result.Snapshot == nil || !strings.Contains(result.Snapshot.Text, "Applied:") {
+		raw, _ := json.Marshal(result)
+		t.Fatalf("interaction not reflected: %s", raw)
+	}
+	checked := invoke(map[string]any{"action": "evaluate", "expression": "document.querySelector('#result').textContent === 'Applied: Verified from workspace'"})
+	if checked.Value != true {
+		t.Fatalf("wrong input value applied: %+v", checked.Value)
+	}
+	invoke(map[string]any{"action": "screenshot", "path": "preview.png"})
+	next := invoke(map[string]any{"action": "preview", "path": "dashboard.html"})
+	if next.Snapshot == nil || !strings.Contains(next.Snapshot.Text, "Waiting") || strings.Contains(next.Snapshot.Text, "Applied:") {
+		t.Fatal("preview did not reload actual file")
+	}
+	numeric := invoke(map[string]any{"action": "fill", "selector": "#threshold", "text": "5"})
+	if !strings.Contains(numeric.Snapshot.Text, "Median 5.05; date 2026-09-15") {
+		t.Fatalf("numeric filter damaged page evidence: %s", numeric.Snapshot.Text)
+	}
+	private := invoke(map[string]any{"action": "fill", "selector": "#pin", "text": "123456"})
+	if strings.Contains(private.Snapshot.Text, "123456") || !strings.Contains(private.Snapshot.Text, "[redacted]") {
+		t.Fatalf("credential input lost redaction: %s", private.Snapshot.Text)
+	}
+}
 
 // This opt-in contract uses a separate authenticated bridge and disposable
 // Chromium sessions. It performs no model calls and never attaches to user tabs.

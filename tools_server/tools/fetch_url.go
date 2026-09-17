@@ -109,7 +109,11 @@ func fetchURL() mcpserver.ToolHandlerFunc {
 		}
 		readable := extractPage(page)
 		body := truncatePageBytes(readable.Text, maxFetchBodyChars)
-		out := formatPageText(page.URL.String(), readable.Title, body)
+		coverage := "complete_readable_text"
+		if len(readable.Text) > maxFetchBodyChars {
+			coverage = "truncated"
+		}
+		out := formatPageObservation(page.URL.String(), readable.Title, body, coverage, len(readable.Text))
 		return mcp.NewToolResultText(out), nil
 	}
 }

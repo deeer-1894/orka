@@ -55,6 +55,17 @@ func (e *Engine) Run(ctx context.Context, identity connectors.GUIIdentity, req R
 	opCtx, cancel := context.WithTimeout(ctx, duration)
 	defer cancel()
 	session := Session{Lease: lease, Identity: identity}
+	if req.Action == "preview" {
+		reader, ok := files.(PreviewReader)
+		if !ok {
+			err = NewActionError("unavailable", "Workspace HTML preview is unavailable.")
+			return
+		}
+		result.Preview, err = openPreview(opCtx, session, reader, req.Path)
+		if err != nil {
+			return
+		}
+	}
 	if req.Action == "open" {
 		var response struct {
 			ErrorText  string `json:"errorText"`
@@ -78,7 +89,7 @@ func (e *Engine) Run(ctx context.Context, identity connectors.GUIIdentity, req R
 	switch req.Action {
 	case "snapshot":
 		err = observe(opCtx, session, &result)
-	case "open":
+	case "open", "preview":
 		err = waitFor(opCtx, session, Request{Condition: req.Condition})
 		if err == nil {
 			err = observe(opCtx, session, &result)
@@ -151,6 +162,10 @@ func validateRequest(identity connectors.GUIIdentity, r Request) error {
 	}
 	target := r.Ref != "" || strings.TrimSpace(r.Selector) != ""
 	switch r.Action {
+	case "preview":
+		if !validPreviewPath(r.Path) || len(r.Path) > 1024 {
+			return invalid()
+		}
 	case "open":
 		u, err := url.Parse(r.URL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil {

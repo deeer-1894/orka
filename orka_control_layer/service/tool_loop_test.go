@@ -1,9 +1,47 @@
 package service
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
+
+func TestBrowserRepeatedFailureIgnoresElapsedTimeOnly(t *testing.T) {
+	d := newLoopDetector()
+	key := "browser\x00{\"action\":\"evaluate\",\"expression\":\"same invalid code\"}"
+	for i := 1; i <= 3; i++ {
+		result := fmt.Sprintf(`{"ok":false,"action":"evaluate","page_id":"one","page_epoch":2,"elapsed_ms":%d,"error":{"code":"script_error","message":"Browser page script failed."}}`, i*13)
+		note := d.observe(key, result)
+		if (note != "") != (i == 3) {
+			t.Fatalf("attempt %d: %q", i, note)
+		}
+	}
+	// A different page epoch/error is new evidence, even with identical arguments.
+	if note := d.observe(key, `{"ok":false,"action":"evaluate","page_id":"one","page_epoch":3,"elapsed_ms":40,"error":{"code":"script_error","message":"Browser page script failed."}}`); note != "" {
+		t.Fatal("new page state treated as unchanged failure")
+	}
+}
+
+func TestBrowserLoopNormalizationPreservesOtherEvidence(t *testing.T) {
+	for _, key := range []string{"browser\x00{}", "other\x00{}"} {
+		d := newLoopDetector()
+		for i := 1; i <= 4; i++ {
+			result := fmt.Sprintf(`{"ok":true,"elapsed_ms":%d,"value":%d}`, i, i)
+			if note := d.observe(key, result); note != "" {
+				t.Fatal("changing successful result was normalized")
+			}
+		}
+	}
+	original := `{"ok":false,"elapsed_ms":1,"error":{"code":"script_error"}}`
+	if loopObservation("other\x00{}", original) != original {
+		t.Fatal("unrelated tool was normalized")
+	}
+	for _, raw := range []string{"not json", `{"ok":false}`, `{"ok":false,"error":"failed"}`, original + " trailing evidence"} {
+		if loopObservation("browser\x00{}", raw) != raw {
+			t.Fatal("non-contract result changed")
+		}
+	}
+}
 
 // The run that motivated this produced all nine of its deliverables and then
 // called file_list five times with identical arguments, getting identical output

@@ -42,6 +42,7 @@ type Result struct {
 	Title     string       `json:"title,omitempty"`
 	Snapshot  *Snapshot    `json:"snapshot,omitempty"`
 	Files     []FileResult `json:"files,omitempty"`
+	Preview   *FileResult  `json:"preview,omitempty"`
 	Value     any          `json:"value,omitempty"`
 	ElapsedMS int64        `json:"elapsed_ms"`
 	Error     *ActionError `json:"error,omitempty"`

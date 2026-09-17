@@ -1,6 +1,8 @@
 package service
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"github.com/cloudwego/eino/schema"
@@ -198,5 +200,37 @@ func TestDeliveryResponseModeSurvivesRecoveryAndCanBeChanged(t *testing.T) {
 	restoreCheckpoint(&runCheckpoint{Outputs: []string{"report.md"}}, nil, nil, legacy)
 	if legacy.responseMode() != "answer" {
 		t.Fatal("legacy checkpoint opted into receipt")
+	}
+}
+
+func TestFileReceiptRetainsArchiveReferenceWarnings(t *testing.T) {
+	root := t.TempDir()
+	var b bytes.Buffer
+	w := zip.NewWriter(&b)
+	f, err := w.Create("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.Write([]byte("Evidence: `tests/final.log`")); err != nil {
+		t.Fatal(err)
+	}
+	if err = w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(root, "release.zip"), b.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	d := newDeliveryTracker(root)
+	if err = d.configure([]string{"release.zip"}, "file_receipt"); err != nil {
+		t.Fatal(err)
+	}
+	p := &planTracker{}
+	p.record([]messages.PlanStep{{Title: "Deliver", Status: "done"}})
+	ctx := withDelivery(withPlanTracker(context.Background(), p), d)
+	got := deliveryResponse(ctx, schema.AssistantMessage("done", nil)).Content
+	for _, want := range []string{"[release.zip](./release.zip)", "包内引用待核对", "tests/final.log"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q: %s", want, got)
+		}
 	}
 }

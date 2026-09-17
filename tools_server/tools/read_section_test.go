@@ -54,3 +54,26 @@ func TestFetchURLUnicodeCompatibility(t *testing.T) {
 		t.Fatalf("broken fetch compatibility: %.100s", out)
 	}
 }
+
+func TestFetchReportsCoverageAndReadSectionFindsAPIDefinition(t *testing.T) {
+	s := docsFixture(t, map[string]string{"/api": `<html><h1>API</h1><p>Connection.backup index</p><dt id="sqlite3.Connection.create_function">Connection.create_function(name)</dt><dd><p>` + strings.Repeat("connection target pages sqlite3 unrelated ", 1000) + `</p></dd><dt id="sqlite3.Connection.backup">Connection.backup(target, *, pages=-1)</dt><dd><p>COPY_DATABASE_BACKUP into target.</p></dd></html>`})
+	_, out := callDocsTool(t, "fetch_url", map[string]any{"url": s.URL + "/api"})
+	if !strings.Contains(out, "Coverage: truncated") {
+		t.Fatalf("missing truncation metadata: %.150s", out)
+	}
+	res, out := callDocsTool(t, "read_section", map[string]any{"url": s.URL + "/api", "query": "Connection.backup target pages sqlite3", "max_chars": 200})
+	if res.IsError || !strings.Contains(out, "COPY_DATABASE_BACKUP") {
+		t.Fatalf("missed API definition: %s", out)
+	}
+	if !strings.Contains(out, "Coverage: selected_passages") {
+		t.Fatal("section presented as full page")
+	}
+}
+
+func TestFetchCoverageAtByteBoundary(t *testing.T) {
+	s := docsFixture(t, map[string]string{"/text": strings.Repeat("x", maxFetchBodyChars+1)})
+	res, out := callDocsTool(t, "fetch_url", map[string]any{"url": s.URL + "/text"})
+	if res.IsError || !strings.Contains(out, "Coverage: truncated") {
+		t.Fatalf("%s", out[:min(len(out), 150)])
+	}
+}

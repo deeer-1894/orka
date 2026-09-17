@@ -64,6 +64,14 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 	// Retry infrastructure failures before giving up. A dropped MCP socket is not
 	// a result the model should have to reason about, and it was the single
 	// biggest source of tool failures here.
+	var revisions executionRevisionSnapshot
+	if name == "shell" || name == "python" {
+		revisions.scope = "declared_outputs"
+		if len(deliveryFrom(ctx).snapshot()) == 0 {
+			revisions.scope = "workspace_sample"
+		}
+		revisions.files, revisions.partial = executionRevisions(ctx)
+	}
 	retries := 0
 	out, err := researchFrom(ctx).invoke(ctx, name, args, func() (string, error) {
 		result, callErr, n := retryTransient(ctx, func() (string, error) { return t.base.Invoke(ctx, args) })
@@ -84,7 +92,16 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 		if isInterruptErr(err) {
 			return "", err
 		}
-		return toolErrorMessage(name, err, retries), nil
+		return toolErrorMessage(name, err, retries) +
+			loopDetectorFrom(ctx).observe(cacheKey, err.Error()) +
+			recordExecution(ctx, name, args, err.Error(), revisions), nil
+	}
+	evidenceNote := recordExecution(ctx, name, args, out, revisions)
+	deliveryNote := ""
+	if name == "file_write" {
+		if path, ok := args["path"].(string); ok {
+			deliveryNote = deliveryFrom(ctx).noteUndeclaredWrites([]string{path}) + deliveryFrom(ctx).inspectWrittenArchives(ctx, []string{path})
+		}
 	}
 	// Annotate a call the run has already made identically. Not blocked and not
 	// an error — the model is simply told the result is unchanged, which from
@@ -92,7 +109,7 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 	if note := loopDetectorFrom(ctx).observe(cacheKey, out); note != "" {
 		out += note
 	}
-	return out + deliveryFrom(ctx).inspectProduced(ctx, name), nil
+	return out + evidenceNote + deliveryNote + deliveryFrom(ctx).inspectProduced(ctx, name), nil
 }
 
 // EinoTools adapts a slice of BaseTools.

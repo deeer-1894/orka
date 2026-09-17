@@ -1,6 +1,8 @@
 package service
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -128,5 +130,59 @@ func TestProducedChecksDeferUndisplayedFailures(t *testing.T) {
 	}
 	if got := d.inspectProduced(context.Background(), "shell"); got != "" {
 		t.Fatal("already delivered errors repeated")
+	}
+}
+
+func TestProducedArchiveNotesAreAdvisoryAndRevisionScoped(t *testing.T) {
+	root := t.TempDir()
+	d := newDeliveryTracker(root)
+
+	write := func(include bool) {
+		t.Helper()
+		var b bytes.Buffer
+		w := zip.NewWriter(&b)
+		f, err := w.Create("README.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = f.Write([]byte("Test evidence: `tests/final.log`")); err != nil {
+			t.Fatal(err)
+		}
+		if include {
+			f, err = w.Create("tests/final.log")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = f.Write([]byte("OK")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err = w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(filepath.Join(root, "release.zip"), b.Bytes(), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(false)
+	ctx := withAcceptance(withDelivery(context.Background(), d), t.TempDir(), "owner", "conversation", "archive-run")
+	out, err := EinoTool(retrievalFixture{"shell", func(context.Context, map[string]any) (string, error) {
+		return `{"ok":true,"exit_code":0,"stdout":"","stderr":"","file_changes":{"paths":["release.zip"]}}`, nil
+	}}).InvokableRun(ctx, `{}`)
+	if err != nil || !strings.Contains(out, "tests/final.log") || !strings.Contains(out, "not a failed structural check") {
+		t.Fatalf("missing early advisory: %s %v", out, err)
+	}
+	if got := d.inspectWrittenArchives(ctx, []string{"release.zip"}); got != "" {
+		t.Fatal("unchanged ZIP reviewed repeatedly", got)
+	}
+	if got := d.failures(ctx); len(got) != 0 {
+		t.Fatal("prose advisory became hard failure", got)
+	}
+	if len(d.snapshot()) != 0 {
+		t.Fatal("observed ZIP became a declared deliverable")
+	}
+	write(true)
+	if got := d.inspectWrittenArchives(ctx, []string{"release.zip"}); got != "" {
+		t.Fatal("repaired ZIP still warns", got)
 	}
 }

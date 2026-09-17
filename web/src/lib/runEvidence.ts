@@ -10,6 +10,8 @@ export interface AcceptanceResult {
   detail?: string;
 }
 export interface RunAcceptance {
+  executions?: {revision_scope?: string; error?: string; files?: {path:string;sha256:string}[]; changed_during?: string[]; changed_since?: string[]; revisions_partial?: boolean; id: string; run_id: string; at: number; tool: string; command: string; ok: boolean; exit_code: number; timed_out: boolean; canceled: boolean; stdout: string; stderr: string; output_truncated: boolean}[];
+  executions_truncated?: boolean;
   contract: { run_id: string; requests: unknown[]; truncated: boolean };
   checks: {
     at: string;

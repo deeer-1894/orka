@@ -37,7 +37,7 @@ FROM python:3.12-slim-bookworm
 # merely slow link rather than a blocked one.
 ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        bubblewrap git curl ca-certificates jq pandoc wkhtmltopdf poppler-utils fonts-noto-cjk \
+        bash bubblewrap git curl ca-certificates jq pandoc wkhtmltopdf poppler-utils fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir --index-url "$PIP_INDEX_URL" --retries 5 --timeout 60 \
         matplotlib pandas numpy openpyxl python-pptx

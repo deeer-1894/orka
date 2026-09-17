@@ -16,6 +16,7 @@ import (
 
 	"github.com/orka-oss/orka_core/acceptance"
 	"github.com/orka-oss/orka_core/messages"
+	"github.com/orka-oss/orka_core/pathsafe"
 )
 
 type acceptanceScope struct {
@@ -36,8 +37,10 @@ type AcceptanceRecord struct {
 	Report   acceptance.Report `json:"report"`
 }
 type AcceptanceHistory struct {
-	Contract AcceptanceContract `json:"contract"`
-	Checks   []AcceptanceRecord `json:"checks"`
+	Executions          []ExecutionEvidence `json:"executions"`
+	ExecutionsTruncated bool                `json:"executions_truncated"`
+	Contract            AcceptanceContract  `json:"contract"`
+	Checks              []AcceptanceRecord  `json:"checks"`
 }
 
 func acceptanceDir(scope acceptanceScope) (string, error) {
@@ -190,7 +193,31 @@ func saveAcceptanceCheck(ctx context.Context, record AcceptanceRecord) error {
 	return writeNewAcceptance(filepath.Join(dir, name), body)
 }
 func (s *ChatService) AcceptanceFor(owner, conv, runID string) (AcceptanceHistory, error) {
-	return readAcceptance(acceptanceScope{base: s.Cfg.Storage.BaseStoragePath, owner: owner, conversation: conv, runID: runID})
+	scope := acceptanceScope{base: s.Cfg.Storage.BaseStoragePath, owner: owner, conversation: conv, runID: runID}
+	history, err := readAcceptance(scope)
+	if err != nil {
+		return history, err
+	}
+	for _, id := range append([]string{runID}, history.Contract.InheritedRunIDs...) {
+		if len(history.Executions) >= 200 {
+			history.ExecutionsTruncated = true
+			break
+		}
+		scope.runID = id
+		records, partial, err := readExecutionEvidenceLimit(scope, 200-len(history.Executions))
+		if err != nil {
+			return history, err
+		}
+		history.Executions = append(history.Executions, records...)
+		history.ExecutionsTruncated = history.ExecutionsTruncated || partial
+	}
+	sort.SliceStable(history.Executions, func(i, j int) bool { return history.Executions[i].At < history.Executions[j].At })
+	root, err := pathsafe.SessionRoot(s.Cfg.Storage.BaseStoragePath, owner, conv)
+	if err != nil {
+		return history, err
+	}
+	refreshExecutionHistory(context.Background(), root, history.Executions)
+	return history, nil
 }
 func readAcceptanceRun(scope acceptanceScope) (AcceptanceHistory, error) {
 	runID := scope.runID

@@ -62,7 +62,7 @@ export default function RunsPanel({
    <p className="text-sm">{r.prompt}</p><p className="line-clamp-3 text-xs text-muted">{r.error || r.output}</p>
    {!!r.unfinished?.length && <p className="text-xs text-muted">未完成：{r.unfinished.join(' · ')}</p>}
    {r.budget_hit && <p className="text-xs text-muted">历史停止原因：{r.budget_hit === 'tokens' ? '旧 Token 限额（已取消）' : r.budget_hit}</p>}
-   <p className="text-xs text-faint">{Math.round((r.duration_ms || 0) / 1000)} 秒 · {r.tokens || 0} tokens · {r.tool_calls || 0} 次工具调用</p>
+   <p className="text-xs text-faint">{r.status === "running" ? "执行中，实时用量见概览" : `${Math.round((r.duration_ms || 0) / 1000)} 秒 · ${r.tokens || 0} tokens · ${r.tool_calls || 0} 次工具调用`}</p>
    <div className="flex flex-wrap gap-3 text-sm"><ActionChip onClick={() => onJumpToConversation(r.conversation_id)} icon="share">查看对话</ActionChip>
    {resumableRun(r) && canResumeRun(r) && <ActionChip disabled={pending !== null || isRunBusy(r.conversation_id)} onClick={() => void execute(r, true)} icon="play">继续任务</ActionChip>}
    {!['running', 'paused'].includes(r.status) && <ActionChip disabled={pending !== null || isRunBusy(r.conversation_id)} onClick={() => void execute(r, false)} icon="refresh">重新执行</ActionChip>}</div>

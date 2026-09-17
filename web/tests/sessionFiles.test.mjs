@@ -34,6 +34,26 @@ test('conversation filter and new-turn plan boundaries discard unrelated declara
   const items = [tool('update_plan', { outputs: ['B/old.md'] }), msg('chat', null, { role: 'user', content: 'new task' }), tool('update_plan', { outputs: ['F/new.md'] }), { ...tool('file_write', { path: 'E/old.md' }), meta: { conversation_id: 'e' } }];
   assert.deepEqual(sessionFileCandidates(items, ctx), ['F/new.md']);
 });
+
+test('current deliverables stay visible ahead of intermediate files but require existence', async () => {
+ const messages = Array.from({length:12},(_,i)=>tool('file_write',{path:`source-${i}.py`}));
+ messages.push(tool('update_plan',{outputs:['release.zip','validation.md']}));
+ const candidates=sessionFileCandidates(messages,ctx);
+ assert.deepEqual(candidates.slice(0,2),['release.zip','validation.md']);
+ const found=await existingSessionFiles(candidates,async()=>candidates.filter(p=>p!=='validation.md').map(name=>({name,dir:false})));
+ assert.equal(found[0],'release.zip');assert.ok(!found.includes('validation.md'));
+});
+test('steering an active task preserves its declared deliverable priority', () => {
+  const messages = [
+    tool('file_write', { path: 'source.py' }),
+    { ...tool('update_plan', { outputs: ['release.zip'] }), meta: { conversation_id: 'f', run_id: 'active' } },
+    msg('chat', null, { role: 'user', action: 'human_input', content: '补充发布回归', meta: { conversation_id: 'f', run_id: 'active' } }),
+    tool('file_write', { path: 'tests.py' }),
+  ];
+  assert.deepEqual(sessionFileCandidates(messages, ctx), ['release.zip', 'source.py', 'tests.py']);
+  messages.push(msg('chat', null, { role: 'user', action: 'human_input', content: '另一个任务', meta: { conversation_id: 'f', run_id: 'next' } }));
+  assert.deepEqual(sessionFileCandidates(messages, ctx), ['source.py', 'tests.py']);
+});
 test('finished explicit deliverable links are accepted but generic link mentions are not', () => {
   assert.deepEqual(sessionFileCandidates([msg('chat', null, { content: '已生成：[报告](F/report.md)' }), msg('chat', null, { content: '可能参考 [旧报告](B/report.md)' })], ctx), ['F/report.md']);
 });
@@ -87,4 +107,39 @@ test('Markdown file links decode paths and remain scoped to the current conversa
     assert.equal(workspaceLinkPath(href, ctx), undefined, href);
   }
   assert.equal(workspaceLinkPath('outputs/a.csv', { ...ctx, conversationID: '' }), undefined);
+});
+
+test('sandbox delivery references resolve only within this conversation workspace', () => {
+  for (const href of ['sandbox:?path=/workspace/report.zip', 'sandbox:/workspace/report.zip', '/workspace/report.zip', 'sandbox:report.zip']) {
+    assert.equal(workspaceLinkPath(href, ctx), 'report.zip');
+  }
+  assert.equal(workspaceLinkPath('sandbox:?path=%2Fworkspace%2F%E6%8A%A5%E5%91%8A%23a.zip', ctx), '报告#a.zip');
+  for (const href of ['sandbox://host/report.zip', 'sandbox:/workspace/../other.zip', 'sandbox:?path=/etc/passwd', 'sandbox:?path=/workspace/a&path=/workspace/b', 'sandbox:?path=/workspace/a&token=x', 'sandbox:javascript:alert(1)', 'javascript:alert(1)', 'sandbox:?path=/storage/me@example.com/sessions/foreign/a']) {
+    assert.equal(workspaceLinkPath(href, ctx), undefined, href);
+  }
+  assert.deepEqual(sessionFileCandidates([msg('chat', null, { content: '下载：[成果](sandbox:?path=/workspace/report.zip)' })], ctx), ['report.zip']);
+});
+
+test('execution metadata exposes archives without stdout declarations, including failed builds', async () => {
+ const receipt = { ok: false, exit_code: 7, stdout: '', file_changes: { paths: ['package.zip', 'out/report.html', '../foreign.zip'], partial: false } };
+ const candidates = sessionFileCandidates([tool('shell', {command:'build'}, JSON.stringify(receipt))], ctx);
+ assert.deepEqual(candidates, ['package.zip', 'out/report.html']);
+ const found = await existingSessionFiles(candidates, async dir => dir === '.' ? [{name:'package.zip',dir:false}] : []);
+ assert.deepEqual(found, ['package.zip']);
+});
+test('execution receipts remain readable with appended inspection notes', () => {
+ const result = JSON.stringify({ok:true, stdout:'Saved: out/report.csv', file_changes:{paths:['bundle.zip']}}) + '\n\n[Workspace inspection: changed files]';
+ assert.deepEqual(sessionFileCandidates([tool('python',{},result)],ctx), ['bundle.zip']);
+});
+
+
+test('failed adapter envelopes keep observed output files accessible', () => {
+ const result = 'tool error (shell, recoverable — adjust the arguments, try another tool, or proceed without this result): tool "shell" error: ' + JSON.stringify({ok:false,exit_code:7,stdout:'',stderr:'test failed',file_changes:{paths:['tests.log']}}) + '\n[Execution evidence id: exit_code=7.]';
+ assert.deepEqual(sessionFileCandidates([tool('shell',{},result)],ctx), ['tests.log']);
+});
+
+
+test('modern execution metadata takes precedence over filenames printed by read-only commands', () => {
+ const result = JSON.stringify({ok:true,exit_code:0,stdout:'Saved: sources/old.md\n.orka_offload/source.txt',file_changes:{paths:[],partial:false}});
+ assert.deepEqual(sessionFileCandidates([tool('shell',{command:'python3 inspect.py'},result)],ctx), []);
 });

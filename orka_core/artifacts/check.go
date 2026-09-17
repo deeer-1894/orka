@@ -34,6 +34,7 @@ type Report struct {
 	OK       bool     `json:"ok"`
 	Files    []File   `json:"files"`
 	Failures []string `json:"failures"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // ValidPath accepts portable workspace-relative paths. os.Root additionally
@@ -93,6 +94,9 @@ func CheckFS(ctx context.Context, root fs.FS, paths []string) Report {
 		if err = validate(ctx, root, p, data); err != nil {
 			fail(p, err)
 			continue
+		}
+		if strings.EqualFold(path.Ext(p), ".zip") {
+			report.Warnings = append(report.Warnings, reviewArchive(ctx, p, data)...)
 		}
 		digest := sha256.Sum256(data)
 		report.Files = append(report.Files, File{Path: p, Bytes: len(data), SHA256: hex.EncodeToString(digest[:])})

@@ -1,5 +1,6 @@
 // Preview documents never receive session credentials or a same-origin window.
 // Resolve local dependencies in the parent, then embed only their bytes.
+import { previewNavigationBootstrap } from './htmlPreviewNavigation';
 export const HTML_PREVIEW_MAX_BYTES = 2_000_000;
 const MAX_ASSETS = 32;
 const MAX_ASSET_BYTES = 1_000_000;
@@ -26,7 +27,7 @@ function dataURL(bytes: Uint8Array, mime: string): string {
 }
 const IMAGE_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', ico: 'image/x-icon', woff: 'font/woff', woff2: 'font/woff2' };
 
-export async function prepareHtmlPreview(html: string, path: string, fetchAsset: (path: string) => Promise<Response>, signal: AbortSignal) {
+export async function prepareHtmlPreview(html: string, path: string, fetchAsset: (path: string) => Promise<Response>, signal: AbortSignal, navigationNonce?: string) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const skipped = new Set<string>();
   const cache = new Map<string, Uint8Array | null>();
@@ -94,6 +95,11 @@ export async function prepareHtmlPreview(html: string, path: string, fetchAsset:
   // A srcset cannot retain same-origin URLs that could contain credentials.
   doc.querySelectorAll('source[srcset]').forEach(node => node.removeAttribute('srcset'));
   doc.querySelectorAll('a').forEach(node => node.setAttribute('rel', 'noreferrer noopener'));
+  if (navigationNonce) {
+    const bridge = doc.createElement('script');
+    bridge.textContent = previewNavigationBootstrap(navigationNonce);
+    doc.head.prepend(bridge);
+  }
   const policy = doc.createElement('meta'); policy.httpEquiv = 'Content-Security-Policy'; policy.content = CSP;
   doc.head.prepend(policy);
   signal.throwIfAborted();
