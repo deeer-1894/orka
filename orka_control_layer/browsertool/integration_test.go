@@ -40,6 +40,7 @@ func TestRealWorkspacePreview(t *testing.T) {
 	ctx := connectors.WithGUIIdentity(context.Background(), who)
 	invoke := func(args map[string]any) Result {
 		t.Helper()
+		args["view"] = "full"
 		raw, err := tool.Invoke(ctx, args)
 		var r Result
 		if err != nil || json.Unmarshal([]byte(raw), &r) != nil || !r.OK {
@@ -187,8 +188,8 @@ func TestRealBrowserContract(t *testing.T) {
 	run(Request{Action: "wait", Condition: "text", Text: "Entered", Selector: "#status"})
 	run(Request{Action: "scroll", Direction: "down", Amount: 500})
 	reject(Request{Action: "click", Selector: ".duplicate"}, "ambiguous_selector")
-	reject(Request{Action: "click", Selector: "#disabled"}, "not_interactable")
-	reject(Request{Action: "click", Selector: "#covered"}, "not_interactable")
+	reject(Request{Action: "click", Selector: "#disabled"}, "not_ready")
+	reject(Request{Action: "click", Selector: "#covered"}, "not_ready")
 	run(Request{Action: "click", Selector: "#replace"})
 	reject(Request{Action: "click", Ref: apply.Ref, SnapshotID: opened.Snapshot.ID}, "stale_ref")
 	evaluated := run(Request{Action: "evaluate", Expression: "document.querySelector('#status').textContent = 'Script updated'; ({value: 42, title: document.title})"})

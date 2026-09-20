@@ -88,16 +88,16 @@ func (e *Engine) Run(ctx context.Context, identity connectors.GUIIdentity, req R
 	}
 	switch req.Action {
 	case "snapshot":
-		err = observe(opCtx, session, &result)
+		err = observe(opCtx, session, &result, req)
 	case "open", "preview":
 		err = waitFor(opCtx, session, Request{Condition: req.Condition})
 		if err == nil {
-			err = observe(opCtx, session, &result)
+			err = observe(opCtx, session, &result, req)
 		}
 	case "wait":
 		err = waitFor(opCtx, session, req)
 		if err == nil {
-			err = observe(opCtx, session, &result)
+			err = observe(opCtx, session, &result, req)
 		}
 	case "evaluate":
 		result.Value, err = evaluate(opCtx, session, req.Expression)
@@ -108,13 +108,21 @@ func (e *Engine) Run(ctx context.Context, identity connectors.GUIIdentity, req R
 		}
 		result.Files, err = files.Execute(opCtx, session, req)
 	default:
-		err = act(opCtx, session, req)
+		if req.Action == "fill_form" {
+			result.Form, err = fillForm(opCtx, session, req.Fields)
+		} else {
+			err = act(opCtx, session, req)
+		}
+		if err != nil && result.Form != nil && result.Form.Completed > 0 {
+			// Preserve the partial receipt and original error; do not replay earlier fields.
+			_ = observe(opCtx, session, &result, Request{Action: "snapshot"})
+		}
 		if err == nil {
 			// A click/key can navigate. Reacquire the main-document world before the
 			// receipt, never replay the mutation if that observation fails.
 			session.ContextID, err = createWorld(opCtx, lease)
 			if err == nil {
-				err = observe(opCtx, session, &result)
+				err = observe(opCtx, session, &result, req)
 			}
 			if err != nil {
 				err = NewActionError("outcome_unknown", "Browser action was dispatched but its final observation is unavailable; inspect the page before retrying.")
@@ -160,8 +168,37 @@ func validateRequest(identity connectors.GUIIdentity, r Request) error {
 	if len(r.Selector) > 4096 || len(r.Ref) > 256 || len(r.SnapshotID) > 512 || len(r.URL) > 8192 {
 		return invalid()
 	}
+	if r.View != "" && r.View != "auto" && r.View != "full" {
+		return invalid()
+	}
+	if len(r.Frame) > 4 || len(r.Frame) > 0 && (r.Ref != "" || strings.TrimSpace(r.Selector) == "") {
+		return invalid()
+	}
+	for _, selector := range r.Frame {
+		if strings.TrimSpace(selector) == "" || len(selector) > 1024 {
+			return invalid()
+		}
+	}
 	target := r.Ref != "" || strings.TrimSpace(r.Selector) != ""
 	switch r.Action {
+	case "fill_form":
+		if len(r.Fields) == 0 || len(r.Fields) > maxFormFields {
+			return invalid()
+		}
+		total := 0
+		for _, field := range r.Fields {
+			if (field.Text == nil) == (field.Value == nil) {
+				return invalid()
+			}
+			f := field.request()
+			total += len(f.Text) + len(f.Value)
+			if err := validateRequest(identity, f); err != nil {
+				return err
+			}
+		}
+		if total > 16<<10 {
+			return invalid()
+		}
 	case "preview":
 		if !validPreviewPath(r.Path) || len(r.Path) > 1024 {
 			return invalid()

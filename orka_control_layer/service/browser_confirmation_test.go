@@ -19,7 +19,7 @@ func TestBrowserConfirmationUsesOperation(t *testing.T) {
 			t.Errorf("read action %s required approval", action)
 		}
 	}
-	for _, action := range []string{"open", "preview", "click", "fill", "select", "press", "scroll", "evaluate", "download", "unknown"} {
+	for _, action := range []string{"open", "preview", "click", "fill", "fill_form", "select", "press", "scroll", "evaluate", "download", "unknown"} {
 		if !needsConfirm("browser", map[string]any{"action": action}) {
 			t.Errorf("mutating action %s bypassed approval", action)
 		}
@@ -119,5 +119,18 @@ func TestBrowserRunConfirmationIsOperationSpecific(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBrowserFormHistoryDoesNotLeakOrModifyLiveFields(t *testing.T) {
+	args := map[string]any{"action": "fill_form", "fields": []any{map[string]any{"selector": "#password", "text": "private-form-secret"}}}
+	display := toolDisplayArgs("browser", args)
+	raw, _ := json.Marshal(display)
+	if strings.Contains(string(raw), "private-form-secret") {
+		t.Fatal("form input leaked")
+	}
+	live, _ := json.Marshal(args)
+	if !strings.Contains(string(live), "private-form-secret") {
+		t.Fatal("live input mutated")
 	}
 }

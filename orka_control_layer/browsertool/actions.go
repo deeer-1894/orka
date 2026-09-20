@@ -2,6 +2,7 @@ package browsertool
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 	"unicode"
@@ -28,7 +29,7 @@ func waitFor(ctx context.Context, s Session, r Request) error {
 }
 
 func act(ctx context.Context, s Session, r Request) error {
-	reply, err := page(ctx, s, r.Action, r)
+	reply, err := prepareAndAct(ctx, s, r)
 	if err != nil {
 		return err
 	}
@@ -36,7 +37,7 @@ func act(ctx context.Context, s Session, r Request) error {
 	case "click":
 		for _, kind := range []string{"mousePressed", "mouseReleased"} {
 			if err = s.Lease.Execute(ctx, "Input.dispatchMouseEvent", map[string]any{"type": kind, "x": reply.X, "y": reply.Y, "button": "left", "clickCount": 1}, nil); err != nil {
-				return err
+				return NewActionError("outcome_unknown", "Input dispatch was not fully acknowledged; inspect the page before retrying.")
 			}
 		}
 	case "press":
@@ -48,11 +49,35 @@ func act(ctx context.Context, s Session, r Request) error {
 				params["unmodifiedText"] = key.text
 			}
 			if err = s.Lease.Execute(ctx, "Input.dispatchKeyEvent", params, nil); err != nil {
-				return err
+				return NewActionError("outcome_unknown", "Input dispatch was not fully acknowledged; inspect the page before retrying.")
 			}
 		}
 	}
 	return nil
+}
+
+// Only not_ready originates before any page mutation. Never replay a dispatched
+// action, script error or transport failure, even when the cause is transient.
+func prepareAndAct(ctx context.Context, s Session, r Request) (pageReply, error) {
+	deadline := time.NewTimer(1500 * time.Millisecond)
+	defer deadline.Stop()
+	for {
+		reply, err := page(ctx, s, r.Action, r)
+		var action *ActionError
+		if !errors.As(err, &action) || action.Code != "not_ready" {
+			return reply, err
+		}
+		timer := time.NewTimer(150 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return pageReply{}, ctx.Err()
+		case <-deadline.C:
+			timer.Stop()
+			return reply, err
+		case <-timer.C:
+		}
+	}
 }
 
 type keySpec struct {

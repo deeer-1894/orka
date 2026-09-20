@@ -14,7 +14,7 @@ func toolDisplayArgs(name string, args map[string]any) map[string]any {
 		return args
 	}
 	out := maps.Clone(args)
-	for _, key := range []string{"text", "value", "expression"} {
+	for _, key := range []string{"text", "value", "expression", "fields"} {
 		if _, ok := out[key]; ok {
 			out[key] = "[redacted]"
 		}

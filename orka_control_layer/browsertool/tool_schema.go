@@ -14,11 +14,14 @@ func toolSchema() map[string]any {
 		return map[string]any{"type": "string", "description": description, "maxLength": limit}
 	}
 	props := map[string]any{
-		"action":      map[string]any{"type": "string", "enum": []string{"open", "preview", "snapshot", "click", "fill", "select", "press", "scroll", "wait", "evaluate", "screenshot", "download"}},
+		"view":        map[string]any{"type": "string", "enum": []string{"auto", "full"}, "description": "auto: actions return changed text and current controls; snapshot always returns full text. full: complete bounded observation after an action."},
+		"frame":       map[string]any{"type": "array", "maxItems": 4, "items": str("Unique CSS selector for each same-origin iframe from outermost to innermost.", 1024)},
+		"fields":      map[string]any{"type": "array", "minItems": 1, "maxItems": maxFormFields, "description": "Ordered fill/select operations, without explicitly clicking or pressing submit; page event handlers may still have effects. Each field needs one target and exactly one of text/value. Partial failure reports completed count; do not replay completed fields.", "items": map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"ref": str("Element reference", 256), "snapshot_id": str("Reference scope", 512), "selector": str("Unique selector", 4096), "frame": map[string]any{"type": "array", "maxItems": 4, "items": str("Frame selector", 1024)}, "text": str("Fill text; empty clears", 16384), "value": str("Select option value", 16384)}}},
+		"action":      map[string]any{"type": "string", "enum": []string{"open", "preview", "snapshot", "click", "fill", "fill_form", "select", "press", "scroll", "wait", "evaluate", "screenshot", "download"}},
 		"url":         str("HTTP(S) URL for open/download or wait:url; download also accepts current-page blob URLs.", 8192),
 		"ref":         str("Element ref from the same run/page snapshot; requires snapshot_id. Do not combine with selector.", 256),
 		"snapshot_id": str("Snapshot identifier paired with ref.", 512),
-		"selector":    str("CSS selector that identifies exactly one main-document/open-shadow element.", 4096),
+		"selector":    str("CSS selector identifying one element in the main document/open shadow root, or in the specified same-origin frame path.", 4096),
 		"text":        str("Text for fill (empty clears input) or wait:text.", 16384),
 		"value":       str("Option value for select; empty is allowed.", 16384),
 		"key":         str("Key for press: Enter, Tab, Escape, arrows, Home/End, PageUp/Down, Space, or a character; optional Ctrl/Alt/Shift/Meta modifiers.", 64),
@@ -42,7 +45,7 @@ func parseRequest(args map[string]any) (Request, error) {
 	if err = json.Unmarshal(raw, &req); err != nil {
 		return req, errors.New("argument types are invalid")
 	}
-	allowed := map[string]bool{"action": true, "timeout_ms": true}
+	allowed := map[string]bool{"action": true, "timeout_ms": true, "view": true}
 	add := func(names ...string) {
 		for _, name := range names {
 			allowed[name] = true
@@ -57,6 +60,8 @@ func parseRequest(args map[string]any) (Request, error) {
 	case "snapshot":
 	case "click":
 		target = true
+	case "fill_form":
+		add("fields")
 	case "fill":
 		target = true
 		add("text")
@@ -82,9 +87,9 @@ func parseRequest(args map[string]any) (Request, error) {
 		return req, errors.New("unknown browser action")
 	}
 	if target {
-		add("ref", "snapshot_id", "selector")
+		add("ref", "snapshot_id", "selector", "frame")
 	}
-	limits := map[string]int{"action": 32, "url": 8192, "ref": 256, "snapshot_id": 512, "selector": 4096, "text": 16384, "value": 16384, "key": 64, "direction": 16, "condition": 32, "expression": MaxExpressionBytes, "path": 1024, "mode": 16}
+	limits := map[string]int{"view": 16, "action": 32, "url": 8192, "ref": 256, "snapshot_id": 512, "selector": 4096, "text": 16384, "value": 16384, "key": 64, "direction": 16, "condition": 32, "expression": MaxExpressionBytes, "path": 1024, "mode": 16}
 	for name, value := range args {
 		if !allowed[name] {
 			return req, fmt.Errorf("argument %s is not supported for this action", safeArgumentName(name))
@@ -110,8 +115,54 @@ func parseRequest(args map[string]any) (Request, error) {
 	if has("selector") && (!require("selector", req.Selector) || has("ref")) {
 		return req, errors.New("use one nonempty selector or a ref/snapshot_id pair")
 	}
+	if req.View != "" && req.View != "auto" && req.View != "full" {
+		return req, errors.New("view must be auto or full")
+	}
+	if len(req.Frame) > 4 || has("frame") && (has("ref") || !has("selector") || len(req.Frame) == 0) {
+		return req, errors.New("frame requires a selector and one to four frame selectors")
+	}
+	for _, f := range req.Frame {
+		if strings.TrimSpace(f) == "" || len(f) > 1024 {
+			return req, errors.New("invalid frame selector")
+		}
+	}
 	hasTarget := has("ref") || has("selector")
 	switch req.Action {
+	case "fill_form":
+		var fields []map[string]any
+		fieldJSON, _ := json.Marshal(args["fields"])
+		if json.Unmarshal(fieldJSON, &fields) != nil || len(fields) == 0 || len(fields) > maxFormFields {
+			return req, errors.New("fill_form requires 1 to 12 fields")
+		}
+		total := 0
+		for _, field := range fields {
+			if field == nil {
+				return req, errors.New("invalid form field")
+			}
+			for key := range field {
+				if key != "ref" && key != "snapshot_id" && key != "selector" && key != "frame" && key != "text" && key != "value" {
+					return req, errors.New("unsupported form field property")
+				}
+			}
+			_, text := field["text"]
+			_, value := field["value"]
+			if text == value {
+				return req, errors.New("each field needs exactly one of text or value")
+			}
+			if text {
+				field["action"] = "fill"
+			} else {
+				field["action"] = "select"
+			}
+			f, err := parseRequest(field)
+			if err != nil {
+				return req, err
+			}
+			total += len(f.Text) + len(f.Value)
+		}
+		if total > 16384 {
+			return req, errors.New("combined form input exceeds 16 KiB")
+		}
 	case "preview":
 		if !require("path", req.Path) || !validPreviewPath(req.Path) {
 			return req, errors.New("preview requires a canonical workspace-relative .html/.htm path")

@@ -16,16 +16,24 @@ var snapshotScript string
 //go:embed scripts/evaluate.js
 var evaluateScript string
 
+//go:embed scripts/dom.js
+var domScript string
+
+//go:embed scripts/observation.js
+var observationScript string
+
 type pageReply struct {
-	OK       bool         `json:"ok"`
-	URL      string       `json:"url"`
-	Title    string       `json:"title"`
-	Snapshot *Snapshot    `json:"snapshot"`
-	Value    any          `json:"value"`
-	Ready    bool         `json:"ready"`
-	X        float64      `json:"x"`
-	Y        float64      `json:"y"`
-	Error    *ActionError `json:"error"`
+	Change   *PageChange   `json:"change"`
+	Progress *PageProgress `json:"progress"`
+	OK       bool          `json:"ok"`
+	URL      string        `json:"url"`
+	Title    string        `json:"title"`
+	Snapshot *Snapshot     `json:"snapshot"`
+	Value    any           `json:"value"`
+	Ready    bool          `json:"ready"`
+	X        float64       `json:"x"`
+	Y        float64       `json:"y"`
+	Error    *ActionError  `json:"error"`
 }
 
 type runtimeReply struct {
@@ -56,6 +64,13 @@ func createWorld(ctx context.Context, lease connectors.BrowserLease) (int64, err
 	if err == nil && world.ID == 0 {
 		err = NewActionError("browser_error", "Isolated browser context is unavailable.")
 	}
+	if err == nil {
+		var installed runtimeReply
+		err = lease.Execute(ctx, "Runtime.evaluate", map[string]any{"contextId": world.ID, "expression": "(" + domScript + ")();(" + observationScript + ")()", "returnByValue": true}, &installed)
+		if err == nil && len(installed.ExceptionDetails) > 0 && string(installed.ExceptionDetails) != "null" {
+			err = NewActionError("script_error", "Browser observation helpers could not be installed.")
+		}
+	}
 	return world.ID, err
 }
 
@@ -65,7 +80,12 @@ func page(ctx context.Context, s Session, operation string, req Request) (pageRe
 		return pageReply{}, err
 	}
 	info := s.Lease.Info()
-	payload := map[string]any{"operation": operation, "scope": []any{s.Identity.OwnerID, s.Identity.ConversationID, s.Identity.RunID, info.PageID, info.PageEpoch}, "nonce": hex.EncodeToString(nonce), "ref": req.Ref, "snapshot_id": req.SnapshotID, "selector": req.Selector, "text": req.Text, "value": req.Value, "condition": req.Condition, "url": req.URL, "direction": req.Direction, "amount": req.Amount}
+	payload := map[string]any{"operation": operation, "action": req.Action, "view": req.View, "frame": req.Frame, "scope": []any{s.Identity.OwnerID, s.Identity.ConversationID, s.Identity.RunID, info.PageID, info.PageEpoch}, "nonce": hex.EncodeToString(nonce), "ref": req.Ref, "snapshot_id": req.SnapshotID, "selector": req.Selector, "text": req.Text, "value": req.Value, "condition": req.Condition, "url": req.URL, "direction": req.Direction, "amount": req.Amount}
+	if operation == "snapshot" {
+		// Observation needs action identity, never the just-entered input values.
+		delete(payload, "text")
+		delete(payload, "value")
+	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return pageReply{}, err
@@ -109,8 +129,12 @@ func decodeReply(response runtimeReply) (pageReply, error) {
 	return result, nil
 }
 
-func observe(ctx context.Context, s Session, result *Result) error {
-	reply, err := page(ctx, s, "snapshot", Request{})
+func observe(ctx context.Context, s Session, result *Result, request ...Request) error {
+	req := Request{Action: "snapshot"}
+	if len(request) > 0 {
+		req = request[0]
+	}
+	reply, err := page(ctx, s, "snapshot", req)
 	if err != nil {
 		return err
 	}
@@ -120,6 +144,8 @@ func observe(ctx context.Context, s Session, result *Result) error {
 	result.URL = reply.URL
 	result.Title = reply.Title
 	result.Snapshot = reply.Snapshot
+	result.Change = reply.Change
+	result.Progress = reply.Progress
 	return nil
 }
 

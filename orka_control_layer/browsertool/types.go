@@ -16,39 +16,47 @@ const (
 )
 
 type Request struct {
-	Action     string  `json:"action"`
-	URL        string  `json:"url,omitempty"`
-	Ref        string  `json:"ref,omitempty"`
-	SnapshotID string  `json:"snapshot_id,omitempty"`
-	Selector   string  `json:"selector,omitempty"`
-	Text       string  `json:"text,omitempty"`
-	Value      string  `json:"value,omitempty"`
-	Key        string  `json:"key,omitempty"`
-	Direction  string  `json:"direction,omitempty"`
-	Amount     float64 `json:"amount,omitempty"`
-	Condition  string  `json:"condition,omitempty"`
-	Expression string  `json:"expression,omitempty"`
-	Path       string  `json:"path,omitempty"`
-	Mode       string  `json:"mode,omitempty"`
-	TimeoutMS  int     `json:"timeout_ms,omitempty"`
+	Frame      []string    `json:"frame,omitempty"`
+	Fields     []FormField `json:"fields,omitempty"`
+	View       string      `json:"view,omitempty"`
+	Action     string      `json:"action"`
+	URL        string      `json:"url,omitempty"`
+	Ref        string      `json:"ref,omitempty"`
+	SnapshotID string      `json:"snapshot_id,omitempty"`
+	Selector   string      `json:"selector,omitempty"`
+	Text       string      `json:"text,omitempty"`
+	Value      string      `json:"value,omitempty"`
+	Key        string      `json:"key,omitempty"`
+	Direction  string      `json:"direction,omitempty"`
+	Amount     float64     `json:"amount,omitempty"`
+	Condition  string      `json:"condition,omitempty"`
+	Expression string      `json:"expression,omitempty"`
+	Path       string      `json:"path,omitempty"`
+	Mode       string      `json:"mode,omitempty"`
+	TimeoutMS  int         `json:"timeout_ms,omitempty"`
 }
 
 type Result struct {
-	OK        bool         `json:"ok"`
-	Action    string       `json:"action"`
-	PageID    string       `json:"page_id,omitempty"`
-	PageEpoch int64        `json:"page_epoch,omitempty"`
-	URL       string       `json:"url,omitempty"`
-	Title     string       `json:"title,omitempty"`
-	Snapshot  *Snapshot    `json:"snapshot,omitempty"`
-	Files     []FileResult `json:"files,omitempty"`
-	Preview   *FileResult  `json:"preview,omitempty"`
-	Value     any          `json:"value,omitempty"`
-	ElapsedMS int64        `json:"elapsed_ms"`
-	Error     *ActionError `json:"error,omitempty"`
+	Change    *PageChange   `json:"change,omitempty"`
+	Progress  *PageProgress `json:"progress,omitempty"`
+	Form      *FormResult   `json:"form,omitempty"`
+	OK        bool          `json:"ok"`
+	Action    string        `json:"action"`
+	PageID    string        `json:"page_id,omitempty"`
+	PageEpoch int64         `json:"page_epoch,omitempty"`
+	URL       string        `json:"url,omitempty"`
+	Title     string        `json:"title,omitempty"`
+	Snapshot  *Snapshot     `json:"snapshot,omitempty"`
+	Files     []FileResult  `json:"files,omitempty"`
+	Preview   *FileResult   `json:"preview,omitempty"`
+	Value     any           `json:"value,omitempty"`
+	ElapsedMS int64         `json:"elapsed_ms"`
+	Error     *ActionError  `json:"error,omitempty"`
 }
 
 type Snapshot struct {
+	Mode         string    `json:"mode,omitempty"`
+	ReadyState   string    `json:"ready_state,omitempty"`
 	ID           string    `json:"id"`
 	Text         string    `json:"text"`
 	Elements     []Element `json:"elements"`
@@ -65,6 +73,8 @@ type SelectOption struct {
 }
 
 type Element struct {
+	Actions  []string       `json:"actions,omitempty"`
+	Frame    []string       `json:"frame,omitempty"`
 	Options  []SelectOption `json:"options,omitempty"`
 	Ref      string         `json:"ref"`
 	Tag      string         `json:"tag"`
@@ -78,9 +88,12 @@ type Element struct {
 }
 
 type Frame struct {
-	Title     string `json:"title,omitempty"`
-	URL       string `json:"url,omitempty"`
-	Supported bool   `json:"supported"`
+	Path      []string `json:"path,omitempty"`
+	Reason    string   `json:"reason,omitempty"`
+	Handoff   string   `json:"handoff,omitempty"`
+	Title     string   `json:"title,omitempty"`
+	URL       string   `json:"url,omitempty"`
+	Supported bool     `json:"supported"`
 }
 
 type FileResult struct {

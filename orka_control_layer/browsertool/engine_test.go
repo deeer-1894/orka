@@ -76,7 +76,7 @@ func TestEngineSnapshotUsesOneScopedLeaseAndIsolatedWorld(t *testing.T) {
 	if dialer.acquires != 1 || lease.closed != 1 || result.PageID != "page" || result.PageEpoch != 7 {
 		t.Fatal("lease/scope not retained", result)
 	}
-	if len(lease.commands) != 3 || lease.commands[0] != "Page.getFrameTree" || lease.commands[1] != "Page.createIsolatedWorld" || lease.commands[2] != "Runtime.evaluate" {
+	if len(lease.commands) != 4 || lease.commands[0] != "Page.getFrameTree" || lease.commands[1] != "Page.createIsolatedWorld" || lease.commands[2] != "Runtime.evaluate" || lease.commands[3] != "Runtime.evaluate" {
 		t.Fatal(lease.commands)
 	}
 }
