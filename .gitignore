@@ -38,3 +38,6 @@ gui_agent/.venv/
 .superpowers/
 .venv-quant/
 .run/
+
+# User preference: acceptance reports stay local; do not commit or push new reports.
+/docs/superpowers/reports/
