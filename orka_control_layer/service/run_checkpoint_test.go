@@ -41,6 +41,27 @@ func TestCheckpointRestoresRequirementsAndBudget(t *testing.T) {
 		t.Fatal("resumed run exceeded original allowance")
 	}
 }
+
+func TestCheckpointPreservesFailedBrowserEvidence(t *testing.T) {
+	p := &planTracker{}
+	p.record([]messages.PlanStep{{ID: "browser", Title: "返回浏览器页面并确认 URL", Status: "pending"}})
+	p.recordBrowserOutcome(false)
+	ctx := withPlanTracker(context.Background(), p)
+	checkpoint := checkpointFrom(ctx)
+	restored := &planTracker{}
+	restoreCheckpoint(checkpoint, nil, restored, nil)
+	if !restored.browserFailureState() {
+		t.Fatal("browser failure was lost across checkpoint")
+	}
+	if _, err := (planTool{}).Invoke(withPlanTracker(context.Background(), restored), map[string]any{
+		"steps": []any{map[string]any{"id": "browser", "title": "返回浏览器页面并确认 URL", "status": "done"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(restored.unfinished()) != 1 {
+		t.Fatal("checkpointed failed browser step was incorrectly closed")
+	}
+}
 func TestJournalFlushRetriesAfterWriteFailure(t *testing.T) {
 	dir := t.TempDir()
 	j := newRunJournal(dir, "retry", nil)

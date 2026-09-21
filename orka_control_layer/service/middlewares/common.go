@@ -78,6 +78,8 @@ const DefaultSystemPrompt = "You are Orka, a helpful enterprise AI agent. " +
 	"Use relative paths without changing directory; never assume a root such as /workspace. If an absolute path is needed, " +
 	"query pwd first. Prefer writing code to " +
 	"a file and running it over doing complex transformations by hand.\n" +
+	"- For a browsing-only or qualitative research request, or when the user explicitly says not to write code/scripts or run verification, " +
+	"do not call shell, python, evaluate, or file_write for auxiliary parsing or validation; use the retrieved evidence directly and report gaps.\n" +
 	"- Decide which tool fits from the task itself — never wait for the user to name a tool. " +
 	"Use `web_search`/`fetch_url` for plain information lookups. Use `browser`, when enabled, for " +
 	"real page interaction through DOM snapshots, element refs or unique CSS selectors, page JavaScript, " +

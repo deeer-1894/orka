@@ -107,6 +107,34 @@ func TestResearchSessionRetriesErrorsAndReservesDeliveryBudget(t *testing.T) {
 	}
 }
 
+func TestResearchSessionOpensHostCircuitAfterTransientFailure(t *testing.T) {
+	s := newResearchSession(nil, "", nil, 10)
+	ctx := withResearchSession(context.Background(), s)
+	var calls atomic.Int32
+	tool := EinoTool(retrievalFixture{"fetch_url", func(context.Context, map[string]any) (string, error) {
+		calls.Add(1)
+		return "", errors.New("context deadline exceeded")
+	}})
+	_, _ = tool.InvokableRun(ctx, `{"url":"https://www.example.test/releases"}`)
+	if got := calls.Load(); got != int32(toolRetries+1) {
+		t.Fatalf("first transient request calls=%d, want %d", got, toolRetries+1)
+	}
+	blocked, err := tool.InvokableRun(ctx, `{"url":"https://www.example.test/docs"}`)
+	if err != nil || !strings.Contains(blocked, "retrieval circuit open") {
+		t.Fatalf("same-host fallback was not short-circuited: %q, %v", blocked, err)
+	}
+	if got := calls.Load(); got != int32(toolRetries+1) {
+		t.Fatalf("same-host request retried after circuit opened: %d", got)
+	}
+	other := EinoTool(retrievalFixture{"fetch_url", func(context.Context, map[string]any) (string, error) {
+		calls.Add(1)
+		return "official API evidence", nil
+	}})
+	if got, err := other.InvokableRun(ctx, `{"url":"https://api.example.test/releases"}`); err != nil || got != "official API evidence" {
+		t.Fatalf("different-host fallback was blocked: %q, %v", got, err)
+	}
+}
+
 func TestResearchSessionCoalescesConcurrentCalls(t *testing.T) {
 	s := newResearchSession(nil, "", nil, 1)
 	ctx := withResearchSession(context.Background(), s)

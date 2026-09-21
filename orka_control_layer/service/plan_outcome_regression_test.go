@@ -104,6 +104,26 @@ func TestPlanStepIDKeepsRenamedStepAsOneObligation(t *testing.T) {
 	}
 }
 
+func TestPlanDoesNotCloseBrowserStepAfterOnlyFailedBrowserCalls(t *testing.T) {
+	tracker := &planTracker{}
+	tracker.recordBrowserOutcome(false)
+	ctx := withPlanTracker(context.Background(), tracker)
+	if _, err := (planTool{}).Invoke(ctx, map[string]any{
+		"steps": []any{map[string]any{"id": "open", "title": "Attempt return to RFC 9110 top level and confirm URL", "status": "pending"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	response, err := (planTool{}).Invoke(ctx, map[string]any{
+		"steps": []any{map[string]any{"id": "open", "title": "Attempt return to RFC 9110 top level and confirm URL", "status": "done"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tracker.completed() || len(tracker.unfinished()) != 1 || !strings.Contains(response, "Attempt return to RFC 9110 top level") {
+		t.Fatalf("failed browser step was closed: complete=%v unfinished=%v response=%s", tracker.completed(), tracker.unfinished(), response)
+	}
+}
+
 func TestCompletedPlanRejectsASecondChecklist(t *testing.T) {
 	tracker := &planTracker{}
 	ctx := withPlanTracker(context.Background(), tracker)

@@ -91,6 +91,27 @@ func TestEngineRejectsUnsafeRequestsBeforeLease(t *testing.T) {
 	}
 }
 
+func TestEngineSanitizesNetworkNavigationFailure(t *testing.T) {
+	lease := &fixtureLease{}
+	lease.handler = func(method string, _, out any) (bool, error) {
+		if method != "Page.navigate" {
+			return false, nil
+		}
+		raw, _ := json.Marshal(map[string]any{"errorText": "net::ERR_NAME_NOT_RESOLVED https://private.example.test/path"})
+		if err := json.Unmarshal(raw, out); err != nil {
+			return true, err
+		}
+		return true, nil
+	}
+	result, err := NewEngine(&fixtureDialer{lease: lease}).Run(context.Background(), testIdentity(), Request{Action: "open", URL: "https://private.example.test/path"}, nil)
+	if err == nil || result.OK || result.Error.Code != "navigation_network" {
+		t.Fatalf("network navigation error=%+v err=%v", result, err)
+	}
+	if strings.Contains(result.Error.Message, "private.example.test") {
+		t.Fatalf("navigation error leaked URL: %q", result.Error.Message)
+	}
+}
+
 func TestEngineClickDoesNotReplayUnknownDispatch(t *testing.T) {
 	lease := &fixtureLease{}
 	lease.handler = func(method string, params, out any) (bool, error) {

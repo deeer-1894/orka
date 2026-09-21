@@ -24,6 +24,7 @@ type runCheckpoint struct {
 	Outputs                 []string            `json:"outputs,omitempty"`
 	SpentTokens             int                 `json:"spent_tokens"`
 	ResearchCalls           int                 `json:"research_calls,omitempty"`
+	BrowserFailed           bool                `json:"browser_failed,omitempty"`
 	Evidence                *evidenceCheckpoint `json:"evidence,omitempty"`
 }
 
@@ -46,7 +47,8 @@ func (c *runCheckpoint) UnmarshalJSON(data []byte) error {
 }
 
 func checkpointFrom(ctx context.Context) *runCheckpoint {
-	c := &runCheckpoint{AcceptanceRunIDs: acceptanceRunIDs(ctx), EnabledTools: budgetRequestTools(ctx), toolsRecorded: true, successfulToolsRecorded: true, Plan: planTrackerFrom(ctx).snapshot(), Outputs: deliveryFrom(ctx).snapshot(), FinalResponse: deliveryFrom(ctx).responseMode(), SpentTokens: budgetFrom(ctx).totalSpentTokens()}
+	plan := planTrackerFrom(ctx)
+	c := &runCheckpoint{AcceptanceRunIDs: acceptanceRunIDs(ctx), EnabledTools: budgetRequestTools(ctx), toolsRecorded: true, successfulToolsRecorded: true, Plan: plan.snapshot(), BrowserFailed: plan.browserFailureState(), Outputs: deliveryFrom(ctx).snapshot(), FinalResponse: deliveryFrom(ctx).responseMode(), SpentTokens: budgetFrom(ctx).totalSpentTokens()}
 	if session := BudgetSessionFrom(ctx); session != nil {
 		snapshot := session.Snapshot()
 		c.BudgetSnapshot = &snapshot
@@ -90,6 +92,9 @@ func restoreCheckpoint(c *runCheckpoint, b *runBudget, p *planTracker, d *delive
 		b.mu.Unlock()
 	}
 	p.record(c.Plan)
+	if c.BrowserFailed {
+		p.recordBrowserOutcome(false)
+	}
 	// Checkpoints only contain paths validated when first declared.
 	_ = d.configure(c.Outputs, c.FinalResponse)
 }

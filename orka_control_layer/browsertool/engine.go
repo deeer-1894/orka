@@ -75,7 +75,7 @@ func (e *Engine) Run(ctx context.Context, identity connectors.GUIIdentity, req R
 			return
 		}
 		if response.ErrorText != "" {
-			err = NewActionError("navigation_error", "Browser navigation failed.")
+			err = navigationActionError(response.ErrorText)
 			return
 		}
 		if response.IsDownload {
@@ -140,7 +140,14 @@ func actionError(err error) *ActionError {
 	}
 	var transport *connectors.BrowserError
 	if errors.As(err, &transport) {
-		return NewActionError(transport.Code, "Browser transport could not complete the operation.")
+		message := "Browser transport could not complete the operation."
+		switch transport.Code {
+		case "outcome_unknown":
+			message = "Browser operation outcome is unknown; the page may have changed. Inspect the page before retrying."
+		case "timeout":
+			message = "Browser operation timed out; inspect the page before retrying."
+		}
+		return NewActionError(transport.Code, message)
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return NewActionError("timeout", "Browser operation timed out.")
@@ -149,6 +156,24 @@ func actionError(err error) *ActionError {
 		return NewActionError("cancelled", "Browser operation was cancelled.")
 	}
 	return NewActionError("browser_error", "Browser operation failed.")
+}
+
+// navigationActionError turns Chromium's volatile net::ERR_* text into a
+// stable, actionable result. Raw transport text can contain URLs, so it must
+// never be copied into the model-facing error.
+func navigationActionError(raw string) *ActionError {
+	low := strings.ToLower(raw)
+	for _, marker := range []string{"err_name_not_resolved", "err_internet_disconnected", "err_connection", "err_timed_out", "err_address_unreachable", "err_network_changed"} {
+		if strings.Contains(low, marker) {
+			return NewActionError("navigation_network", "Browser navigation could not reach the network endpoint; inspect the current page or use another official endpoint.")
+		}
+	}
+	for _, marker := range []string{"err_cert", "certificate"} {
+		if strings.Contains(low, marker) {
+			return NewActionError("navigation_certificate", "Browser navigation was blocked by a certificate error; do not bypass it automatically.")
+		}
+	}
+	return NewActionError("navigation_error", "Browser navigation failed; inspect the current page before retrying.")
 }
 
 func validateRequest(identity connectors.GUIIdentity, r Request) error {

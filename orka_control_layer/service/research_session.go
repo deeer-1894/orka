@@ -21,6 +21,7 @@ type researchSession struct {
 	mu              sync.Mutex
 	pending         map[string]*researchCall
 	cache           map[string]string
+	blockedHosts    map[string]string
 	calls, maxCalls int
 	budget          *runBudget
 	evidence        *evidenceStore
@@ -36,7 +37,7 @@ func newResearchSession(backend filesystem.Backend, dir string, budget *runBudge
 	if maxCalls <= 0 {
 		maxCalls = defaultResearchMaxCalls
 	}
-	return &researchSession{pending: make(map[string]*researchCall), cache: make(map[string]string), maxCalls: maxCalls, budget: budget, evidence: newEvidenceStore(backend, dir)}
+	return &researchSession{pending: make(map[string]*researchCall), cache: make(map[string]string), blockedHosts: make(map[string]string), maxCalls: maxCalls, budget: budget, evidence: newEvidenceStore(backend, dir)}
 }
 
 func isResearchTool(name string, args map[string]any) bool {
@@ -124,6 +125,12 @@ func (s *researchSession) invoke(ctx context.Context, name string, args map[stri
 			return p.out, p.err
 		}
 	}
+	if host := researchHost(name, args); host != "" {
+		if reason, blocked := s.blockedHosts[host]; blocked {
+			s.mu.Unlock()
+			return fmt.Sprintf("[retrieval circuit open] %s is already unreachable in this run (%s). Do not retry another URL on the same host; use a different official endpoint or report the page as unavailable.", host, reason), nil
+		}
+	}
 	if s.atLimitLocked() {
 		s.mu.Unlock()
 		return researchLimitNotice, nil
@@ -134,6 +141,15 @@ func (s *researchSession) invoke(ctx context.Context, name string, args map[stri
 	s.mu.Unlock()
 
 	out, err := call()
+	if err != nil && classifyToolError(err.Error()) == failTransient {
+		if host := researchHost(name, args); host != "" {
+			// Stop a fan-out of equivalent URLs against one unavailable host. A
+			// different official endpoint remains eligible as a fallback.
+			s.mu.Lock()
+			s.blockedHosts[host] = "the last request timed out or failed at the transport layer"
+			s.mu.Unlock()
+		}
+	}
 	success := err == nil && usefulResearchResult(out)
 	if success {
 		out = s.evidence.capture(ctx, key, name, args, out)
@@ -147,6 +163,28 @@ func (s *researchSession) invoke(ctx context.Context, name string, args map[stri
 	close(p.done)
 	s.mu.Unlock()
 	return out, err
+}
+
+// researchHost identifies only the remote host for URL-based retrieval. It is
+// separate from the request cache key: different paths on one unavailable host
+// must not trigger another full retry sequence, while another host is allowed.
+func researchHost(name string, args map[string]any) string {
+	if name != "fetch_url" && name != "discover_docs" {
+		return ""
+	}
+	raw, _ := args["url"].(string)
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
 }
 
 func usefulResearchResult(out string) bool {

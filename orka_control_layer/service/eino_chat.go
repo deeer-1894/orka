@@ -745,6 +745,9 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 		if instruction == "" {
 			instruction = OrchestratorPrompt
 		}
+		// Pin relative-date interpretation for every model path, including the
+		// multi-agent orchestrator and its single-agent fallback.
+		instruction = withRuntimeDate(instruction)
 		// einoMaxIters, not a literal: this is eino's own hard cycle cliff, and the
 		// run budget is built from the same constant. Drifting apart means either
 		// the guard never fires (and eino errors out instead of reporting) or it
@@ -754,6 +757,7 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 		if instruction == "" {
 			instruction = middlewares.DefaultSystemPrompt
 		}
+		instruction = withRuntimeDate(instruction)
 		var sum []adk.ChatModelAgentMiddleware
 		if !s.DisableSummary {
 			// Auxiliary history compression uses the run's selected model.

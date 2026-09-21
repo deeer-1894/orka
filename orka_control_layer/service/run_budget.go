@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -262,8 +263,46 @@ func budgetNotice(reason string) *schema.Message {
 // only "the model stopped calling tools", which is not a completion signal at
 // all — it is equally true of a finished run and an abandoned one.
 type planTracker struct {
-	mu    sync.Mutex
-	steps []messages.PlanStep
+	mu            sync.Mutex
+	steps         []messages.PlanStep
+	browserFailed bool
+}
+
+func (p *planTracker) recordBrowserOutcome(ok bool) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !ok {
+		p.browserFailed = true
+	}
+}
+
+func (p *planTracker) browserEvidenceIncompleteLocked() bool {
+	// A later successful browser action does not prove that an earlier failed
+	// action's acceptance condition was met. The plan update must explicitly
+	// close that failed step after the model observes the correct page state.
+	return p.browserFailed
+}
+
+func (p *planTracker) browserFailureState() bool {
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.browserFailed
+}
+
+func browserPlanStep(title string) bool {
+	lower := strings.ToLower(title)
+	for _, marker := range []string{"browser", "浏览器", "网页", "页面", "release", "releases", "url", "链接", "anchor", "return", "返回", "顶层"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *planTracker) record(steps []messages.PlanStep) {
@@ -280,8 +319,14 @@ func (p *planTracker) record(steps []messages.PlanStep) {
 	}
 	for _, step := range steps {
 		if i, ok := index[planStepKey(step)]; ok {
+			if step.Status == "done" && p.browserEvidenceIncompleteLocked() && browserPlanStep(step.Title) && p.steps[i].Status != "done" {
+				step.Status = "active"
+			}
 			p.steps[i] = step
 		} else {
+			if step.Status == "done" && p.browserEvidenceIncompleteLocked() && browserPlanStep(step.Title) {
+				step.Status = "active"
+			}
 			index[planStepKey(step)] = len(p.steps)
 			p.steps = append(p.steps, step)
 		}
@@ -306,7 +351,7 @@ func (p *planTracker) completed() bool {
 		return false
 	}
 	for _, step := range p.steps {
-		if step.Status != "done" {
+		if step.Status != "done" || (p.browserEvidenceIncompleteLocked() && browserPlanStep(step.Title)) {
 			return false
 		}
 	}
@@ -353,7 +398,7 @@ func (p *planTracker) unfinished() []string {
 	defer p.mu.Unlock()
 	var out []string
 	for _, s := range p.steps {
-		if s.Status != "done" {
+		if s.Status != "done" || (p.browserEvidenceIncompleteLocked() && browserPlanStep(s.Title)) {
 			out = append(out, s.Title)
 		}
 	}

@@ -96,6 +96,15 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 			loopDetectorFrom(ctx).observe(cacheKey, err.Error()) +
 			recordExecution(ctx, name, args, err.Error(), revisions), nil
 	}
+	if name == "browser" {
+		var receipt struct {
+			OK bool `json:"ok"`
+		}
+		tracker := planTrackerFrom(ctx)
+		if tracker != nil {
+			tracker.recordBrowserOutcome(json.Unmarshal([]byte(out), &receipt) == nil && receipt.OK)
+		}
+	}
 	evidenceNote := recordExecution(ctx, name, args, out, revisions)
 	deliveryNote := ""
 	if name == "file_write" {
