@@ -246,9 +246,21 @@ func (p *planTracker) validateStepLocked(step messages.PlanStep) messages.PlanSt
 	// Verification is incremental, even if done is rejected or the caller keeps
 	// the step active/blocked. Resolved obligations survive receipt eviction.
 	if strings.TrimSpace(step.Reason) != "" {
+		// A completion that cites a real observation can retain earlier matching
+		// navigation/read recovery evidence automatically. Requiring the model to
+		// copy an old receipt ID made successful long workflows permanently sticky.
+		// Uncertain input/submission still requires its explicit recovery receipt.
+		completionObserved := step.Status == "done" && slices.ContainsFunc(state.Receipts, func(r planBrowserReceipt) bool {
+			return r.Observed && slices.Contains(step.EvidenceIDs, r.ID)
+		})
 		for failureKey, failure := range state.Failures {
 			for _, r := range state.Receipts {
-				if slices.Contains(step.EvidenceIDs, r.ID) && browserRecoveryMatches(failure, r) {
+				cited := slices.Contains(step.EvidenceIDs, r.ID)
+				retainRecovery := completionObserved && (failure.Action == "open" || failure.ObservationOnly)
+				if (cited || retainRecovery) && browserRecoveryMatches(failure, r) {
+					if !cited {
+						step.EvidenceIDs = append(step.EvidenceIDs, r.ID)
+					}
 					delete(state.Failures, failureKey)
 					break
 				}
@@ -311,9 +323,11 @@ func sameObservedURL(want, got string) bool {
 // Explain which already-delivered observations can resolve each obligation.
 // Keep this model-facing, so the UI need not expose receipt bookkeeping.
 type browserRecoveryNeed struct {
-	Step       string   `json:"step"`
-	Failure    string   `json:"failure"`
-	Candidates []string `json:"available_evidence_ids"`
+	Step        string   `json:"step"`
+	Failure     string   `json:"failure"`
+	Action      string   `json:"action"`
+	RequiredURL string   `json:"required_url,omitempty"`
+	Candidates  []string `json:"available_evidence_ids"`
 }
 
 func (p *planTracker) browserRecoveryNeeds() []browserRecoveryNeed {
@@ -331,7 +345,7 @@ func (p *planTracker) browserRecoveryNeeds() []browserRecoveryNeed {
 		}
 		slices.SortFunc(failures, func(a, b planBrowserReceipt) int { return a.Sequence - b.Sequence })
 		for _, failure := range failures {
-			need := browserRecoveryNeed{Step: step.ID, Failure: failure.ID, Candidates: []string{}}
+			need := browserRecoveryNeed{Step: step.ID, Failure: failure.ID, Action: failure.Action, RequiredURL: failure.TargetURL, Candidates: []string{}}
 			for _, receipt := range state.Receipts {
 				if browserRecoveryMatches(failure, receipt) {
 					need.Candidates = append(need.Candidates, receipt.ID)

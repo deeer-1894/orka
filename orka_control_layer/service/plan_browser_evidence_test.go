@@ -108,14 +108,16 @@ func TestBrowserOriginRecoveryPointsToExistingObservation(t *testing.T) {
 	browserEvidenceCall(p, "filter", "open", "https://example.com", false)
 	root := browserEvidenceCall(p, "filter", "snapshot", "https://example.com/", true)
 	filtered := browserEvidenceCall(p, "filter", "click", "https://example.com/?query=PostgreSQL", true)
-	browserEvidenceStep(p, "filter", "done", filtered)
 	needs := p.browserRecoveryNeeds()
-	if len(needs) != 1 || len(needs[0].Candidates) != 1 || needs[0].Candidates[0] != root {
+	if len(needs) != 1 || len(needs[0].Candidates) != 1 || needs[0].Candidates[0] != root || needs[0].RequiredURL != "https://example.com" {
 		t.Fatalf("missing existing root recovery: %+v", needs)
 	}
-	browserEvidenceStep(p, "filter", "done", root, filtered)
+	browserEvidenceStep(p, "filter", "done", filtered)
 	if !p.completed() || len(p.browserRecoveryNeeds()) != 0 {
 		t.Fatal("origin slash required unnecessary repeat navigation")
+	}
+	if !strings.Contains(strings.Join(p.snapshot()[0].EvidenceIDs, ","), root) {
+		t.Fatal("automatically retained recovery lost its provenance")
 	}
 	for _, other := range []string{"https://example.com/other", "https://example.com/?query=other", "https://other.example/"} {
 		if sameObservedURL("https://example.com", other) {
@@ -139,6 +141,28 @@ func browserEvidenceCall(p *planTracker, id, action, url string, ok bool) string
 	state := p.checkpoint().Browser["id:"+id]
 	return state.Receipts[len(state.Receipts)-1].ID
 }
+
+func TestAutomaticNavigationRecoveryDoesNotConsumeUncertainClickEvidence(t *testing.T) {
+	p := &planTracker{}
+	browserEvidenceStep(p, "filter", "active")
+	browserEvidenceCall(p, "filter", "open", "https://example.com/form", true)
+	browserEvidenceCall(p, "filter", "click", "https://example.com/form", false)
+	verified := browserEvidenceCall(p, "filter", "snapshot", "https://example.com/form", true)
+	later := browserEvidenceCall(p, "filter", "open", "https://example.com/other", true)
+	browserEvidenceStep(p, "filter", "done", later)
+	if p.completed() {
+		t.Fatal("uncertain click was silently verified by later unrelated work")
+	}
+	needs := p.browserRecoveryNeeds()
+	if len(needs) != 1 || needs[0].Action != "click" || needs[0].RequiredURL != "https://example.com/form" {
+		t.Fatalf("missing actionable verification target: %+v", needs)
+	}
+	browserEvidenceStep(p, "filter", "done", verified, later)
+	if !p.completed() {
+		t.Fatal("explicit verification of the uncertain click was rejected")
+	}
+}
+
 func TestBrowserPlanRecoveryRequiresNewEvidenceFromItsDestination(t *testing.T) {
 	p := &planTracker{}
 	browserEvidenceStep(p, "visit", "active")
