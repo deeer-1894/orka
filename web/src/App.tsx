@@ -144,7 +144,7 @@ function Workbench({
   const version = conversationSettings.value.selectedVersion;
   const setVersion = (selectedVersion: string) => conversationSettings.patch({ selectedVersion });
   const [theme, toggleTheme] = useTheme();
-  // Per-conversation scope. Empty uses default tools without code execution.
+  // Per-conversation scope. Empty uses automatic tool selection.
   const toolGroups = useMemo(() => new Set(conversationSettings.value.enabledTools), [conversationSettings.value.enabledTools]);
   const [models, setModels] = useState<ModelOption[]>(MODELS_FALLBACK);
   const [scheduleFor, setScheduleFor] = useState<string | null>(null); // prompt to schedule
