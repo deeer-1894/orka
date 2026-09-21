@@ -5,8 +5,10 @@ function(q) {
   if (!Array.isArray(slot.redactions)) slot.redactions = [];
   const scope = JSON.stringify(q.scope);
   if (slot.scope !== scope) {
-    slot.scope = scope; slot.refs = new Map(); slot.nonce = ''; slot.nodeIDs=new WeakMap(); slot.nextID=0; slot.observation=null;
+    slot.scope = scope; slot.refs = new Map(); slot.nonce = ''; slot.nodeIDs=new WeakMap(); slot.nextID=0; slot.observation=null; slot.pendingObservation=null; slot.coverageIDs=new WeakMap(); slot.nextCoverageID=0;
   }
+  // Existing isolated worlds can outlive an update of the helper scripts.
+  if (!slot.coverageIDs) {slot.coverageIDs=new WeakMap();slot.nextCoverageID=0;slot.observation=null;slot.pendingObservation=null;}
   const fail = (code, message) => { throw {orkaCode:code, message}; };
   const clean = (value, limit=160) => {
     let text = String(value || '');
@@ -24,9 +26,10 @@ function(q) {
   const find=()=>dom.find(q,slot,fail);
   const remember = value => {if(value){slot.redactions.push(String(value));slot.redactions=slot.redactions.slice(-32);}};
   const rememberInput = (node, value) => {
-    // Numeric filters are public page data; masking "5" globally corrupts dates
-    // and statistics. Credential-labelled numeric controls still hide echoes.
-    if(node.tagName==='INPUT' && node.type==='number') {
+    // Public numeric filters and search queries are page data. Masking them
+    // corrupts dates, article titles and navigation URLs. Credential-labelled
+    // controls still hide echoes, regardless of their input type.
+    if(node.tagName==='INPUT' && ['number','search'].includes(node.type)) {
       const purpose=[node.autocomplete,node.id,node.name,node.getAttribute('aria-label'),node.placeholder,node.title,Array.from(node.labels||[]).map(label=>label.textContent).join(' ')].join(' ');
       if(!/password|passcode|secret|token|auth|pin|otp|one-time|cc-|card|account|ssn|密码|口令|验证码|密钥|账号|帐号|卡号|证件/i.test(purpose))return;
     }
@@ -36,26 +39,35 @@ function(q) {
     slot.refs=new Map(); slot.nonce=slot.nonce||q.nonce;
     const elements=[],frames=[],texts=[];
     let visited=0,characters=0,omitted=false,pixel_content=false;
+    // Internal range metadata contains only node IDs/limits, never page text.
+    // Retain a weak identity for roots and cut points, not an unbounded DOM log.
+    const coverage={roots:[],textEnd:null,elementLimit:false,frameLimit:false,byteLimit:false};
+    const coverageID=node=>{let id=slot.coverageIDs.get(node);if(!id){id=++slot.nextCoverageID;slot.coverageIDs.set(node,id);}return id;};
+    const plainLink=node=>node.tagName==='A'&&(!node.getAttribute('role')||node.getAttribute('role')==='link');
+    const dropLink=()=>{const i=elements.findLastIndex(e=>e.tag==='a'&&e.role==='link');if(i<0)return false;slot.refs.delete(elements[i].ref);elements.splice(i,1);return true;};
     const selector='a[href],button,input,textarea,select,summary,[role],[tabindex],[contenteditable="true"],iframe,frame,canvas';
     for(const root of roots(document,true)){
+      coverage.roots.push(coverageID(root));
       const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
       let text;
-      while((text=walker.nextNode())){
-        if(++visited>20000){omitted=true;break;}
+      while(!coverage.textEnd&&(text=walker.nextNode())){
+        if(++visited>20000){omitted=true;coverage.textEnd={node:coverageID(text),reason:'visit_limit'};break;}
         const p=text.parentElement;
         if(!p||p.closest('script,style,noscript,textarea,select,[contenteditable="true"]')||!shown(p))continue;
         const value=clean(text.nodeValue,12000-characters);
         if(value){texts.push(value);characters+=value.length+1;}
-        if(characters>=12000){omitted=true;break;}
+        if(characters>=12000){omitted=true;coverage.textEnd={node:coverageID(text),reason:'text_limit',length:value.length};break;}
       }
       for(const node of root.querySelectorAll(selector)){
         if(!shown(node))continue;
         if(node.tagName==='CANVAS') {pixel_content=true;continue;}
         if(/^(IFRAME|FRAME)$/.test(node.tagName)) {
-          if(frames.length<32)frames.push({title:clean(node.title),url:clean(node.src,1024),path:dom.framePath(node),supported:!!dom.frameDocument(node),reason:dom.frameDocument(node)?undefined:'cross_origin_or_unavailable',handoff:dom.frameDocument(node)?undefined:'gui'});else omitted=true;
+          if(frames.length<32)frames.push({title:clean(node.title),url:clean(node.src,1024),path:dom.framePath(node),supported:!!dom.frameDocument(node),reason:dom.frameDocument(node)?undefined:'cross_origin_or_unavailable',handoff:dom.frameDocument(node)?undefined:'gui'});else {omitted=true;coverage.frameLimit=true;}
           continue;
         }
-        if(elements.length>=200){omitted=true;continue;}
+        // Keep the current controls even when hundreds of story links precede
+        // them. Evict a trailing plain link, preserving retained DOM order.
+        if(elements.length>=200){omitted=true;coverage.elementLimit=true;if(plainLink(node)||!dropLink())continue;}
         let options;
         if(node.tagName==='SELECT'){
           options=[];
@@ -76,13 +88,20 @@ function(q) {
     // Reserve space for the Go receipt and account for UTF-8/JSON escaping.
     while(new TextEncoder().encode(JSON.stringify(result)).length>60000){
       result.snapshot.omitted=true;
-      if(elements.length){const removed=elements.pop();slot.refs.delete(removed.ref);}
+      coverage.byteLimit=true;
+      if(elements.length){if(!dropLink()){const removed=elements.pop();slot.refs.delete(removed.ref);}}
       else if(frames.length)frames.pop();
       else result.snapshot.text=result.snapshot.text.slice(0,Math.floor(result.snapshot.text.length/2));
     }
-    return globalThis.__orkaObserve(result,q,slot);
+    return globalThis.__orkaObserve(result,q,slot,coverage);
   };
   try {
+    // Internal acknowledgement after recovery's stability check. Commands in a
+    // lease are serial; scope and document ID must still identify the candidate.
+    if(q.operation==='commit_observation'){
+      if(!globalThis.__orkaCommitObservation(slot,q.snapshot_id))fail('stale_ref','Observation candidate belongs to an old scope or document.');
+      return {ok:true};
+    }
     if(q.operation==='snapshot') return snapshot();
     if(q.operation==='wait'){
       const condition=q.condition||(q.ref||q.selector?'visible':'domcontentloaded');

@@ -12,7 +12,7 @@ function Fixture() {
   const [creates, setCreates] = useState(0);
   useEffect(() => { (window as any).fileTest = { set: (next: any) => setState((s: any) => ({ ...s, ...next })) }; }, []);
   const noop = () => {};
-  const messages: any[] = [{ id: "write", ts: 1, role: "assistant", type: "tool", meta: { conversation_id: state.conversationID }, payload: { tool: "file_write", args: { path: "a/b/sample.csv" }, result: "saved successfully" } }];
+  const messages: any[] = state.messages ? [...state.messages] : [{ id: "write", ts: 1, role: "assistant", type: "tool", meta: { conversation_id: state.conversationID }, payload: { tool: "file_write", args: { path: "a/b/sample.csv" }, result: "saved successfully" } }];
   if (state.markdown) messages.push({ id: "answer", ts: 2, role: "assistant", type: "chat", meta: { conversation_id: state.conversationID }, content: state.markdown });
   return <div className="h-screen bg-bg text-ink">
     <output data-testid="creates">{creates}</output>
@@ -21,7 +21,7 @@ function Fixture() {
       setCreates(n => n + 1); await new Promise(r => setTimeout(r, 100));
       setState((s: any) => s.conversationID ? s : ({ ...s, conversationID: "new" })); return "new";
     }} />}
-    {state.mode === "thread" && <Thread messages={messages as any} status="idle" conversationID={state.conversationID} ownerEmail="me@example.com" fileConv={state.shared ? state.conversationID : undefined} recovery={{ run: null, busy: false } as any} onContinue={noop} canRetry={false} onResume={noop} onPick={noop} onRetry={noop} onSchedule={noop} />}
+    {state.mode === "thread" && <Thread messages={messages as any} status={state.status || "idle"} conversationID={state.conversationID} ownerEmail="me@example.com" fileConv={state.shared ? state.conversationID : undefined} recovery={{ run: null, busy: false } as any} onContinue={noop} canRetry={false} onResume={noop} onPick={noop} onRetry={noop} onSchedule={noop} />}
     {state.mode === "preview" && <FilePreview conv={state.conversationID} name={state.name} onClose={() => setState((s: any) => ({ ...s, mode: "none" }))} />}
     {state.mode === "app" && <App />}
   </div>;

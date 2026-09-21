@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type retrievalFixture struct {
@@ -312,5 +313,38 @@ func TestReadOnlyHTTPRequestUsesResearchBudgetAndEvidenceCache(t *testing.T) {
 	third, err := tool.InvokableRun(ctx, `{"method":"GET","url":"https://example.test/other"}`)
 	if err != nil || !strings.Contains(third, "retrieval budget") {
 		t.Fatalf("uncounted HTTP read: %q err=%v", third, err)
+	}
+}
+
+func TestRetrievalBackoffSharedAcrossReadersAndExpires(t *testing.T) {
+	s := newResearchSession(nil, "", nil, 10)
+	clock := time.Unix(100, 0)
+	s.now = func() time.Time { return clock }
+	args := map[string]any{"url": "https://example.test/a"}
+	calls := 0
+	_, _ = s.invoke(context.Background(), "fetch_url", args, func() (string, error) { calls++; return "", errors.New("context deadline exceeded") })
+	for _, name := range []string{"read_section", "http_request"} {
+		result, _ := s.invoke(context.Background(), name, args, func() (string, error) { calls++; return "ok", nil })
+		if !strings.Contains(result, "retrieval circuit open") {
+			t.Fatal("equivalent fallback escaped backoff", name, result)
+		}
+	}
+	if calls != 1 {
+		t.Fatal(calls)
+	}
+	clock = clock.Add(retrievalRetryDelay)
+	result, _ := s.invoke(context.Background(), "read_section", args, func() (string, error) { calls++; return "recovered page", nil })
+	if result != "recovered page" || calls != 2 {
+		t.Fatal(result, calls)
+	}
+}
+func TestRetrievalHTTPFailureDoesNotDisableOtherPathsOrWrites(t *testing.T) {
+	s := newResearchSession(nil, "", nil, 10)
+	_, _ = s.invoke(context.Background(), "fetch_url", map[string]any{"url": "https://example.test/a"}, func() (string, error) { return "", errors.New("HTTP 503 service unavailable") })
+	for _, tc := range []struct{ name, url, method string }{{"fetch_url", "https://example.test/b", ""}, {"http_request", "https://example.test/a", "POST"}} {
+		got, _ := s.invoke(context.Background(), tc.name, map[string]any{"url": tc.url, "method": tc.method}, func() (string, error) { return "unaffected", nil })
+		if got != "unaffected" {
+			t.Fatal(got)
+		}
 	}
 }

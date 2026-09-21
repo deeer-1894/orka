@@ -423,7 +423,7 @@ test('one composer control switches with input and steers the live run without a
   }
   if(path==='/chat/steer') {
    if(fail) await route.fulfill({status:503,json:{code:503,msg:'temporary failure'}});
-   else await json({run_id:body.run_id,message:msg('steer2','chat',body.message)});
+   else await json({run_id:body.run_id,message:msg('steer2','chat',body.message,{action:'human_input',payload:{request_id:body.request_id,file_ids:body.file_ids}})});
    return true;
   }
  }});
@@ -436,7 +436,10 @@ test('one composer control switches with input and steers the live run without a
  await input.fill('   ');await stop.waitFor();assert.equal(await send.count(),0);
  await input.fill('change the plan now');await send.click();
  await a.page.getByText('temporary failure',{exact:false}).first().waitFor();assert.equal(await input.inputValue(),'change the plan now');
+ assert.equal(await a.page.getByText('已加入当前任务',{exact:true}).count(),0);
  fail=false;await send.click();await stop.waitFor();assert.equal(await input.inputValue(),'');
+ await a.page.getByText('已加入当前任务',{exact:true}).waitFor();
+ assert.equal(await a.page.getByText('已采纳',{exact:true}).count(),0);
  const submissions=a.requests.filter(r=>r.path==='/chat/steer');
  assert.equal(submissions.length,2);assert.equal(submissions[0].body.request_id,submissions[1].body.request_id);assert.equal(submissions[1].body.run_id,'run-a');
  assert.equal(a.requests.filter(r=>r.path==='/chat/run').length,1);

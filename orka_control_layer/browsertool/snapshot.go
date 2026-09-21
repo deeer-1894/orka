@@ -2,9 +2,7 @@ package browsertool
 
 import (
 	"context"
-	"crypto/rand"
 	_ "embed"
-	"encoding/hex"
 	"encoding/json"
 
 	"github.com/orka-oss/orka_control_layer/connectors"
@@ -64,45 +62,24 @@ func createWorld(ctx context.Context, lease connectors.BrowserLease) (int64, err
 	if err == nil && world.ID == 0 {
 		err = NewActionError("browser_error", "Isolated browser context is unavailable.")
 	}
-	if err == nil {
-		var installed runtimeReply
-		err = lease.Execute(ctx, "Runtime.evaluate", map[string]any{"contextId": world.ID, "expression": "(" + domScript + ")();(" + observationScript + ")()", "returnByValue": true}, &installed)
-		if err == nil && len(installed.ExceptionDetails) > 0 && string(installed.ExceptionDetails) != "null" {
-			err = NewActionError("script_error", "Browser observation helpers could not be installed.")
-		}
-	}
+
 	return world.ID, err
 }
 
 func page(ctx context.Context, s Session, operation string, req Request) (pageReply, error) {
-	nonce := make([]byte, 16)
-	if _, err := rand.Read(nonce); err != nil {
-		return pageReply{}, err
-	}
-	info := s.Lease.Info()
-	payload := map[string]any{"operation": operation, "action": req.Action, "view": req.View, "frame": req.Frame, "scope": []any{s.Identity.OwnerID, s.Identity.ConversationID, s.Identity.RunID, info.PageID, info.PageEpoch}, "nonce": hex.EncodeToString(nonce), "ref": req.Ref, "snapshot_id": req.SnapshotID, "selector": req.Selector, "text": req.Text, "value": req.Value, "condition": req.Condition, "url": req.URL, "direction": req.Direction, "amount": req.Amount}
+	payload := map[string]any{"action": req.Action, "view": req.View, "frame": req.Frame, "ref": req.Ref, "snapshot_id": req.SnapshotID, "selector": req.Selector, "text": req.Text, "value": req.Value, "condition": req.Condition, "url": req.URL, "direction": req.Direction, "amount": req.Amount}
 	if operation == "snapshot" {
-		// Observation needs action identity, never the just-entered input values.
 		delete(payload, "text")
 		delete(payload, "value")
 	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return pageReply{}, err
+	// The server executes fixed helpers in a protected world. Generic evaluate
+	// cannot redefine the globals or prototypes used by an observation.
+	method := "Orka.act"
+	if operation == "snapshot" || operation == "wait" || operation == "commit_observation" {
+		method = "Orka.observe"
 	}
-	// Keep user-controlled strings out of generated source. Snapshot's small
-	// payload uses evaluate for a single initial observation; other operations
-	// pass arguments separately so a full-sized input is not truncated by JS.
 	var response runtimeReply
-	if operation == "snapshot" {
-		expression := "(" + snapshotScript + ")(" + string(raw) + ")"
-		if len(expression) > MaxExpressionBytes {
-			return pageReply{}, NewActionError("output_limit", "Browser helper exceeds the script limit.")
-		}
-		err = s.Lease.Execute(ctx, "Runtime.evaluate", map[string]any{"contextId": s.ContextID, "expression": expression, "returnByValue": true, "awaitPromise": true}, &response)
-	} else {
-		err = s.Lease.Execute(ctx, "Runtime.callFunctionOn", map[string]any{"executionContextId": s.ContextID, "functionDeclaration": snapshotScript, "arguments": []any{map[string]any{"value": payload}}, "returnByValue": true, "awaitPromise": true}, &response)
-	}
+	err := s.Lease.Execute(ctx, method, map[string]any{"operation": operation, "request": payload}, &response)
 	if err != nil {
 		return pageReply{}, err
 	}

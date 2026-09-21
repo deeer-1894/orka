@@ -43,7 +43,7 @@ func TestPressSendsKeyAndTextWithoutShortcutInsertion(t *testing.T) {
 func TestWaitDeadlineClosesLease(t *testing.T) {
 	lease := &fixtureLease{}
 	lease.handler = func(method string, params, out any) (bool, error) {
-		if method != "Runtime.callFunctionOn" {
+		if method != "Orka.observe" {
 			return false, nil
 		}
 		return true, json.Unmarshal([]byte(`{"result":{"value":{"ok":true,"ready":false}}}`), out)

@@ -16,16 +16,17 @@ type runCheckpoint struct {
 	EnabledTools     []string           `json:"enabled_tools"`
 	toolsRecorded    bool
 
-	SuccessfulTools         int                 `json:"successful_tools"`
-	successfulToolsRecorded bool                // distinguish an authoritative zero from a legacy absent field
-	LastCallError           string              `json:"last_call_error,omitempty"`
-	Plan                    []messages.PlanStep `json:"plan,omitempty"`
-	FinalResponse           string              `json:"final_response,omitempty"`
-	Outputs                 []string            `json:"outputs,omitempty"`
-	SpentTokens             int                 `json:"spent_tokens"`
-	ResearchCalls           int                 `json:"research_calls,omitempty"`
-	BrowserFailed           bool                `json:"browser_failed,omitempty"`
-	Evidence                *evidenceCheckpoint `json:"evidence,omitempty"`
+	SuccessfulTools         int                            `json:"successful_tools"`
+	successfulToolsRecorded bool                           // distinguish an authoritative zero from a legacy absent field
+	LastCallError           string                         `json:"last_call_error,omitempty"`
+	Plan                    []messages.PlanStep            `json:"plan,omitempty"`
+	FinalResponse           string                         `json:"final_response,omitempty"`
+	Outputs                 []string                       `json:"outputs,omitempty"`
+	SpentTokens             int                            `json:"spent_tokens"`
+	ResearchCalls           int                            `json:"research_calls,omitempty"`
+	BrowserEvidence         map[string]planBrowserEvidence `json:"browser_evidence,omitempty"`
+	BrowserFailed           bool                           `json:"browser_failed,omitempty"`
+	Evidence                *evidenceCheckpoint            `json:"evidence,omitempty"`
 }
 
 // New snapshots always serialize successful_tools, including zero. Legacy
@@ -47,8 +48,8 @@ func (c *runCheckpoint) UnmarshalJSON(data []byte) error {
 }
 
 func checkpointFrom(ctx context.Context) *runCheckpoint {
-	plan := planTrackerFrom(ctx)
-	c := &runCheckpoint{AcceptanceRunIDs: acceptanceRunIDs(ctx), EnabledTools: budgetRequestTools(ctx), toolsRecorded: true, successfulToolsRecorded: true, Plan: plan.snapshot(), BrowserFailed: plan.browserFailureState(), Outputs: deliveryFrom(ctx).snapshot(), FinalResponse: deliveryFrom(ctx).responseMode(), SpentTokens: budgetFrom(ctx).totalSpentTokens()}
+	plan := planTrackerFrom(ctx).checkpoint()
+	c := &runCheckpoint{AcceptanceRunIDs: acceptanceRunIDs(ctx), EnabledTools: budgetRequestTools(ctx), toolsRecorded: true, successfulToolsRecorded: true, Plan: plan.Steps, BrowserEvidence: plan.Browser, Outputs: deliveryFrom(ctx).snapshot(), FinalResponse: deliveryFrom(ctx).responseMode(), SpentTokens: budgetFrom(ctx).totalSpentTokens()}
 	if session := BudgetSessionFrom(ctx); session != nil {
 		snapshot := session.Snapshot()
 		c.BudgetSnapshot = &snapshot
@@ -91,10 +92,7 @@ func restoreCheckpoint(c *runCheckpoint, b *runBudget, p *planTracker, d *delive
 		b.lastCallError = c.LastCallError
 		b.mu.Unlock()
 	}
-	p.record(c.Plan)
-	if c.BrowserFailed {
-		p.recordBrowserOutcome(false)
-	}
+	p.restore(planCheckpoint{Steps: c.Plan, Browser: c.BrowserEvidence}, c.BrowserFailed)
 	// Checkpoints only contain paths validated when first declared.
 	_ = d.configure(c.Outputs, c.FinalResponse)
 }

@@ -41,7 +41,7 @@ func TestUnknownFormDispatchStopsWithoutReplaying(t *testing.T) {
 	lease := &fixtureLease{}
 	calls := 0
 	lease.handler = func(method string, params, out any) (bool, error) {
-		if method != "Runtime.callFunctionOn" {
+		if method != "Orka.act" {
 			return false, nil
 		}
 		calls++

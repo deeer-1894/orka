@@ -151,7 +151,10 @@ class CanvasMemoryTests(unittest.IsolatedAsyncioTestCase):
         port=listener.sockets[0].getsockname()[1]
         try:
             async with async_playwright() as pw:
-                browser=await pw.chromium.launch(headless=True,args=["--no-sandbox"])
+                # Exercise the deployed Xvfb/Chromium renderer when requested;
+                # this still draws and compares real canvas screenshots.
+                import os
+                browser=await pw.chromium.launch(headless=os.getenv("BROWSER_TEST_HEADFUL") != "1",args=["--no-sandbox"])
                 try:
                     page=await browser.new_page()
                     await page.set_content("""<canvas id="report" width="250" height="90"></canvas>

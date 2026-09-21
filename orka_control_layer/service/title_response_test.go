@@ -18,6 +18,8 @@ func TestTitleResponseRejectsIncompleteAndToolProtocol(t *testing.T) {
 		{"tool finish without calls", llm.Response{Content: "Not a final title", FinishReason: "tool_calls"}},
 		{"legacy function finish", llm.Response{Content: "Not a title", FinishReason: "function_call"}},
 		{"blank", llm.Response{Content: " \n\t"}},
+		{"provider answered browser task", llm.Response{Content: "I can't actually visit https://hn.algolia.com, but I can help you prepare a reading list.", FinishReason: "stop"}},
+		{"Chinese refusal", llm.Response{Content: "我无法直接浏览网页，但可以为你提供建议。", FinishReason: "stop"}},
 		{"quotes only", llm.Response{Content: "“”"}},
 		{"DSML", llm.Response{Content: "<｜DSML｜tool_calls><｜DSML｜invoke name=\"search\">"}},
 		{"ASCII DSML", llm.Response{Content: "<|DSML|tool_calls>"}},

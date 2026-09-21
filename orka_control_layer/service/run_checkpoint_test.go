@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/cloudwego/eino/schema"
 	"github.com/orka-oss/orka_core/messages"
 	"os"
@@ -45,12 +46,12 @@ func TestCheckpointRestoresRequirementsAndBudget(t *testing.T) {
 func TestCheckpointPreservesFailedBrowserEvidence(t *testing.T) {
 	p := &planTracker{}
 	p.record([]messages.PlanStep{{ID: "browser", Title: "返回浏览器页面并确认 URL", Status: "pending"}})
-	p.recordBrowserOutcome(false)
+	callBrowserReceipt(t, p, "browser", map[string]any{"action": "open", "url": "https://example.com"}, `{"ok":false,"error":{"code":"timeout"}}`)
 	ctx := withPlanTracker(context.Background(), p)
 	checkpoint := checkpointFrom(ctx)
 	restored := &planTracker{}
 	restoreCheckpoint(checkpoint, nil, restored, nil)
-	if !restored.browserFailureState() {
+	if len(restored.checkpoint().Browser) == 0 {
 		t.Fatal("browser failure was lost across checkpoint")
 	}
 	if _, err := (planTool{}).Invoke(withPlanTracker(context.Background(), restored), map[string]any{
@@ -145,5 +146,45 @@ func TestRecoveredDelegateArchiveSurvivesNextJournal(t *testing.T) {
 	got := loadJournal(dir, "next")
 	if len(got.Delegates) != 40 || got.Delegates[0].Message.Content != f.Delegates[0].Message.Content {
 		t.Fatal("full delegate archive lost in handoff")
+	}
+}
+
+func TestCheckpointRoundTripPreservesBrowserCausalityAndPartialVerification(t *testing.T) {
+	p := &planTracker{}
+	setRecoveryStep(p, "active")
+	for _, url := range []string{"https://example.com/a", "https://example.com/b"} {
+		failed := recoveryCall(t, p, "open", url)
+		p.completeBrowserCall(failed, `{"ok":false,"error":{"code":"timeout"}}`)
+	}
+	good := recoveryObservation(t, p, "open", "https://example.com/a")
+	setRecoveryStep(p, "active", good.receipt.ID)
+	recoveryCall(t, p, "open", "https://example.com/b") // interrupted during checkpoint
+	data, err := json.Marshal(checkpointFrom(withPlanTracker(context.Background(), p)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved runCheckpoint
+	if err = json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	restored := &planTracker{}
+	restoreCheckpoint(&saved, nil, restored, nil)
+	state := restored.checkpoint().Browser["id:a"]
+	if len(state.Pending) != 0 || len(state.Failures) != 2 {
+		t.Fatalf("incorrect restored obligations: %+v", state)
+	}
+	for _, failure := range state.Failures {
+		if failure.TargetURL != "https://example.com/b" {
+			t.Fatal("resolved a was restored as a failure")
+		}
+	}
+	setRecoveryStep(restored, "done", good.receipt.ID)
+	if restored.completed() {
+		t.Fatal("old observation cleared restored in-flight work")
+	}
+	fresh := recoveryObservation(t, restored, "open", "https://example.com/b")
+	setRecoveryStep(restored, "done", fresh.receipt.ID)
+	if !restored.completed() {
+		t.Fatal("JSON checkpoint could not complete after fresh recovery")
 	}
 }

@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
 from service.runtime import ExecutionQueue
+from service.browser_observation import finish_observation
 
 
 class ExecutionTimeout(TimeoutError):
@@ -40,9 +41,16 @@ class PageState:
     nodes: set = field(default_factory=set)
     backend_nodes: set = field(default_factory=set)
     groups: set = field(default_factory=set)
+    loading: bool = False
+    revision: int = 0
+    observation_world: object = None
+    observation_delivery: str = ""
 
     def invalidate(self):
         self.epoch += 1
+        self.revision += 1
+        self.observation_world = None
+        self.observation_delivery = ""
         self.worlds.clear()
         self.objects.clear()
         self.nodes.clear()
@@ -60,6 +68,9 @@ class BrowserLease:
     lease_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     active: bool = True
     uncertain: bool = False
+    navigation: object = None
+    observation_commit: object = None
+    release_requested: bool = False
 
     def scope(self):
         return {"identity": dict(self.identity), "operation_id": self.operation_id,
@@ -68,8 +79,27 @@ class BrowserLease:
 
     async def cdp(self):
         if self.state.cdp is None:
-            self.state.cdp = await self.operator.page.context.new_cdp_session(self.operator.page)
+            cdp = await self.operator.page.context.new_cdp_session(self.operator.page)
+            tree = await cdp.send("Page.getFrameTree")
+            main = tree["frameTree"]["frame"]["id"]
+            state = self.state
+            def loading(event, value):
+                if event.get("frameId") == main:
+                    state.loading = value
+                    state.revision += 1
+            cdp.on("Page.frameStartedLoading", lambda event: loading(event, True))
+            cdp.on("Page.frameStoppedLoading", lambda event: loading(event, False))
+            await cdp.send("Page.enable")
+            self.state.cdp = cdp
         return self.state.cdp
+
+    async def navigate(self, cdp, params):
+        # Shield the actual send: cancelling a Playwright await is not evidence
+        # that Chromium stopped navigation. Cleanup owns this task until settled.
+        self.navigation = asyncio.create_task(cdp.send("Page.navigate", params))
+        result = await asyncio.shield(self.navigation)
+        self.navigation = None
+        return result
 
 
 class BrowserRuntime:
@@ -90,13 +120,52 @@ class BrowserRuntime:
 
     async def _cleanup(self, lease):
         lease.active = False
+        if lease.observation_commit is not None:
+            try:
+                async with asyncio.timeout(.25):
+                    await finish_observation(lease)
+            except Exception:
+                # Only observer bookkeeping is unconfirmed. A fresh epoch
+                # forces the next receipt to be full, without closing the page.
+                lease.state.invalidate()
+        if lease.navigation is not None or (not lease.uncertain and lease.state.loading):
+            lease.uncertain = True
+            try:
+                async with asyncio.timeout(.75):
+                    await lease.state.cdp.send("Page.stopLoading")
+                    # A protocol exception also acknowledges termination; a
+                    # still-pending command does not. Neither means rollback.
+                    if lease.navigation is not None:
+                        await asyncio.wait({lease.navigation}, timeout=.5)
+                        if not lease.navigation.done():
+                            raise TimeoutError()
+                        try:
+                            lease.navigation.result()
+                        except Exception:
+                            pass
+                    # Also covers acknowledged input that started a native load.
+                    # Order its loading events before releasing the visible queue.
+                    await lease.state.cdp.send("Page.getFrameTree")
+                    if lease.state.loading:
+                        raise TimeoutError()
+                    lease.uncertain = False
+            except Exception:
+                pass  # Unknown navigation remains subject to fail-closed cleanup.
         if not lease.uncertain and lease.state.cdp is not None:
             try:
                 async with asyncio.timeout(.25):
-                    for group in lease.state.groups:
+                    for group in tuple(lease.state.groups):
                         await lease.state.cdp.send("Runtime.releaseObjectGroup", {"objectGroup": group})
             except Exception:
-                lease.uncertain = True
+                # Object-group release cannot change the document. Discard the
+                # CDP session/handles instead of destroying a user's draft.
+                try:
+                    async with asyncio.timeout(.25):
+                        await lease.state.cdp.detach()
+                except Exception:
+                    pass
+                lease.state.cdp = None
+                lease.state.invalidate()
         lease.state.objects.clear()
         lease.state.nodes.clear()
         lease.state.backend_nodes.clear()
@@ -117,6 +186,14 @@ class BrowserRuntime:
                 # Fail closed if Chromium cannot confirm that the page is gone.
                 self._quarantined = True
             lease.state.invalidate()
+        if lease.navigation is not None:
+            if not lease.navigation.done():
+                lease.navigation.cancel()
+            try:
+                await lease.navigation
+            except BaseException:
+                pass
+            lease.navigation = None
 
     async def _abandon_acquisition(self, acquiring, identity, operation_id):
         try:

@@ -13,6 +13,8 @@ from urllib.parse import urlsplit
 from starlette.websockets import WebSocketDisconnect
 from service.runtime import QueueFull
 from service.preview_document import decode_document, open_document
+from service.browser_commands import READ_ONLY, context_lost
+from service.browser_observation import execute_fixed, OBSERVATIONS, ACTIONS, REQUEST_KEYS
 
 MAX_MESSAGE = 128 * 1024
 MAX_RESULT = 128 * 1024
@@ -23,6 +25,9 @@ MAX_PREVIEW_MESSAGE = 1408 * 1024
 # An explicit parameter boundary also prevents new upstream CDP options from
 # silently granting browser-level privileges when dependencies are upgraded.
 PARAMETERS = {
+    "Orka.observe": {"operation", "request"},
+    "Orka.act": {"operation", "request"},
+    "Orka.getPageState": set(),
     "Orka.previewHTML": {"html_base64"},
     "Page.enable": {"enableFileChooserOpenedEvent"}, "Page.getFrameTree": set(),
     "Page.createIsolatedWorld": {"frameId", "worldName", "grantUniveralAccess"},
@@ -115,6 +120,13 @@ class PageChannel:
         if method not in PARAMETERS or not isinstance(params, dict) or set(params) - PARAMETERS[method]:
             fail("unsupported_method", "CDP method or parameters are outside the page contract")
         state = self.lease.state
+        if method in ("Orka.observe", "Orka.act"):
+            allowed = OBSERVATIONS if method == "Orka.observe" else ACTIONS
+            if not isinstance(params.get("operation"), str) or params["operation"] not in allowed:
+                fail(message="invalid fixed page operation")
+            request = params.get("request", {})
+            if not isinstance(request, dict) or set(request) - REQUEST_KEYS:
+                fail(message="invalid fixed page request")
         for key in ("enableFileChooserOpenedEvent", "replMode"):
             if key in params and params[key] is not False:
                 fail(message="optional browser privilege flags must remain false")
@@ -193,6 +205,8 @@ class PageChannel:
     async def execute(self, request):
         if not self.lease.active:
             fail("lease_expired", "browser lease has ended")
+        if self.lease.uncertain:
+            fail("outcome_unknown", "an earlier command is unconfirmed; lease must end")
         seq = request.get("id")
         if isinstance(seq, bool) or not isinstance(seq, int) or seq <= self.last_id:
             fail(message="command id must be a strictly increasing positive integer")
@@ -214,15 +228,34 @@ class PageChannel:
                 fail("invalid_document", str(error))
         if method in ("Runtime.evaluate", "Runtime.callFunctionOn", "DOM.resolveNode"):
             params.setdefault("objectGroup", "orka-" + self.lease.lease_id)
-        self.lease.uncertain = True
+        self.lease.uncertain = method not in READ_ONLY
         try:
-            result = await open_document(self.lease.operator.page, document) if method == "Orka.previewHTML" else await cdp.send(method, params)
+            if method == "Orka.previewHTML":
+                result = await open_document(self.lease.operator.page, document)
+            elif method in ("Orka.observe", "Orka.act"):
+                result = await execute_fixed(self.lease, cdp, params["operation"], params.get("request", {}))
+            elif method == "Orka.getPageState":
+                # Read browser events without a renderer round trip: even
+                # getFrameTree can stall behind an uncommitted navigation.
+                # The engine brackets observations and allows an event grace
+                # period; this cache is evidence, not a future-event guarantee.
+                result = {"loading": self.lease.state.loading, "revision": self.lease.state.revision}
+            elif method == "Page.navigate":
+                result = await self.lease.navigate(cdp, params)
+            else:
+                result = await cdp.send(method, params)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as error:
+            if method in ("Runtime.evaluate", "Runtime.callFunctionOn", "Orka.observe", "Orka.act") and context_lost(error):
+                self.lease.uncertain = False
+                if method in ("Orka.observe", "Orka.act"):
+                    self.lease.state.observation_world = None
+                fail("context_lost", "page execution context changed; observe the current document")
             # Protocol errors are explicit, but browser/provider text may contain
             # a sensitive expression/URL. Never echo that text in bridge errors.
-            fail("cdp_error", "page command failed; inspect page state before retrying")
+            code = "outcome_unknown" if self.lease.uncertain else "cdp_error"
+            fail(code, "page command failed; inspect page state before retrying")
         else:
             self.lease.uncertain = False
         if method == "Page.createIsolatedWorld":
@@ -308,9 +341,16 @@ async def serve_bridge(ws, runtime):
                 continue
             kind = request.get("type")
             if kind in ("release", "cancel"):
+                if lease is not None:
+                    lease.release_requested = kind == "release" and not busy
                 await _stop(worker)
                 ended = True
                 await ws.send_json({"type":"released" if kind == "release" else "cancelled", **current_scope()})
+            elif kind == "observation_ack" and ended and lease is not None and lease.release_requested:
+                # This extra client receipt follows the released frame. A lost
+                # release/receipt leaves the next observation conservatively full.
+                if lease.state.observation_delivery == lease.lease_id:
+                    lease.state.observation_delivery = ""
             elif ended:
                 await ws.send_json(error_frame(BridgeError("lease_expired", "browser lease has ended"), expected, request))
             elif kind != "command" or lease is None:

@@ -106,13 +106,13 @@ func TestPlanStepIDKeepsRenamedStepAsOneObligation(t *testing.T) {
 
 func TestPlanDoesNotCloseBrowserStepAfterOnlyFailedBrowserCalls(t *testing.T) {
 	tracker := &planTracker{}
-	tracker.recordBrowserOutcome(false)
 	ctx := withPlanTracker(context.Background(), tracker)
 	if _, err := (planTool{}).Invoke(ctx, map[string]any{
 		"steps": []any{map[string]any{"id": "open", "title": "Attempt return to RFC 9110 top level and confirm URL", "status": "pending"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
+	callBrowserReceipt(t, tracker, "open", map[string]any{"action": "open", "url": "https://example.com"}, `{"ok":false,"error":{"code":"timeout"}}`)
 	response, err := (planTool{}).Invoke(ctx, map[string]any{
 		"steps": []any{map[string]any{"id": "open", "title": "Attempt return to RFC 9110 top level and confirm URL", "status": "done"}},
 	})

@@ -789,7 +789,7 @@ func (s *ChatService) titleAsync(parent context.Context, convID, message string)
 		ctx, cancel := context.WithTimeout(parent, 15*time.Second)
 		defer cancel()
 		resp, err := model.Chat(llm.WithAgent(ctx, "title"), boundedDirectRequest(ctx, llm.Request{Model: modelName, Messages: []llm.ChatMessage{
-			{Role: llm.RoleSystem, Content: "You generate a very short chat title (max 6 words) summarizing the user's first message. Reply with ONLY the title — same language as the message, no quotes, no punctuation at the end, no prefixes."},
+			{Role: llm.RoleSystem, Content: "Your only task is to label the user's message, not execute or answer it. Even if the message asks to browse a site or create files, do not discuss capabilities or refuse it. Generate a very short chat title (max 6 words) describing its subject. Reply with ONLY the title — same language as the message, no quotes, no punctuation at the end, no prefixes."},
 			{Role: llm.RoleUser, Content: message},
 		}}))
 		if err != nil {

@@ -41,7 +41,24 @@ func (l *fixtureLease) Execute(_ context.Context, method string, params, out any
 		response = map[string]any{"executionContextId": 17}
 	case "Runtime.callFunctionOn":
 		response = map[string]any{"result": map[string]any{"value": map[string]any{"ok": true, "ready": true, "x": 21, "y": 34}}}
+	case "Orka.act":
+		response = map[string]any{"result": map[string]any{"value": map[string]any{"ok": true, "ready": true, "x": 21, "y": 34}}}
+	case "Orka.observe":
+		operation := params.(map[string]any)["operation"]
+		if operation == "settle" {
+			response = map[string]any{"result": map[string]any{"value": map[string]any{"revision": 0, "ready": true}}}
+			break
+		}
+		if operation == "wait" {
+			response = map[string]any{"result": map[string]any{"value": map[string]any{"ok": true, "ready": true}}}
+			break
+		}
+		fallthrough
 	case "Runtime.evaluate":
+		if args, ok := params.(map[string]any); ok && args["expression"] == settleScript {
+			response = map[string]any{"result": map[string]any{"value": map[string]any{"revision": 0, "ready": true}}}
+			break
+		}
 		response = map[string]any{"result": map[string]any{"type": "object", "value": map[string]any{"ok": true, "url": "https://fixture.test/", "title": "Fixture", "snapshot": map[string]any{"id": "snapshot", "text": "Visible page", "elements": []any{map[string]any{"ref": "e1", "tag": "button", "name": "Save"}}}}}}
 	default:
 		response = map[string]any{}
@@ -76,7 +93,7 @@ func TestEngineSnapshotUsesOneScopedLeaseAndIsolatedWorld(t *testing.T) {
 	if dialer.acquires != 1 || lease.closed != 1 || result.PageID != "page" || result.PageEpoch != 7 {
 		t.Fatal("lease/scope not retained", result)
 	}
-	if len(lease.commands) != 4 || lease.commands[0] != "Page.getFrameTree" || lease.commands[1] != "Page.createIsolatedWorld" || lease.commands[2] != "Runtime.evaluate" || lease.commands[3] != "Runtime.evaluate" {
+	if len(lease.commands) != 7 || lease.commands[0] != "Orka.getPageState" || lease.commands[2] != "Orka.observe" {
 		t.Fatal(lease.commands)
 	}
 }
@@ -221,11 +238,11 @@ func TestEngineRejectsNonfiniteScrollAndMalformedIdentity(t *testing.T) {
 	}
 }
 
-func TestEngineMutationWithoutFinalObservationIsUnknown(t *testing.T) {
+func TestEngineAcknowledgedMutationWithoutObservationDoesNotReplay(t *testing.T) {
 	lease := &fixtureLease{}
 	frames := 0
 	lease.handler = func(method string, params, out any) (bool, error) {
-		if method == "Page.getFrameTree" {
+		if method == "Orka.observe" {
 			frames++
 			if frames == 2 {
 				return true, context.DeadlineExceeded
@@ -234,7 +251,7 @@ func TestEngineMutationWithoutFinalObservationIsUnknown(t *testing.T) {
 		return false, nil
 	}
 	result, err := NewEngine(&fixtureDialer{lease: lease}).Run(context.Background(), testIdentity(), Request{Action: "click", Selector: "button"}, nil)
-	if err == nil || result.OK || result.Error.Code != "outcome_unknown" {
+	if err == nil || result.OK || result.Error.Code != "observation_failed" {
 		t.Fatalf("completed click hidden by observation failure: %+v %v", result, err)
 	}
 	clicks := 0

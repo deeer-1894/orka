@@ -45,12 +45,17 @@ func (e *Engine) Run(ctx context.Context, identity connectors.GUIIdentity, req R
 		return
 	}
 	defer func() {
-		info := lease.Info()
-		result.PageID = info.PageID
-		result.PageEpoch = info.PageEpoch
 		if closeErr := lease.Close(); err == nil && closeErr != nil {
 			err = NewActionError("outcome_unknown", "Browser operation cleanup was not acknowledged.")
 		}
+		info := lease.Info()
+		if result.Snapshot != nil && result.PageEpoch != info.PageEpoch {
+			result.Snapshot, result.Change, result.Progress = nil, nil, nil
+			if err == nil {
+				err = observationFailure(req.Action != "snapshot" && req.Action != "wait")
+			}
+		}
+		result.PageID, result.PageEpoch = info.PageID, info.PageEpoch
 	}()
 	opCtx, cancel := context.WithTimeout(ctx, duration)
 	defer cancel()
@@ -83,24 +88,35 @@ func (e *Engine) Run(ctx context.Context, identity connectors.GUIIdentity, req R
 			return
 		}
 	}
-	if session.ContextID, err = createWorld(opCtx, lease); err != nil {
+	if req.Action == "snapshot" {
+		err = observeCurrent(opCtx, &session, &result, req, false)
+		result.OK = err == nil
 		return
 	}
+	if req.Action == "evaluate" || req.Action == "screenshot" || req.Action == "download" {
+		if err = createCurrentWorld(opCtx, &session); err != nil {
+			return
+		}
+	}
 	switch req.Action {
-	case "snapshot":
-		err = observe(opCtx, session, &result, req)
 	case "open", "preview":
-		err = waitFor(opCtx, session, Request{Condition: req.Condition})
+		err = waitCurrent(opCtx, &session, Request{Condition: req.Condition})
 		if err == nil {
-			err = observe(opCtx, session, &result, req)
+			err = observeCurrent(opCtx, &session, &result, req, true)
+		}
+		if err != nil {
+			err = observationFailure(true)
 		}
 	case "wait":
-		err = waitFor(opCtx, session, req)
+		err = waitCurrent(opCtx, &session, req)
 		if err == nil {
-			err = observe(opCtx, session, &result, req)
+			err = observeCurrent(opCtx, &session, &result, req, false)
 		}
 	case "evaluate":
 		result.Value, err = evaluate(opCtx, session, req.Expression)
+		if err != nil && actionError(err).Code == "context_lost" {
+			err = NewActionError("outcome_unknown", "The script's document changed before acknowledgement; inspect the page before retrying.")
+		}
 	case "screenshot", "download":
 		if files == nil {
 			err = NewActionError("unavailable", "Browser file operations are unavailable.")
@@ -115,17 +131,14 @@ func (e *Engine) Run(ctx context.Context, identity connectors.GUIIdentity, req R
 		}
 		if err != nil && result.Form != nil && result.Form.Completed > 0 {
 			// Preserve the partial receipt and original error; do not replay earlier fields.
-			_ = observe(opCtx, session, &result, Request{Action: "snapshot"})
+			_ = observeCurrent(opCtx, &session, &result, Request{Action: "snapshot"}, false)
 		}
 		if err == nil {
-			// A click/key can navigate. Reacquire the main-document world before the
-			// receipt, never replay the mutation if that observation fails.
-			session.ContextID, err = createWorld(opCtx, lease)
-			if err == nil {
-				err = observe(opCtx, session, &result, req)
-			}
+			// The fixed observer reacquires its protected world after navigation.
+			// Never replay the mutation if its receipt is unavailable.
+			err = observeCurrent(opCtx, &session, &result, req, true)
 			if err != nil {
-				err = NewActionError("outcome_unknown", "Browser action was dispatched but its final observation is unavailable; inspect the page before retrying.")
+				err = observationFailure(true)
 			}
 		}
 	}

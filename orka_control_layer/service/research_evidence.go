@@ -82,7 +82,12 @@ func (s *evidenceStore) capture(ctx context.Context, key, tool string, args map[
 	s.records = append(s.records, r)
 	if r.Path != "" {
 		s.writeCatalogLocked(ctx)
-		return fmt.Sprintf("[Evidence %s; retrieved %s; saved tool response (may be partial): %s]\n%s", r.ID, r.RetrievedAt, r.Path, trunc(body, evidencePreviewChars))
+		preview := trunc(body, evidencePreviewChars)
+		scope := "Shown below: complete saved response."
+		if len([]rune(body)) > evidencePreviewChars {
+			scope = fmt.Sprintf("Shown below: preview only (%d of %d characters). Full response is saved, not yet read in this observation. Use search_evidence or file_read for the exact passages before attributing claims.", evidencePreviewChars, len([]rune(body)))
+		}
+		return fmt.Sprintf("[Evidence %s; retrieved %s; saved tool response (may be partial): %s]\n%s\n%s", r.ID, r.RetrievedAt, r.Path, scope, preview)
 	}
 	// Do not truncate the only accessible copy if persistence is unavailable.
 	return body

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cloudwego/eino/adk/filesystem"
 	"github.com/orka-oss/orka_core/toolargs"
@@ -21,7 +22,8 @@ type researchSession struct {
 	mu              sync.Mutex
 	pending         map[string]*researchCall
 	cache           map[string]string
-	blockedHosts    map[string]string
+	blockedHosts    map[string]retrievalBackoff
+	now             func() time.Time
 	calls, maxCalls int
 	budget          *runBudget
 	evidence        *evidenceStore
@@ -37,13 +39,10 @@ func newResearchSession(backend filesystem.Backend, dir string, budget *runBudge
 	if maxCalls <= 0 {
 		maxCalls = defaultResearchMaxCalls
 	}
-	return &researchSession{pending: make(map[string]*researchCall), cache: make(map[string]string), blockedHosts: make(map[string]string), maxCalls: maxCalls, budget: budget, evidence: newEvidenceStore(backend, dir)}
+	return &researchSession{pending: make(map[string]*researchCall), cache: make(map[string]string), blockedHosts: make(map[string]retrievalBackoff), now: time.Now, maxCalls: maxCalls, budget: budget, evidence: newEvidenceStore(backend, dir)}
 }
 
 func isResearchTool(name string, args map[string]any) bool {
-	if isResearchToolName(name) {
-		return true
-	}
 	if name == "http_request" {
 		method, _ := args["method"].(string)
 		if method == "" {
@@ -53,7 +52,7 @@ func isResearchTool(name string, args map[string]any) bool {
 		_, hasURL := args["url"].(string)
 		return hasURL && (method == "GET" || method == "HEAD")
 	}
-	return false
+	return isResearchToolName(name)
 }
 
 func isResearchToolName(name string) bool {
@@ -125,11 +124,9 @@ func (s *researchSession) invoke(ctx context.Context, name string, args map[stri
 			return p.out, p.err
 		}
 	}
-	if host := researchHost(name, args); host != "" {
-		if reason, blocked := s.blockedHosts[host]; blocked {
-			s.mu.Unlock()
-			return fmt.Sprintf("[retrieval circuit open] %s is already unreachable in this run (%s). Do not retry another URL on the same host; use a different official endpoint or report the page as unavailable.", host, reason), nil
-		}
+	if reason := s.retrievalBackoffLocked(name, args); reason != "" {
+		s.mu.Unlock()
+		return "[retrieval circuit open] " + reason + " Use collected evidence or a different reachable source. Do not change tools to repeat the same request.", nil
 	}
 	if s.atLimitLocked() {
 		s.mu.Unlock()
@@ -141,15 +138,12 @@ func (s *researchSession) invoke(ctx context.Context, name string, args map[stri
 	s.mu.Unlock()
 
 	out, err := call()
-	if err != nil && classifyToolError(err.Error()) == failTransient {
-		if host := researchHost(name, args); host != "" {
-			// Stop a fan-out of equivalent URLs against one unavailable host. A
-			// different official endpoint remains eligible as a fallback.
-			s.mu.Lock()
-			s.blockedHosts[host] = "the last request timed out or failed at the transport layer"
-			s.mu.Unlock()
-		}
+	if err != nil && ctx.Err() == nil && classifyToolError(err.Error()) == failTransient {
+		s.mu.Lock()
+		s.recordRetrievalFailureLocked(name, args, err.Error())
+		s.mu.Unlock()
 	}
+
 	success := err == nil && usefulResearchResult(out)
 	if success {
 		out = s.evidence.capture(ctx, key, name, args, out)
@@ -169,7 +163,7 @@ func (s *researchSession) invoke(ctx context.Context, name string, args map[stri
 // separate from the request cache key: different paths on one unavailable host
 // must not trigger another full retry sequence, while another host is allowed.
 func researchHost(name string, args map[string]any) string {
-	if name != "fetch_url" && name != "discover_docs" {
+	if name != "fetch_url" && name != "discover_docs" && name != "read_section" && !(name == "http_request" && isResearchTool(name, args)) {
 		return ""
 	}
 	raw, _ := args["url"].(string)
@@ -184,7 +178,7 @@ func researchHost(name string, args map[string]any) string {
 	if err != nil {
 		return ""
 	}
-	return strings.ToLower(u.Hostname())
+	return strings.ToLower(u.Scheme + "://" + u.Host)
 }
 
 func usefulResearchResult(out string) bool {

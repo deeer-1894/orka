@@ -1,4 +1,5 @@
-import { executionError } from '../lib/executionResult';
+import { executionError, normalizeToolReceipt, totalToolElapsedMs } from '../lib/executionResult';
+import { steeringReceipt } from '../lib/steeringReceipt';
 import { HomeWelcome } from "./HomeWelcome";
 import { ActionChip } from './ActionChip';
 import { useDeliveryManifest } from '../hooks/useDeliveryManifest';
@@ -466,6 +467,7 @@ function ThreadFind({
 function UserBubble({ m, onEdit, onFork }: { m: Message; onEdit?: (text: string) => void; onFork?: () => void }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(m.content || "");
+  const receipt = steeringReceipt(m);
   if (editing) {
     const submit = () => {
       const t = draft.trim();
@@ -502,6 +504,7 @@ function UserBubble({ m, onEdit, onFork }: { m: Message; onEdit?: (text: string)
       <div className="max-w-[85%] rounded-2xl rounded-br-md bg-userbubble px-4 py-2.5 text-[15px] leading-relaxed text-ink whitespace-pre-wrap">
         {m.content}
       </div>
+      {receipt && <span className="text-[11px] text-faint">{receipt}</span>}
       {(onEdit || onFork) && (
         <div className="flex gap-1 opacity-0 transition group-hover:opacity-100">
           <CopyButton text={m.content || ""} />
@@ -515,11 +518,12 @@ function UserBubble({ m, onEdit, onFork }: { m: Message; onEdit?: (text: string)
 
 // StructuredPlan renders a first-class plan event (the agent's `update_plan`
 // tool calls) as a live checklist with real per-step status — pending / active
-// (currently working) / done — instead of inferring progress from prose.
+// (currently working) / done / blocked — instead of inferring progress from prose.
 function StructuredPlan({ plan, live }: { plan: PlanPayload; live: boolean }) {
   const steps = plan.steps || [];
   if (steps.length === 0) return null;
   const done = steps.filter((s) => s.status === "done").length;
+  const blocked = steps.filter((s) => s.status === "blocked").length;
   const allDone = done === steps.length;
   return (
     <div className="my-2 ml-[42px] rounded-xl border border-border bg-surface2/40 p-3">
@@ -527,7 +531,8 @@ function StructuredPlan({ plan, live }: { plan: PlanPayload; live: boolean }) {
         <Icon name="sparkle" size={14} className="text-accent" />
         <span>执行计划</span>
         <span className="text-faint">· {done}/{steps.length}</span>
-        {live && !allDone ? (
+        {blocked > 0 && <span className="text-accent">· {blocked} 项受阻</span>}
+        {live && !allDone && (blocked === 0 || steps.some(s => s.status === "active")) ? (
           <span className="inline-flex items-center gap-1 text-accent">
             <span className="dot h-1.5 w-1.5 rounded-full bg-accent" /> 进行中
           </span>
@@ -545,13 +550,16 @@ function StructuredPlan({ plan, live }: { plan: PlanPayload; live: boolean }) {
                   ? "bg-ok text-white"
                   : s.status === "active"
                   ? "bg-accent text-white"
+                  : s.status === "blocked"
+                  ? "bg-accent text-white"
                   : "border border-faint text-faint")
               }
             >
-              {s.status === "done" ? "✓" : s.status === "active" ? <span className="dot h-1.5 w-1.5 rounded-full bg-white" /> : i + 1}
+              {s.status === "done" ? "✓" : s.status === "active" ? <span className="dot h-1.5 w-1.5 rounded-full bg-white" /> : s.status === "blocked" ? "!" : i + 1}
             </span>
-            <span className={s.status === "done" ? "text-faint line-through" : s.status === "active" ? "text-ink font-medium" : "text-muted"}>
+            <span className={s.status === "done" ? "text-faint line-through" : s.status === "active" ? "text-ink font-medium" : s.status === "blocked" ? "text-accent" : "text-muted"}>
               {s.title}
+              {s.status === "blocked" && <span className="ml-1 text-faint">· 受阻{s.reason ? `：${s.reason}` : ""}</span>}
             </span>
           </li>
         ))}
@@ -752,9 +760,9 @@ function Steps({ items, live }: { items: Message[]; live?: boolean }) {
         <div className="mt-2 border-l-2 border-border pl-4">
           {groupRuns(own).map((g) =>
             g.items.length > 1 ? (
-              <CollapsedRun key={g.items[0].id} items={g.items} prev={own[own.indexOf(g.items[0]) - 1]} />
+              <CollapsedRun key={g.items[0].id} items={g.items} />
             ) : (
-              <TimelineRow key={g.items[0].id} m={g.items[0]} prev={own[own.indexOf(g.items[0]) - 1]} />
+              <TimelineRow key={g.items[0].id} m={g.items[0]} />
             ),
           )}
           {live && (
@@ -781,7 +789,8 @@ function groupRuns(items: Message[]): { key: string; items: Message[] }[] {
   for (const m of items) {
     const p = m.type === "tool" ? (m.payload as ToolPayload) : null;
     // errors and non-tool events are never folded away
-    const key = p && !executionError(p) ? "tool:" + (p.tool || "") : "solo:" + m.id;
+    const receipt = p ? normalizeToolReceipt(p) : undefined;
+    const key = p && !receipt?.error ? "tool:" + (p.tool || "") + ":" + (receipt?.browser?.label || "") : "solo:" + m.id;
     const last = out[out.length - 1];
     if (last && last.key === key) last.items.push(m);
     else out.push({ key, items: [m] });
@@ -791,15 +800,17 @@ function groupRuns(items: Message[]): { key: string; items: Message[] }[] {
 
 // CollapsedRun renders a run of same-tool steps as one line ("搜索 · 5 次"),
 // expandable to the individual steps.
-function CollapsedRun({ items, prev }: { items: Message[]; prev?: Message }) {
+function CollapsedRun({ items }: { items: Message[] }) {
   const [open, setOpen] = useState(false);
   const first = toolReceipt((items[0].payload as ToolPayload) || ({} as ToolPayload));
-  const total = items[items.length - 1].ts && prev?.ts ? items[items.length - 1].ts - (prev.ts as number) : 0;
+  const total = totalToolElapsedMs(items
+    .filter((m) => m.type === "tool")
+    .map((m) => (m.payload as ToolPayload) || ({ tool: "" } as ToolPayload)));
   if (open) {
     return (
       <>
-        {items.map((m, i) => (
-          <TimelineRow key={m.id} m={m} prev={i === 0 ? prev : items[i - 1]} />
+        {items.map((m) => (
+          <TimelineRow key={m.id} m={m} />
         ))}
         <button onClick={() => setOpen(false)} className="ml-1 py-0.5 text-[11.5px] text-faint hover:text-accent">收起这 {items.length} 步</button>
       </>
@@ -812,7 +823,7 @@ function CollapsedRun({ items, prev }: { items: Message[]; prev?: Message }) {
         <Icon name={first.icon} size={14} className="shrink-0 text-muted" />
         <span className="text-ink">{first.label.replace(/\s*“[^”]*”\s*$/, "")}</span>
         <span className="text-muted">· {items.length} 次</span>
-        {total > 400 && <span className="text-faint">· {(total / 1000).toFixed(1)}s</span>}
+        {total !== undefined && total > 400 && <span className="text-faint">· {(total / 1000).toFixed(1)}s</span>}
         <span className="text-faint opacity-0 transition group-hover:opacity-100">展开 ▾</span>
       </button>
     </div>
@@ -821,9 +832,10 @@ function CollapsedRun({ items, prev }: { items: Message[]; prev?: Message }) {
 
 // TimelineRow wraps one Step with a status node on the spine + elapsed time, so
 // the steps read as a timeline ("图标 + 动作 + 耗时 + 状态") not a flat list.
-function TimelineRow({ m, prev }: { m: Message; prev?: Message }) {
-  const err = m.type === "tool" && !!executionError((m.payload as ToolPayload) || { tool: "" });
-  const dur = prev && m.ts && prev.ts ? m.ts - prev.ts : 0;
+function TimelineRow({ m }: { m: Message }) {
+  const receipt = m.type === "tool" ? normalizeToolReceipt((m.payload as ToolPayload) || { tool: "" }) : undefined;
+  const err = !!receipt?.error;
+  const dur = receipt?.elapsedMs;
   return (
     <div className="relative flex items-start gap-2 py-0.5">
       <span
@@ -831,7 +843,7 @@ function TimelineRow({ m, prev }: { m: Message; prev?: Message }) {
         title={err ? "失败" : "完成"}
       />
       <div className="min-w-0 flex-1"><Step m={m} /></div>
-      {dur > 400 && <span className="shrink-0 pt-0.5 text-[10px] text-faint">{(dur / 1000).toFixed(1)}s</span>}
+      {dur !== undefined && dur > 400 && <span className="shrink-0 pt-0.5 text-[10px] text-faint">{(dur / 1000).toFixed(1)}s</span>}
     </div>
   );
 }
@@ -898,7 +910,11 @@ function toolReceipt(p: ToolPayload): { icon: IconName; label: string; detail: s
     currency: { icon: "coin", label: "汇率换算", detail: trunc(res, 60) },
     timezone: { icon: "clock", label: "时区换算", detail: trunc(res, 60) },
   };
-  if (p.tool === "researcher" || p.tool === "writer" || p.tool === "browser") {
+  if (p.tool === "browser") {
+    const receipt = normalizeToolReceipt(p).browser;
+    return { icon: "globe", label: receipt?.label || "浏览器操作", detail: trunc(receipt?.detail, 70), file };
+  }
+  if (p.tool === "researcher" || p.tool === "writer") {
     return { icon: "users", label: `委派 ${p.tool}`, detail: trunc(s("task") || res, 64), file };
   }
   const r = base[p.tool || ""] || { icon: "wrench" as IconName, label: p.tool || "tool", detail: trunc(res, 70) };

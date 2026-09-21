@@ -2,13 +2,10 @@ package service
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/schema"
-
-	"github.com/orka-oss/orka_core/messages"
 )
 
 // This file gives a run a BUDGET and a DEFINITION OF DONE — the two things a
@@ -253,156 +250,6 @@ func budgetNotice(reason string) *schema.Message {
 		"2. 还剩什么没做\n" +
 		"3. 若要继续,下一步应该做什么\n" +
 		"用户可以据此让你继续。")
-}
-
-// ---- plan completion ----
-
-// planTracker preserves every step published via update_plan, so
-// omitted steps cannot erase obligations. File requirements are checked separately.
-// Without a tracker "done" means
-// only "the model stopped calling tools", which is not a completion signal at
-// all — it is equally true of a finished run and an abandoned one.
-type planTracker struct {
-	mu            sync.Mutex
-	steps         []messages.PlanStep
-	browserFailed bool
-}
-
-func (p *planTracker) recordBrowserOutcome(ok bool) {
-	if p == nil {
-		return
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if !ok {
-		p.browserFailed = true
-	}
-}
-
-func (p *planTracker) browserEvidenceIncompleteLocked() bool {
-	// A later successful browser action does not prove that an earlier failed
-	// action's acceptance condition was met. The plan update must explicitly
-	// close that failed step after the model observes the correct page state.
-	return p.browserFailed
-}
-
-func (p *planTracker) browserFailureState() bool {
-	if p == nil {
-		return false
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.browserFailed
-}
-
-func browserPlanStep(title string) bool {
-	lower := strings.ToLower(title)
-	for _, marker := range []string{"browser", "浏览器", "网页", "页面", "release", "releases", "url", "链接", "anchor", "return", "返回", "顶层"} {
-		if strings.Contains(lower, marker) {
-			return true
-		}
-	}
-	return false
-}
-
-func (p *planTracker) record(steps []messages.PlanStep) {
-	if p == nil {
-		return
-	}
-	p.mu.Lock()
-	// Omission is not completion. Explicit IDs let the model rename a step
-	// without creating a second obligation; legacy title-only updates retain
-	// their exact-title behavior for backward compatibility.
-	index := make(map[string]int, len(p.steps))
-	for i, step := range p.steps {
-		index[planStepKey(step)] = i
-	}
-	for _, step := range steps {
-		if i, ok := index[planStepKey(step)]; ok {
-			if step.Status == "done" && p.browserEvidenceIncompleteLocked() && browserPlanStep(step.Title) && p.steps[i].Status != "done" {
-				step.Status = "active"
-			}
-			p.steps[i] = step
-		} else {
-			if step.Status == "done" && p.browserEvidenceIncompleteLocked() && browserPlanStep(step.Title) {
-				step.Status = "active"
-			}
-			index[planStepKey(step)] = len(p.steps)
-			p.steps = append(p.steps, step)
-		}
-	}
-	p.mu.Unlock()
-}
-
-func planStepKey(step messages.PlanStep) string {
-	if step.ID != "" {
-		return "id:" + step.ID
-	}
-	return "title:" + step.Title
-}
-
-func (p *planTracker) completed() bool {
-	if p == nil {
-		return false
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.steps) == 0 {
-		return false
-	}
-	for _, step := range p.steps {
-		if step.Status != "done" || (p.browserEvidenceIncompleteLocked() && browserPlanStep(step.Title)) {
-			return false
-		}
-	}
-	return true
-}
-
-func (p *planTracker) snapshot() []messages.PlanStep {
-	if p == nil {
-		return nil
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return append([]messages.PlanStep(nil), p.steps...)
-}
-
-// same reports whether steps are identical to the plan already recorded, so a
-// re-post of an unchanged checklist can be answered without spending an event.
-// An empty tracker is never "the same": the first plan of a run is always news.
-func (p *planTracker) same(steps []messages.PlanStep) bool {
-	if p == nil {
-		return false
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.steps) == 0 || len(p.steps) != len(steps) {
-		return false
-	}
-	for i := range steps {
-		if planStepKey(steps[i]) != planStepKey(p.steps[i]) || steps[i].Title != p.steps[i].Title || steps[i].Status != p.steps[i].Status {
-			return false
-		}
-	}
-	return true
-}
-
-// unfinished returns the titles of steps still pending or active. A plan the
-// agent never published yields nothing, which correctly means "no claim to
-// check" rather than "incomplete".
-func (p *planTracker) unfinished() []string {
-	if p == nil {
-		return nil
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	var out []string
-	for _, s := range p.steps {
-		if s.Status != "done" || (p.browserEvidenceIncompleteLocked() && browserPlanStep(s.Title)) {
-			out = append(out, s.Title)
-		}
-	}
-	return out
 }
 
 // agentBudget returns the run-scoped budget when the caller installed one (so

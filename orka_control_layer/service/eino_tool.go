@@ -37,6 +37,12 @@ func (t *einoTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 		if err := json.Unmarshal(b, &js); err != nil {
 			return nil, err
 		}
+		if t.base.Name() == "browser" {
+			if js.Properties == nil {
+				js.Properties = jsonschema.NewProperties()
+			}
+			js.Properties.Set("plan_step_id", &jsonschema.Schema{Type: "string", Description: "Stable update_plan step id owning this action. Required when more than one step is active; otherwise the only active step is inferred."})
+		}
 		info.ParamsOneOf = schema.NewParamsOneOfByJSONSchema(&js)
 	}
 	return info, nil
@@ -59,6 +65,16 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 		}
 	}
 	name := t.base.Name()
+	browserCall := planBrowserCall{}
+	if name == "browser" {
+		stepID, _ := args["plan_step_id"].(string)
+		var admissionErr error
+		browserCall, admissionErr = planTrackerFrom(ctx).beginBrowserCall(stepID, args)
+		if admissionErr != nil {
+			return "tool call failed: " + admissionErr.Error(), nil
+		}
+		delete(args, "plan_step_id")
+	}
 	canonicalArgs, _ := json.Marshal(args)
 	cacheKey := name + "\x00" + string(canonicalArgs)
 	// Retry infrastructure failures before giving up. A dropped MCP socket is not
@@ -80,6 +96,8 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 	})
 	if err != nil {
 		if ctx.Err() != nil {
+			// Cancellation after dispatch cannot prove that the operation was not applied.
+			planTrackerFrom(ctx).completeBrowserCall(browserCall, `{"ok":false,"error":{"code":"outcome_unknown"}}`)
 			return "", ctx.Err()
 		}
 		// An interrupt is CONTROL FLOW, not a tool failure: the confirm gate uses
@@ -90,21 +108,19 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 		// compose.Interrupt returns an *adk.InterruptSignal — NOT the interruptError
 		// that compose.ExtractInterruptInfo looks for — so match the signal itself.
 		if isInterruptErr(err) {
+			planTrackerFrom(ctx).discardBrowserCall(browserCall)
 			return "", err
 		}
-		return toolErrorMessage(name, err, retries) +
+		planNote := planTrackerFrom(ctx).completeBrowserCall(browserCall, `{"ok":false,"error":{"code":"transport_error"}}`)
+		return toolErrorMessage(name, err, retries) + planNote +
 			loopDetectorFrom(ctx).observe(cacheKey, err.Error()) +
 			recordExecution(ctx, name, args, err.Error(), revisions), nil
 	}
+	planNote := ""
 	if name == "browser" {
-		var receipt struct {
-			OK bool `json:"ok"`
-		}
-		tracker := planTrackerFrom(ctx)
-		if tracker != nil {
-			tracker.recordBrowserOutcome(json.Unmarshal([]byte(out), &receipt) == nil && receipt.OK)
-		}
+		planNote = planTrackerFrom(ctx).completeBrowserCall(browserCall, out)
 	}
+
 	evidenceNote := recordExecution(ctx, name, args, out, revisions)
 	deliveryNote := ""
 	if name == "file_write" {
@@ -118,7 +134,7 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 	if note := loopDetectorFrom(ctx).observe(cacheKey, out); note != "" {
 		out += note
 	}
-	return out + evidenceNote + deliveryNote + deliveryFrom(ctx).inspectProduced(ctx, name), nil
+	return out + planNote + evidenceNote + deliveryNote + deliveryFrom(ctx).inspectProduced(ctx, name), nil
 }
 
 // EinoTools adapts a slice of BaseTools.

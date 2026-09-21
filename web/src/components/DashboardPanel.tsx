@@ -1,4 +1,5 @@
 import { MetricsPanel, type MetricsRunContext } from './MetricsPanel';
+import { runStatistics } from '../lib/runStatistics';
 import { useEffect, useState } from "react";
 import { api, artifacts as artifactApi, files as fileApi } from "../api";
 import type { Artifact, RunRecord } from "../types";
@@ -74,19 +75,8 @@ export function DashboardPanel({ conversationID, onJumpToConversation, goTab, on
       </div>
     );
 
-  const done = runs.filter((r) => r.status === "done").length;
-  const failed = runs.filter((r) => r.status === "failed").length;
-  // "partial" ran to an orderly stop without finishing the job (out of budget, or
-  // plan steps left undone). It is an OUTCOME, so it belongs in the denominator —
-  // counting it as success is exactly the flattery this status exists to prevent.
-  const partial = runs.filter((r) => r.status === "partial").length;
-  // "interrupted" means the serving process went away. Nothing was decided, so it
-  // is not an outcome at all and must not drag the success rate down.
-  const interrupted = runs.filter((r) => r.status === "interrupted").length;
-  const finished = done + failed + partial;
-  const successRate = finished ? Math.round((done / finished) * 100) : 0;
-  const durs = runs.filter((r) => r.duration_ms > 0).map((r) => r.duration_ms);
-  const avgDur = durs.length ? Math.round(durs.reduce((a, b) => a + b, 0) / durs.length / 1000) : 0;
+  const stats = runStatistics(runs);
+  const { done, failed, partial, interrupted, paused, running } = stats;
   const triggers = runs.reduce((acc, r) => { const k = r.trigger || "manual"; acc[k] = (acc[k] || 0) + 1; return acc; }, {} as Record<string, number>);
   const fmtNum = (n: number) => (n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(n));
   const dot = (s: string) =>
@@ -113,12 +103,13 @@ export function DashboardPanel({ conversationID, onJumpToConversation, goTab, on
       <Stat
         label="近期运行数"
         value={String(runs.length)}
-        sub={[`${done} 成功`, partial ? `${partial} 部分` : "", `${failed} 失败`, interrupted ? `${interrupted} 中断` : ""].filter(Boolean).join(" · ")}
+        sub={[`${done} 完成`, partial ? `${partial} 部分` : "", `${failed} 失败`, interrupted ? `${interrupted} 中断` : "", paused ? `${paused} 等待` : "", running ? `${running} 进行中` : ""].filter(Boolean).join(" · ")}
       />
       <div className="grid grid-cols-2 gap-2">
-        <Stat label="成功率" value={successRate + "%"} sub={`${finished} 个有结论${interrupted ? ` · ${interrupted} 个中断不计` : ""}`} />
-        <Stat label="平均耗时" value={avgDur + "s"} sub={durs.length ? `基于 ${durs.length} 个运行` : "—"} />
+        <Stat label="运行完成率" value={stats.completionRate === undefined ? "—" : stats.completionRate + "%"} sub={`${done} / ${stats.ended} 次已结束运行 · 中断计入`} />
+        <Stat label="平均耗时" value={stats.averageSeconds === undefined ? "—" : stats.averageSeconds + "s"} sub={stats.timedRuns ? `基于 ${stats.timedRuns} 次已结束运行` : "暂无已结束运行的耗时"} />
       </div>
+      <p className="text-[11px] text-faint">按运行记录统计，恢复执行单独计数；完成状态不代表成果已通过验收。</p>
 
       <div className="rounded-xl border border-border bg-surface p-3">
         <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-faint">近期运行 · {recent.length}</div>
@@ -134,11 +125,11 @@ export function DashboardPanel({ conversationID, onJumpToConversation, goTab, on
           ))}
         </div>
         <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[10.5px] text-faint">
-          <span><span style={{ color: "var(--color-ok)" }}>●</span> 成功</span>
+          <span><span style={{ color: "var(--color-ok)" }}>●</span> 完成</span>
           <span><span style={{ color: "#d2761f" }}>●</span> 部分完成</span>
           <span><span style={{ color: "#e0695f" }}>●</span> 失败</span>
           <span><span style={{ color: "#e3b341" }}>●</span> 进行中</span>
-          <span><span style={{ color: "var(--color-faint)" }}>●</span> 中断</span>
+          <span><span style={{ color: "var(--color-faint)" }}>●</span> 等待 / 中断</span>
         </div>
       </div>
 

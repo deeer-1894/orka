@@ -31,6 +31,11 @@ func waitFor(ctx context.Context, s Session, r Request) error {
 func act(ctx context.Context, s Session, r Request) error {
 	reply, err := prepareAndAct(ctx, s, r)
 	if err != nil {
+		// A destroyed context can follow a handler that already changed the
+		// site. Context recovery is only safe in the observation layer.
+		if actionError(err).Code == "context_lost" {
+			return NewActionError("outcome_unknown", "The action's document changed before acknowledgement; inspect the current page before retrying.")
+		}
 		return err
 	}
 	switch r.Action {

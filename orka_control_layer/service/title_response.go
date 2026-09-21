@@ -19,6 +19,17 @@ func titleFromResponse(resp llm.Response) string {
 		return ""
 	}
 	content := strings.ToLower(resp.Content)
+	firstLine := strings.TrimSpace(strings.SplitN(content, "\n", 2)[0])
+	// A title-only call has no browsing tools. If a provider answers the task
+	// instead of labelling it, keep the user's existing snippet.
+	for _, prefix := range []string{"i can't", "i cannot", "i’m unable", "i'm unable", "as an ai", "i don't have", "我无法", "我不能", "我目前无法", "抱歉", "很抱歉"} {
+		if strings.HasPrefix(firstLine, prefix) {
+			return ""
+		}
+	}
+	if len(strings.Fields(firstLine)) > 8 {
+		return ""
+	}
 	if strings.Contains(content, "<｜dsml｜") || strings.Contains(content, "<|dsml|") {
 		return ""
 	}

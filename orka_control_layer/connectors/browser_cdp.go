@@ -50,21 +50,22 @@ type browserRead struct {
 	size  int
 }
 type browserLease struct {
-	interruptCtx context.Context
-	interrupt    context.CancelFunc
-	conn         *websocket.Conn
-	identity     GUIIdentity
-	operation    string
-	incoming     chan browserRead
-	done         chan struct{}
-	gate         chan struct{} // Owns commands, writes and cleanup; waits respect context.
-	infoMu       sync.RWMutex
-	info         BrowserPageInfo
-	nextID       int64
-	closed       bool
-	closeErr     error
-	ctx          context.Context
-	cancel       context.CancelFunc
+	interruptCtx   context.Context
+	interrupt      context.CancelFunc
+	conn           *websocket.Conn
+	identity       GUIIdentity
+	operation      string
+	incoming       chan browserRead
+	done           chan struct{}
+	gate           chan struct{} // Owns commands, writes and cleanup; waits respect context.
+	infoMu         sync.RWMutex
+	info           BrowserPageInfo
+	nextID         int64
+	closed         bool
+	closeErr       error
+	ackObservation bool
+	ctx            context.Context
+	cancel         context.CancelFunc
 }
 
 var _ cdp.Executor = (*browserLease)(nil)
@@ -270,6 +271,14 @@ func (l *browserLease) Execute(ctx context.Context, method string, params, resul
 	if len(encoded) > limit {
 		return browserFailure("output_limit", "CDP parameters exceed message limit", nil)
 	}
+	if method == "Orka.observe" {
+		var fixed struct {
+			Operation string `json:"operation"`
+		}
+		if json.Unmarshal(encoded, &fixed) == nil && fixed.Operation == "commit_observation" {
+			l.ackObservation = true
+		}
+	}
 	l.nextID++
 	f := l.envelope("command")
 	f.ID = l.nextID
@@ -283,7 +292,7 @@ func (l *browserLease) Execute(ctx context.Context, method string, params, resul
 	defer cancel()
 	if err = l.write(commandCtx, f); err != nil {
 		_ = l.finish("cancel")
-		return browserFailure("outcome_unknown", "command delivery was not acknowledged", err)
+		return commandUnconfirmed(method, "command delivery was not acknowledged", err)
 	}
 	r, err := l.receive(commandCtx)
 	if err == nil {
@@ -316,7 +325,7 @@ func (l *browserLease) Execute(ctx context.Context, method string, params, resul
 		}
 	}
 	_ = l.finish("cancel")
-	return browserFailure("outcome_unknown", "command result could not be confirmed", err)
+	return commandUnconfirmed(method, "command result could not be confirmed", err)
 }
 
 // Close waits for bounded cleanup acknowledgement, including after cancellation.
@@ -355,7 +364,20 @@ func (l *browserLease) finish(kind string) error {
 		if kind == "cancel" && r.frame.Type == "reply" && r.frame.ID == l.nextID {
 			continue
 		}
+		if kind == "cancel" && r.frame.Type == "error" && r.frame.Error != nil {
+			// The runtime's execution timeout may race the client's cancel. It
+			// does not replace the required cleanup acknowledgement below.
+			continue
+		}
 		if r.frame.Type == map[string]string{"release": "released", "cancel": "cancelled"}[kind] && r.frame.Error == nil {
+			l.infoMu.Lock()
+			l.info = r.frame.BrowserPageInfo
+			l.infoMu.Unlock()
+			if kind == "release" && l.ackObservation {
+				if err = l.write(ctx, l.envelope("observation_ack")); err != nil {
+					break
+				}
+			}
 			return nil
 		}
 		err = fmt.Errorf("cleanup not acknowledged")
@@ -365,9 +387,22 @@ func (l *browserLease) finish(kind string) error {
 }
 
 var browserMethods = map[string]bool{
-	"Orka.previewHTML": true,
-	"Page.enable":      true, "Page.getFrameTree": true, "Page.createIsolatedWorld": true, "Page.navigate": true, "Page.captureScreenshot": true,
+	"Orka.observe": true, "Orka.act": true,
+	"Orka.getPageState": true,
+	"Orka.previewHTML":  true,
+	"Page.enable":       true, "Page.getFrameTree": true, "Page.createIsolatedWorld": true, "Page.navigate": true, "Page.captureScreenshot": true,
 	"Runtime.enable": true, "Runtime.evaluate": true, "Runtime.callFunctionOn": true, "Runtime.getProperties": true, "Runtime.releaseObject": true, "Runtime.releaseObjectGroup": true,
 	"DOM.getDocument": true, "DOM.querySelector": true, "DOM.describeNode": true, "DOM.resolveNode": true, "DOM.scrollIntoViewIfNeeded": true, "DOM.getBoxModel": true,
 	"Input.dispatchMouseEvent": true, "Input.dispatchKeyEvent": true, "Input.insertText": true,
+}
+
+// Only methods whose server-owned semantics cannot perform a page action are
+// observation failures. In particular arbitrary JS is never trusted as a read.
+func commandUnconfirmed(method, message string, cause error) error {
+	code := "outcome_unknown"
+	switch method {
+	case "Orka.observe", "Orka.getPageState", "Page.getFrameTree", "Page.captureScreenshot", "Page.createIsolatedWorld", "Page.enable", "Runtime.enable", "Runtime.releaseObject", "Runtime.releaseObjectGroup", "DOM.getDocument", "DOM.querySelector", "DOM.describeNode", "DOM.resolveNode", "DOM.getBoxModel":
+		code = "observation_failed"
+	}
+	return browserFailure(code, message, cause)
 }

@@ -147,12 +147,14 @@ func Confirm(c ConfirmRequest, meta Meta) Message {
 }
 
 // PlanStep is one item in the agent's declared task checklist. Status is one of
-// "pending" | "active" | "done" so the UI can show real per-step progress
+// "pending" | "active" | "blocked" | "done" so the UI can show real per-step progress
 // instead of an all-or-nothing list.
 type PlanStep struct {
-	ID     string `json:"id,omitempty"`
-	Title  string `json:"title"`
-	Status string `json:"status"`
+	ID          string   `json:"id,omitempty"`
+	Title       string   `json:"title"`
+	Status      string   `json:"status"`
+	Reason      string   `json:"reason,omitempty"`
+	EvidenceIDs []string `json:"evidence_ids,omitempty"`
 }
 
 // PlanUpdate is the payload of an EventPlan message: the agent's current plan and
