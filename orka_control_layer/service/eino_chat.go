@@ -223,6 +223,7 @@ func BuildEinoSubAgents(ctx context.Context, client llm.Client, model string, at
 		byName[t.Name()] = t
 	}
 	var out []adk.Agent
+	limiter := newWorkerLimiter(executionPolicyFrom(ctx).MaxWorkers)
 	for _, sp := range specs {
 		if sp.Name == "" {
 			continue
@@ -249,7 +250,7 @@ func BuildEinoSubAgents(ctx context.Context, client llm.Client, model string, at
 			Instruction: prompt,
 			Model:       newAgentModel(client, model, sp.Name),
 			ToolsConfig: adk.ToolsConfig{
-				ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(scoped)},
+				ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(withFindTools(scoped))},
 			},
 			MaxIterations: iters,
 			// Same resilience as the orchestrator: a delegated worker that dies on a
@@ -258,15 +259,15 @@ func BuildEinoSubAgents(ctx context.Context, client llm.Client, model string, at
 
 			// Delegates retain context compaction and shared evidence guidance.
 			// They have no separate token or iteration allowance.
-			Handlers: append(subAgentContextHandlers(ctx, sp.Name, scoped),
+			Handlers: append([]adk.ChatModelAgentMiddleware{newGateMiddleware(toolGateFrom(ctx))}, append(subAgentContextHandlers(ctx, sp.Name, scoped),
 				newResearchGuidance(ctx),
 				newBudgetGuardFor(newDelegateBudget(0, 0)),
-			),
+			)...),
 		})
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, sub)
+		out = append(out, limiter.wrap(sub))
 	}
 	return out, nil
 }
@@ -300,7 +301,7 @@ func BuildEinoSubAgents(ctx context.Context, client llm.Client, model string, at
 //     summarization all carry incidents behind them and transfer unchanged —
 //     adk.ChatModelAgentMiddleware is exactly what DeepAgent's Handlers take.
 func BuildEinoDeepOrchestrator(ctx context.Context, client llm.Client, model, instruction string, atomic []agent.BaseTool, specs []config.SubAgentConfig, maxIters int, summarize bool, extra ...adk.ChatModelAgentMiddleware) (adk.Agent, error) {
-	subs, err := BuildEinoSubAgents(ctx, client, model, atomic, specs)
+	subs, err := BuildEinoSubAgents(ctx, client, model, atomic, deepSubAgentSpecs(atomic, specs))
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +333,10 @@ func BuildEinoDeepOrchestrator(ctx context.Context, client llm.Client, model, in
 		WithoutWriteTodos: true,
 		// The whole point. A step that matches no specialist still has somewhere
 		// to go, which is what four prompt rewrites could not achieve.
-		WithoutGeneralSubAgent: false,
+		// Every worker is wrapped by the run-scoped limiter above. Eino's implicit
+		// general worker cannot be wrapped, so keep delegation within the explicit
+		// registry where the three-worker invariant is enforceable.
+		WithoutGeneralSubAgent: true,
 		Handlers:               handlers,
 		ModelRetryConfig:       modelRetryConfig(),
 	})
@@ -741,13 +745,13 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	if steering := s.prepareSteering(ctx, rc); steering != nil {
 		ctxMW = append([]adk.ChatModelAgentMiddleware{steering}, ctxMW...)
 	}
-	if s.Cfg.Agent.MultiAgent {
+	if s.deepAgentEnabled(ctx) {
 		if instruction == "" {
 			instruction = OrchestratorPrompt
 		}
 		// Pin relative-date interpretation for every model path, including the
 		// multi-agent orchestrator and its single-agent fallback.
-		instruction = withRuntimeDate(instruction)
+		instruction = executionPolicyFrom(ctx).decorateInstruction(withRuntimeDate(instruction))
 		// einoMaxIters, not a literal: this is eino's own hard cycle cliff, and the
 		// run budget is built from the same constant. Drifting apart means either
 		// the guard never fires (and eino errors out instead of reporting) or it
@@ -757,7 +761,7 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 		if instruction == "" {
 			instruction = middlewares.DefaultSystemPrompt
 		}
-		instruction = withRuntimeDate(instruction)
+		instruction = executionPolicyFrom(ctx).decorateInstruction(withRuntimeDate(instruction))
 		var sum []adk.ChatModelAgentMiddleware
 		if !s.DisableSummary {
 			// Auxiliary history compression uses the run's selected model.

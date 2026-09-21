@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 const { currentRun, canResumeRun, restoredStatus, lastUserPrompt, pendingConfirmationID, RecoveryController } = createRequire(import.meta.url)(join(process.env.ORKA_TEST_BUILD, 'lib/runRecovery.js'));
 const event = (run = 'new', action = 'failed', extra = {}) => ({ id: `event-${run}-${action}`, type: 'task', action, role: 'system', ts: 20, meta: { conversation_id: 'c', run_id: run, trace_id: `trace-${run}` }, ...extra });
-const record = (id = 'new', extra = {}) => ({ run_id: id, conversation_id: 'c', created_at: id === 'new' ? 20 : 10, status: 'failed', resumable: true, trace_id: `trace-${id}`, ...extra });
+const record = (id = 'new', extra = {}) => ({ run_id: id, conversation_id: 'c', created_at: id === 'new' ? 20 : 10, status: 'failed', resumable: true, unfinished: ['remaining work'], trace_id: `trace-${id}`, ...extra });
 const context = (extra = {}) => ({ conversationID: 'c', messages: [event()], status: 'error', enabled: true, ...extra });
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 
@@ -35,8 +35,11 @@ test('legacy trace identity is exact and an optimistic new turn cannot reuse old
   assert.equal(currentRun(context({ messages: [event(), { ...event(), id: 'local', type: 'chat', role: 'user', meta: { conversation_id: 'c' }, content: 'fresh request' }] }), [record()]), undefined);
   assert.equal(currentRun(context({ messages: [] }), [record()]), undefined);
 });
-test('only failed/interrupted/partial terminal records may resume', () => {
+test('only failures, interruptions and errored partial runs may resume', () => {
   for (const status of ['done', 'running', 'paused']) assert.equal(canResumeRun(context(), record('new', { status })), false);
+  assert.equal(canResumeRun(context(), record('new', { status: 'partial', error: '' })), false);
+  assert.equal(canResumeRun(context(), record('new', { status: 'partial', error: 'provider rate limited' })), true);
+  assert.equal(canResumeRun(context(), record('new', { status: 'failed', unfinished: [] })), false);
   assert.equal(canResumeRun(context({ status: 'streaming' }), record()), false);
   assert.equal(canResumeRun(context({ enabled: false }), record()), false);
   assert.equal(canResumeRun(context(), record('new', { resumable: false })), false);
@@ -131,32 +134,32 @@ test('the stream and refreshed history share terminal handling including confirm
   assert.equal(terminalStatus(event('new', 'running')), undefined);
 });
 
-test('partial SSE and refreshed partial history are terminal and can offer the current saved run', () => {
+test('partial SSE is terminal but plan-only partial history does not offer another run', () => {
   const { terminalStatus, isIncompleteRun } = createRequire(import.meta.url)(join(process.env.ORKA_TEST_BUILD, 'lib/runRecovery.js'));
   assert.equal(typeof terminalStatus, 'function');
   assert.equal(terminalStatus(event('new', 'partial')), 'partial');
   assert.equal(restoredStatus([event('new', 'partial')]), 'partial');
   const c = context({ status: 'partial', messages: [event('new', 'partial')] });
-  assert.equal(canResumeRun(c, record('new', { status: 'partial' })), true);
+  assert.equal(canResumeRun(c, record('new', { status: 'partial' })), false);
   assert.equal(isIncompleteRun(c, record('new', { status: 'partial' })), true);
 });
-test('legacy done SSE must defer to matching partial run record, but ordinary done stays complete', () => {
+test('legacy done SSE recognizes matching partial state without offering plan-only continuation', () => {
   const { isIncompleteRun } = createRequire(import.meta.url)(join(process.env.ORKA_TEST_BUILD, 'lib/runRecovery.js'));
   const c = context({ status: 'done', messages: [event('new', 'done')] });
-  assert.equal(canResumeRun(c, record('new', { status: 'partial' })), true);
+  assert.equal(canResumeRun(c, record('new', { status: 'partial' })), false);
   assert.equal(isIncompleteRun(c, record('new', { status: 'partial' })), true);
   assert.equal(canResumeRun(c, record('new', { status: 'done' })), false);
   assert.equal(isIncompleteRun(c, record('new', { status: 'done' })), false);
 });
-test('retained partial runs can resume after legacy token quotas are removed', () => {
+test('retired budget markers never create a continuation offer', () => {
   for (const status of ['idle', 'error', 'partial', 'done']) {
-    assert.equal(canResumeRun(context({ status }), record('new', { status: 'partial', budget_hit: 'tokens' })), true);
-    for (const budget_hit of ['steps', 'time']) assert.equal(canResumeRun(context({ status }), record('new', { status: 'partial', budget_hit })), true);
+    assert.equal(canResumeRun(context({ status }), record('new', { status: 'partial', budget_hit: 'tokens' })), false);
+    for (const budget_hit of ['steps', 'time']) assert.equal(canResumeRun(context({ status }), record('new', { status: 'partial', budget_hit })), false);
   }
 });
 test('late partial resumable settlement enables the button after initial non-resumable record', async () => {
   let saved = false;
-  const c = new RecoveryController({ list: async () => [record('new', { status: 'partial', resumable: saved })] });
+  const c = new RecoveryController({ list: async () => [record('new', { status: 'interrupted', resumable: saved })] });
   c.setContext(context({ status: 'partial', messages: [event('new', 'partial')] }));
   await c.refresh(); assert.equal(c.snapshot().recoverable, false);
   saved = true; await c.refresh(); assert.equal(c.snapshot().recoverable, true);

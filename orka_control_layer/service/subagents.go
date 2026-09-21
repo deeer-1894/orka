@@ -2,6 +2,7 @@ package service
 
 import (
 	"github.com/orka-oss/orka_control_layer/service/middlewares"
+	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/config"
 )
 
@@ -110,6 +111,34 @@ func DefaultSubAgents() []config.SubAgentConfig {
 			Tools:       []string{"file_read", "sql_query"},
 		},
 	}
+}
+
+// deepSubAgentSpecs makes Eino's general worker explicit so it can share the
+// same run-scoped concurrency limiter as every specialist. The built-in general
+// worker is otherwise created inside Eino and cannot be wrapped.
+func deepSubAgentSpecs(tools []agent.BaseTool, specs []config.SubAgentConfig) []config.SubAgentConfig {
+	if len(specs) == 0 {
+		specs = DefaultSubAgents()
+	} else {
+		specs = append([]config.SubAgentConfig(nil), specs...)
+	}
+	for _, spec := range specs {
+		if spec.Name == "general-purpose" {
+			return specs
+		}
+	}
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		if tool != nil && tool.Name() != "" {
+			names = append(names, tool.Name())
+		}
+	}
+	return append(specs, config.SubAgentConfig{
+		Name:        "general-purpose",
+		Description: "Handle an isolated multi-step subtask that does not fit a specialist. Use only the supplied tools and return a compact evidence-based result.",
+		Prompt:      "Complete the delegated subtask autonomously with the supplied tools. Keep the result concise, cite tool receipts or files, and do not repeat work already stated in the brief.",
+		Tools:       names,
+	})
 }
 
 // OrchestratorPrompt augments the base prompt with delegation guidance so the

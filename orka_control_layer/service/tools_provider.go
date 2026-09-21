@@ -29,11 +29,10 @@ func LocalToolsProvider(baseStorage string, options ...ToolsProviderOptions) Too
 			return nil, nil, rootErr
 		}
 		tools := append(filesystem.New(root), builtins...)
-		tools = filterEnabled(tools, req.EnabledTools)
 		// skill mgmt + artifact publishing + quant pipeline are always available
 		// (local tools).
 		local := localCapabilityTools(ctx, req)
-		return append(tools, local...), nil, nil
+		return filterToolsForRequest(append(tools, local...), req), nil, nil
 	}
 }
 
@@ -342,13 +341,13 @@ func MCPToolsProviderPooled(baseStorage, mcpURL, secret string, tokenTTL time.Du
 			}
 			fallback := append(filesystem.New(root), builtins...)
 			local := localCapabilityTools(ctx, req)
-			return append(filterEnabled(fallback, req.EnabledTools), local...), nil, err
+			return filterToolsForRequest(append(fallback, local...), req), nil, err
 		}
 		// The pool still owns the connections, but the run holds a lease on them
 		// for its whole duration — releasing it is what lets the janitor reclaim
 		// them, and holding it is what stops the janitor closing them mid-run.
 		local := localCapabilityTools(ctx, req)
-		return append(filterEnabled(tools, req.EnabledTools), local...), release, nil
+		return filterToolsForRequest(append(tools, local...), req), release, nil
 	}
 	return provider, pool.invalidate
 }

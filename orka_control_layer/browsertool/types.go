@@ -52,6 +52,15 @@ type Result struct {
 	Value     any           `json:"value,omitempty"`
 	ElapsedMS int64         `json:"elapsed_ms"`
 	Error     *ActionError  `json:"error,omitempty"`
+	Recovery  *Recovery     `json:"recovery,omitempty"`
+}
+
+// Recovery records a read-only observation repair after an acknowledged
+// action. It is evidence that the current page was inspected, never that the
+// mutating action was replayed or that its business outcome was accepted.
+type Recovery struct {
+	From               string `json:"from"`
+	ActionAcknowledged bool   `json:"action_acknowledged"`
 }
 
 type Snapshot struct {

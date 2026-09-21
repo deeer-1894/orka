@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/orka-oss/orka_control_layer/connectors"
 	"github.com/orka-oss/orka_core/agent"
@@ -12,12 +13,13 @@ import (
 type tool struct {
 	engine      *Engine
 	baseStorage string
+	navigation  *navigationRetryGuard
 }
 
 // New constructs immutable metadata and a model-free operation tool. It never
 // opens a browser or creates a workspace; absent configuration stays unavailable.
 func New(dialer connectors.BrowserDialer, baseStorage string) agent.BaseTool {
-	t := &tool{baseStorage: baseStorage}
+	t := &tool{baseStorage: baseStorage, navigation: newNavigationRetryGuard()}
 	if dialer != nil {
 		t.engine = NewEngine(dialer)
 	}
@@ -41,7 +43,22 @@ func (t *tool) Invoke(ctx context.Context, args map[string]any) (string, error) 
 	if err != nil {
 		return encodeToolResult(Result{Action: req.Action, Error: NewActionError("identity_required", "browser requires trusted owner, conversation and run identity")})
 	}
+	if blocked := t.navigation.blocked(identity, req); blocked != nil {
+		return encodeToolResult(Result{Action: req.Action, Error: blocked})
+	}
 	result, err := t.engine.Run(ctx, identity, req, NewFiles(t.baseStorage, identity))
+	if shouldRecoverObservation(req, result, err) {
+		recoveryCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		observed, observeErr := t.engine.Run(recoveryCtx, identity, Request{Action: "snapshot", View: "full", TimeoutMS: 4000}, NewFiles(t.baseStorage, identity))
+		cancel()
+		if observeErr == nil && observed.OK && observed.Snapshot != nil {
+			observed.Action = req.Action
+			observed.ElapsedMS += result.ElapsedMS
+			observed.Form, observed.Files, observed.Preview, observed.Value = result.Form, result.Files, result.Preview, result.Value
+			observed.Recovery = &Recovery{From: "observation_failed", ActionAcknowledged: true}
+			result, err = observed, nil
+		}
+	}
 	if err != nil {
 		result.OK = false
 		if result.Error == nil {
@@ -54,7 +71,20 @@ func (t *tool) Invoke(ctx context.Context, args map[string]any) (string, error) 
 		}
 	}
 	result.Action = req.Action
+	t.navigation.record(identity, req, result)
 	return encodeToolResult(result)
+}
+
+func shouldRecoverObservation(req Request, result Result, err error) bool {
+	if err == nil || result.Error == nil || result.Error.Code != "observation_failed" {
+		return false
+	}
+	switch req.Action {
+	case "open", "preview", "click", "fill", "select", "press", "scroll", "fill_form":
+		return true
+	default:
+		return false
+	}
 }
 func encodeToolResult(result Result) (string, error) {
 	raw, err := json.Marshal(result)

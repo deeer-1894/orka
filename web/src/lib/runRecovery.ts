@@ -55,11 +55,12 @@ export function isIncompleteRun(c: RecoveryContext, run?: RunRecord): boolean {
 }
 
 export function canResumeRun(c: RecoveryContext, run?: RunRecord): boolean {
-  // resumable says a journal survived, not that its retained allowance remains.
-  // Token allowance survives resume; per-attempt limits are rebuilt by the
-  // backend. Do not infer a new token allowance from done/partial presentation.
-  return c.enabled !== false && isIncompleteRun(c, run) &&
-    run?.conversation_id === c.conversationID && resumableRun(run);
+  if (c.enabled === false || !isIncompleteRun(c, run) || run?.conversation_id !== c.conversationID || !resumableRun(run)) return false;
+  if (!run.unfinished?.length) return false;
+  // A plan-only partial response is a completed delivery with disclosed gaps,
+  // not automatically another run. Offer continuation for an interruption,
+  // failure, or a partial run carrying an actual provider/runtime error.
+  return run.status === 'interrupted' || run.status === 'failed' || (run.status === 'partial' && !!run.error);
 }
 
 export function terminalStatus(m: Message): ChatStatus | undefined {

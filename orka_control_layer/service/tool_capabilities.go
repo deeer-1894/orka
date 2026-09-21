@@ -36,6 +36,9 @@ func dangerousToolName(name string) bool { return dangerTools[name] || strings.H
 type executionScopeKey struct{}
 
 func withRequestedExecutionScope(ctx context.Context, req ChatRunRequest) context.Context {
+	if req.executionPolicy != nil {
+		return context.WithValue(ctx, executionScopeKey{}, req.executionPolicy.allowsExecution() && !catalogOnly(ctx))
+	}
 	enabled := len(req.EnabledTools) == 0
 	for _, name := range req.EnabledTools {
 		if name == "code" || name == "python" || name == "shell" {

@@ -9,7 +9,6 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/orka-oss/orka_control_layer/db"
-	"github.com/orka-oss/orka_control_layer/llm"
 )
 
 // run_digest.go — what a finished run leaves behind for the turns after it.
@@ -21,20 +20,18 @@ import (
 //
 // The digest is deliberately NOT the transcript. Replaying tool results
 // verbatim would cost 76k tokens on one real conversation — more than the run
-// that produced them. It is a compaction, and it is built in two halves for a
-// reason grounded in what these runs actually do:
+// that produced them. It is a compact record built from data already present
+// in the completed run:
 //
 //   - Facts are mechanical. file_write averages 78 characters ("wrote N bytes
 //     to X"); there is nothing for a model to add, and a paraphrased file path
 //     is worse than no path because later turns will cite it.
-//   - Learned needs a model. The dominant tools are retrieval — fetch_url
-//     averages 3,024 characters, http_request 14,039 — and the value is in the
-//     content. Truncating to a fixed prefix returns page furniture, not
-//     findings, which would fill the context with noise.
+//   - Learned reuses the final answer already delivered to the user. It does
+//     not launch a second generation after the visible task appears complete.
 //
-// The model half runs AFTER the user has their answer (the titleAsync pattern
-// in adk_chat.go), so it costs no latency, and its failure degrades the digest
-// to facts-only rather than losing the turn.
+// Findings reuse the final assistant response already delivered to the user.
+// This avoids a second model generation that used to add 8-45 seconds to the
+// run tail and could introduce claims that were not in the delivered answer.
 
 const (
 	// digestKeep is how many runs of history a conversation carries. Each digest
@@ -44,10 +41,7 @@ const (
 	// digestMaxFacts caps the factual spine. A run that writes forty files is
 	// summarised by its first few plus a count.
 	digestMaxFacts = 12
-	// digestSourceChars is how much transcript the model summarises. Enough to
-	// cover a long run's findings, small enough to stay a cheap mini-model call.
-	digestSourceChars = 12000
-	// digestLearnedChars caps the model's output so one verbose run cannot
+	// digestLearnedChars caps the delivered answer so one verbose run cannot
 	// dominate the preamble.
 	digestLearnedChars = 700
 )
@@ -62,9 +56,8 @@ var factTools = map[string]bool{
 	"skill_create":     true,
 }
 
-// buildDigest derives a run's digest from its journal. The factual half is
-// complete on return; the model half is filled in asynchronously by
-// digestAsync, so a caller that skips it still gets a useful record.
+// buildDigest derives a run's digest from its journal. Durable effects remain
+// mechanical; Learned is copied from the already-delivered final response.
 func buildDigest(runID, prompt string, msgs []*schema.Message) db.RunDigest {
 	d := db.RunDigest{
 		RunID:  runID,
@@ -106,6 +99,13 @@ func buildDigest(runID, prompt string, msgs []*schema.Message) db.RunDigest {
 	if extra > 0 {
 		d.Facts = append(d.Facts, "…以及另外 "+itoa(extra)+" 项同类操作")
 	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		message := msgs[i]
+		if message != nil && message.Role == schema.Assistant && strings.TrimSpace(message.Content) != "" && len(message.ToolCalls) == 0 {
+			d.Learned = trunc(strings.TrimSpace(message.Content), digestLearnedChars)
+			break
+		}
+	}
 	return d
 }
 
@@ -128,91 +128,20 @@ func describeFact(name, rawArgs, result string) string {
 	return name + ": " + trunc(result, 120)
 }
 
-// digestAsync writes the model half and stores the finished digest. Detached on
-// purpose: the digest matters on the NEXT turn, so making the current one wait
-// for it would be paying latency for nobody.
-func (s *ChatService) digestAsync(parent context.Context, convID string, d db.RunDigest, msgs []*schema.Message) {
+// digestAsync stores deterministic memory on a detached, bounded context. The
+// current response never waits for memory maintenance.
+func (s *ChatService) digestAsync(parent context.Context, convID string, d db.RunDigest) {
 	if s.Msg == nil || s.Msg.Store == nil || convID == "" {
 		return
 	}
-	model, modelName := s.modelsForContext(parent).modelFor(ModelAuto)
-	source := digestSource(msgs)
-	doneBudget := beginBudgetAuxiliary(parent)
+	detached := context.WithoutCancel(parent)
 	go func() {
-		defer doneBudget()
-		ctx, cancel := context.WithTimeout(parent, 45*time.Second)
+		ctx, cancel := context.WithTimeout(detached, 5*time.Second)
 		defer cancel()
-		if model != nil && source != "" {
-			if learned := s.summarizeFindings(ctx, model, modelName, d.Prompt, source); learned != "" {
-				d.Learned = learned
-			}
-		}
-		// Store regardless: a digest with facts and no prose still beats the
-		// amnesia this replaces.
 		if err := s.Msg.Store.AppendRunDigest(ctx, convID, d, digestKeep); err != nil && s.Log != nil {
 			s.Log.Warn("append run digest failed", "conversation_id", convID, "err", err)
 		}
 	}()
-}
-
-// summarizeFindings asks the fast model what the run LEARNED. The prompt is
-// narrow on purpose: this output is model-written and therefore fallible, so it
-// is confined to the one thing a model is needed for. Anything a later turn
-// might cite as fact comes from the deterministic half instead.
-func (s *ChatService) summarizeFindings(ctx context.Context, model llm.Client, modelName, prompt, source string) string {
-	resp, err := model.Chat(llm.WithAgent(ctx, "run-digest"), boundedDirectRequest(ctx, llm.Request{Model: modelName, Messages: []llm.ChatMessage{
-		{Role: llm.RoleSystem, Content: "你在为一个 AI agent 压缩它刚完成的一轮工作,供它在下一轮回忆。\n" +
-			"只写这轮**查到/得出了什么**——具体的结论、数据、事实。\n" +
-			"不要复述它做了哪些操作(那部分已单独记录)。不要写开场白、不要总结体裁。\n" +
-			"不确定的内容宁可省略,也不要编造:这段文字会被当作记忆使用。\n" +
-			"用与用户相同的语言,300 字以内,直接给要点。"},
-		{Role: llm.RoleUser, Content: "本轮任务:" + prompt + "\n\n工具返回的原始内容:\n" + source},
-	}}))
-	if err != nil {
-		return ""
-	}
-	return trunc(strings.TrimSpace(resp.Content), digestLearnedChars)
-}
-
-// digestSource collects the retrieval output worth summarising. Fact tools are
-// excluded — they are already captured precisely — and the newest results are
-// taken first, because a run's later findings build on its earlier ones.
-func digestSource(msgs []*schema.Message) string {
-	names := map[string]string{}
-	for _, m := range msgs {
-		if m == nil {
-			continue
-		}
-		for _, tc := range m.ToolCalls {
-			names[tc.ID] = tc.Function.Name
-		}
-	}
-	var parts []string
-	total := 0
-	for i := len(msgs) - 1; i >= 0; i-- {
-		m := msgs[i]
-		if m == nil || m.Role != schema.Tool || strings.TrimSpace(m.Content) == "" {
-			continue
-		}
-		name := names[m.ToolCallID]
-		if name == "" {
-			name = m.ToolName
-		}
-		if factTools[name] || name == planToolName {
-			continue
-		}
-		chunk := "[" + name + "] " + trunc(m.Content, 2000)
-		if total+len(chunk) > digestSourceChars {
-			break
-		}
-		parts = append(parts, chunk)
-		total += len(chunk)
-	}
-	// Restore chronological order so the model reads the run forwards.
-	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
-		parts[i], parts[j] = parts[j], parts[i]
-	}
-	return strings.Join(parts, "\n\n")
 }
 
 // digestPreamble renders a conversation's digests as the memory a new turn

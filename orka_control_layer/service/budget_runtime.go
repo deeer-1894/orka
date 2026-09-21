@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_control_layer/llm"
@@ -131,25 +130,4 @@ func withBudgetRequestTools(ctx context.Context, tools []string) context.Context
 func budgetRequestTools(ctx context.Context) []string {
 	tools, _ := ctx.Value(budgetRequestToolsKey{}).([]string)
 	return append([]string(nil), tools...)
-}
-
-// Register synchronously before launching auxiliary work, so a final checkpoint
-// cannot race a not-yet-started title/digest reservation. The run waits after it
-// has scheduled its last auxiliary job; all these jobs have bounded contexts.
-type budgetAuxiliaryKey struct{}
-
-func withBudgetAuxiliary(ctx context.Context) context.Context {
-	return context.WithValue(ctx, budgetAuxiliaryKey{}, &sync.WaitGroup{})
-}
-func beginBudgetAuxiliary(ctx context.Context) func() {
-	if group, _ := ctx.Value(budgetAuxiliaryKey{}).(*sync.WaitGroup); group != nil {
-		group.Add(1)
-		return group.Done
-	}
-	return func() {}
-}
-func waitBudgetAuxiliary(ctx context.Context) {
-	if group, _ := ctx.Value(budgetAuxiliaryKey{}).(*sync.WaitGroup); group != nil {
-		group.Wait()
-	}
 }

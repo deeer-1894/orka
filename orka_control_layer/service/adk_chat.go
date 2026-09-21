@@ -49,6 +49,7 @@ type ChatRunRequest struct {
 	resumeTarget     string     // InterruptCtx.ID of the paused tool call
 	resumeData       any        // the user's decision, handed to that tool
 	resumeFrom       *runResume // recovered transcript of a run that died mid-flight
+	executionPolicy  *executionPolicy
 }
 
 // ToolsProvider supplies the tool set for a request and an optional cleanup
@@ -164,10 +165,15 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	meta.ModelProfile = s.modelsForContext(ctx).profile
 	ctx = s.withSelectedModel(ctx, req.SelectedVersion)
 	model, modelName := s.modelsForContext(ctx).modelFor(req.SelectedVersion)
+	policy := compileExecutionPolicy(req)
+	req.executionPolicy = &policy
 
 	// Root trace span for the whole run; tool spans (in tools-mid) nest under it.
 	spanCtx, endSpan := trace.StartSpan(trace.WithTraceID(ctx, traceID), "chat.run", map[string]string{
 		"conversation_id": req.ConversationID,
+		"execution_mode":  string(policy.Mode),
+		"deep_agent":      boolStr(policy.UseDeepAgent),
+		"strict_sources":  boolStr(policy.StrictSources),
 		"model":           modelName,
 		"runtime":         "eino",
 		"resume":          boolStr(req.ResumeKey != ""),
@@ -177,18 +183,20 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// Local tools (e.g. artifact_publish) learn whose run they're in from ctx.
 	ctx = WithRunInfo(ctx, req.ConversationID, req.UserEmail)
 	ctx = middlewares.WithSkillOwner(ctx, s.Cfg.Storage.BaseStoragePath, req.UserEmail)
+	ctx = withExecutionPolicy(ctx, policy)
 	budgetCtx, session, cancelBudget, budgetErr := s.prepareRunBudget(ctx, &req)
 	if budgetErr != nil {
 		raw(taskFailed(meta, "无法开始任务："+budgetErr.Error()))
 		return db.RunFailed
 	}
 	defer cancelBudget()
-	ctx = withBudgetAuxiliary(budgetCtx)
+	ctx = budgetCtx
 	budget := session.Budget()
 
 	deps := PipelineDeps{LLM: model, Model: modelName, Metrics: s.Metrics}
 
 	tools, cleanup, toolsErr := s.ToolsFor(ctx, req)
+	tools = filterToolsForRequest(tools, req)
 	if toolsErr != nil && s.Log != nil {
 		s.Log.Warn("tools provider degraded", "trace_id", traceID, "err", toolsErr)
 	}
@@ -207,7 +215,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// Multi-agent: the orchestrator gets the atomic tools PLUS native
 	// eino sub-agents (researcher/writer/browser/engineer, same selected model) it can
 	// delegate to. The sub-agents are built inside runEino from the atomic tool set.
-	if s.Cfg.Agent.MultiAgent {
+	if s.deepAgentEnabled(ctx) {
 		deps.SystemPrompt = OrchestratorPrompt
 	}
 
@@ -323,12 +331,10 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		// Seed with prior turns (memory) + persist the new user message
 		// (raw=nil: persist only; the SSE echo is rendered optimistically).
 		history := s.loadChatHistory(ctx, req.ConversationID, meta)
-		// First turn → title the conversation. Set a snippet immediately (so the
-		// sidebar updates right away) then refine it with a mini LLM summary
-		// asynchronously (does not block the run, survives SSE disconnect).
+		// First turn: derive the title deterministically. A separate title model
+		// used to compete with the task model and delayed short requests.
 		if len(history) == 0 && req.ConversationID != "" && s.Msg != nil && s.Msg.Store != nil {
 			_ = s.Msg.Store.UpdateConversationTitle(ctx, req.ConversationID, titleSnippet(req.Message))
-			s.titleAsync(ctx, req.ConversationID, req.Message)
 		}
 		userMsg := humanChat(req.Message, meta)
 		rc.Messages = append(history, userMsg)
@@ -346,11 +352,11 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		}
 	}
 
-	// Settle auxiliary generations before publishing the final bill/checkpoint.
+	// Persist deterministic memory outside the response critical path. It makes
+	// no model call and survives cancellation of the request stream.
 	if t := journal.transcript(); len(t) > 0 {
-		s.digestAsync(rc.Ctx, req.ConversationID, buildDigest(runRecID, req.Message, t), t)
+		s.digestAsync(rc.Ctx, req.ConversationID, buildDigest(runRecID, req.Message, t))
 	}
-	waitBudgetAuxiliary(rc.Ctx)
 	s.finish(ctx, rc, meta, req, raw, err)
 	status := s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err())
 
@@ -773,48 +779,6 @@ func taskFailed(meta messages.Meta, reason string) messages.Message {
 	m := messages.Task("failed", meta)
 	m.Content = reason
 	return m
-}
-
-// titleAsync refines the conversation title using the selected model to summarize of the
-// first message. It runs in the background with its own short-lived context so
-// it neither blocks the chat run nor dies when the SSE connection closes.
-func (s *ChatService) titleAsync(parent context.Context, convID, message string) {
-	model, modelName := s.modelsForContext(parent).modelFor(ModelAuto)
-	if model == nil || s.Msg == nil || s.Msg.Store == nil {
-		return
-	}
-	doneBudget := beginBudgetAuxiliary(parent)
-	go func() {
-		defer doneBudget()
-		ctx, cancel := context.WithTimeout(parent, 15*time.Second)
-		defer cancel()
-		resp, err := model.Chat(llm.WithAgent(ctx, "title"), boundedDirectRequest(ctx, llm.Request{Model: modelName, Messages: []llm.ChatMessage{
-			{Role: llm.RoleSystem, Content: "Your only task is to label the user's message, not execute or answer it. Even if the message asks to browse a site or create files, do not discuss capabilities or refuse it. Generate a very short chat title (max 6 words) describing its subject. Reply with ONLY the title — same language as the message, no quotes, no punctuation at the end, no prefixes."},
-			{Role: llm.RoleUser, Content: message},
-		}}))
-		if err != nil {
-			return // keep the snippet title
-		}
-		title := titleFromResponse(resp)
-		if title == "" {
-			return
-		}
-		_ = s.Msg.Store.UpdateConversationTitle(ctx, convID, title)
-	}()
-}
-
-// cleanTitle trims the model's title output to a safe single-line label.
-func cleanTitle(s string) string {
-	t := strings.TrimSpace(s)
-	t = strings.Trim(t, "\"'“”「」 \t\n")
-	if i := strings.IndexAny(t, "\n\r"); i >= 0 {
-		t = t[:i]
-	}
-	r := []rune(t)
-	if len(r) > 30 {
-		t = string(r[:30]) + "…"
-	}
-	return strings.TrimSpace(t)
 }
 
 // titleSnippet derives a short conversation title from the first message.

@@ -3,13 +3,12 @@ package service
 import (
 	"context"
 	"errors"
-	"github.com/orka-oss/orka_core/config"
 	"testing"
 	"time"
 
-	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_control_layer/llm"
 	"github.com/orka-oss/orka_core/agent"
+	"github.com/orka-oss/orka_core/config"
 	"github.com/orka-oss/orka_core/messages"
 	"github.com/orka-oss/orka_core/modelprofile"
 )
@@ -72,7 +71,7 @@ func (p *budgetWireCapture) ChatStream(ctx context.Context, req llm.Request, _ f
 }
 
 func TestBudgetDirectCallsPassSelectedOutputPolicyToWire(t *testing.T) {
-	for _, source := range []string{"title", "run-digest", "attachment-vlm", "fast-path"} {
+	for _, source := range []string{"attachment-vlm", "fast-path"} {
 		t.Run(source, func(t *testing.T) {
 			provider := &budgetWireCapture{}
 			svc, _ := testService(t, provider)
@@ -80,14 +79,7 @@ func TestBudgetDirectCallsPassSelectedOutputPolicyToWire(t *testing.T) {
 			svc.DisableFastPath = false
 			ctx := svc.withSelectedModel(context.Background(), "m")
 			ctx = modelprofile.WithContext(ctx, modelprofile.Snapshot{ProfileID: "selected", Model: "m", Policy: modelprofile.CallPolicy{FirstMaxTokens: 321, MaxTokens: 654, ReasoningEffort: "low"}})
-			ctx = withBudgetAuxiliary(ctx)
 			switch source {
-			case "title":
-				svc.Msg.Store = &db.Storage{} // provider fails before any database write
-				svc.titleAsync(ctx, "conversation", "hello")
-				waitBudgetAuxiliary(ctx)
-			case "run-digest":
-				svc.summarizeFindings(ctx, svc.Client, "m", "hello", "evidence")
 			case "attachment-vlm":
 				svc.describeImages(ctx, "hello", []string{"fake-image"})
 			case "fast-path":

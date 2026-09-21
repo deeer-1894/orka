@@ -28,8 +28,43 @@ export const auth = {
 };
 
 let unauthorizedHandler: (() => void) | null = null;
+let unauthorizedProbe: { token: string; promise: Promise<boolean> } | null = null;
 export function setOnUnauthorized(fn: () => void) {
   unauthorizedHandler = fn;
+}
+
+function expireSession(token: string) {
+  if (!token || auth.token() !== token) return;
+  auth.clear();
+  unauthorizedHandler?.();
+  toastError("登录已过期，请重新登录");
+}
+
+// A single endpoint can return 401 because its own authorization state is
+// stale. Confirm the token against /auth/me before clearing the whole app.
+async function confirmUnauthorized(path: string) {
+  const token = auth.token();
+  if (!token) return;
+  if (path === "/auth/me") {
+    expireSession(token);
+    return;
+  }
+  if (!unauthorizedProbe || unauthorizedProbe.token !== token) {
+    const probe = {
+      token,
+      promise: fetch(BASE + "/auth/me", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+        body: "{}",
+      }).then((res) => res.status === 401).catch(() => false),
+    };
+    unauthorizedProbe = probe;
+    void probe.promise.finally(() => {
+      if (unauthorizedProbe === probe) unauthorizedProbe = null;
+    });
+  }
+  const probe = unauthorizedProbe;
+  if (await probe.promise) expireSession(token);
 }
 
 function headers(json = true): Record<string, string> {
@@ -55,11 +90,7 @@ async function post<T>(path: string, body: unknown, silent = false): Promise<T> 
     throw new Error("network");
   }
   if (res.status === 401) {
-    // token missing/expired — clear it and let the app fall back to the login
-    // screen on its next render (no jarring full-page reload).
-    auth.clear();
-    unauthorizedHandler?.();
-    toastError("登录已过期，请重新登录");
+    await confirmUnauthorized(path);
     throw new Error("unauthorized");
   }
   const j = await res.json().catch(() => ({}));
@@ -83,8 +114,7 @@ async function get<T>(path: string): Promise<T> {
     throw new Error("network");
   }
   if (res.status === 401) {
-    auth.clear();
-    unauthorizedHandler?.();
+    await confirmUnauthorized(path);
     throw new Error("unauthorized");
   }
   const j = await res.json().catch(() => ({}));

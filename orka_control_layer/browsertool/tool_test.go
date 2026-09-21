@@ -18,6 +18,20 @@ func (d *countingDialer) Acquire(context.Context, connectors.GUIIdentity, time.D
 	d.calls++
 	return nil, NewActionError("unavailable", "fixture has no page")
 }
+
+type sequenceDialer struct {
+	leases   []connectors.BrowserLease
+	acquires int
+}
+
+func (d *sequenceDialer) Acquire(context.Context, connectors.GUIIdentity, time.Duration, time.Duration) (connectors.BrowserLease, error) {
+	if d.acquires >= len(d.leases) {
+		return nil, NewActionError("unavailable", "no fixture lease")
+	}
+	lease := d.leases[d.acquires]
+	d.acquires++
+	return lease, nil
+}
 func browserTestContext() context.Context {
 	return connectors.WithGUIIdentity(context.Background(), connectors.GUIIdentity{OwnerID: "owner", ConversationID: "conversation", RunID: "run"})
 }
@@ -93,5 +107,34 @@ func TestToolSnapshotNeedsNoModelAndCreatesNoWorkspace(t *testing.T) {
 	entries, err := os.ReadDir(base)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("DOM read created a workspace: %v %v", entries, err)
+	}
+}
+
+func TestToolRepairsObservationWithoutReplayingMutation(t *testing.T) {
+	first := &fixtureLease{handler: func(method string, params, _ any) (bool, error) {
+		if method == "Orka.observe" && params.(map[string]any)["operation"] == "snapshot" {
+			return true, NewActionError("observation_failed", "fixture observation failed")
+		}
+		return false, nil
+	}}
+	second := &fixtureLease{}
+	dialer := &sequenceDialer{leases: []connectors.BrowserLease{first, second}}
+	browser := New(dialer, t.TempDir())
+	out, err := browser.Invoke(browserTestContext(), map[string]any{"action": "click", "selector": "button"})
+	var result Result
+	if err != nil || json.Unmarshal([]byte(out), &result) != nil || !result.OK || result.Snapshot == nil || result.Recovery == nil {
+		t.Fatalf("recovered browser result: %s %v", out, err)
+	}
+	if result.Action != "click" || result.Recovery.From != "observation_failed" || !result.Recovery.ActionAcknowledged {
+		t.Fatalf("recovery receipt = %+v", result)
+	}
+	inputs := 0
+	for _, method := range append(first.commands, second.commands...) {
+		if method == "Input.dispatchMouseEvent" {
+			inputs++
+		}
+	}
+	if inputs != 2 || dialer.acquires != 2 || first.closed != 1 || second.closed != 1 {
+		t.Fatalf("mutation replayed or leases leaked: inputs=%d acquires=%d closes=%d/%d", inputs, dialer.acquires, first.closed, second.closed)
 	}
 }
