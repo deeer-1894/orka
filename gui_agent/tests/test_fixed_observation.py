@@ -88,6 +88,30 @@ class FixedObservationTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(BridgeError):
                     await channel.execute({"id": seq, "method": method, "params": params})
 
+    async def test_snapshot_accepts_and_applies_bounded_observation_limits(self):
+        async with self.runtime.lease(self.who, "bounded-observation", 1, 3) as lease:
+            await lease.operator.page.set_content(
+                "<main>" + ("long page text " * 400) + "</main>" +
+                "".join(f"<button>Action {index}</button>" for index in range(40))
+            )
+            observed = await PageChannel(lease).execute({
+                "id": 1,
+                "method": "Orka.observe",
+                "params": {
+                    "operation": "snapshot",
+                    "request": {
+                        "text_limit": 1000,
+                        "element_limit": 16,
+                        "byte_limit": 8192,
+                    },
+                },
+            })
+
+            snapshot = observed["result"]["value"]["snapshot"]
+            self.assertLessEqual(len(snapshot["text"]), 1000)
+            self.assertLessEqual(len(snapshot["elements"]), 16)
+            self.assertTrue(snapshot["omitted"])
+
     async def test_cancelled_commit_restores_last_delivered_baseline(self):
         async with self.runtime.lease(self.who, "initial", 1, 2) as lease:
             await lease.operator.page.set_content("<p>Before</p>")

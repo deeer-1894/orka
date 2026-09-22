@@ -71,12 +71,14 @@ func (l *fixtureLease) Execute(_ context.Context, method string, params, out any
 }
 
 type fixtureDialer struct {
-	lease    *fixtureLease
-	acquires int
+	lease     *fixtureLease
+	acquires  int
+	execution time.Duration
 }
 
 func (d *fixtureDialer) Acquire(_ context.Context, id connectors.GUIIdentity, q, x time.Duration) (connectors.BrowserLease, error) {
 	d.acquires++
+	d.execution = x
 	return d.lease, nil
 }
 func testIdentity() connectors.GUIIdentity {
@@ -126,6 +128,23 @@ func TestEngineSanitizesNetworkNavigationFailure(t *testing.T) {
 	}
 	if strings.Contains(result.Error.Message, "private.example.test") {
 		t.Fatalf("navigation error leaked URL: %q", result.Error.Message)
+	}
+}
+
+func TestOpenUsesShorterDefaultWithoutOverridingExplicitTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		req  Request
+		want time.Duration
+	}{
+		{req: Request{Action: "open", URL: "https://example.test"}, want: defaultNavigationTimeout},
+		{req: Request{Action: "snapshot"}, want: defaultBrowserTimeout},
+		{req: Request{Action: "open", URL: "https://example.test", TimeoutMS: 23000}, want: 23 * time.Second},
+	} {
+		dialer := &fixtureDialer{lease: &fixtureLease{}}
+		_, _ = NewEngine(dialer).Run(context.Background(), testIdentity(), tc.req, nil)
+		if dialer.execution != tc.want {
+			t.Fatalf("%s execution timeout=%s want=%s", tc.req.Action, dialer.execution, tc.want)
+		}
 	}
 }
 

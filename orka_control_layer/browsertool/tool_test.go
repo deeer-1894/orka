@@ -110,6 +110,34 @@ func TestToolSnapshotNeedsNoModelAndCreatesNoWorkspace(t *testing.T) {
 	}
 }
 
+func TestResearchObservationProfileReachesBrowserScript(t *testing.T) {
+	lease := &fixtureLease{}
+	var request map[string]any
+	lease.handler = func(method string, params, _ any) (bool, error) {
+		if method == "Orka.observe" && params.(map[string]any)["operation"] == "snapshot" {
+			request = params.(map[string]any)["request"].(map[string]any)
+		}
+		return false, nil
+	}
+	browser := New(&fixtureDialer{lease: lease}, t.TempDir())
+	ctx := WithObservationProfile(browserTestContext(), ObservationResearch)
+	if _, err := browser.Invoke(ctx, map[string]any{"action": "snapshot"}); err != nil {
+		t.Fatal(err)
+	}
+	if request == nil {
+		t.Fatal("snapshot request did not reach the browser script")
+	}
+	if got := int(request["text_limit"].(int)); got >= MaxSnapshotText {
+		t.Fatalf("research text limit = %d, want below %d", got, MaxSnapshotText)
+	}
+	if got := int(request["element_limit"].(int)); got >= MaxSnapshotRefs {
+		t.Fatalf("research element limit = %d, want below %d", got, MaxSnapshotRefs)
+	}
+	if got := int(request["byte_limit"].(int)); got >= MaxSnapshotBytes {
+		t.Fatalf("research byte limit = %d, want below %d", got, MaxSnapshotBytes)
+	}
+}
+
 func TestToolRepairsObservationWithoutReplayingMutation(t *testing.T) {
 	first := &fixtureLease{handler: func(method string, params, _ any) (bool, error) {
 		if method == "Orka.observe" && params.(map[string]any)["operation"] == "snapshot" {

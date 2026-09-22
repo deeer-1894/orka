@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 vm.runInThisContext('(' + fs.readFileSync(path.join(__dirname, 'scripts/observation.js'), 'utf8') + ')()');
+const compactSnapshot = vm.runInThisContext('(' + fs.readFileSync(path.join(__dirname, 'scripts/compact_snapshot.js'), 'utf8') + ')');
 
 const element = (ref, role = 'link') => ({ref, role, tag: role === 'link' ? 'a' : 'button', name: 'Story ' + ref, actions: ['click', 'press']});
 const page = (text, elements = [], omitted = false) => ({ok: true, url: 'https://fixture.test/', title: 'Fixture', snapshot: {id: 'doc', ready_state: 'complete', text, elements, frames: [], pixel_content: false, omitted}});
@@ -137,7 +138,7 @@ test('UTF-8 change summaries cannot exceed the reply budget or clip the text spl
   const after = Array.from({length: 24}, (_, i) => '新'.repeat(239) + i).join('\n');
   const first = page(before, elements);
   assert.ok(Buffer.byteLength(JSON.stringify(first)) < 60000);
-  const result = observe(begin(first), page(after, elements));
+  const result = observe(begin(first), page(after, elements), {text_limit: 12000, byte_limit: 60000});
   assert.equal(result.snapshot.mode, 'delta');
   assert.match(result.snapshot.text, /新{239}23/);
   assert.ok(Buffer.byteLength(JSON.stringify(result)) <= 61000);
@@ -148,7 +149,7 @@ test('UTF-8 change summaries cannot exceed the reply budget or clip the text spl
 test('delta annotations near the text cap fall back to an intact full view', () => {
   const after = 'x'.repeat(11999);
   const elements = [element('a')];
-  const result = observe(begin(page('old', elements)), page(after, elements));
+  const result = observe(begin(page('old', elements)), page(after, elements), {text_limit: 12000, byte_limit: 60000});
   assert.equal(result.snapshot.mode, 'full');
   assert.equal(result.snapshot.text, after);
   assert.deepEqual(result.snapshot.elements, elements);
@@ -210,4 +211,57 @@ test('legacy eager baselines are discarded once when upgrading the helper', () =
   assert.equal(first.snapshot.mode, 'full');
   const next = observe(slot, page('Unseen'), {action: 'wait'});
   assert.equal(next.snapshot.mode, 'unchanged');
+});
+
+test('snapshot de-duplicates retained controls, exposes absolute hrefs and preserves refs', () => {
+  const saved = Object.fromEntries(['document', 'location'].map(key => [key, globalThis[key]]));
+  try {
+    const attributes = (href = '') => ({href, role: '', type: ''});
+    const links = [
+      {tagName: 'A', label: 'First story', attrs: attributes('/story/1')},
+      {tagName: 'A', label: 'Second story', attrs: attributes('https://source.example/story/2')},
+    ];
+    const paragraph = {closest: () => null};
+    for (const link of links) {
+      link.textContent = link.label;
+      link.getAttribute = key => link.attrs[key] || '';
+      link.getClientRects = () => [{}];
+    }
+    const document = {
+      querySelectorAll: selector => selector==='a[href]'?links:[],
+    };
+    globalThis.document = document;
+    globalThis.location = {href: 'https://news.example/front'};
+    const raw = {id: 'document-1', mode: 'full', text: 'First story\nSecond story\nArticle summary\nArticle summary\nFooter note', elements: links.map((link, i) => ({ref: `e${i + 1}`, tag: 'a', role: 'link', name: link.label, actions: ['click', 'press']})), frames: []};
+    const first = compactSnapshot({snapshot: raw, byte_limit: 10240});
+    assert.equal(first.text, 'Article summary\nFooter note');
+    assert.deepEqual(first.elements.map(item => item.href), ['https://news.example/story/1', 'https://source.example/story/2']);
+    assert.deepEqual(first.elements.map(item => item.ref), ['e1', 'e2']);
+    assert.doesNotMatch(first.text, /First story|Second story/);
+
+    // A navigation-heavy page keeps the first story destinations in one read,
+    // while a text-heavy article retains bounded prose without repeating links.
+    for (let i = 2; i < 100; i++) {
+      const link = {tagName: 'A', label: `Story ${i}: a longer browser research headline`, attrs: attributes(`/story/${i}`)};
+      link.textContent = link.label;
+      link.getAttribute = key => link.attrs[key] || '';
+      link.getClientRects = () => [{}];
+      links.push(link);
+    }
+    const listingRaw = {id: 'listing-1', mode: 'full', text: links.map(link => link.label).join('\n')+'\n'+('Brief context '.repeat(500)), elements: links.slice(0, 48).map((link, i) => ({ref: `l${i + 1}`, tag: 'a', role: 'link', name: link.label, actions: ['click', 'press']})), frames: []};
+    const listing = compactSnapshot({snapshot: listingRaw, byte_limit: 11264});
+    assert.ok(Buffer.byteLength(JSON.stringify(listing)) < 12700);
+    assert.ok(listing.elements.length >= 10);
+    assert.deepEqual(listing.elements.slice(2, 10).map(item => item.href), Array.from({length: 8}, (_, i) => `https://news.example/story/${i + 2}`));
+
+    links.length = 0;
+    const articleRaw = {id: 'article-1', mode: 'full', text: 'Article paragraph '.repeat(1000), elements: [], frames: []};
+    const article = compactSnapshot({snapshot: articleRaw, byte_limit: 11264});
+    assert.ok(article.text.length > 5000);
+    assert.ok(Buffer.byteLength(JSON.stringify(article)) < 12700);
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete globalThis[key]; else globalThis[key] = value;
+    }
+  }
 });

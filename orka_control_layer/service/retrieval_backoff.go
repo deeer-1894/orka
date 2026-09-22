@@ -52,7 +52,10 @@ func (s *researchSession) recordRetrievalFailureLocked(name string, args map[str
 	}
 	key, reason := "page:"+retrievalPageKey(args), "failure on this URL"
 	low := strings.ToLower(message)
-	for _, marker := range []string{"deadline exceeded", "timed out", "timeout awaiting", "dial tcp", "no such host", "connection refused", "network is unreachable"} {
+	for _, marker := range []string{
+		"deadline exceeded", "timed out", "timeout awaiting", "dial tcp", "no such host", "connection refused", "network is unreachable",
+		"browser timeout", "browser outcome_unknown", "browser navigation_network", "browser unavailable",
+	} {
 		if strings.Contains(low, marker) {
 			key, reason = "host:"+host, "transport timeout or connection failure for "+host
 			break

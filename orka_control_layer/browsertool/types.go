@@ -16,24 +16,25 @@ const (
 )
 
 type Request struct {
-	Frame      []string    `json:"frame,omitempty"`
-	Fields     []FormField `json:"fields,omitempty"`
-	View       string      `json:"view,omitempty"`
-	Action     string      `json:"action"`
-	URL        string      `json:"url,omitempty"`
-	Ref        string      `json:"ref,omitempty"`
-	SnapshotID string      `json:"snapshot_id,omitempty"`
-	Selector   string      `json:"selector,omitempty"`
-	Text       string      `json:"text,omitempty"`
-	Value      string      `json:"value,omitempty"`
-	Key        string      `json:"key,omitempty"`
-	Direction  string      `json:"direction,omitempty"`
-	Amount     float64     `json:"amount,omitempty"`
-	Condition  string      `json:"condition,omitempty"`
-	Expression string      `json:"expression,omitempty"`
-	Path       string      `json:"path,omitempty"`
-	Mode       string      `json:"mode,omitempty"`
-	TimeoutMS  int         `json:"timeout_ms,omitempty"`
+	Frame       []string    `json:"frame,omitempty"`
+	Fields      []FormField `json:"fields,omitempty"`
+	View        string      `json:"view,omitempty"`
+	Action      string      `json:"action"`
+	URL         string      `json:"url,omitempty"`
+	Ref         string      `json:"ref,omitempty"`
+	SnapshotID  string      `json:"snapshot_id,omitempty"`
+	Selector    string      `json:"selector,omitempty"`
+	Text        string      `json:"text,omitempty"`
+	Value       string      `json:"value,omitempty"`
+	Key         string      `json:"key,omitempty"`
+	Direction   string      `json:"direction,omitempty"`
+	Amount      float64     `json:"amount,omitempty"`
+	Condition   string      `json:"condition,omitempty"`
+	Expression  string      `json:"expression,omitempty"`
+	Path        string      `json:"path,omitempty"`
+	Mode        string      `json:"mode,omitempty"`
+	TimeoutMS   int         `json:"timeout_ms,omitempty"`
+	observation observationLimits
 }
 
 type Result struct {
@@ -89,6 +90,7 @@ type Element struct {
 	Tag      string         `json:"tag"`
 	Role     string         `json:"role,omitempty"`
 	Name     string         `json:"name,omitempty"`
+	Href     string         `json:"href,omitempty"`
 	Type     string         `json:"type,omitempty"`
 	Disabled bool           `json:"disabled,omitempty"`
 	Checked  bool           `json:"checked,omitempty"`

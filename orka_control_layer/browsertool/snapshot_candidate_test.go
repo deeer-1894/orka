@@ -75,7 +75,7 @@ func TestRealSnapshotCandidateCommit(t *testing.T) {
 	}
 	read := func(ctx context.Context, s Session, action string, commit bool) pageReply {
 		t.Helper()
-		r, err := page(ctx, s, "snapshot", Request{Action: action, Selector: "#filter"})
+		r, err := page(ctx, s, "snapshot", Request{Action: action, Selector: "#filter", observation: observationProfiles[ObservationDetailed]})
 		if err != nil || r.Snapshot == nil {
 			t.Fatalf("candidate: %+v %v", r, err)
 		}

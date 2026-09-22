@@ -9,6 +9,19 @@
 # (unchanged TOOLS_MCP_URL). The workspace volume is shared so files the agent
 # writes in the container appear for the host file API and vice-versa.
 services:
+  # Bridge only the browser's outbound TCP connection to the host egress
+  # proxy. The GUI container stays on the normal isolated Docker network.
+  browser-proxy-bridge:
+    image: alpine/socat:1.8.0.1
+    container_name: orka-browser-proxy-bridge
+    network_mode: host
+    command:
+      - "TCP-LISTEN:${BROWSER_RELAY_PORT:-17877},bind=${BROWSER_RELAY_BIND:-172.17.0.1},fork,reuseaddr,keepalive"
+      - "TCP:${BROWSER_HOST_PROXY_HOST:-127.0.0.1}:${BROWSER_HOST_PROXY_PORT:-7877}"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
   tools:
     build:
       context: .
@@ -69,11 +82,24 @@ services:
     ports:
       - "127.0.0.1:8100:8100" # WebSocket exec API (run_agent)
       - "127.0.0.1:6080:6080" # noVNC live browser view
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - browser-proxy-bridge
     environment:
       - GUI_PORT=8100
       - GUI_PLANNER=${GUI_PLANNER:-vlm}
       - MACRO_ENABLE=0
       - GUI_AUTH_TOKEN=${GUI_AUTH_TOKEN:?set GUI_AUTH_TOKEN}
+      # Playwright does not automatically inherit the host proxy. Without this,
+      # Chromium waits for its full navigation timeout on otherwise reachable
+      # sites while the control layer can access them normally.
+      - BROWSER_PROXY_SERVER=${BROWSER_PROXY_SERVER:-http://host.docker.internal:17877}
+      - BROWSER_PROXY_BYPASS=${BROWSER_PROXY_BYPASS:-}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - ALL_PROXY=${ALL_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1}
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true

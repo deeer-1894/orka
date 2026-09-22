@@ -12,7 +12,9 @@ function() {
   globalThis.__orkaObserve=(result,q,slot,coverage)=>{
     // Old helper versions eagerly committed their last (possibly unseen) read.
     if(slot.observationVersion!==2){slot.observation=null;slot.pendingObservation=null;slot.observationVersion=2;}
-    const previous=slot.observation;
+	const previous=slot.observation;
+	const textLimit=Math.max(1000,Math.min(12000,Number(q.text_limit)||12000));
+	const byteLimit=Math.max(8192,Math.min(60000,Number(q.byte_limit)||60000));
     const current={url:result.url,title:result.title,snapshot:structuredClone(result.snapshot),coverage};
     const candidate={observation:current,scope:slot.scope,progress:slot.progress||{key:'',count:0}};
     slot.pendingObservation=candidate;
@@ -21,7 +23,7 @@ function() {
       for(const secret of slot.redactions){if(secret){text=text.split(secret).join('[redacted]');const normalized=secret.replace(/\s+/g,' ').trim();if(normalized)text=text.split(normalized).join('[redacted]');}}
       return text;
     };
-    const bounded=()=>{if(new TextEncoder().encode(JSON.stringify(result)).length>61000&&result.change){result.change={observed:result.change.observed,added:[],removed:[],omitted:true};}return result;};
+	const bounded=()=>{if(new TextEncoder().encode(JSON.stringify(result)).length>byteLimit+1000&&result.change){result.change={observed:result.change.observed,added:[],removed:[],omitted:true};}return result;};
     const full=()=>{result.snapshot.mode='full';return bounded();};
     if(!previous||previous.url!==current.url){candidate.progress={key:'',count:0};return full();}
     const maskTree=value=>typeof value==='string'?mask(value):Array.isArray(value)?value.map(maskTree):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,maskTree(v)])):value;
@@ -58,7 +60,7 @@ function() {
     result.snapshot.text=notes.join('\n');
     // Text annotations can exceed the text budget when one long line changes.
     // Fall back to the original bounded view, not a partly described delta.
-    if(result.snapshot.text.length>12000){result.snapshot=structuredClone(current.snapshot);return full();}
+	if(result.snapshot.text.length>textLimit){result.snapshot=structuredClone(current.snapshot);return full();}
     return bounded();
   };
 }

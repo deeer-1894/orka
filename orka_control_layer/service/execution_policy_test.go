@@ -6,6 +6,7 @@ import (
 
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/config"
+	"github.com/orka-oss/orka_core/modelprofile"
 )
 
 type policyTool struct{ name string }
@@ -34,15 +35,86 @@ func TestExecutionPolicyEnforcesBrowserOnlyAtTheToolBoundary(t *testing.T) {
 		policyTool{"shell"}, policyTool{"file_write"}, policyTool{"calculator"},
 	}
 	got := policyToolNames(filterToolsByPolicy(tools, policy))
-	for _, name := range []string{"browser", "run_agent", "file_write", "calculator"} {
+	for _, name := range []string{"browser", "run_agent"} {
 		if !got[name] {
 			t.Errorf("allowed tool %q was removed", name)
 		}
 	}
-	for _, name := range []string{"web_search", "fetch_url", "http_request", "python", "shell"} {
+	for _, name := range []string{"web_search", "fetch_url", "http_request", "python", "shell", "file_write", "calculator"} {
 		if got[name] {
 			t.Errorf("browser-only policy leaked %q", name)
 		}
+	}
+}
+
+func TestExecutionPolicyDoesNotTreatProhibitedCodeAsRequestedCode(t *testing.T) {
+	prompt := "只能通过浏览器访问网页完成，不得使用网页搜索、直连请求、Python 执行或终端，也不要创建脚本、测试或文件"
+	policy := compileExecutionPolicy(ChatRunRequest{Message: prompt})
+	if !policy.StrictSources || !policy.SourceVerificationOnly || policy.Mode != executionBrowser {
+		t.Fatalf("prohibited code was treated as requested code: %+v", policy)
+	}
+
+	positive := compileExecutionPolicy(ChatRunRequest{Message: "只能通过浏览器获取网页，但用 Python 分析下载的 CSV"})
+	if positive.SourceVerificationOnly || positive.Mode != executionBrowser {
+		t.Fatalf("affirmative code after contrast was ignored: %+v", positive)
+	}
+}
+
+func TestSourceVerificationUsesOnlyRelevantAgentControls(t *testing.T) {
+	policy := compileExecutionPolicy(ChatRunRequest{Message: "只能通过浏览器访问网页完成，打开三个网站交叉验证"})
+	ctx := withExecutionPolicy(context.Background(), policy)
+	got := policyToolNames(mainAgentTools(ctx, []agent.BaseTool{policyTool{"browser"}, policyTool{"run_agent"}}))
+
+	for _, name := range []string{"browser", "run_agent", planToolName, "clarify"} {
+		if !got[name] {
+			t.Errorf("required tool %q was removed", name)
+		}
+	}
+	for _, name := range []string{findToolsName, "check_delivery", "check_acceptance"} {
+		if got[name] {
+			t.Errorf("source-verification task exposed irrelevant tool %q", name)
+		}
+	}
+}
+
+func TestSimpleBrowserSummaryUsesMinimalToolSurface(t *testing.T) {
+	policy := compileExecutionPolicy(ChatRunRequest{Message: "打开 Hacker News，读取首页前 10 条并整理中文摘要"})
+	if policy.Mode != executionBrowser || !policy.SourceVerificationOnly || policy.NeedsPlan {
+		t.Fatalf("simple browser summary policy = %+v", policy)
+	}
+	ctx := modelprofile.WithContext(context.Background(), modelprofile.Snapshot{
+		Capabilities: modelprofile.Capabilities{Tools: true},
+	})
+	req := ChatRunRequest{executionPolicy: &policy}
+	got := policyToolNames(filterToolsForRequest(ctx, []agent.BaseTool{
+		policyTool{"browser"}, policyTool{"run_agent"}, policyTool{"fetch_url"},
+		policyTool{"search_evidence"}, policyTool{"file_read"}, policyTool{"file_write"},
+		policyTool{"python"}, policyTool{"shell"}, policyTool{"calculator"},
+	}, req))
+	for _, name := range []string{"browser", "fetch_url", "search_evidence", "file_read"} {
+		if !got[name] {
+			t.Errorf("source tool %q was removed", name)
+		}
+	}
+	for _, name := range []string{"run_agent", "file_write", "python", "shell", "calculator"} {
+		if got[name] {
+			t.Errorf("irrelevant or unavailable tool %q remained visible", name)
+		}
+	}
+	controls := policyToolNames(mainAgentTools(withExecutionPolicy(ctx, policy), []agent.BaseTool{policyTool{"browser"}}))
+	if controls[planToolName] || controls[findToolsName] || !controls["clarify"] {
+		t.Fatalf("simple source controls = %v", controls)
+	}
+}
+
+func TestVerifiedVisionKeepsGUIAgentAvailable(t *testing.T) {
+	policy := compileExecutionPolicy(ChatRunRequest{Message: "浏览器打开网页并总结"})
+	ctx := modelprofile.WithContext(context.Background(), modelprofile.Snapshot{
+		Capabilities: modelprofile.Capabilities{Tools: true, Vision: true},
+	})
+	got := policyToolNames(filterToolsForRequest(ctx, []agent.BaseTool{policyTool{"browser"}, policyTool{"run_agent"}}, ChatRunRequest{executionPolicy: &policy}))
+	if !got["browser"] || !got["run_agent"] {
+		t.Fatalf("verified GUI tools = %v", got)
 	}
 }
 

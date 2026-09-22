@@ -32,7 +32,7 @@ func LocalToolsProvider(baseStorage string, options ...ToolsProviderOptions) Too
 		// skill mgmt + artifact publishing + quant pipeline are always available
 		// (local tools).
 		local := localCapabilityTools(ctx, req)
-		return filterToolsForRequest(append(tools, local...), req), nil, nil
+		return filterToolsForRequest(ctx, append(tools, local...), req), nil, nil
 	}
 }
 
@@ -341,13 +341,13 @@ func MCPToolsProviderPooled(baseStorage, mcpURL, secret string, tokenTTL time.Du
 			}
 			fallback := append(filesystem.New(root), builtins...)
 			local := localCapabilityTools(ctx, req)
-			return filterToolsForRequest(append(fallback, local...), req), nil, err
+			return filterToolsForRequest(ctx, append(fallback, local...), req), nil, err
 		}
 		// The pool still owns the connections, but the run holds a lease on them
 		// for its whole duration — releasing it is what lets the janitor reclaim
 		// them, and holding it is what stops the janitor closing them mid-run.
 		local := localCapabilityTools(ctx, req)
-		return filterToolsForRequest(append(tools, local...), req), release, nil
+		return filterToolsForRequest(ctx, append(tools, local...), req), release, nil
 	}
 	return provider, pool.invalidate
 }
@@ -424,7 +424,7 @@ func groupForName(name string) string {
 		return "gui_agent"
 	case name == "shell":
 		return "shell"
-	case name == "web_search" || name == "fetch_url" || name == "discover_docs" || name == "read_section" || name == "weather" || name == "http_request":
+	case name == "web_search" || name == "fetch_url" || name == "discover_docs" || name == "read_section" || name == "search_evidence" || name == "weather" || name == "http_request":
 		return "web"
 	case name == "current_time" || name == "calculator" || name == "unit_convert" ||
 		name == "base64" || name == "hash" || name == "uuid" || name == "json_format" ||

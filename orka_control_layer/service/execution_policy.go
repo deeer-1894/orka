@@ -6,6 +6,7 @@ import (
 	"unicode"
 
 	"github.com/orka-oss/orka_core/agent"
+	"github.com/orka-oss/orka_core/modelprofile"
 )
 
 type executionMode string
@@ -26,6 +27,7 @@ type executionPolicy struct {
 	StrictSources          bool
 	SourceVerificationOnly bool
 	UseDeepAgent           bool
+	NeedsPlan              bool
 	MaxWorkers             int
 }
 
@@ -48,14 +50,20 @@ func compileExecutionPolicy(req ChatRunRequest) executionPolicy {
 
 	browser := containsPolicyTerm(text,
 		"浏览器", "browser", "网页操作", "点击网页", "填写网页", "打开官网", "打开网站")
+	if !browser && containsPolicyTerm(text, "访问", "打开 ") &&
+		!containsPolicyTerm(text, "文件", "工作区", "目录") {
+		browser = true
+	}
 	strictBrowser := browser && containsPolicyTerm(text,
 		"只能通过浏览器", "仅通过浏览器", "只用浏览器", "只允许浏览器", "必须通过浏览器",
 		"browser only", "only through the browser", "浏览器打开")
-	coding := containsPolicyTerm(text,
+	coding := containsAffirmativePolicyTerm(text,
 		"编程", "写代码", "实现代码", "代码项目", "修复代码", "运行测试", "单元测试", "集成测试",
 		"python", "golang", " go ", "typescript", "javascript", "build", "compile", "coding")
 	dataWork := containsPolicyTerm(text,
 		"csv", "excel", "xlsx", "数据处理", "数据分析", "生成表格", "电子表格")
+	deliverableWork := containsPolicyTerm(text,
+		"报告", "文档", "方案", "交付", "write report", "create report", "deliver a report")
 	research := containsPolicyTerm(text,
 		"调研", "研究", "查询", "检索", "搜索", "最新", "新闻", "来源", "交叉验证", "比较", "对比",
 		"research", "latest", "sources", "compare")
@@ -69,7 +77,7 @@ func compileExecutionPolicy(req ChatRunRequest) executionPolicy {
 		policy.Mode = executionCoding
 	case browser:
 		policy.Mode = executionBrowser
-		policy.SourceVerificationOnly = research && !dataWork
+		policy.SourceVerificationOnly = !coding && !dataWork
 	case research:
 		policy.Mode = executionResearch
 		policy.SourceVerificationOnly = !dataWork
@@ -83,6 +91,7 @@ func compileExecutionPolicy(req ChatRunRequest) executionPolicy {
 		"至少", "多个", "不同来源", "独立来源", "跨网站", "三个", "3个", "四个", "4个",
 		"完整项目", "复杂任务", "多阶段", "分别", "multiple", "at least", "cross-site")
 	policy.UseDeepAgent = !policy.StrictSources && complex && (policy.Mode == executionResearch || policy.Mode == executionCoding)
+	policy.NeedsPlan = coding || dataWork || deliverableWork || complex
 	return policy
 }
 
@@ -116,20 +125,72 @@ func containsPolicyTerm(text string, terms ...string) bool {
 	return false
 }
 
+// containsAffirmativePolicyTerm ignores capability words that occur inside a
+// local prohibition. This matters for constrained prompts such as "do not use
+// Python": a keyword-only router otherwise expands the run into a coding task.
+// Contrast markers start a new local scope so "do not browse, but use Python"
+// still records the affirmative requirement.
+func containsAffirmativePolicyTerm(text string, terms ...string) bool {
+	for _, term := range terms {
+		from := 0
+		for from < len(text) {
+			rel := strings.Index(text[from:], term)
+			if rel < 0 {
+				break
+			}
+			at := from + rel
+			if !policyTermNegated(text, at) {
+				return true
+			}
+			from = at + len(term)
+		}
+	}
+	return false
+}
+
+func policyTermNegated(text string, at int) bool {
+	if at <= 0 {
+		return false
+	}
+	prefix := text[:at]
+	start := 0
+	for _, marker := range []string{"。", "；", ";", "\n", "！", "!", "？", "?", "但是", "不过", "但", " however ", " but "} {
+		if i := strings.LastIndex(prefix, marker); i >= start {
+			start = i + len(marker)
+		}
+	}
+	scope := prefix[start:]
+	return containsPolicyTerm(scope,
+		"不得", "禁止", "不允许", "不要", "不可", "不能", "无需", "无须",
+		"do not", "don't", "must not", "without", "not allowed", "never use")
+}
+
 func (p executionPolicy) allowsTool(tool agent.BaseTool) bool {
 	if tool == nil {
 		return false
 	}
 	name, group := tool.Name(), toolGroup(tool)
 	if p.StrictSources {
-		switch group {
-		case "browser", "gui_agent", "file", "artifact", "util", "office", "skill":
+		if name == "browser" || name == "run_agent" {
 			return true
 		}
-		return name == "browser" || name == "run_agent"
-	}
-	if p.SourceVerificationOnly && (name == "python" || name == "shell" || group == "code" || group == "shell") {
+		if !p.SourceVerificationOnly {
+			switch group {
+			case "file", "artifact", "util", "office", "skill":
+				return true
+			}
+		}
 		return false
+	}
+	if p.SourceVerificationOnly {
+		switch {
+		case group == "browser" || group == "gui_agent" || group == "web":
+			return true
+		case name == "search_evidence" || name == "file_read" || name == "current_time":
+			return true
+		default:
+			return false
+		}
 	}
 	return true
 }
@@ -148,10 +209,19 @@ func filterToolsByPolicy(tools []agent.BaseTool, policy executionPolicy) []agent
 	return out
 }
 
-func filterToolsForRequest(tools []agent.BaseTool, req ChatRunRequest) []agent.BaseTool {
+func filterToolsForRequest(ctx context.Context, tools []agent.BaseTool, req ChatRunRequest) []agent.BaseTool {
 	tools = filterEnabled(tools, req.EnabledTools)
 	if req.executionPolicy != nil {
 		tools = filterToolsByPolicy(tools, *req.executionPolicy)
+		if selected, ok := modelprofile.FromContext(ctx); !ok || !selected.Capabilities.Vision {
+			out := tools[:0]
+			for _, tool := range tools {
+				if tool != nil && tool.Name() != "run_agent" {
+					out = append(out, tool)
+				}
+			}
+			tools = out
+		}
 	}
 	return tools
 }
@@ -171,7 +241,7 @@ func (p executionPolicy) decorateInstruction(base string) string {
 		rules = append(rules, "This run has a server-enforced browser-only source policy. Obtain online information with browser or run_agent. Web search, direct HTTP and code execution are unavailable and must not be simulated.")
 	}
 	if p.SourceVerificationOnly {
-		rules = append(rules, "This is a source-verification task. Verify source, date and coverage, then answer directly. Do not create scripts, tests, build steps or acceptance files unless the user explicitly asks for a software or data artifact.")
+		rules = append(rules, "This is a source-verification task. Verify source, date and coverage, then answer directly. Do not create scripts, tests, build steps or acceptance files unless the user explicitly asks for a software or data artifact. After a browser navigation timeout or unknown outcome, inspect the current page once; if the target is absent, report the site as unreachable and do not reopen the same host.")
 	}
 	if p.UseDeepAgent {
 		rules = append(rules, "Use at most three independent workers. Launch independent branches together, then synthesize their receipts without repeating their research.")

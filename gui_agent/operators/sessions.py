@@ -7,9 +7,47 @@ import asyncio
 import os
 import time
 from collections import OrderedDict
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from playwright.async_api import async_playwright
 from operators.remote_browser import RemoteBrowserOperator
+
+
+def _container_proxy_host(host):
+    # Compose passes the host proxy into an isolated container. A loopback
+    # address would otherwise point back at the container itself.
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return "host.docker.internal"
+    return host
+
+
+def browser_proxy_from_env(environ=None):
+    """Build Playwright's proxy option without exposing credentials to logs."""
+    environ = os.environ if environ is None else environ
+    raw = next((environ.get(name, "").strip() for name in (
+        "BROWSER_PROXY_SERVER", "HTTPS_PROXY", "https_proxy",
+        "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy",
+    ) if environ.get(name, "").strip()), "")
+    if not raw:
+        return None
+    parsed = urlsplit(raw if "://" in raw else "http://" + raw)
+    if parsed.scheme not in ("http", "https", "socks4", "socks5") or not parsed.hostname:
+        raise ValueError("browser proxy must be an HTTP(S) or SOCKS URL")
+    host = _container_proxy_host(parsed.hostname)
+    if ":" in host and not host.startswith("["):
+        host = "[" + host + "]"
+    authority = host + ((":" + str(parsed.port)) if parsed.port else "")
+    option = {"server": urlunsplit((parsed.scheme, authority, "", "", ""))}
+    if parsed.username is not None:
+        option["username"] = unquote(parsed.username)
+    if parsed.password is not None:
+        option["password"] = unquote(parsed.password)
+    bypass = environ.get("BROWSER_PROXY_BYPASS", "").strip()
+    if not bypass:
+        bypass = environ.get("NO_PROXY", environ.get("no_proxy", "")).strip()
+    if bypass:
+        option["bypass"] = bypass
+    return option
 
 
 class SessionPool:
@@ -31,8 +69,14 @@ class SessionPool:
             if self.cdp_url:
                 self.browser = await self._pw.chromium.connect_over_cdp(self.cdp_url)
             else:
-                self.browser = await self._pw.chromium.launch(headless=self.headless,
-                    args=["--no-sandbox", "--disable-dev-shm-usage", "--start-maximized"])
+                options = {
+                    "headless": self.headless,
+                    "args": ["--no-sandbox", "--disable-dev-shm-usage", "--start-maximized"],
+                }
+                proxy = browser_proxy_from_env()
+                if proxy:
+                    options["proxy"] = proxy
+                self.browser = await self._pw.chromium.launch(**options)
         except BaseException:
             await self._pw.stop()
             self._pw = None

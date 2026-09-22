@@ -348,3 +348,60 @@ func TestRetrievalHTTPFailureDoesNotDisableOtherPathsOrWrites(t *testing.T) {
 		}
 	}
 }
+
+func TestBrowserOpenFailureTripsHostCircuitWithoutBlockingSnapshot(t *testing.T) {
+	s := newResearchSession(nil, "", nil, 40)
+	ctx := withResearchSession(context.Background(), s)
+	args := map[string]any{"action": "open", "url": "https://news.example/path"}
+	calls := 0
+	invoke := func(arguments map[string]any) string {
+		out, err := s.invoke(ctx, "browser", arguments, func() (string, error) {
+			calls++
+			return `{"ok":false,"error":{"code":"timeout"}}`, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if first := invoke(args); !strings.Contains(first, `"timeout"`) {
+		t.Fatalf("first failure lost: %s", first)
+	}
+	if second := invoke(map[string]any{"action": "open", "url": "https://news.example/other"}); !strings.Contains(second, "browser navigation circuit open") {
+		t.Fatalf("same-host navigation was not blocked: %s", second)
+	}
+	if snapshot := invoke(map[string]any{"action": "snapshot"}); strings.Contains(snapshot, "circuit open") {
+		t.Fatalf("snapshot inspection was blocked: %s", snapshot)
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d want first open plus snapshot", calls)
+	}
+}
+
+func TestBrowserOpenObservationFailureBlocksOnlyTheSameURL(t *testing.T) {
+	s := newResearchSession(nil, "", nil, 40)
+	ctx := withResearchSession(context.Background(), s)
+	calls := 0
+	open := func(url string) string {
+		out, err := s.invoke(ctx, "browser", map[string]any{"action": "open", "url": url}, func() (string, error) {
+			calls++
+			return `{"ok":false,"error":{"code":"observation_failed"}}`, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if first := open("https://news.example/article"); !strings.Contains(first, "observation_failed") {
+		t.Fatalf("first observation failure lost: %s", first)
+	}
+	if same := open("https://news.example/article"); !strings.Contains(same, "browser navigation circuit open") {
+		t.Fatalf("same URL was retried after an acknowledged navigation: %s", same)
+	}
+	if other := open("https://news.example/other"); !strings.Contains(other, "observation_failed") {
+		t.Fatalf("different URL was incorrectly blocked: %s", other)
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d want one attempt per distinct URL", calls)
+	}
+}

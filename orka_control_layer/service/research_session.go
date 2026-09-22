@@ -99,6 +99,9 @@ func (s *researchSession) invoke(ctx context.Context, name string, args map[stri
 	if s == nil {
 		return call()
 	}
+	if name == "browser" && browserOpen(args) {
+		return s.invokeBrowserOpen(ctx, args, call)
+	}
 	if !isResearchTool(name, args) {
 		out, err := call()
 		if name == "file_read" && err == nil && usefulResearchResult(out) {
@@ -159,11 +162,60 @@ func (s *researchSession) invoke(ctx context.Context, name string, args map[stri
 	return out, err
 }
 
+func browserOpen(args map[string]any) bool {
+	action, _ := args["action"].(string)
+	return action == "open"
+}
+
+func (s *researchSession) invokeBrowserOpen(ctx context.Context, args map[string]any, call func() (string, error)) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	if reason := s.retrievalBackoffLocked("browser", args); reason != "" {
+		s.mu.Unlock()
+		return "[browser navigation circuit open] " + reason + " Inspect the current page once; if it does not contain the target, report the site as unreachable instead of reopening it.", nil
+	}
+	s.mu.Unlock()
+
+	out, err := call()
+	reason := ""
+	if err != nil && ctx.Err() == nil && classifyToolError(err.Error()) == failTransient {
+		reason = err.Error()
+	} else if err == nil {
+		reason = browserNavigationFailure(out)
+	}
+	if reason != "" {
+		s.mu.Lock()
+		s.recordRetrievalFailureLocked("browser", args, reason)
+		s.mu.Unlock()
+	}
+	return out, err
+}
+
+func browserNavigationFailure(out string) string {
+	var result struct {
+		OK    bool `json:"ok"`
+		Error *struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(out), &result) != nil || result.OK || result.Error == nil {
+		return ""
+	}
+	switch result.Error.Code {
+	case "timeout", "outcome_unknown", "navigation_network", "observation_failed", "unavailable":
+		return "browser " + result.Error.Code
+	default:
+		return ""
+	}
+}
+
 // researchHost identifies only the remote host for URL-based retrieval. It is
 // separate from the request cache key: different paths on one unavailable host
 // must not trigger another full retry sequence, while another host is allowed.
 func researchHost(name string, args map[string]any) string {
-	if name != "fetch_url" && name != "discover_docs" && name != "read_section" && !(name == "http_request" && isResearchTool(name, args)) {
+	if name != "browser" && name != "fetch_url" && name != "discover_docs" && name != "read_section" && !(name == "http_request" && isResearchTool(name, args)) {
 		return ""
 	}
 	raw, _ := args["url"].(string)

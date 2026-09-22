@@ -18,6 +18,7 @@ import (
 	"github.com/orka-oss/orka_core/pathsafe"
 	"github.com/orka-oss/orka_core/trace"
 
+	"github.com/orka-oss/orka_control_layer/browsertool"
 	"github.com/orka-oss/orka_control_layer/checkpoint"
 	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_control_layer/llm"
@@ -184,6 +185,9 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	ctx = WithRunInfo(ctx, req.ConversationID, req.UserEmail)
 	ctx = middlewares.WithSkillOwner(ctx, s.Cfg.Storage.BaseStoragePath, req.UserEmail)
 	ctx = withExecutionPolicy(ctx, policy)
+	if policy.Mode == executionBrowser && policy.SourceVerificationOnly {
+		ctx = browsertool.WithObservationProfile(ctx, browsertool.ObservationResearch)
+	}
 	budgetCtx, session, cancelBudget, budgetErr := s.prepareRunBudget(ctx, &req)
 	if budgetErr != nil {
 		raw(taskFailed(meta, "无法开始任务："+budgetErr.Error()))
@@ -196,7 +200,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	deps := PipelineDeps{LLM: model, Model: modelName, Metrics: s.Metrics}
 
 	tools, cleanup, toolsErr := s.ToolsFor(ctx, req)
-	tools = filterToolsForRequest(tools, req)
+	tools = filterToolsForRequest(ctx, tools, req)
 	if toolsErr != nil && s.Log != nil {
 		s.Log.Warn("tools provider degraded", "trace_id", traceID, "err", toolsErr)
 	}

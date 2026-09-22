@@ -79,6 +79,17 @@ func TestContextHandlersBuild(t *testing.T) {
 	}
 }
 
+func TestSourceVerificationUsesEarlierReductionProfile(t *testing.T) {
+	ctx := withExecutionPolicy(context.Background(), executionPolicy{SourceVerificationOnly: true})
+	got := reductionProfileFor(ctx)
+	if got.maxToolOutputChars != sourceMaxToolOutputChars || got.clearAboveTokens != sourceClearAboveTokens || got.clearFloorTokens != sourceClearFloorTokens {
+		t.Fatalf("source reduction profile = %+v", got)
+	}
+	if got.clearAboveTokens >= reductionProfileFor(context.Background()).clearAboveTokens {
+		t.Fatalf("source threshold %d must be below default", got.clearAboveTokens)
+	}
+}
+
 // A sub-agent's result is the most expensive output in the system — a whole
 // nested agent run. Clearing it as "an old tool result" cost the worst run
 // measured here: four researchers returned sourced reports in 140 seconds, the

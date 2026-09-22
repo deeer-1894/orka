@@ -67,7 +67,8 @@ func createWorld(ctx context.Context, lease connectors.BrowserLease) (int64, err
 }
 
 func page(ctx context.Context, s Session, operation string, req Request) (pageReply, error) {
-	payload := map[string]any{"action": req.Action, "view": req.View, "frame": req.Frame, "ref": req.Ref, "snapshot_id": req.SnapshotID, "selector": req.Selector, "text": req.Text, "value": req.Value, "condition": req.Condition, "url": req.URL, "direction": req.Direction, "amount": req.Amount}
+	limits := req.observation.normalized()
+	payload := map[string]any{"action": req.Action, "view": req.View, "frame": req.Frame, "ref": req.Ref, "snapshot_id": req.SnapshotID, "selector": req.Selector, "text": req.Text, "value": req.Value, "condition": req.Condition, "url": req.URL, "direction": req.Direction, "amount": req.Amount, "text_limit": limits.textChars, "element_limit": limits.elementRefs, "byte_limit": limits.outputBytes}
 	if operation == "snapshot" {
 		delete(payload, "text")
 		delete(payload, "value")

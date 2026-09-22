@@ -145,6 +145,9 @@ func observeCurrent(ctx context.Context, s *Session, result *Result, req Request
 				var candidate Result
 				err = observe(ctx, *s, &candidate, req)
 				if err == nil {
+					err = compactObservation(ctx, s, candidate.Snapshot, req.observation.normalized())
+				}
+				if err == nil {
 					var after observationStamp
 					after, err = readObservationStamp(ctx, *s)
 					if err == nil && before == after {

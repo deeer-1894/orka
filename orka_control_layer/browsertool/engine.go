@@ -17,6 +17,19 @@ type Engine struct{ dialer connectors.BrowserDialer }
 
 func NewEngine(dialer connectors.BrowserDialer) *Engine { return &Engine{dialer: dialer} }
 
+const defaultBrowserTimeout = 45 * time.Second
+const defaultNavigationTimeout = 15 * time.Second
+
+func requestTimeout(req Request) time.Duration {
+	if req.TimeoutMS > 0 {
+		return time.Duration(req.TimeoutMS) * time.Millisecond
+	}
+	if req.Action == "open" {
+		return defaultNavigationTimeout
+	}
+	return defaultBrowserTimeout
+}
+
 func (e *Engine) Run(ctx context.Context, identity connectors.GUIIdentity, req Request, files FileActions) (result Result, err error) {
 	started := time.Now()
 	result.Action = req.Action
@@ -35,10 +48,7 @@ func (e *Engine) Run(ctx context.Context, identity connectors.GUIIdentity, req R
 		err = NewActionError("unavailable", "Browser transport is unavailable.")
 		return
 	}
-	duration := 45 * time.Second
-	if req.TimeoutMS > 0 {
-		duration = time.Duration(req.TimeoutMS) * time.Millisecond
-	}
+	duration := requestTimeout(req)
 	lease, acquireErr := e.dialer.Acquire(ctx, identity, 30*time.Second, duration)
 	if acquireErr != nil {
 		err = acquireErr
@@ -131,7 +141,7 @@ func (e *Engine) Run(ctx context.Context, identity connectors.GUIIdentity, req R
 		}
 		if err != nil && result.Form != nil && result.Form.Completed > 0 {
 			// Preserve the partial receipt and original error; do not replay earlier fields.
-			_ = observeCurrent(opCtx, &session, &result, Request{Action: "snapshot"}, false)
+			_ = observeCurrent(opCtx, &session, &result, Request{Action: "snapshot", observation: req.observation}, false)
 		}
 		if err == nil {
 			// The fixed observer reacquires its protected world after navigation.

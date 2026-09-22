@@ -127,7 +127,26 @@ const (
 	// mid-conversation drops this provider's prefix-cache hit rate from 98% to
 	// 63%, so a pass that reclaims a trickle costs more than it saves.
 	clearFloorTokens = 4000
+	// Source-verification runs repeatedly carry retrieved pages. They need a small
+	// active working set; older evidence remains available through the offload
+	// pointer and its in-context abstract.
+	sourceMaxToolOutputChars = 12000
+	sourceClearAboveTokens   = 12000
+	sourceClearFloorTokens   = 2000
 )
+
+type reductionProfile struct {
+	maxToolOutputChars int
+	clearAboveTokens   int
+	clearFloorTokens   int
+}
+
+func reductionProfileFor(ctx context.Context) reductionProfile {
+	if executionPolicyFrom(ctx).SourceVerificationOnly {
+		return reductionProfile{sourceMaxToolOutputChars, sourceClearAboveTokens, sourceClearFloorTokens}
+	}
+	return reductionProfile{maxToolOutputChars, clearAboveTokens, clearFloorTokens}
+}
 
 // durableArgPayload names, per tool, the argument field holding a payload that
 // the call itself puts on disk, and the field saying where it landed.
@@ -202,14 +221,29 @@ func contextHandlers(ctx context.Context, baseStorage, userEmail, label string, 
 	}
 
 	backend := newWorkspaceBackend(baseStorage, userEmail, agent.MetaFrom(ctx).ConversationID)
+	profile := reductionProfileFor(ctx)
 	// Never reduce the pipeline's own control tools: their output IS the state
 	// that flows to the next step, and a placeholder would break it.
-	protected := append(protectedToolOutputs(), subAgentNames(specs)...)
+	protected := protectedToolOutputs()
+	atomicNames := make(map[string]bool, len(tools))
+	for _, t := range tools {
+		if t != nil {
+			atomicNames[t.Name()] = true
+		}
+	}
+	for _, name := range subAgentNames(specs) {
+		// A delegate that collides with an atomic tool is exposed under an alias.
+		// In particular, protecting the "browser" delegate by name used to keep
+		// every full browser page in the model context indefinitely.
+		if !atomicNames[name] {
+			protected = append(protected, name)
+		}
+	}
 
 	red, err := reduction.New(ctx, &reduction.Config{
 		Backend:           backend,
 		ReadFileToolName:  readFileToolName,
-		MaxLengthForTrunc: maxToolOutputChars,
+		MaxLengthForTrunc: profile.maxToolOutputChars,
 		// The path in the placeholder is the only route back to an offloaded
 		// result, so it has to be a path file_read can open. eino's defaults name
 		// files "/tmp/{trunc,clear}/{call_id}" while workspaceBackend stores them
@@ -220,8 +254,8 @@ func contextHandlers(ctx context.Context, baseStorage, userEmail, label string, 
 		GenClearOffloadFilePath: offloadPathFor(ctx, "clear"),
 		TruncExcludeTools:       protected,
 		ClearExcludeTools:       protected,
-		MaxTokensForClear:       clearAboveTokens,
-		ClearAtLeastTokens:      clearFloorTokens,
+		MaxTokensForClear:       int64(profile.clearAboveTokens),
+		ClearAtLeastTokens:      int64(profile.clearFloorTokens),
 		// Per-tool handlers are the only way to override eino's clear placeholder
 		// (there is no general hook), so every tool the run owns gets one.
 		ToolConfig: l0ClearConfigs(ctx, tools, backend),

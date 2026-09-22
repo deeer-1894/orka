@@ -159,7 +159,7 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 		Instruction: instruction,
 		Model:       newAgentModel(client, model, "orka"),
 		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(withFindTools(withPlan(withClarify(tools))))},
+			ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(mainAgentTools(ctx, tools))},
 			ReturnDirectly:  clarifyReturnDirectly(),
 		},
 		MaxIterations: maxIters,
@@ -250,7 +250,7 @@ func BuildEinoSubAgents(ctx context.Context, client llm.Client, model string, at
 			Instruction: prompt,
 			Model:       newAgentModel(client, model, sp.Name),
 			ToolsConfig: adk.ToolsConfig{
-				ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(withFindTools(scoped))},
+				ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(workerAgentTools(ctx, scoped))},
 			},
 			MaxIterations: iters,
 			// Same resilience as the orchestrator: a delegated worker that dies on a
@@ -323,7 +323,7 @@ func BuildEinoDeepOrchestrator(ctx context.Context, client llm.Client, model, in
 		Instruction: instruction,
 		SubAgents:   subs,
 		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(withFindTools(withPlan(withClarify(atomic))))},
+			ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(mainAgentTools(ctx, atomic))},
 			ReturnDirectly:  clarifyReturnDirectly(),
 			// Stream delegate events up so the UI keeps its per-agent lanes.
 			EmitInternalEvents: true,
@@ -355,7 +355,7 @@ func BuildEinoOrchestrator(ctx context.Context, client llm.Client, model, instru
 	if maxIters <= 0 {
 		maxIters = einoMaxIters
 	}
-	allTools := append(EinoTools(withFindTools(withPlan(withClarify(atomic)))), subTools...)
+	allTools := append(EinoTools(mainAgentTools(ctx, atomic)), subTools...)
 	handlers := append([]adk.ChatModelAgentMiddleware{newBudgetGuardFor(agentBudget(ctx, maxIters)), newGateMiddleware(toolGateFrom(ctx))}, extra...)
 	if summarize {
 		// Compression uses the same selected model as the rest of the run.
@@ -736,7 +736,10 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	ctx = withResearchSession(ctx, research)
 	rc.Ctx = ctx
 	journalFrom(ctx).trackState(ctx)
-	tools = append(append([]agent.BaseTool(nil), tools...), evidenceSearchTool{research})
+	tools = append([]agent.BaseTool(nil), tools...)
+	if !executionPolicyFrom(ctx).StrictSources {
+		tools = append(tools, evidenceSearchTool{research})
+	}
 	// Context-window management (truncate oversized tool output to a workspace
 	// file, clear stale tool results, repair dangling tool calls). Runs ahead of
 	// the summarization backstop.

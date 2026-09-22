@@ -20,6 +20,9 @@ function(q) {
     }
     return text.slice(0,limit);
   };
+	const textLimit=Math.max(1000,Math.min(12000,Number(q.text_limit)||12000));
+	const elementLimit=Math.max(16,Math.min(200,Number(q.element_limit)||200));
+	const byteLimit=Math.max(8192,Math.min(60000,Number(q.byte_limit)||60000));
   const dom=globalThis.__orkaDOM;
   const {roots,shown,disabled,rawName,fingerprint,interactable}=dom;
   const name=node=>clean(rawName(node));
@@ -54,9 +57,9 @@ function(q) {
         if(++visited>20000){omitted=true;coverage.textEnd={node:coverageID(text),reason:'visit_limit'};break;}
         const p=text.parentElement;
         if(!p||p.closest('script,style,noscript,textarea,select,[contenteditable="true"]')||!shown(p))continue;
-        const value=clean(text.nodeValue,12000-characters);
+		const value=clean(text.nodeValue,textLimit-characters);
         if(value){texts.push(value);characters+=value.length+1;}
-        if(characters>=12000){omitted=true;coverage.textEnd={node:coverageID(text),reason:'text_limit',length:value.length};break;}
+		if(characters>=textLimit){omitted=true;coverage.textEnd={node:coverageID(text),reason:'text_limit',length:value.length};break;}
       }
       for(const node of root.querySelectorAll(selector)){
         if(!shown(node))continue;
@@ -67,7 +70,7 @@ function(q) {
         }
         // Keep the current controls even when hundreds of story links precede
         // them. Evict a trailing plain link, preserving retained DOM order.
-        if(elements.length>=200){omitted=true;coverage.elementLimit=true;if(plainLink(node)||!dropLink())continue;}
+		if(elements.length>=elementLimit){omitted=true;coverage.elementLimit=true;if(plainLink(node)||!dropLink())continue;}
         let options;
         if(node.tagName==='SELECT'){
           options=[];
@@ -84,9 +87,9 @@ function(q) {
       }
       if(visited>20000)break;
     }
-    const result={ok:true,url:clean(location.href,2048),title:clean(document.title,256),snapshot:{id:slot.nonce,ready_state:document.readyState,text:texts.join('\n').slice(0,12000),elements,frames,pixel_content,omitted}};
+	const result={ok:true,url:clean(location.href,2048),title:clean(document.title,256),snapshot:{id:slot.nonce,ready_state:document.readyState,text:texts.join('\n').slice(0,textLimit),elements,frames,pixel_content,omitted}};
     // Reserve space for the Go receipt and account for UTF-8/JSON escaping.
-    while(new TextEncoder().encode(JSON.stringify(result)).length>60000){
+	while(new TextEncoder().encode(JSON.stringify(result)).length>byteLimit){
       result.snapshot.omitted=true;
       coverage.byteLimit=true;
       if(elements.length){if(!dropLink()){const removed=elements.pop();slot.refs.delete(removed.ref);}}

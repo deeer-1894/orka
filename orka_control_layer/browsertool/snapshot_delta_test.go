@@ -58,6 +58,7 @@ func TestRealSnapshotBoundedDelta(t *testing.T) {
 	engine := NewEngine(connectors.NewBrowserDialer(endpoint, os.Getenv("ORKA_BROWSER_TEST_TOKEN")))
 	run := func(req Request) Result {
 		t.Helper()
+		req.observation = observationProfiles[ObservationDetailed]
 		ctx, cancel := context.WithTimeout(context.Background(), 65*time.Second)
 		defer cancel()
 		result, err := engine.Run(ctx, who, req, nil)
@@ -66,7 +67,7 @@ func TestRealSnapshotBoundedDelta(t *testing.T) {
 		}
 		return result
 	}
-	full := run(Request{Action: "open", URL: target})
+	full := run(Request{Action: "open", URL: target, observation: observationProfiles[ObservationDetailed]})
 	if full.Snapshot == nil || !full.Snapshot.Omitted || len(full.Snapshot.Elements) != 200 {
 		t.Fatalf("fixture must exercise the 200-element limit: %+v", full.Snapshot)
 	}
@@ -139,7 +140,7 @@ func TestRealSnapshotBoundedDelta(t *testing.T) {
 	// truncated prefix can be delta; replacing its cut-point node must be full,
 	// even if its visible text is identical.
 	run(Request{Action: "evaluate", Expression: `const p=document.createElement('p');p.id='padding';p.textContent='x'.repeat(13000);document.querySelector('#status').after(p);const h=document.createElement('div');document.body.append(h);h.attachShadow({mode:'open'}).innerHTML='<p>Beyond text boundary</p>';null`})
-	textFull := run(Request{Action: "snapshot"})
+	textFull := run(Request{Action: "snapshot", observation: observationProfiles[ObservationDetailed]})
 	if !textFull.Snapshot.Omitted || len(textFull.Snapshot.Text) > MaxSnapshotText || strings.Contains(textFull.Snapshot.Text, "Beyond text boundary") {
 		t.Fatal("text budget restarted in another root")
 	}

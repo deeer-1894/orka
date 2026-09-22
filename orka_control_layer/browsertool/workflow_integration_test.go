@@ -120,9 +120,7 @@ document.querySelector('#query').dataset.fills='0';document.querySelector('#quer
 		open()
 		run(Request{Action: "evaluate", Expression: `setTimeout(()=>document.querySelector('#late').innerHTML='<button id=delayed onclick="this.textContent=\'Clicked once\'">Delayed</button>',300);null`})
 		r := run(Request{Action: "click", Selector: "#delayed"})
-		if !strings.Contains(r.Snapshot.Text, "Clicked once") {
-			t.Fatal("delayed target not clicked")
-		}
+		ref(r, "Clicked once")
 		run(Request{Action: "evaluate", Expression: `document.querySelector('#late').insertAdjacentHTML('beforeend','<div id=cover style="position:fixed;inset:0;z-index:9999;background:white">Blocked</div>');null`})
 		reject(Request{Action: "click", Selector: "#noop", TimeoutMS: 200}, "timeout")
 		run(Request{Action: "evaluate", Expression: "document.querySelector('#cover').remove();null"})

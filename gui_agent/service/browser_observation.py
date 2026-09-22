@@ -10,7 +10,11 @@ from pathlib import Path
 SCRIPTS = json.loads(Path(__file__).with_name("browser_helpers.json").read_text())
 OBSERVATIONS = frozenset({"snapshot", "settle", "wait", "commit_observation"})
 ACTIONS = frozenset({"click", "press", "fill", "select", "scroll", "prepare"})
-REQUEST_KEYS = frozenset({"action", "view", "frame", "ref", "snapshot_id", "selector", "text", "value", "condition", "url", "direction", "amount"})
+REQUEST_KEYS = frozenset({
+    "action", "view", "frame", "ref", "snapshot_id", "selector", "text",
+    "value", "condition", "url", "direction", "amount",
+    "text_limit", "element_limit", "byte_limit",
+})
 
 
 def by_value(result):

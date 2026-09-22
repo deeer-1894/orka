@@ -31,7 +31,7 @@ func toolSchema() map[string]any {
 		"expression":  str("Page JavaScript script or expression for evaluate only; browser context, never host shell. Result is bounded.", MaxExpressionBytes),
 		"path":        str("Conversation-workspace path: existing self-contained UTF-8 .html/.htm input for preview (up to 1 MiB); output path for screenshot/download.", 1024),
 		"mode":        map[string]any{"type": "string", "enum": []string{"create", "replace"}, "description": "File write mode; default create, replace preserves history."},
-		"timeout_ms":  map[string]any{"type": "integer", "minimum": 1, "maximum": 60000, "description": "Bound this operation; default 45000 ms, maximum 60000 ms."},
+		"timeout_ms":  map[string]any{"type": "integer", "minimum": 1, "maximum": 60000, "description": "Bound this operation; open defaults to 15000 ms, other actions to 45000 ms, maximum 60000 ms."},
 	}
 	return map[string]any{"type": "object", "properties": props, "required": []string{"action"}, "additionalProperties": false}
 }
