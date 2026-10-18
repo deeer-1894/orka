@@ -43,6 +43,7 @@ async function app(t, { history = async () => [], runs = [] } = {}) {
       case '/artifact/list': return json({ artifacts: [] });
       case '/artifact/by-conversation': return route.fulfill({ status: 404, json: { code: 404, msg: 'No artifact' } });
       case '/events': return route.fulfill({ status: 503, body: '' });
+      case '/chat/active': return json({ active: false, seq: 0 });
       case '/chat/followups': return json({ suggestions: [] });
       case '/chat/attach': {
         attachCalls++;

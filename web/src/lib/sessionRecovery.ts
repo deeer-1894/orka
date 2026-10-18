@@ -21,6 +21,7 @@ export interface RetrySnapshot {
   activeSkill?: string;
   fileIDs?: string[];
   confirmRisky?: boolean;
+  deepThinking?: string;
 }
 type Kind = 'draft' | 'settings' | 'retry';
 type Payload = DraftSnapshot | ConversationSettings | RetrySnapshot;
@@ -56,7 +57,7 @@ function clean(kind: Kind, value: unknown, owner: string, cid: string): Payload 
   }
   if (value.userEmail !== owner || value.conversationID !== cid || typeof value.message !== 'string') return;
   const result: RetrySnapshot = { message: value.message, userEmail: owner, conversationID: cid, enabledTools: [...value.enabledTools] };
-  for (const key of ['selectedVersion', 'modelProfile', 'activeSkill'] as const) {
+  for (const key of ['selectedVersion', 'modelProfile', 'activeSkill', 'deepThinking'] as const) {
     if (value[key] === undefined) continue;
     if (typeof value[key] !== 'string') return;
     result[key] = value[key];

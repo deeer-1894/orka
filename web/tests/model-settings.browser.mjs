@@ -90,6 +90,7 @@ async function mockApp(t, options = {}) {
         ];
         return route.fulfill({ contentType: 'text/event-stream', body: frames.map(frame => `data: ${JSON.stringify(frame)}\n\n`).join('') });
       }
+      case '/chat/active': return json({ active: false, seq: 0 });
       case '/chat/followups': return json({ suggestions: [`Follow up on: ${body.prompt}`] });
       default:
         unexpected.push(path);

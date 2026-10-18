@@ -47,6 +47,7 @@ async function app(t, options = {}) {
    case '/events': return route.fulfill({status:503,body:''});
    case '/chat/kill': return route.fulfill({status:503,json:{code:503,msg:'stop unavailable'}});
    case '/chat/attach': return route.fulfill({status:404,body:''});
+   case '/chat/active': return json({ active: false, seq: 0 });
    case '/chat/followups': return json({suggestions:['Follow up once']});
    case '/chat/run': return route.fulfill({status:503,body:''});
    default:
