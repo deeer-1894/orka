@@ -63,9 +63,13 @@ func guardedDial(ctx context.Context, network, addr string) (net.Conn, error) {
 }
 
 // httpRequest performs a generic outbound HTTP GET/POST and returns the status
-// and (truncated) body. It is SSRF-guarded: only http/https to public hosts are
+// and complete bounded body. It is SSRF-guarded: only http/https to public hosts are
 // allowed — loopback, private, link-local and metadata IPs are rejected.
 func httpRequest() mcpserver.ToolHandlerFunc {
+	return httpRequestWithClient(httpReqClient)
+}
+
+func httpRequestWithClient(client *http.Client) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		raw := strings.TrimSpace(req.GetString("url", ""))
 		if raw == "" {
@@ -98,15 +102,36 @@ func httpRequest() mcpserver.ToolHandlerFunc {
 			hreq.Header.Set("Content-Type", "application/json")
 		}
 
-		resp, err := httpReqClient.Do(hreq)
+		resp, err := client.Do(hreq)
 		if err != nil {
 			return mcp.NewToolResultError("request failed: " + err.Error()), nil
 		}
 		defer resp.Body.Close()
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10)) // cap at 64KB
-		out := fmt.Sprintf("HTTP %d %s\n\n%s", resp.StatusCode, resp.Status, string(body))
+		body, err := readHTTPBody(resp.Body)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("HTTP %d: incomplete response body: %v", resp.StatusCode, err)), nil
+		}
+		out := fmt.Sprintf("HTTP %d %s\nCoverage: complete response body (%d bytes)\n\n%s", resp.StatusCode, resp.Status, len(body), body)
+		if resp.StatusCode >= http.StatusBadRequest {
+			return mcp.NewToolResultError(out), nil
+		}
 		return mcp.NewToolResultText(out), nil
 	}
+}
+
+const maxHTTPBodyBytes = 1 << 20
+
+// Read one sentinel byte beyond the cap so exactly-at-cap responses stay valid.
+// A partial JSON prefix is not a usable API response: never report it as success.
+func readHTTPBody(r io.Reader) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r, maxHTTPBodyBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read failed: %w", err)
+	}
+	if len(body) > maxHTTPBodyBytes {
+		return nil, fmt.Errorf("exceeds %d bytes; request a smaller page or narrower endpoint instead of parsing a truncated response", maxHTTPBodyBytes)
+	}
+	return body, nil
 }
 
 // guardURL rejects non-http(s) schemes and any host that resolves to a

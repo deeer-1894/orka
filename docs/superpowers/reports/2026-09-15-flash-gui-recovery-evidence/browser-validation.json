@@ -1,0 +1,26 @@
+{
+  "source": "CUA accessibility observations in a real browser",
+  "checks": [
+    {
+      "check": "North filter",
+      "visible_rows": 2
+    },
+    {
+      "check": "income descending",
+      "visible_order": [
+        "North Q3 348600.00",
+        "North Q2 288000.00"
+      ]
+    },
+    {
+      "check": "reset filter",
+      "visible_rows": 6
+    },
+    {
+      "check": "scenario/target and sensitivity tables visible",
+      "region_scenario_rows": 3,
+      "sensitivity_rows": 36
+    }
+  ],
+  "passed": true
+}

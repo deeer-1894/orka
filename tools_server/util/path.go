@@ -21,8 +21,17 @@ import (
 // "/root/.openclaw/workspace/report.md") thinking it's the workspace root.
 // Rather than nest that whole path under the sandbox, collapse an absolute path
 // to its base filename so the artifact lands cleanly at the workspace root.
-func ResolvePath(root, rel string) (string, error) {
-	return pathsafe.Resolve(root, normalizeRel(rel))
+func ResolvePath(base, user, rel string, conversationID ...string) (string, error) {
+	rel = normalizeRel(rel)
+	root := pathsafe.UserRoot(base, user) // legacy utility callers only
+	if len(conversationID) > 0 {
+		var err error
+		root, err = pathsafe.SessionRoot(base, user, conversationID[0])
+		if err != nil {
+			return "", err
+		}
+	}
+	return pathsafe.Resolve(root, rel)
 }
 
 func normalizeRel(rel string) string {

@@ -2,10 +2,11 @@ package api
 
 import (
 	"context"
+	"github.com/orka-oss/orka_core/pathsafe"
+	"github.com/orka-oss/orka_core/workspaceio"
 	"os"
 	"path/filepath"
 	"sort"
-	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
@@ -14,17 +15,17 @@ import (
 // trashDir mirrors tools_server's TrashDir: the gateway writes a timestamped
 // copy of every overwritten file here, giving the control layer a version
 // history to list, diff (client-side), and restore.
-const trashDir = ".orka_trash"
+const trashDir = workspaceio.TrashDir
 
 // stampFormat must match tools_server's: nanosecond backup-dir timestamps.
-const stampFormat = "20060102-150405.000000000"
+const stampFormat = workspaceio.VersionFormat
 
 // fileVersion is one historical snapshot of a file.
 type fileVersion struct {
-	TS    string `json:"ts"`    // backup folder name, e.g. 20260619-014233
-	When  int64  `json:"when"`  // unix millis parsed from TS (for display)
-	Size  int64  `json:"size"`  // bytes of that snapshot
-	Path  string `json:"path"`  // download path for this version
+	TS   string `json:"ts"`   // backup folder name, e.g. 20260619-014233
+	When int64  `json:"when"` // unix millis parsed from TS (for display)
+	Size int64  `json:"size"` // bytes of that snapshot
+	Path string `json:"path"` // download path for this version
 }
 
 // FileVersions lists prior versions of a file from the trash, newest first.
@@ -37,23 +38,33 @@ func (a *API) FileVersions(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "path required")
 		return
 	}
-	rel := filepath.Clean(req.Path)
-	trashRoot, err := a.resolveIn(ctx, c, req.ConversationID, trashDir, false)
-	if err != nil {
-		fail(c, consts.StatusBadRequest, err.Error())
+	rel, err := fileRel(req.Path)
+	if err != nil || rel == "." {
+		fail(c, 400, "invalid path")
 		return
 	}
-	stamps, _ := os.ReadDir(trashRoot) // missing trash → no versions, not an error
+	root, _, err := a.openWorkspace(ctx, c, false)
+	if err != nil {
+		workspaceFail(c, err)
+		return
+	}
+	defer root.Close()
+	trash, err := root.Open(trashDir)
+	var stamps []os.DirEntry
+	if err == nil {
+		defer trash.Close()
+		stamps, _ = trash.ReadDir(-1)
+	} // // missing trash → no versions, not an error
 	out := make([]fileVersion, 0, len(stamps))
 	for _, s := range stamps {
 		if !s.IsDir() {
 			continue
 		}
-		vp, rerr := a.resolveIn(ctx, c, req.ConversationID, filepath.Join(trashDir, s.Name(), rel), false)
+		vp, rerr := fileRel(filepath.Join(trashDir, s.Name(), rel))
 		if rerr != nil {
 			continue
 		}
-		info, serr := os.Stat(vp)
+		info, serr := root.Stat(vp)
 		if serr != nil || info.IsDir() {
 			continue
 		}
@@ -81,31 +92,45 @@ func (a *API) FileRestore(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "path and ts required")
 		return
 	}
-	rel := filepath.Clean(req.Path)
-	versionPath, err := a.resolveIn(ctx, c, req.ConversationID, filepath.Join(trashDir, filepath.Clean(req.TS), rel), true)
+	rel, err := fileRel(req.Path)
+	if err != nil || rel == "." {
+		fail(c, 400, "invalid path")
+		return
+	}
+	if _, err := workspaceio.ParseVersion(req.TS); err != nil {
+		fail(c, 400, "invalid version timestamp")
+		return
+	}
+	root, _, err := a.openWorkspace(ctx, c, true)
+	if err != nil {
+		workspaceFail(c, err)
+		return
+	}
+	defer root.Close()
+	versionPath, err := fileRel(filepath.Join(trashDir, req.TS, rel))
 	if err != nil {
 		fail(c, consts.StatusBadRequest, err.Error())
 		return
 	}
-	data, err := os.ReadFile(versionPath)
+	data, err := root.ReadFile(versionPath)
 	if err != nil {
 		fail(c, consts.StatusNotFound, "version not found")
 		return
 	}
-	cur, err := a.resolveIn(ctx, c, req.ConversationID, rel, true)
+	cur, err := fileRel(rel)
 	if err != nil {
 		fail(c, consts.StatusBadRequest, err.Error())
 		return
 	}
 	// Snapshot the current contents before clobbering them (reversible restore).
-	if old, rerr := os.ReadFile(cur); rerr == nil {
-		a.snapshotToTrash(ctx, c, req.ConversationID, rel, old)
+	if old, rerr := root.ReadFile(cur); rerr == nil {
+		snapshotToTrash(root, rel, old)
 	}
-	if err := os.MkdirAll(filepath.Dir(cur), 0o755); err != nil {
+	if err := root.MkdirAll(filepath.Dir(cur), pathsafe.WorkspaceDirMode); err != nil {
 		fail(c, consts.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := os.WriteFile(cur, data, 0o644); err != nil {
+	if err := root.WriteFile(cur, data, pathsafe.WorkspaceFileMode); err != nil {
 		fail(c, consts.StatusInternalServerError, err.Error())
 		return
 	}
@@ -113,20 +138,14 @@ func (a *API) FileRestore(ctx context.Context, c *app.RequestContext) {
 }
 
 // snapshotToTrash writes content to .orka_trash/<now>/<rel> (best-effort).
-func (a *API) snapshotToTrash(ctx context.Context, c *app.RequestContext, convID, rel string, content []byte) {
-	dst, err := a.resolveIn(ctx, c, convID, filepath.Join(trashDir, time.Now().Format(stampFormat), rel), true)
-	if err != nil {
-		return
-	}
-	if os.MkdirAll(filepath.Dir(dst), 0o755) == nil {
-		_ = os.WriteFile(dst, content, 0o644)
-	}
+func snapshotToTrash(root *os.Root, rel string, content []byte) {
+	_, _ = workspaceio.Snapshot(root, rel, content)
 }
 
 // parseStampMillis turns a 20060102-150405 trash folder name into unix millis;
 // 0 if it doesn't parse (the TS still sorts lexically).
 func parseStampMillis(stamp string) int64 {
-	t, err := time.ParseInLocation(stampFormat, stamp, time.Local)
+	t, err := workspaceio.ParseVersion(stamp)
 	if err != nil {
 		return 0
 	}

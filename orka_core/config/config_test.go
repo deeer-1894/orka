@@ -71,3 +71,55 @@ func TestEnvOverride(t *testing.T) {
 		t.Fatalf("cors hosts = %v", c.Server.CORSAllowedHosts)
 	}
 }
+
+func TestModelListHasNoImplicitMiniTier(t *testing.T) {
+	c := LLMConfig{Model: " first ", MiniModel: "hidden", Models: []string{"other", "first", "mini"}}
+	got := c.SelectableModels()
+	if len(got) != 3 || got[0] != "first" || got[1] != "other" || got[2] != "mini" || c.AllowsModel("hidden") {
+		t.Fatal(got)
+	}
+}
+
+func TestModelDefaultsUseOrderedList(t *testing.T) {
+	for _, tc := range []struct {
+		legacy string
+		models []string
+		want   string
+	}{
+		{models: []string{"listed", "other"}, want: "listed"},
+		{legacy: "old", models: []string{"listed", "old"}, want: "old"},
+		{want: "gpt-4o-mini"},
+	} {
+		c := Config{LLM: LLMConfig{Model: tc.legacy, MiniModel: "ignored", Models: tc.models}}
+		c.applyDefaults()
+		if c.LLM.Model != tc.want || c.LLM.MiniModel != tc.want || c.LLM.Models[0] != tc.want || c.LLM.AllowsModel("ignored") {
+			t.Fatalf("default=%s alias=%s list=%v", c.LLM.Model, c.LLM.MiniModel, c.LLM.Models)
+		}
+	}
+}
+
+func TestLegacyLimitsAreIgnoredAfterConfigLoad(t *testing.T) {
+	for _, value := range []string{"1", "-1", "oops", "99999999999999999999999"} {
+		t.Setenv("ORKA_DEV", "1")
+		t.Setenv("RUN_MAX_TOKENS", value)
+		t.Setenv("RUN_MAX_WALL_SECONDS", value)
+		t.Setenv("RUN_MAX_STEPS", value)
+		t.Setenv("USER_DAILY_TOKENS", value)
+		c, err := Load("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		a := c.Agent
+		if a.RunMaxTokens != 0 || a.RunMaxSteps != 0 || a.RunMaxWallSeconds != 0 || a.UserDailyTokens != 0 {
+			t.Fatalf("legacy quota %+v", a)
+		}
+	}
+}
+func TestUsageEstimateValidation(t *testing.T) {
+	for _, value := range []string{"oops", "-1", "99999999999999999999999"} {
+		t.Setenv("USAGE_RESERVATION_TOKENS", value)
+		if _, err := Load(""); err == nil {
+			t.Fatalf("accepted invalid estimate %s", value)
+		}
+	}
+}

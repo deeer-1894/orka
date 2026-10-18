@@ -13,6 +13,8 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont
 from playwright.async_api import ElementHandle, Page
 
+from operators.privacy import SENSITIVE_ELEMENT
+
 _SELECTOR = "a, button, input, textarea, select, [role=button], [role=link], [role=tab], [onclick]"
 
 
@@ -39,7 +41,9 @@ async def collect_marks(page: Page, limit: int = 40) -> list[Mark]:
             if not box or box["width"] < 6 or box["height"] < 6:
                 continue
             role = (await h.get_attribute("role")) or (await h.evaluate("e => e.tagName.toLowerCase()"))
-            name = ((await h.inner_text()) or "").strip()
+            is_input = await h.evaluate("e => e.matches('input,textarea') || e.isContentEditable")
+            private = is_input and await h.evaluate(SENSITIVE_ELEMENT)
+            name = "[redacted]" if private else ((await h.inner_text()) or "").strip()
             if not name:
                 # Use the LIVE value property (not the static value attribute) so a
                 # filled input reflects what was typed — otherwise the planner

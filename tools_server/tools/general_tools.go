@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/orka-oss/orka_core/pathsafe"
 	"math/rand"
 	"os"
 	"regexp"
@@ -142,8 +143,8 @@ func parseFlexDate(s string) (time.Time, error) {
 // Backed by a JSON file in the user's storage root.
 func memoryTool(base string) mcpserver.ToolHandlerFunc {
 	const file = ".orka_memory.json"
-	load := func(root string) (map[string]string, string) {
-		p, err := util.ResolvePath(root, file)
+	load := func(email, conversationID string) (map[string]string, string) {
+		p, err := util.ResolvePath(base, email, file, conversationID)
 		if err != nil {
 			return map[string]string{}, ""
 		}
@@ -154,10 +155,8 @@ func memoryTool(base string) mcpserver.ToolHandlerFunc {
 		return m, p
 	}
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// The scratchpad follows the workspace, so one conversation's stashed
-		// values are not visible to another. It still spans runs, which is what
-		// long tasks need.
-		m, p := load(identity.From(ctx).Root(base))
+		email := identity.From(ctx).Email
+		m, p := load(email, identity.From(ctx).ConversationID)
 		switch strings.ToLower(req.GetString("op", "get")) {
 		case "set":
 			key := req.GetString("key", "")
@@ -166,14 +165,14 @@ func memoryTool(base string) mcpserver.ToolHandlerFunc {
 			}
 			m[key] = req.GetString("value", "")
 			b, _ := json.MarshalIndent(m, "", "  ")
-			if err := os.WriteFile(p, b, 0o644); err != nil {
+			if err := os.WriteFile(p, b, pathsafe.WorkspaceFileMode); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			return mcp.NewToolResultText("saved " + key), nil
 		case "delete":
 			delete(m, req.GetString("key", ""))
 			b, _ := json.MarshalIndent(m, "", "  ")
-			_ = os.WriteFile(p, b, 0o644)
+			_ = os.WriteFile(p, b, pathsafe.WorkspaceFileMode)
 			return mcp.NewToolResultText("deleted"), nil
 		case "list":
 			if len(m) == 0 {

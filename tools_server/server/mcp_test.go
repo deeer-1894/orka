@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,7 +88,9 @@ func callText(t *testing.T, c *mcpclient.Client, name string, args map[string]an
 }
 
 func tokenHeader(t *testing.T, email string, scopes []string) map[string]string {
-	tok, err := security.Sign(security.NewToken(email, scopes, time.Hour), []byte(testSecret))
+	claims := security.NewToken(email, scopes, time.Hour)
+	claims.ConversationID = "test-session"
+	tok, err := security.Sign(claims, []byte(testSecret))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +111,7 @@ func TestGateway_FileWriteReadWithinRoot(t *testing.T) {
 		t.Fatal("file_write returned empty")
 	}
 	// actually on disk under base/u@x.com
-	if b, err := os.ReadFile(filepath.Join(base, "u@x.com", "notes/a.txt")); err != nil || string(b) != "hi" {
+	if b, err := os.ReadFile(filepath.Join(base, "u@x.com", "sessions", "test-session", "notes/a.txt")); err != nil || string(b) != "hi" {
 		t.Fatalf("disk content = %q err=%v", b, err)
 	}
 	if _, txt := callText(t, c, "file_read", map[string]any{"path": "notes/a.txt"}); txt != "hi" {
@@ -167,5 +171,114 @@ func TestGateway_RBACScopeFilter(t *testing.T) {
 	}
 	if !names["file_read"] {
 		t.Fatalf("file_read should be visible with file:read scope: %v", names)
+	}
+}
+
+func sessionHeader(t *testing.T, owner, conv string) map[string]string {
+	claims := security.NewToken(owner, []string{"file:read", "file:write", "code:execute"}, time.Hour)
+	claims.ConversationID = conv
+	tok, err := security.Sign(claims, []byte(testSecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return map[string]string{"X-Orka-Token": tok}
+}
+func TestGatewaySessionFilesShellPython(t *testing.T) {
+	t.Setenv("CODE_EXECUTION", "1")
+	t.Setenv("CODE_SANDBOX_MODE", "unsafe-dev")
+	base := t.TempDir()
+	endpoint := startGateway(t, Config{Secret: testSecret, BaseStorage: base})
+	for _, conv := range []string{"one", "two"} {
+		c := connect(t, endpoint, sessionHeader(t, "owner", conv))
+		defer c.Close()
+		if res, txt := callText(t, c, "file_write", map[string]any{"path": "report.txt", "content": conv}); res.IsError {
+			t.Fatal(txt)
+		}
+		if _, txt := callText(t, c, "shell", map[string]any{"command": `pwd; printf '%s' "$HOME"`}); !strings.Contains(txt, filepath.Join(base, "owner", "sessions", conv)) {
+			t.Fatal(txt)
+		}
+		if _, err := exec.LookPath("python3"); err == nil {
+			if res, txt := callText(t, c, "python", map[string]any{"code": "import os; open('python.txt','w').write(os.getcwd())"}); res.IsError {
+				t.Fatal(txt)
+			}
+			b, err := os.ReadFile(filepath.Join(base, "owner", "sessions", conv, "python.txt"))
+			if err != nil || string(b) != filepath.Join(base, "owner", "sessions", conv) {
+				t.Fatalf("python wrote wrong workspace: %s %v", b, err)
+			}
+		}
+		if _, txt := callText(t, c, "file_read", map[string]any{"path": "report.txt"}); txt != conv {
+			t.Fatalf("session=%s got=%s", conv, txt)
+		}
+		if res, _ := callText(t, c, "file_read", map[string]any{"path": "../other/report.txt"}); !res.IsError {
+			t.Fatal("traversal accepted")
+		}
+	}
+	for _, headers := range []map[string]string{{"X-User-Email": "owner", "X-Conversation-ID": "one"}, sessionHeader(t, "owner", "")} {
+		c := connect(t, endpoint, headers)
+		defer c.Close()
+		for _, name := range []string{"file_read", "python", "shell"} {
+			res, txt := callText(t, c, name, map[string]any{"path": "report.txt", "code": "print('bad')", "command": "pwd"})
+			if !res.IsError {
+				t.Fatalf("missing verified session accepted %s: %s", name, txt)
+			}
+		}
+	}
+}
+
+func TestGateway_FileWriteIntentSchemaAndModes(t *testing.T) {
+	base := t.TempDir()
+	url := startGateway(t, Config{Secret: testSecret, BaseStorage: base})
+	c := connect(t, url, tokenHeader(t, "u@x.com", []string{"file:read", "file:write"}))
+	listed, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, tool := range listed.Tools {
+		if tool.Name != "file_write" {
+			continue
+		}
+		found = true
+		mode, ok := tool.InputSchema.Properties["mode"].(map[string]any)
+		if !ok {
+			t.Errorf("missing mode schema: %+v", tool.InputSchema)
+			continue
+		}
+		if mode["default"] != "create" {
+			t.Errorf("wrong default: %+v", mode)
+		}
+		enum, ok := mode["enum"].([]any)
+		if !ok || len(enum) != 3 || enum[0] != "create" || enum[1] != "replace" || enum[2] != "append" {
+			t.Errorf("wrong enum: %+v", mode)
+		}
+		for _, word := range []string{"create", "append", "replace", "existing"} {
+			if !strings.Contains(tool.Description, word) {
+				t.Errorf("description omits %q", word)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("file_write not listed")
+	}
+	for _, step := range []struct {
+		mode, content, want string
+		reject              bool
+	}{
+		{"", "original", "original", false},
+		{"", "supplement", "original", true},
+		{"append", "+added", "original+added", false},
+		{"replace", "complete replacement", "complete replacement", false},
+	} {
+		args := map[string]any{"path": "record.txt", "content": step.content}
+		if step.mode != "" {
+			args["mode"] = step.mode
+		}
+		result, text := callText(t, c, "file_write", args)
+		if result.IsError != step.reject {
+			t.Fatalf("unexpected outcome: %s", text)
+		}
+		if _, text := callText(t, c, "file_read", map[string]any{"path": "record.txt"}); text != step.want {
+			t.Fatalf("wrong bytes: %q, want %q", text, step.want)
+		}
 	}
 }

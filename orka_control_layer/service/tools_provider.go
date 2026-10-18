@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/pathsafe"
 	"github.com/orka-oss/orka_core/security"
-	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_middleware/local/filesystem"
 	mcpclient "github.com/orka-oss/orka_middleware/mcp"
 	"github.com/orka-oss/orka_middleware/toolsmanager"
@@ -19,33 +19,29 @@ import (
 // ConnectorSource supplies a user's enabled external MCP connectors at run time.
 type ConnectorSource func(ctx context.Context, email string) ([]db.Connector, error)
 
-// GUITool is the GUI automation tool injected by the providers. It defaults to
-// a mock; main wires the real run_agent (WebSocket) tool when GUI_AGENT_WS_URL
-// is configured.
-var GUITool agent.BaseTool = guiMockTool{}
-
 // LocalToolsProvider serves the real local filesystem tools (confined to the
-// per-user storage root) plus the GUI tool. No remote dependency.
-func LocalToolsProvider(baseStorage string) ToolsProvider {
-	return func(_ context.Context, req ChatRunRequest) ([]agent.BaseTool, func(), error) {
-		root := pathsafe.Workspace(baseStorage, req.UserEmail, req.ConversationID)
-		tools := append(filesystem.New(root), GUITool)
-		tools = filterEnabled(tools, req.EnabledTools)
+// per-conversation storage root) plus injected GUI and DOM browser tools.
+func LocalToolsProvider(baseStorage string, options ...ToolsProviderOptions) ToolsProvider {
+	builtins := providerBuiltins(baseStorage, options)
+	return func(ctx context.Context, req ChatRunRequest) ([]agent.BaseTool, func(), error) {
+		root, rootErr := toolWorkspace(ctx, baseStorage, req)
+		if rootErr != nil {
+			return nil, nil, rootErr
+		}
+		tools := append(filesystem.New(root), builtins...)
 		// skill mgmt + artifact publishing + quant pipeline are always available
 		// (local tools).
-		local := append(append(SkillTools(), ArtifactTools...), QuantTools...)
-		return append(tools, local...), nil, nil
+		local := localCapabilityTools(ctx, req)
+		return filterToolsForRequest(ctx, append(tools, local...), req), nil, nil
 	}
 }
 
-// mcpPool reuses one MCP connection per user across chat requests instead of
-// dialing + handshaking on every message. Entries are keyed by user email AND
-// conversation, because the signed context token baked into the client's
-// headers now carries both — identity and RBAC as before, plus the workspace
-// the file tools may touch. Keyed by email alone, the first conversation to
-// dial would lend its workspace to every later one. Entries are refreshed
-// before the token expires so the gateway never sees a stale token.
+// mcpPool leases connections per owner and conversation. Each connection signs
+// fresh tokens bound to that immutable pair; concurrent sessions never reuse
+// another session's gateway context. Connector invalidation retires all of the
+// owner's entries without closing connections held by in-progress runs.
 type mcpPool struct {
+	builtins    []agent.BaseTool
 	baseStorage string
 	mcpURL      string
 	secret      string
@@ -94,11 +90,24 @@ type mcpEntry struct {
 // the janitor saw a 40-minute run as 40 minutes idle and evicted it mid-flight.
 // Every historical occurrence of this failure was a run longer than the eviction
 // window (183, 176, 143 and 36 minutes), and none was shorter.
-func (p *mcpPool) get(ctx context.Context, email, conv string) ([]agent.BaseTool, func(), error) {
+func (p *mcpPool) get(ctx context.Context, email string, conversationID ...string) ([]agent.BaseTool, func(), error) {
+	conv := ""
+	if len(conversationID) > 0 {
+		conv = conversationID[0]
+	}
+	key := email
+	if conv != "" {
+		key += "\x00" + conv
+	}
+	if requestedExecutionScope(ctx) {
+		key += "\x00code:execute"
+	}
+	if catalogOnly(ctx) {
+		key += "\x00tools:catalog"
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	key := poolKey(email, conv)
 	if e := p.entries[key]; e != nil && time.Since(e.created) < p.maxAge {
 		e.lastUsed = time.Now()
 		e.refs++
@@ -123,7 +132,16 @@ func (p *mcpPool) get(ctx context.Context, email, conv string) ([]agent.BaseTool
 	// work. A signing failure yields no header, which the gateway rejects as
 	// unauthenticated rather than silently unscoped.
 	headers := func(context.Context) map[string]string {
-		tok, err := security.Sign(security.NewToken(email, p.scopes, p.tokenTTL).InConversation(conv), []byte(p.secret))
+		scopes := append([]string(nil), p.scopes...)
+		if requestedExecutionScope(ctx) {
+			scopes = append(scopes, "code:execute")
+		}
+		if catalogOnly(ctx) {
+			scopes = []string{"tools:catalog"}
+		}
+		claims := security.NewToken(email, scopes, p.tokenTTL)
+		claims.ConversationID = conv
+		tok, err := security.Sign(claims, []byte(p.secret))
 		if err != nil {
 			return nil
 		}
@@ -154,9 +172,9 @@ func (p *mcpPool) get(ctx context.Context, email, conv string) ([]agent.BaseTool
 		}
 	}
 
-	// Only the GUI tool is local; everything else comes over MCP. One manager
+	// GUI and DOM browser tools are local; other tools come over MCP. One manager
 	// merges the gateway + all connector clients into a single tool list.
-	tools, err := toolsmanager.New([]agent.BaseTool{GUITool}, clients...).GetTools(ctx)
+	tools, err := toolsmanager.New(p.builtins, clients...).GetTools(ctx)
 	if err != nil {
 		closeClients(clients)
 		return nil, nil, err
@@ -203,9 +221,8 @@ func (p *mcpPool) retire(key string, e *mcpEntry) {
 func (p *mcpPool) invalidate(email string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	prefix := email + "\x00"
 	for key, e := range p.entries {
-		if e == nil || !strings.HasPrefix(key, prefix) {
+		if key != email && !strings.HasPrefix(key, email+"\x00") {
 			continue
 		}
 		// Retire rather than close: a run in progress keeps working with the tool
@@ -241,7 +258,7 @@ func ProbeConnector(ctx context.Context, cn db.Connector) ([]string, error) {
 
 // connectorConfig maps a stored Connector to an MCP client config.
 func connectorConfig(cn db.Connector) mcpclient.Config {
-	cfg := mcpclient.Config{Headers: cn.Headers, Command: cn.Command, Args: cn.Args, Name: "orka-connector:" + cn.Name}
+	cfg := mcpclient.Config{Headers: cn.Headers, Command: cn.Command, Args: cn.Args, Name: "orka-connector:" + cn.Name, Namespace: "connector:" + cn.ConnectorID}
 	switch cn.Transport {
 	case "stdio":
 		cfg.Transport = mcpclient.TransportStdio
@@ -292,11 +309,11 @@ func (p *mcpPool) closeAll() {
 }
 
 // MCPToolsProviderPooled is MCPToolsProvider with a per-user connection pool.
-// On any pool error it degrades to local filesystem tools (+ GUI). connectors
+// On any pool error it degrades to local filesystem tools plus GUI/DOM. connectors
 // (optional) merges each user's registered external MCP servers. Returns the
 // provider plus an invalidate(email) callback to bust a user's cache when their
 // connectors change.
-func MCPToolsProviderPooled(baseStorage, mcpURL, secret string, tokenTTL time.Duration, scopes []string, connectors ConnectorSource) (ToolsProvider, func(string)) {
+func MCPToolsProviderPooled(baseStorage, mcpURL, secret string, tokenTTL time.Duration, scopes []string, connectors ConnectorSource, options ...ToolsProviderOptions) (ToolsProvider, func(string)) {
 	// How long a pooled CONNECTION is reused. This used to be derived from the
 	// token TTL, because the token was baked into the client and the entry had to
 	// be rebuilt before it went stale. Tokens are now signed per request, so the
@@ -313,25 +330,31 @@ func MCPToolsProviderPooled(baseStorage, mcpURL, secret string, tokenTTL time.Du
 	if maxAge < time.Minute {
 		maxAge = time.Minute // never let the pool churn faster than calls complete
 	}
+	builtins := providerBuiltins(baseStorage, options)
 	pool := &mcpPool{
+		builtins:    builtins,
 		baseStorage: baseStorage, mcpURL: mcpURL, secret: secret,
 		tokenTTL: tokenTTL, maxAge: maxAge, scopes: scopes, connectors: connectors,
 		entries: map[string]*mcpEntry{},
 	}
 	go pool.janitor(context.Background()) // evict idle connections for process lifetime
 	provider := func(ctx context.Context, req ChatRunRequest) ([]agent.BaseTool, func(), error) {
+		ctx = withRequestedExecutionScope(ctx, req)
 		tools, release, err := pool.get(ctx, req.UserEmail, req.ConversationID)
 		if err != nil {
-			root := pathsafe.Workspace(baseStorage, req.UserEmail, req.ConversationID)
-			fallback := append(filesystem.New(root), GUITool)
-			local := append(append(SkillTools(), ArtifactTools...), QuantTools...)
-			return append(filterEnabled(fallback, req.EnabledTools), local...), nil, err
+			root, rootErr := toolWorkspace(ctx, baseStorage, req)
+			if rootErr != nil {
+				return nil, nil, rootErr
+			}
+			fallback := append(filesystem.New(root), builtins...)
+			local := localCapabilityTools(ctx, req)
+			return filterToolsForRequest(ctx, append(fallback, local...), req), nil, err
 		}
 		// The pool still owns the connections, but the run holds a lease on them
 		// for its whole duration — releasing it is what lets the janitor reclaim
 		// them, and holding it is what stops the janitor closing them mid-run.
-		local := append(append(SkillTools(), ArtifactTools...), QuantTools...)
-		return append(filterEnabled(tools, req.EnabledTools), local...), release, nil
+		local := localCapabilityTools(ctx, req)
+		return filterToolsForRequest(ctx, append(tools, local...), req), release, nil
 	}
 	return provider, pool.invalidate
 }
@@ -365,7 +388,7 @@ type ToolInfo struct {
 // change; the UI marks them and (when confirm is on) gates them behind human
 // approval. ingest_factor is the pipeline's human-review checkpoint: in an
 // interactive run it asks before a factor enters the library.
-var dangerTools = map[string]bool{"shell": true, "python": true, "run_agent": true, "http_request": true, "ingest_factor": true}
+var dangerTools = map[string]bool{"shell": true, "python": true, "run_agent": true, "http_request": true, "ingest_factor": true, "browser": true}
 
 // ToolCatalog returns the tools actually available to a user (gateway + their
 // connectors), with descriptions and groups — the single source of truth for
@@ -375,6 +398,7 @@ func (s *ChatService) ToolCatalog(ctx context.Context, email string) []ToolInfo 
 	if s.ToolsFor == nil {
 		return nil
 	}
+	ctx = context.WithValue(WithQuantCapability(ctx), catalogContextKey{}, true)
 	tools, cleanup, _ := s.ToolsFor(ctx, ChatRunRequest{UserEmail: email})
 	if cleanup != nil {
 		defer cleanup()
@@ -385,7 +409,7 @@ func (s *ChatService) ToolCatalog(ctx context.Context, email string) []ToolInfo 
 			Name:        t.Name(),
 			Description: t.Description(),
 			Group:       toolGroup(t),
-			Danger:      dangerTools[t.Name()],
+			Danger:      dangerousToolName(t.Name()),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -401,11 +425,13 @@ func groupForName(name string) string {
 	switch {
 	case strings.HasPrefix(name, "file_") || name == "memory":
 		return "file"
+	case name == "browser":
+		return "browser"
 	case name == "run_agent":
 		return "gui_agent"
 	case name == "shell":
 		return "shell"
-	case name == "web_search" || name == "fetch_url" || name == "weather" || name == "http_request":
+	case name == "web_search" || name == "fetch_url" || name == "discover_docs" || name == "read_section" || name == "search_evidence" || name == "weather" || name == "http_request":
 		return "web"
 	case name == "current_time" || name == "calculator" || name == "unit_convert" ||
 		name == "base64" || name == "hash" || name == "uuid" || name == "json_format" ||
@@ -414,7 +440,7 @@ func groupForName(name string) string {
 		return "util"
 	case name == "currency" || name == "timezone" || name == "qrcode" ||
 		name == "csv_query" || name == "csv_stats" || name == "csv_to_json" ||
-		name == "doc_export" || name == "chart" ||
+		name == "doc_export" || name == "render_report" || name == "chart" ||
 		name == "xlsx_to_csv" || name == "csv_to_xlsx" || name == "pdf_extract" ||
 		name == "doc_read" || name == "sql_query" || name == "csv_join" || name == "slides":
 		return "office"
@@ -447,4 +473,17 @@ func filterEnabled(tools []agent.BaseTool, enabled []string) []agent.BaseTool {
 		}
 	}
 	return out
+}
+
+type catalogContextKey struct{}
+
+func catalogOnly(ctx context.Context) bool { v, _ := ctx.Value(catalogContextKey{}).(bool); return v }
+
+// Metadata construction never creates a fake session. Catalog tools are only
+// serialized to ToolInfo by ToolCatalog and cannot be invoked through its API.
+func toolWorkspace(ctx context.Context, base string, req ChatRunRequest) (string, error) {
+	if catalogOnly(ctx) {
+		return "", nil
+	}
+	return pathsafe.EnsureSession(base, req.UserEmail, req.ConversationID)
 }

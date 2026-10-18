@@ -2,16 +2,38 @@ package api
 
 import (
 	"context"
+	"errors"
+	"github.com/orka-oss/orka_control_layer/db"
 	"io"
 	"strconv"
-	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 
 	"github.com/orka-oss/orka_control_layer/service"
-	"github.com/orka-oss/orka_core/messages"
+	"github.com/orka-oss/orka_core/pathsafe"
 )
+
+// ChatSteer delivers instructions to an exact active execution without opening
+// another SSE stream, releasing its lease, or changing its budget/grants.
+func (a *API) ChatSteer(ctx context.Context, c *app.RequestContext) {
+	var req service.SteeringRequest
+	if err := bind(c, &req); err != nil {
+		fail(c, consts.StatusBadRequest, "bad request: "+err.Error())
+		return
+	}
+	conv, err := a.authorizedConversation(ctx, c, req.ConversationID, true)
+	if err != nil {
+		workspaceFail(c, err)
+		return
+	}
+	m, err := a.Chat.Steer(ctx, conv.OwnerEmail, req)
+	if err != nil {
+		fail(c, consts.StatusConflict, err.Error())
+		return
+	}
+	ok(c, map[string]any{"message": m, "run_id": req.RunID})
+}
 
 // ChatRun handles POST /chat/run, streaming events as Server-Sent Events.
 //
@@ -26,35 +48,42 @@ func (a *API) ChatRun(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "bad request: "+err.Error())
 		return
 	}
-	// authenticated identity always wins over any client-supplied email
-	me := authEmail(c)
-	if me != "" {
-		req.UserEmail = me
+	// Execution always uses the persisted conversation owner. Unknown IDs and
+	// storage failures are rejected rather than treated as new conversations.
+	conv, err := a.authorizedConversation(ctx, c, req.ConversationID, true)
+	if err != nil {
+		workspaceFail(c, err)
+		return
 	}
-	// Sharing authz: for an existing conversation owned by someone else, only an
-	// editor may send (viewers are read-only), and the run executes in the
-	// OWNER's context (files/memory/workspace) so the shared thread stays
-	// coherent. A brand-new conversation has no record yet → the sender owns it.
-	if req.ConversationID != "" {
-		if conv, err := a.Store.GetConversation(ctx, req.ConversationID); err == nil && conv.OwnerEmail != "" && conv.OwnerEmail != me {
-			if !conv.CanWrite(me) {
-				fail(c, consts.StatusForbidden, "只读访问:你没有此会话的编辑权限")
-				return
-			}
-			req.UserEmail = conv.OwnerEmail
+	req.UserEmail = conv.OwnerEmail
+	// Task aliases affect execution cancellation and persistent outcomes, so a
+	// caller may only bind a task owned by this exact conversation's owner.
+	if req.TaskID != "" {
+		task, taskErr := a.Store.GetTask(ctx, req.TaskID)
+		if taskErr != nil || task == nil || task.OwnerEmail != conv.OwnerEmail || task.ConversationID != conv.ConversationID {
+			fail(c, consts.StatusNotFound, "task not found in conversation")
+			return
 		}
 	}
+	if _, err := pathsafe.EnsureSession(a.BaseStorage, req.UserEmail, req.ConversationID); err != nil {
+		workspaceFail(c, err)
+		return
+	}
 
+	runCtx, release, err := a.Chat.AdmitExecution(context.Background(), req.UserEmail, req.ConversationID, req.TaskID)
+	if err != nil {
+		fail(c, consts.StatusConflict, err.Error())
+		return
+	}
 	runID := firstNonEmptyStr(req.ConversationID, req.TaskID)
-	rs := a.hub.start(runID)
+	rs := a.hub.start(runID, service.ExecutionID(runCtx))
 
 	go func() {
 		// Detach from the Hertz request context (which ends when the handler
 		// returns); the run is cancelled via /chat/kill instead.
-		a.Chat.Run(context.Background(), req, func(m messages.Message) {
-			a.hub.publish(runID, m)
-		})
-		a.hub.finish(runID)
+		defer release()
+		a.Chat.Run(runCtx, req, rs.publish)
+		a.hub.finishStream(runID, rs)
 	}()
 
 	a.streamRun(c, rs, 0)
@@ -67,6 +96,19 @@ func (a *API) ChatAttach(ctx context.Context, c *app.RequestContext) {
 	if runID == "" {
 		runID = string(c.Query("task_id"))
 	}
+	convID := runID
+	if string(c.Query("conversation_id")) == "" && string(c.Query("task_id")) != "" {
+		task, err := a.Store.GetTask(ctx, runID)
+		if err != nil || task == nil {
+			fail(c, 404, "task not found")
+			return
+		}
+		convID = task.ConversationID
+	}
+	if _, err := a.authorizedConversation(ctx, c, convID, false); err != nil {
+		workspaceFail(c, err)
+		return
+	}
 	rs := a.hub.get(runID)
 	if rs == nil {
 		fail(c, consts.StatusNotFound, "no active run for id")
@@ -76,7 +118,15 @@ func (a *API) ChatAttach(ctx context.Context, c *app.RequestContext) {
 	if v := string(c.Query("last_event_id")); v != "" {
 		from, _ = strconv.ParseInt(v, 10, 64)
 	}
-	a.streamRun(c, rs, from)
+	reconcile := string(c.Query("reconcile")) == "1"
+	if expected := string(c.Query("run_id")); expected != "" && expected != rs.executionID {
+		if !reconcile {
+			c.JSON(consts.StatusConflict, map[string]any{"code": 409, "msg": "execution changed", "data": map[string]any{"reconcile": true, "run_id": rs.executionID}})
+			return
+		}
+		from = 0
+	}
+	a.streamRunChecked(c, rs, from, reconcile)
 }
 
 // ChatActive handles GET /chat/active?conversation_id=.. — whether a run is
@@ -111,7 +161,15 @@ func (a *API) ChatActive(ctx context.Context, c *app.RequestContext) {
 // streamRun writes SSE frames (with id: lines for reconnect) from a runStream,
 // starting after fromSeq, until the run finishes or the client disconnects.
 func (a *API) streamRun(c *app.RequestContext, rs *runStream, fromSeq int64) {
-	ch, replay, done, cancel := rs.subscribe(fromSeq)
+	a.streamRunChecked(c, rs, fromSeq, true)
+}
+
+func (a *API) streamRunChecked(c *app.RequestContext, rs *runStream, fromSeq int64, reconcile bool) {
+	ch, replay, done, cancel, gap := rs.subscribeChecked(fromSeq, reconcile)
+	if gap {
+		c.JSON(consts.StatusConflict, map[string]any{"code": 409, "msg": "stream history gap", "data": map[string]any{"reconcile": true, "run_id": rs.executionID}})
+		return
+	}
 
 	pr, pw := io.Pipe()
 	c.SetStatusCode(consts.StatusOK)
@@ -167,12 +225,19 @@ func (a *API) ChatKill(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "bad request: "+err.Error())
 		return
 	}
-	id := req.TaskID
-	if id == "" {
-		id = req.ConversationID
+	convID := req.ConversationID
+	id := convID
+	if req.TaskID != "" {
+		task, err := a.Store.GetTask(ctx, req.TaskID)
+		if err != nil || task == nil || (convID != "" && task.ConversationID != convID) {
+			fail(c, 404, "task not found")
+			return
+		}
+		convID = task.ConversationID
+		id = req.TaskID
 	}
-	if id == "" {
-		fail(c, consts.StatusBadRequest, "task_id or conversation_id required")
+	if _, err := a.authorizedConversation(ctx, c, convID, true); err != nil {
+		workspaceFail(c, err)
 		return
 	}
 	if a.Chat.Kill(id) {
@@ -182,85 +247,62 @@ func (a *API) ChatKill(ctx context.Context, c *app.RequestContext) {
 	fail(c, consts.StatusNotFound, "no running session for id")
 }
 
-// ChatSteer handles POST /chat/steer — a message typed while a run is still
-// going. It is handed to the live run, which injects it before its next model
-// call, so it lands in the turn already in progress instead of queueing behind
-// it.
-//
-// A 404 here is not an error the client should show: it means the run ended in
-// the moment between typing and sending, and the correct recovery is to send
-// the same text as an ordinary /chat/run turn. The client must not swallow the
-// message, which is exactly what the composer used to do.
-func (a *API) ChatSteer(ctx context.Context, c *app.RequestContext) {
+// Followups returns suggestions bound to one authenticated, persisted run.
+func (a *API) Followups(ctx context.Context, c *app.RequestContext) {
+	owner := authEmail(c)
+	if owner == "" {
+		fail(c, consts.StatusUnauthorized, "authentication required")
+		return
+	}
+	c.Response.Header.Set("Cache-Control", "no-store")
+	if len(c.Request.Body()) > 128<<10 {
+		fail(c, consts.StatusRequestEntityTooLarge, "request too large")
+		return
+	}
 	var req struct {
 		ConversationID string `json:"conversation_id"`
-		TaskID         string `json:"task_id"`
-		Message        string `json:"message"`
-	}
-	if err := bind(c, &req); err != nil {
-		fail(c, consts.StatusBadRequest, "bad request: "+err.Error())
-		return
-	}
-	id := firstNonEmptyStr(req.TaskID, req.ConversationID)
-	if id == "" {
-		fail(c, consts.StatusBadRequest, "task_id or conversation_id required")
-		return
-	}
-	if strings.TrimSpace(req.Message) == "" {
-		fail(c, consts.StatusBadRequest, "message required")
-		return
-	}
-	if a.Chat.Steer(id, req.Message) {
-		ok(c, map[string]string{"status": "steered", "id": id})
-		return
-	}
-	fail(c, consts.StatusNotFound, "no running session accepted the message")
-}
-
-// ListModels handles GET /models, exposing the configured model names so the UI
-// shows real labels (deepseek / vLLM / OpenAI…) instead of a hardcoded string.
-// Only the two user-facing tiers are surfaced (main / mini) — base_url and other
-// ops details are intentionally not exposed to the client.
-// Followups returns up to 3 suggested next questions for the last Q&A turn.
-func (a *API) Followups(ctx context.Context, c *app.RequestContext) {
-	var req struct {
-		Prompt string `json:"prompt"`
-		Answer string `json:"answer"`
+		RunID          string `json:"run_id"`
+		ModelProfile   string `json:"model_profile"`
 	}
 	if err := bind(c, &req); err != nil {
 		fail(c, consts.StatusBadRequest, "bad request")
 		return
 	}
-	ok(c, map[string]any{"suggestions": a.Chat.SuggestFollowups(ctx, req.Prompt, req.Answer)})
+	if a.Chat == nil {
+		fail(c, consts.StatusServiceUnavailable, "followups unavailable")
+		return
+	}
+	suggestions, err := a.Chat.SuggestFollowupsForRun(ctx, owner, req.ConversationID, req.RunID, req.ModelProfile)
+	if err != nil {
+		switch {
+		case errors.Is(err, db.ErrNotFound):
+			fail(c, consts.StatusNotFound, "run not found")
+		case errors.Is(err, service.ErrFollowupRunPending):
+			fail(c, consts.StatusConflict, err.Error())
+		case errors.Is(err, service.ErrFollowupStorage):
+			fail(c, consts.StatusServiceUnavailable, err.Error())
+		default:
+			settingsError(c, err)
+		}
+		return
+	}
+	ok(c, map[string]any{"suggestions": suggestions})
 }
 
+// ListModels exposes Auto followed by every explicitly selectable model name.
 func (a *API) ListModels(_ context.Context, c *app.RequestContext) {
-	cfg := a.Chat.Cfg.LLM
-	models := cfg.SelectableModels()
-	var out []map[string]string
-	// `auto` first, and it is offered even on a single-model deployment now: it
-	// escalates the model's REASONING rather than swapping the model, so there
-	// is always something to escalate. It used to be hidden unless two tiers
-	// were configured, which is the same reason the tiers existed at all.
-	if len(models) > 0 {
-		out = append(out, map[string]string{
-			"version": service.ModelAuto, "label": "自动",
-			"hint": "先浅思考,复杂了自动加深",
-		})
+	if authEmail(c) == "" {
+		fail(c, consts.StatusUnauthorized, "authentication required")
+		return
 	}
-	// Then every model the deployment allows, by name, the first being the
-	// default. No "主模型 / 更快更省" tiers: there is one list, and which entry to
-	// use is the user's choice per conversation.
-	for i, m := range models {
-		hint := "手动指定"
-		if i == 0 {
-			hint = "默认"
-		}
-		version := m
-		if i == 0 {
-			version = "" // the default is addressed by the empty version, as before
-		}
-		out = append(out, map[string]string{"version": version, "label": m, "hint": hint})
+	llm, err := a.Chat.ModelConfigForUser(authEmail(c))
+	if err != nil {
+		settingsError(c, err)
+		return
+	}
+	out := []map[string]string{{"version": service.ModelAuto, "label": "Auto", "hint": "使用列表中的第一个模型"}}
+	for _, m := range llm.Models {
+		out = append(out, map[string]string{"version": m, "label": m, "hint": "手动指定"})
 	}
 	ok(c, out)
 }
@@ -278,7 +320,8 @@ func (a *API) ToolsCatalog(ctx context.Context, c *app.RequestContext) {
 // /chat/attach and sees a normal continuation.
 func (a *API) ResumeRun(ctx context.Context, c *app.RequestContext) {
 	var req struct {
-		RunID string `json:"run_id"`
+		RunID        string    `json:"run_id"`
+		EnabledTools *[]string `json:"enabled_tools,omitempty"`
 	}
 	if err := bind(c, &req); err != nil || req.RunID == "" {
 		fail(c, consts.StatusBadRequest, "run_id required")
@@ -297,14 +340,28 @@ func (a *API) ResumeRun(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	conv := rec.ConversationID
-	a.hub.start(conv)
+	if _, err := a.authorizedConversation(ctx, c, conv, true); err != nil {
+		workspaceFail(c, err)
+		return
+	}
+	runCtx, release, admissionErr := a.Chat.AdmitExecution(context.Background(), email, conv, rec.TaskID)
+	if admissionErr != nil {
+		fail(c, consts.StatusConflict, admissionErr.Error())
+		return
+	}
+	prepared, prepareErr := a.Chat.PrepareResumeRun(runCtx, req.RunID, email, service.ResumeOptions{EnabledTools: req.EnabledTools})
+	if prepareErr != nil {
+		release()
+		fail(c, consts.StatusConflict, prepareErr.Error())
+		return
+	}
+	rs := a.hub.start(conv, service.ExecutionID(runCtx))
 	go func() {
-		if _, err := a.Chat.ResumeRun(context.Background(), req.RunID, email, func(m messages.Message) {
-			a.hub.publish(conv, m)
-		}); err != nil && a.Log != nil {
+		defer release()
+		if _, err := prepared(runCtx, rs.publish); err != nil && a.Log != nil {
 			a.Log.Warn("resume run failed", "run_id", req.RunID, "err", err)
 		}
-		a.hub.finish(conv)
+		a.hub.finishStream(conv, rs)
 	}()
 	ok(c, map[string]any{"resumed": true, "conversation_id": conv, "steps": rec.ResumeSteps})
 }
@@ -321,8 +378,12 @@ func (a *API) ConfirmAction(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "id required")
 		return
 	}
+	if _, err := a.authorizedConversation(ctx, c, req.ConversationID, true); err != nil {
+		workspaceFail(c, err)
+		return
+	}
 	// Blocking gate (no checkpoint store): the parked tool call is still waiting.
-	if a.Chat.ResolveConfirm(req.ID, req.Approve, req.Always) {
+	if a.Chat.ResolveConfirmInConversation(req.ID, req.ConversationID, req.Approve, req.Always) {
 		ok(c, map[string]bool{"resolved": true})
 		return
 	}
@@ -337,16 +398,25 @@ func (a *API) ConfirmAction(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "conversation_id required to resume a paused run")
 		return
 	}
-	if _, _, _, pending := a.Chat.PendingConfirm(conv); !pending {
+	_, _, target, pending := a.Chat.PendingConfirm(conv)
+	if !pending {
 		fail(c, consts.StatusNotFound, "no pending confirmation (expired?)")
 		return
 	}
-	a.hub.start(conv)
+	if target != req.ID {
+		fail(c, consts.StatusConflict, "confirmation is stale; use the latest confirmation")
+		return
+	}
+	runCtx, release, admissionErr := a.Chat.AdmitExecution(context.Background(), authEmail(c), conv, "")
+	if admissionErr != nil {
+		fail(c, consts.StatusConflict, admissionErr.Error())
+		return
+	}
+	rs := a.hub.start(conv, service.ExecutionID(runCtx))
 	go func() {
-		a.Chat.ResumeConfirm(context.Background(), conv, req.Approve, req.Always, func(m messages.Message) {
-			a.hub.publish(conv, m)
-		})
-		a.hub.finish(conv)
+		defer release()
+		a.Chat.ResumeConfirm(runCtx, conv, req.Approve, req.Always, rs.publish)
+		a.hub.finishStream(conv, rs)
 	}()
 	ok(c, map[string]bool{"resolved": true, "resumed": true})
 }

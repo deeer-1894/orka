@@ -16,6 +16,9 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
+	"github.com/orka-oss/orka_core/pathsafe"
+	"github.com/orka-oss/orka_core/toolargs"
+	"github.com/orka-oss/orka_core/workspaceio"
 	"github.com/orka-oss/tools_server/identity"
 	"github.com/orka-oss/tools_server/util"
 )
@@ -35,6 +38,8 @@ func Registry() map[string]Meta {
 		"file_list":     {Group: "file", Scope: "file:read"},
 		"web_search":    {Group: "web", Scope: "web:search"},
 		"fetch_url":     {Group: "web", Scope: "web:search"},
+		"discover_docs": {Group: "web", Scope: "web:search"},
+		"read_section":  {Group: "web", Scope: "web:search"},
 		"weather":       {Group: "web", Scope: "web:search"},
 		"current_time":  {Group: "util", Scope: ""}, // always available
 		"calculator":    {Group: "util", Scope: ""},
@@ -48,28 +53,29 @@ func Registry() map[string]Meta {
 		"json_query":    {Group: "util", Scope: ""},
 		"datetime":      {Group: "util", Scope: ""},
 		"random":        {Group: "util", Scope: ""},
-		"memory":        {Group: "file", Scope: "file:write"}, // persists to the user's storage
-		"http_request":  {Group: "web", Scope: "web:search"},  // network egress → gated
-		"shell":         {Group: "shell", Scope: ""},          // env-gated (SHELL_TOOL=1); confined to the workspace
+		"memory":        {Group: "file", Scope: "file:write"},    // persists to the user's storage
+		"http_request":  {Group: "web", Scope: "web:search"},     // network egress → gated
+		"shell":         {Group: "shell", Scope: "code:execute"}, // opt-in code execution; runner enforces isolation
 		// Office / productivity tools.
-		"currency":    {Group: "office", Scope: ""},
-		"timezone":    {Group: "office", Scope: ""},
-		"qrcode":      {Group: "office", Scope: "file:write"},
-		"csv_query":   {Group: "office", Scope: "file:read"},
-		"csv_stats":   {Group: "office", Scope: "file:read"},
-		"csv_to_json": {Group: "office", Scope: "file:read"},
-		"doc_export":  {Group: "office", Scope: "file:write"},
-		"chart":       {Group: "office", Scope: "file:write"},
-		"xlsx_to_csv": {Group: "office", Scope: "file:write"},
-		"csv_to_xlsx": {Group: "office", Scope: "file:write"},
-		"pdf_extract": {Group: "office", Scope: "file:read"},
-		"doc_read":    {Group: "office", Scope: "file:read"},
-		"sql_query":   {Group: "office", Scope: "file:read"},
-		"csv_join":    {Group: "office", Scope: "file:write"},
-		"slides":      {Group: "office", Scope: "file:write"},
-		"python":      {Group: "code", Scope: ""}, // confined to the workspace container, like shell
-		"lark_whoami": {Group: "lark", Scope: "lark:read"},
-		"aio_echo":    {Group: "aio", Scope: "aio:read"},
+		"currency":      {Group: "office", Scope: ""},
+		"timezone":      {Group: "office", Scope: ""},
+		"qrcode":        {Group: "office", Scope: "file:write"},
+		"csv_query":     {Group: "office", Scope: "file:read"},
+		"csv_stats":     {Group: "office", Scope: "file:read"},
+		"csv_to_json":   {Group: "office", Scope: "file:read"},
+		"render_report": {Group: "office", Scope: "file:write"},
+		"doc_export":    {Group: "office", Scope: "file:write"},
+		"chart":         {Group: "office", Scope: "file:write"},
+		"xlsx_to_csv":   {Group: "office", Scope: "file:write"},
+		"csv_to_xlsx":   {Group: "office", Scope: "file:write"},
+		"pdf_extract":   {Group: "office", Scope: "file:read"},
+		"doc_read":      {Group: "office", Scope: "file:read"},
+		"sql_query":     {Group: "office", Scope: "file:read"},
+		"csv_join":      {Group: "office", Scope: "file:write"},
+		"slides":        {Group: "office", Scope: "file:write"},
+		"python":        {Group: "code", Scope: "code:execute"}, // same capability and isolation as shell
+		"lark_whoami":   {Group: "lark", Scope: "lark:read"},
+		"aio_echo":      {Group: "aio", Scope: "aio:read"},
 	}
 }
 
@@ -77,6 +83,7 @@ func Registry() map[string]Meta {
 // a scope guard (defense in depth: list filtering is not enough on its own).
 func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]bool) {
 	reg := Registry()
+	codeEnabled := os.Getenv("CODE_EXECUTION") == "1"
 	add := func(tool mcp.Tool, h mcpserver.ToolHandlerFunc) {
 		if blacklist[tool.Name] {
 			return
@@ -89,11 +96,17 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 		mcp.WithString("path", mcp.Required(), mcp.Description("relative file path")),
 	), fileRead(baseStorage))
 
-	add(mcp.NewTool("file_write",
-		mcp.WithDescription("Write a UTF-8 text file to your storage (creates dirs)."),
-		mcp.WithString("path", mcp.Required(), mcp.Description("relative file path")),
-		mcp.WithString("content", mcp.Required(), mcp.Description("file content")),
+	add(mcp.NewTool("file_write", mcp.WithDescription(workspaceio.WriteDescription),
+		func(t *mcp.Tool) {
+			t.InputSchema.Properties = workspaceio.WriteProperties()
+			t.InputSchema.Required = []string{"path", "content"}
+		},
 	), fileWrite(baseStorage))
+
+	add(mcp.NewTool("render_report",
+		mcp.WithDescription(`Render Markdown numeric claims directly from CSV aggregates, without copying numbers manually. First write a *.report.json spec: {"kind":"orka.report/v1","output":"outputs/report.md","template":"Each group has {{lo}}–{{hi}} orders.","bindings":{"lo":{"csv":"outputs/summary.csv","column":"orders","op":"min"},"hi":{"csv":"outputs/summary.csv","column":"orders","op":"max"}}}. Ops: min/max/sum require a decimal numeric column; count counts rows and omits column. Optional where is an exact string column/value filter. All paths are relative to the current conversation root. Calculations are exact decimals. Use bindings for ALL supported numeric claims; literal prose is not verified. Declare the spec AND output with update_plan.outputs; check_delivery recomputes and rejects stale reports. After data edits rerender, then refresh manifest hashes. No expressions, loops or external resources.`),
+		mcp.WithString("path", mcp.Required(), mcp.Description("workspace-relative *.report.json specification path")),
+	), renderReport(baseStorage))
 
 	add(mcp.NewTool("file_list",
 		mcp.WithDescription("List directory entries in your storage."),
@@ -107,9 +120,23 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 	), webSearch())
 
 	add(mcp.NewTool("fetch_url",
-		mcp.WithDescription("Fetch a web page and return its readable text. Use after web_search to read a result."),
+		mcp.WithDescription("Fetch readable page text (up to 20000 bytes), with resolved URL: and Title: source headers. Use discover_docs to find official documentation URLs and read_section to target content beyond this preview."),
 		mcp.WithString("url", mcp.Required(), mcp.Description("the page URL")),
 	), fetchURL())
+
+	add(mcp.NewTool("discover_docs",
+		mcp.WithDescription("Find documentation links on the supplied official origin. Probe the supplied directory (llms.txt, sitemap.xml, landing page) before host-root indexes; explicit index files are read directly. Expand recognized llms catalogs or sitemap children one level, preferring the input path language or English. A supplied HTML landing page with one same-origin directory link may expand once. Returns JSON index_source and results with title, url and kind (page or unexpanded index); pages rank first, then query relevance, then language preference and URL to break ties. At most 5 HTTP requests including redirects, 20 seconds, 512 KiB per response and 5000 candidate links; no arbitrary recursion or cross-origin traversal."),
+		mcp.WithString("url", mcp.Required(), mcp.Description("absolute HTTP(S) official site or index URL")),
+		mcp.WithString("query", mcp.Description("optional ranking terms, at most 512 bytes")),
+		mcp.WithNumber("limit", mcp.Description("max results, 1–20 (default 10)")),
+	), discoverDocs())
+
+	add(mcp.NewTool("read_section",
+		mcp.WithDescription("Read query-relevant sections from a page, including content beyond fetch_url's preview. Returns resolved URL: and Title: source headers followed by readable excerpts with section headings and code line breaks. Source headers are outside the excerpt budget. Downloads at most 2 MiB; does not execute JavaScript. Errors if no section matches."),
+		mcp.WithString("url", mcp.Required(), mcp.Description("absolute HTTP(S) page URL, preferably from discover_docs")),
+		mcp.WithString("query", mcp.Required(), mcp.Description("terms identifying the section or topic, at most 512 bytes")),
+		mcp.WithNumber("max_chars", mcp.Description("excerpt-only Unicode character budget, 1–20000 (default 4000); URL and Title headers are always returned separately")),
+	), readSection())
 
 	add(mcp.NewTool("weather",
 		mcp.WithDescription("Get current weather + today's forecast for a location (live, keyless)."),
@@ -197,23 +224,22 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 	), memoryTool(baseStorage))
 
 	add(mcp.NewTool("http_request",
-		mcp.WithDescription("Make an HTTP GET/POST to a public URL (e.g. a JSON API) and return status + body. Not for browser tasks."),
+		mcp.WithDescription("Make an HTTP GET/POST to a public URL (e.g. a JSON API) and return status + complete body up to 1 MiB. Incomplete/oversized bodies and HTTP error statuses are tool errors; use smaller API pages when needed, never parse a truncated JSON prefix as complete data. Not for browser tasks."),
 		mcp.WithString("url", mcp.Required(), mcp.Description("the request URL (http/https, public host only)")),
 		mcp.WithString("method", mcp.Description("GET (default) or POST")),
 		mcp.WithString("body", mcp.Description("request body for POST")),
 		mcp.WithString("content_type", mcp.Description("Content-Type for the body")),
 	), httpRequest())
 
-	// The shell/terminal is powerful, so it is opt-in via SHELL_TOOL=1 and is
-	// confined to the per-user workspace (see shellExec). Run the gateway inside a
-	// container/VM for hard isolation when exposing it to untrusted workloads.
-	if os.Getenv("SHELL_TOOL") == "1" {
+	// Arbitrary shell and Python share one opt-in and code:execute capability.
+	// The runner enforces a session-only mount, including inside a tools container.
+	if codeEnabled {
 		add(mcp.NewTool("shell",
 			// The "not for reading/writing files" clause is load-bearing: the eval
 			// suite caught the agent creating files with `printf > f.txt` instead of
 			// file_write, which needs an approval in a confirm-gated session and
 			// bypasses the workspace write-diff/undo machinery keyed on file_*.
-			mcp.WithDescription("Run a shell command in your workspace (POSIX sh). Use it like a terminal: run CLI tools, scripts, git, package managers, data processing, or code you wrote (e.g. `python3 app.py`, `grep -rn foo .`, `ls -la`). The working directory is your workspace and output is captured. Prefer this over describing manual steps when one command would do the job. Do NOT use it to read or write files — use file_read/file_write/file_list, which are safer and tracked."),
+			mcp.WithDescription("Run a shell command in your workspace (Bash with errexit and pipefail). Use it like a terminal: run CLI tools, scripts, git, package managers, data processing, or code you wrote (e.g. `python3 app.py`, `grep -rn foo .`, `ls -la`). Every call starts in this conversation's workspace, shared with file_read/file_write/file_list. Each call has a fresh process and /tmp; only workspace-relative files persist. Background servers stop when the call ends, and sandbox localhost is not the browser service's localhost. The production sandbox has no network access; dependencies must be preinstalled. Use Python zipfile/shutil for archives when zip/unzip are unavailable. A failed command or pipeline stops the script; handle expected failures explicitly with if/else. Use relative paths such as outputs/audit.py; do not change to a guessed root such as /workspace. Run pwd only when you need its absolute path. Returns JSON with ok, exit_code, stdout, stderr, timed_out, canceled, and file_changes (observed workspace changes, not verification); failures set isError. Prefer this over describing manual steps when one command would do the job. Do NOT use it to read or write files — use file_read/file_write/file_list, which are safer and tracked."),
 			mcp.WithString("command", mcp.Required(), mcp.Description("the shell command to run")),
 			mcp.WithNumber("timeout_sec", mcp.Description("max seconds before it's killed (default 30, max 120)")),
 		), shellExec(baseStorage))
@@ -332,12 +358,14 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 		mcp.WithString("out", mcp.Description("output .pptx filename (default slides.pptx)")),
 	), slidesGenerate(baseStorage))
 
-	add(mcp.NewTool("python",
-		mcp.WithDescription("Run Python in the sandboxed workspace and capture its output — for writing code, computing, and data analysis. pandas/numpy/matplotlib/openpyxl are preinstalled; files read/written are relative to your workspace. Args: code (a snippet) OR path (a .py file to run), and optional argv."),
-		mcp.WithString("code", mcp.Description("Python source to execute (use this or path)")),
-		mcp.WithString("path", mcp.Description("a workspace .py file to run instead of inline code")),
-		mcp.WithString("argv", mcp.Description("optional space-separated args passed to the script")),
-	), pythonRun(baseStorage))
+	if codeEnabled {
+		add(mcp.NewTool("python",
+			mcp.WithDescription("Run Python in the sandboxed workspace and capture its output — for writing code, computing, and data analysis. pandas/numpy/matplotlib/openpyxl are preinstalled; files read/written are relative to your workspace. Each call starts a fresh process and temporary filesystem: /tmp and in-memory variables do not persist between calls. Save scripts, extracted projects, and intermediate results needed by later calls under a workspace-relative directory. Background processes end with this call; sandbox localhost and files are not shared with the browser service. Args: code (a snippet) OR path (a .py file to run), and optional argv. Returns JSON with ok, exit_code, stdout, stderr, timed_out, canceled, and file_changes (observed workspace changes, not verification); failures set isError."),
+			mcp.WithString("code", mcp.Description("Python source to execute (use this or path)")),
+			mcp.WithString("path", mcp.Description("a workspace .py file to run instead of inline code")),
+			mcp.WithString("argv", mcp.Description("optional space-separated args passed to the script")),
+		), pythonRun(baseStorage))
+	}
 
 	add(mcp.NewTool("lark_whoami",
 		mcp.WithDescription("Lark: return the current user (stub)."),
@@ -359,6 +387,9 @@ func guard(scope string, h mcpserver.ToolHandlerFunc) mcpserver.ToolHandlerFunc 
 		if id.AuthErr != nil {
 			return mcp.NewToolResultError("auth failed (retryable — the caller should refresh its context token): " + id.AuthErr.Error()), nil
 		}
+		if id.CatalogOnly() {
+			return mcp.NewToolResultError("permission denied: catalog credential is metadata-only; tools/call is forbidden"), nil
+		}
 		if scope != "" && !id.HasScope(scope) {
 			return mcp.NewToolResultError("permission denied: missing scope " + scope), nil
 		}
@@ -372,7 +403,7 @@ func fileRead(base string) mcpserver.ToolHandlerFunc {
 		if rel == "" {
 			return missingPathError(req, "{\"path\": \"notes/summary.md\"}"), nil
 		}
-		p, err := util.ResolvePath(identity.From(ctx).Root(base), rel)
+		p, err := util.ResolvePath(base, identity.From(ctx).Email, rel, identity.From(ctx).ConversationID)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -384,30 +415,10 @@ func fileRead(base string) mcpserver.ToolHandlerFunc {
 	}
 }
 
-// pathArgAliases are the keys models actually reach for when they mean "path".
-//
-// Each one cost a real failure before it was added. {"file": ...} read as an
-// EMPTY path, resolved to the workspace root and failed with "is a directory" —
-// an error about the wrong thing, which the agent reported to the user as a
-// workspace problem. {"filename": ...} did the same later: a survey that had
-// already written three findings files correctly slipped to "filename" on the
-// fourth, got a bare `open /workspace/...` filesystem error that never mentioned
-// the argument, did not self-correct, and the run ended partial with the report
-// unwritten.
-//
-// Accepting the synonyms is the cheap half. The expensive half was the error: a
-// tool that rejects an argument has to say WHICH argument and what it expected,
-// or the model has nothing to correct from.
-var pathArgAliases = []string{"path", "file", "filename", "file_path", "filepath"}
-
-// pathArg pulls the relative path out of a call under any of its usual names.
+// pathArg shares compatibility with control-layer policies so alternate
+// spellings cannot address a different file in the two layers.
 func pathArg(req mcp.CallToolRequest) string {
-	for _, k := range pathArgAliases {
-		if v := strings.TrimSpace(req.GetString(k, "")); v != "" {
-			return v
-		}
-	}
-	return ""
+	return toolargs.Path(req.GetArguments())
 }
 
 // missingPathError names the expected argument and shows the keys that WERE
@@ -430,28 +441,24 @@ func missingPathError(req mcp.CallToolRequest, example string) *mcp.CallToolResu
 
 func fileWrite(base string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		rel := pathArg(req)
-		if rel == "" {
-			return missingPathError(req, "{\"path\": \"notes/summary.md\", \"content\": \"...\"}"), nil
-		}
-		p, err := util.ResolvePath(identity.From(ctx).Root(base), rel)
+		intent, err := workspaceio.ParseIntent(req.GetArguments())
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		rel := pathArg(req)
+		if rel == "" {
+			return missingPathError(req, `{"path":"notes/summary.md","content":"..."}`), nil
+		}
+		id := identity.From(ctx)
+		root, err := pathsafe.SessionRoot(base, id.Email, id.ConversationID)
+		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		// Back up the prior version before overwriting (recoverable + diffable).
-		backed := backupBeforeWrite(identity.From(ctx).Root(base), rel)
-		content := req.GetString("content", "")
-		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		result, err := workspaceio.Apply(root, rel, intent)
+		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		msg := fmt.Sprintf("wrote %d bytes to %s", len(content), rel)
-		if backed {
-			msg += " (previous version saved to history)"
-		}
-		return mcp.NewToolResultText(msg), nil
+		return mcp.NewToolResultText(result.String()), nil
 	}
 }
 
@@ -471,8 +478,12 @@ func fileList(base string) mcpserver.ToolHandlerFunc {
 		if rel == "" {
 			rel = "."
 		}
-		root := identity.From(ctx).Root(base)
-		p, err := util.ResolvePath(root, rel)
+		id := identity.From(ctx)
+		root, err := pathsafe.SessionRoot(base, id.Email, id.ConversationID)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		p, err := util.ResolvePath(base, id.Email, rel, id.ConversationID)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

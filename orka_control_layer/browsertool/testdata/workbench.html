@@ -1,0 +1,22 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Browser contract workbench</title>
+<style>body{font:18px sans-serif;padding:20px}label,button,select{display:block;margin:10px}button,input,select{padding:8px}#cover{position:relative}#overlay{position:absolute;inset:0;background:#ccc;z-index:3}canvas{border:1px solid #777}#below{margin-top:1200px}</style></head><body>
+<h1>Nimbus browser contract</h1><p id="status">Ready</p>
+<label>Customer name <input id="customer" aria-label="Customer name"></label>
+<label>Password <input id="password" type="password" value="fixture-password-must-not-appear"></label>
+<select id="region" aria-label="Region"><option value="north">North</option><option value="south">South</option></select>
+<button id="apply">Apply scenario</button><button id="replace">Replace action</button>
+<button id="disabled" disabled>Disabled action</button>
+<div id="cover"><button id="covered">Covered action</button><div id="overlay">Overlay</div></div>
+<button class="duplicate">Duplicate one</button><button class="duplicate">Duplicate two</button>
+<div id="shadow"></div><iframe title="Unsupported child frame" src="/frame"></iframe>
+<table><thead><tr><th>Month</th><th>Revenue</th></tr></thead><tbody><tr><td>April</td><td>84000</td></tr><tr><td>May</td><td>96000</td></tr></tbody></table>
+<canvas id="chart" width="420" height="80"></canvas><a href="/protected.csv">Download report</a>
+<button id="below">Below fold</button>
+<script>
+let customer='';document.querySelector('#customer').addEventListener('input',e=>{customer=e.target.value;document.querySelector('#status').textContent='Editing '+customer});
+document.querySelector('#customer').addEventListener('keydown',e=>{if(e.key==='Enter')document.querySelector('#status').textContent='Entered '+customer});
+document.querySelector('#apply').onclick=()=>{document.cookie='fixture_auth=contract;path=/;SameSite=Lax';document.querySelector('#status').textContent='Applied '+customer+' '+document.querySelector('#region').value};
+document.querySelector('#replace').onclick=()=>document.querySelector('#apply').replaceWith(document.querySelector('#apply').cloneNode(true));
+const shadow=document.querySelector('#shadow').attachShadow({mode:'open'});shadow.innerHTML='<button id="shadow-button">Shadow action</button>';shadow.querySelector('button').onclick=()=>document.querySelector('#status').textContent='Shadow clicked';
+const context=document.querySelector('#chart').getContext('2d');context.font='24px sans-serif';context.fillText('Canvas verification code: 7319',10,45);
+</script></body></html>

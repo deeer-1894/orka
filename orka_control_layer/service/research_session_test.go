@@ -1,0 +1,407 @@
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/schema"
+	"github.com/orka-oss/orka_control_layer/llm"
+	"github.com/orka-oss/orka_core/agent"
+	"github.com/orka-oss/orka_core/messages"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+type retrievalFixture struct {
+	name string
+	call func(context.Context, map[string]any) (string, error)
+}
+
+func (f retrievalFixture) Name() string           { return f.name }
+func (f retrievalFixture) Description() string    { return "Retrieve a test document." }
+func (f retrievalFixture) Schema() map[string]any { return nil }
+func (f retrievalFixture) Invoke(ctx context.Context, args map[string]any) (string, error) {
+	return f.call(ctx, args)
+}
+
+func TestRetrievalCacheDoesNotCrossIndependentRuns(t *testing.T) {
+	for _, content := range []string{"first user's response", "second user's response"} {
+		tool := EinoTool(retrievalFixture{"fetch_url", func(context.Context, map[string]any) (string, error) {
+			return content, nil
+		}})
+		got, err := tool.InvokableRun(context.Background(), `{"url":"https://example.test/cache-isolation"}`)
+		if err != nil || got != content {
+			t.Fatalf("independent invocation = %q, %v; want %q", got, err, content)
+		}
+	}
+}
+
+func TestResearchSessionCachesNormalizedRequestsAndPersistsEvidence(t *testing.T) {
+	base := t.TempDir()
+	s := newResearchSession(newWorkspaceBackend(base, "reader", "test-session"), ".orka_offload/run-test/evidence", nil, 10)
+	ctx := withResearchSession(context.Background(), s)
+	calls := 0
+	tool := EinoTool(retrievalFixture{"fetch_url", func(context.Context, map[string]any) (string, error) {
+		calls++
+		return "URL: https://example.test/docs\nTitle: Recovery\n\nPersistent checkpoints survive restarts.", nil
+	}})
+	first, err := tool.InvokableRun(ctx, `{"url":"https://example.test/docs#first"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := tool.InvokableRun(ctx, `{ "url": "https://example.test/docs#second" }`)
+	if err != nil || calls != 1 || !strings.Contains(second, "cached") {
+		t.Fatalf("calls=%d second=%q err=%v", calls, second, err)
+	}
+	if !strings.Contains(first, ".orka_offload/run-test/evidence/") {
+		t.Fatal("missing durable receipt", first)
+	}
+	got, err := (evidenceSearchTool{s}).Invoke(ctx, map[string]any{"query": "checkpoints"})
+	if err != nil || !strings.Contains(got, "Persistent checkpoints") || !strings.Contains(got, "https://example.test/docs") {
+		t.Fatalf("search=%q err=%v", got, err)
+	}
+	files, _ := filepath.Glob(filepath.Join(base, "reader", "sessions", "test-session", ".orka_offload/run-test/evidence/*.txt"))
+	if len(files) != 1 {
+		t.Fatalf("evidence files=%v", files)
+	}
+	body, _ := os.ReadFile(files[0])
+	if !strings.Contains(string(body), "Persistent checkpoints") {
+		t.Fatal("lost body")
+	}
+}
+
+func TestResearchSessionRetriesErrorsAndReservesDeliveryBudget(t *testing.T) {
+	budget := newRunBudget(20, 1000, 0)
+	s := newResearchSession(nil, "", budget, 10)
+	ctx := withResearchSession(context.Background(), s)
+	calls := 0
+	tool := EinoTool(retrievalFixture{"fetch_url", func(context.Context, map[string]any) (string, error) {
+		calls++
+		if calls == 1 {
+			return "", errors.New("HTTP 404")
+		}
+		return "a valid page", nil
+	}})
+	_, _ = tool.InvokableRun(ctx, `{"url":"https://example.test/retry"}`)
+	got, _ := tool.InvokableRun(ctx, `{"url":"https://example.test/retry"}`)
+	if calls != 2 || !strings.Contains(got, "a valid page") {
+		t.Fatalf("failed response cached: %d %q", calls, got)
+	}
+	budget.AddUsage(750, 0)
+	got, _ = tool.InvokableRun(ctx, `{"url":"https://example.test/new"}`)
+	if calls != 2 || !strings.Contains(got, "retrieval budget") {
+		t.Fatalf("retrieval not limited: %d %q", calls, got)
+	}
+	got, _ = tool.InvokableRun(ctx, `{"url":"https://example.test/retry"}`)
+	if !strings.Contains(got, "a valid page") {
+		t.Fatal("cache inaccessible after limit", got)
+	}
+	shell := EinoTool(retrievalFixture{"shell", func(context.Context, map[string]any) (string, error) { return "delivery works", nil }})
+	got, _ = shell.InvokableRun(ctx, `{}`)
+	if got != "delivery works" {
+		t.Fatal("delivery blocked", got)
+	}
+}
+
+func TestResearchSessionOpensHostCircuitAfterTransientFailure(t *testing.T) {
+	s := newResearchSession(nil, "", nil, 10)
+	ctx := withResearchSession(context.Background(), s)
+	var calls atomic.Int32
+	tool := EinoTool(retrievalFixture{"fetch_url", func(context.Context, map[string]any) (string, error) {
+		calls.Add(1)
+		return "", errors.New("context deadline exceeded")
+	}})
+	_, _ = tool.InvokableRun(ctx, `{"url":"https://www.example.test/releases"}`)
+	if got := calls.Load(); got != int32(toolRetries+1) {
+		t.Fatalf("first transient request calls=%d, want %d", got, toolRetries+1)
+	}
+	blocked, err := tool.InvokableRun(ctx, `{"url":"https://www.example.test/docs"}`)
+	if err != nil || !strings.Contains(blocked, "retrieval circuit open") {
+		t.Fatalf("same-host fallback was not short-circuited: %q, %v", blocked, err)
+	}
+	if got := calls.Load(); got != int32(toolRetries+1) {
+		t.Fatalf("same-host request retried after circuit opened: %d", got)
+	}
+	other := EinoTool(retrievalFixture{"fetch_url", func(context.Context, map[string]any) (string, error) {
+		calls.Add(1)
+		return "official API evidence", nil
+	}})
+	if got, err := other.InvokableRun(ctx, `{"url":"https://api.example.test/releases"}`); err != nil || got != "official API evidence" {
+		t.Fatalf("different-host fallback was blocked: %q, %v", got, err)
+	}
+}
+
+func TestResearchSessionCoalescesConcurrentCalls(t *testing.T) {
+	s := newResearchSession(nil, "", nil, 1)
+	ctx := withResearchSession(context.Background(), s)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	tool := EinoTool(retrievalFixture{"fetch_url", func(context.Context, map[string]any) (string, error) {
+		calls.Add(1)
+		close(entered)
+		<-release
+		return "shared response", nil
+	}})
+	done := make(chan string, 1)
+	go func() { r, _ := tool.InvokableRun(ctx, `{"url":"https://example.test/concurrent"}`); done <- r }()
+	<-entered
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := tool.InvokableRun(canceled, `{"url":"https://example.test/concurrent"}`); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation=%v", err)
+	}
+	other := make(chan string, 1)
+	go func() { r, _ := tool.InvokableRun(ctx, `{"url":"https://example.test/concurrent"}`); other <- r }()
+	close(release)
+	if a, b := <-done, <-other; !strings.Contains(a, "shared response") || !strings.Contains(b, "shared response") || calls.Load() != 1 {
+		t.Fatalf("calls=%d results=%q,%q", calls.Load(), a, b)
+	}
+}
+
+func TestResearchGuidanceSurvivesHistoryReplacement(t *testing.T) {
+	b := newRunBudget(20, 1000, 0)
+	s := newResearchSession(nil, "", b, 10)
+	p := &planTracker{}
+	p.record([]messages.PlanStep{{Title: "Research", Status: "done"}, {Title: "Generate and verify data", Status: "active"}})
+	ctx := withPlanTracker(withResearchSession(context.Background(), s), p)
+	g := newResearchGuidance(ctx)
+	b.AddUsage(750, 0)
+	state := &adk.ChatModelAgentState{Messages: []*schema.Message{schema.SystemMessage("instruction"), schema.UserMessage("summary replaced the full history")}, ToolInfos: infos("fetch_url", "web_search", "search_evidence", "file_write", "shell")}
+	for i := 0; i < 2; i++ {
+		_, state, _ = g.BeforeModelRewriteState(ctx, state, nil)
+		if len(state.Messages) != 3 {
+			t.Fatalf("guidance accumulated: %d", len(state.Messages))
+		}
+		last := state.Messages[len(state.Messages)-1].Content
+		if !strings.Contains(last, "Generate and verify data") || !strings.Contains(last, "retrieval budget") {
+			t.Fatal("lost live state", last)
+		}
+		visible := names(state.ToolInfos)
+		if visible["fetch_url"] || !visible["shell"] || !visible["search_evidence"] {
+			t.Fatal("wrong remaining tools", visible)
+		}
+	}
+}
+
+func TestGateShowsDocumentationEvidenceAndDeepTask(t *testing.T) {
+	g := newToolGate()
+	g.remember(infos("discover_docs", "read_section", "search_evidence", "task"))
+	got := names(g.visible())
+	for _, name := range []string{"discover_docs", "read_section", "search_evidence", "task"} {
+		if !got[name] {
+			t.Errorf("hidden core tool %s", name)
+		}
+	}
+}
+
+func TestEvidenceIDsResolveAndCatalogSnapshotsStayReadable(t *testing.T) {
+	base := t.TempDir()
+	s := newResearchSession(newWorkspaceBackend(base, "reader", "test-session"), ".orka_offload/run-test/evidence", nil, 10)
+	ctx := withResearchSession(context.Background(), s)
+	tool := EinoTool(retrievalFixture{"fetch_url", func(_ context.Context, args map[string]any) (string, error) {
+		return "URL: " + args["url"].(string) + "\nTitle: durable evidence\nbody", nil
+	}})
+	_, _ = tool.InvokableRun(ctx, `{"url":"https://example.test/one"}`)
+	raw, _ := (evidenceSearchTool{s}).Invoke(ctx, map[string]any{})
+	var records []evidenceRecord
+	if err := json.Unmarshal([]byte(raw), &records); err != nil || len(records) != 1 {
+		t.Fatalf("records %s: %v", raw, err)
+	}
+	byID, _ := (evidenceSearchTool{s}).Invoke(ctx, map[string]any{"query": records[0].ID})
+	if !strings.Contains(byID, "https://example.test/one") {
+		t.Errorf("ID lookup=%s", byID)
+	}
+	originalPath := s.evidence.indexPath
+	original, _ := os.ReadFile(filepath.Join(base, "reader", "sessions", "test-session", originalPath))
+	_, _ = tool.InvokableRun(ctx, `{"url":"https://example.test/two"}`)
+	after, _ := os.ReadFile(filepath.Join(base, "reader", "sessions", "test-session", originalPath))
+	if string(original) != string(after) {
+		t.Error("previously advertised catalog was overwritten")
+	}
+	latest, err := os.ReadFile(filepath.Join(base, "reader", "sessions", "test-session", s.evidence.indexPath))
+	if err != nil || !strings.Contains(string(latest), "https://example.test/two") {
+		t.Fatalf("latest catalog=%s: %v", latest, err)
+	}
+}
+
+func TestResearchGuidanceDoesNotContradictFinalBudgetNotice(t *testing.T) {
+	b := newRunBudget(20, 1000, 0)
+	b.AddUsage(1000, 0)
+	b.observe(nil)
+	s := newResearchSession(nil, "", b, 10)
+	ctx := withResearchSession(context.Background(), s)
+	state := &adk.ChatModelAgentState{Messages: []*schema.Message{budgetNotice("tokens")}}
+	_, state, _ = newResearchGuidance(ctx).BeforeModelRewriteState(ctx, state, nil)
+	if len(state.Messages) != 1 || strings.Contains(state.Messages[len(state.Messages)-1].Content, "tools remain available") {
+		t.Fatal("contradictory final guidance", state.Messages)
+	}
+}
+
+func TestDocumentationToolsStayInWebScope(t *testing.T) {
+	for _, name := range []string{"discover_docs", "read_section"} {
+		if groupForName(name) != "web" {
+			t.Errorf("%s excluded from web scope", name)
+		}
+	}
+}
+
+func TestResearchSessionWiredThroughEinoRunner(t *testing.T) {
+	s := newResearchSession(newWorkspaceBackend(t.TempDir(), "reader", "test-session"), ".orka_offload/integration/evidence", nil, 10)
+	ctx := withToolGate(withResearchSession(context.Background(), s), newToolGate())
+	calls := 0
+	source := retrievalFixture{"fetch_url", func(context.Context, map[string]any) (string, error) {
+		calls++
+		return "URL: https://example.test/docs\nTitle: durable source\nKeep checkpoints on disk", nil
+	}}
+	model := llm.NewMock(
+		llm.Response{ToolCalls: []llm.ToolCall{{ID: "one", Name: "fetch_url", Arguments: `{"url":"https://example.test/docs"}`}}},
+		llm.Response{ToolCalls: []llm.ToolCall{{ID: "two", Name: "search_evidence", Arguments: `{"query":"checkpoints"}`}}},
+		llm.Response{Content: "done"},
+	)
+	ag, err := BuildEinoAgent(ctx, model, "m", "execute the request", []agent.BaseTool{source, evidenceSearchTool{s}}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RunEinoOnce(ctx, ag, "research and deliver"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || len(model.Requests) != 3 {
+		t.Fatalf("calls=%d requests=%d", calls, len(model.Requests))
+	}
+	raw, _ := json.Marshal(model.Requests[len(model.Requests)-1])
+	if !strings.Contains(string(raw), "checkpoints") || !strings.Contains(string(raw), "Source catalog") {
+		t.Fatal("runner did not carry durable evidence and live state")
+	}
+}
+
+func TestEvidenceKeepsResolvedSourceMetadata(t *testing.T) {
+	s := newResearchSession(nil, "", nil, 2)
+	ctx := withResearchSession(context.Background(), s)
+	tool := EinoTool(retrievalFixture{"read_section", func(context.Context, map[string]any) (string, error) {
+		return "URL: https://example.test/current\nTitle: Actual document\n\nA relevant section.", nil
+	}})
+	_, _ = tool.InvokableRun(ctx, `{"url":"https://example.test/old","query":"section"}`)
+	raw, _ := (evidenceSearchTool{s}).Invoke(ctx, map[string]any{})
+	var records []evidenceRecord
+	_ = json.Unmarshal([]byte(raw), &records)
+	if len(records) != 1 || records[0].URL != "https://example.test/current" || records[0].Title != "Actual document" {
+		t.Fatalf("source metadata=%s", raw)
+	}
+}
+
+func TestReadOnlyHTTPRequestUsesResearchBudgetAndEvidenceCache(t *testing.T) {
+	s := newResearchSession(newWorkspaceBackend(t.TempDir(), "reader", "test-session"), ".orka_offload/http", nil, 1)
+	ctx := withResearchSession(context.Background(), s)
+	calls := 0
+	tool := EinoTool(retrievalFixture{"http_request", func(context.Context, map[string]any) (string, error) {
+		calls++
+		return "URL: https://example.test/page\nTitle: Cached HTTP\n\nEvidence body", nil
+	}})
+	first, err := tool.InvokableRun(ctx, `{"method":"GET","url":"https://example.test/page"}`)
+	if err != nil || !strings.Contains(first, "Evidence body") {
+		t.Fatalf("first=%q err=%v", first, err)
+	}
+	second, err := tool.InvokableRun(ctx, `{ "url": "https://example.test/page", "method": "get" }`)
+	if err != nil || calls != 1 || !strings.Contains(second, "cached") {
+		t.Fatalf("calls=%d second=%q err=%v", calls, second, err)
+	}
+	third, err := tool.InvokableRun(ctx, `{"method":"GET","url":"https://example.test/other"}`)
+	if err != nil || !strings.Contains(third, "retrieval budget") {
+		t.Fatalf("uncounted HTTP read: %q err=%v", third, err)
+	}
+}
+
+func TestRetrievalBackoffSharedAcrossReadersAndExpires(t *testing.T) {
+	s := newResearchSession(nil, "", nil, 10)
+	clock := time.Unix(100, 0)
+	s.now = func() time.Time { return clock }
+	args := map[string]any{"url": "https://example.test/a"}
+	calls := 0
+	_, _ = s.invoke(context.Background(), "fetch_url", args, func() (string, error) { calls++; return "", errors.New("context deadline exceeded") })
+	for _, name := range []string{"read_section", "http_request"} {
+		result, _ := s.invoke(context.Background(), name, args, func() (string, error) { calls++; return "ok", nil })
+		if !strings.Contains(result, "retrieval circuit open") {
+			t.Fatal("equivalent fallback escaped backoff", name, result)
+		}
+	}
+	if calls != 1 {
+		t.Fatal(calls)
+	}
+	clock = clock.Add(retrievalRetryDelay)
+	result, _ := s.invoke(context.Background(), "read_section", args, func() (string, error) { calls++; return "recovered page", nil })
+	if result != "recovered page" || calls != 2 {
+		t.Fatal(result, calls)
+	}
+}
+func TestRetrievalHTTPFailureDoesNotDisableOtherPathsOrWrites(t *testing.T) {
+	s := newResearchSession(nil, "", nil, 10)
+	_, _ = s.invoke(context.Background(), "fetch_url", map[string]any{"url": "https://example.test/a"}, func() (string, error) { return "", errors.New("HTTP 503 service unavailable") })
+	for _, tc := range []struct{ name, url, method string }{{"fetch_url", "https://example.test/b", ""}, {"http_request", "https://example.test/a", "POST"}} {
+		got, _ := s.invoke(context.Background(), tc.name, map[string]any{"url": tc.url, "method": tc.method}, func() (string, error) { return "unaffected", nil })
+		if got != "unaffected" {
+			t.Fatal(got)
+		}
+	}
+}
+
+func TestBrowserOpenFailureTripsHostCircuitWithoutBlockingSnapshot(t *testing.T) {
+	s := newResearchSession(nil, "", nil, 40)
+	ctx := withResearchSession(context.Background(), s)
+	args := map[string]any{"action": "open", "url": "https://news.example/path"}
+	calls := 0
+	invoke := func(arguments map[string]any) string {
+		out, err := s.invoke(ctx, "browser", arguments, func() (string, error) {
+			calls++
+			return `{"ok":false,"error":{"code":"timeout"}}`, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if first := invoke(args); !strings.Contains(first, `"timeout"`) {
+		t.Fatalf("first failure lost: %s", first)
+	}
+	if second := invoke(map[string]any{"action": "open", "url": "https://news.example/other"}); !strings.Contains(second, "browser navigation circuit open") {
+		t.Fatalf("same-host navigation was not blocked: %s", second)
+	}
+	if snapshot := invoke(map[string]any{"action": "snapshot"}); strings.Contains(snapshot, "circuit open") {
+		t.Fatalf("snapshot inspection was blocked: %s", snapshot)
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d want first open plus snapshot", calls)
+	}
+}
+
+func TestBrowserOpenObservationFailureBlocksOnlyTheSameURL(t *testing.T) {
+	s := newResearchSession(nil, "", nil, 40)
+	ctx := withResearchSession(context.Background(), s)
+	calls := 0
+	open := func(url string) string {
+		out, err := s.invoke(ctx, "browser", map[string]any{"action": "open", "url": url}, func() (string, error) {
+			calls++
+			return `{"ok":false,"error":{"code":"observation_failed"}}`, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if first := open("https://news.example/article"); !strings.Contains(first, "observation_failed") {
+		t.Fatalf("first observation failure lost: %s", first)
+	}
+	if same := open("https://news.example/article"); !strings.Contains(same, "browser navigation circuit open") {
+		t.Fatalf("same URL was retried after an acknowledged navigation: %s", same)
+	}
+	if other := open("https://news.example/other"); !strings.Contains(other, "observation_failed") {
+		t.Fatalf("different URL was incorrectly blocked: %s", other)
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d want one attempt per distinct URL", calls)
+	}
+}

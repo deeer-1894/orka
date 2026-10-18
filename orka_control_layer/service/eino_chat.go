@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/cloudwego/eino/adk"
@@ -54,6 +55,7 @@ func newBudgetGuardFor(b *runBudget) *budgetGuard {
 }
 
 func (g *budgetGuard) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
+	applyDeliveryPhase(g.budget, state)
 	if !g.budget.observe(state.Messages) {
 		return ctx, state, nil
 	}
@@ -93,18 +95,27 @@ func summarizationTrigger() *summarization.TriggerCondition {
 }
 
 func summarizationHandlers(ctx context.Context, client llm.Client, model string) []adk.ChatModelAgentMiddleware {
+	trigger := summarizationTrigger()
+	trigger.ContextMessages = 0 // wrapper counts compressible work; native token accounting stays authoritative
 	mw, err := summarization.New(ctx, &summarization.Config{
-		Model: llm.NewEinoModel(client, model).ForAgent("summarizer"),
+		Model:           llm.NewEinoModel(client, model).ForAgent("summarizer"),
+		ModelOptions:    []einomodel.Option{einomodel.WithMaxTokens(8192)},
+		UserInstruction: "Create a concise continuation checkpoint, targeting at most 1200 words. Original human requests are retained verbatim by the runtime; do not rewrite their formulas or acceptance criteria. Preserve exact file paths, completed and pending work, verified results, unresolved failures and source references. Do not reproduce scripts, raw tables or tool output; point to saved files instead. Never turn unverified claims into verified results.",
+		Finalize:        finalizeSummary,
 		// Reduction now trims oversized/stale tool output first, so summarization
 		// is the backstop for genuinely long dialogue — trigger it earlier than the
 		// old 80-message mark, which a long pipeline blew past on cost alone.
 		//
-		Trigger: summarizationTrigger(),
+		Trigger: trigger,
 	})
 	if err != nil {
 		return nil // summarization is best-effort; never block agent construction
 	}
-	return []adk.ChatModelAgentMiddleware{bestEffort(mw)}
+	rewriter, ok := mw.(summaryRewriter)
+	if !ok {
+		return nil
+	}
+	return []adk.ChatModelAgentMiddleware{bestEffort(&requestAwareSummary{rewriter})}
 }
 
 // bestEffortMiddleware makes a context-management middleware unable to fail a
@@ -136,35 +147,57 @@ func (b *bestEffortMiddleware) BeforeModelRewriteState(ctx context.Context, stat
 }
 
 // BuildEinoAgent constructs an eino ReAct ChatModelAgent over our model + tools.
-// backup is an optional other-tier model to fail over to when retries are
-// exhausted (nil = no failover). handlers are optional middlewares (e.g.
-// summarization) the production path supplies; the minimal/test path passes none
-// for deterministic behavior.
-func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction string, tools []agent.BaseTool, maxIters int, backup einomodel.BaseChatModel, handlers ...adk.ChatModelAgentMiddleware) (adk.Agent, error) {
+// Retries keep the selected model. Handlers supply optional context management middleware.
+func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction string, tools []agent.BaseTool, maxIters int, handlers ...adk.ChatModelAgentMiddleware) (adk.Agent, error) {
 	if maxIters <= 0 {
-		maxIters = 16
+		maxIters = einoMaxIters
 	}
+	handlers = append(handlers, newResearchGuidance(ctx))
 	return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        "orka",
 		Description: "Orka assistant",
 		Instruction: instruction,
-		Model:       llm.NewEinoModel(client, model).ForAgent("orka"),
+		Model:       newAgentModel(client, model, "orka"),
 		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(withFindTools(withPlan(withClarify(tools))))},
+			ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(mainAgentTools(ctx, tools))},
 			ReturnDirectly:  clarifyReturnDirectly(),
 		},
 		MaxIterations: maxIters,
 		// Survive transient/mid-stream model failures instead of failing the run.
-		ModelRetryConfig:    modelRetryConfig(),
-		ModelFailoverConfig: modelFailoverConfig(backup),
-		Handlers:            append([]adk.ChatModelAgentMiddleware{newBudgetGuardFor(agentBudget(ctx, maxIters)), newGateMiddleware(toolGateFrom(ctx))}, handlers...),
+		ModelRetryConfig: modelRetryConfig(),
+
+		Handlers: append([]adk.ChatModelAgentMiddleware{newBudgetGuardFor(agentBudget(ctx, maxIters)), newGateMiddleware(toolGateFrom(ctx))}, handlers...),
 	})
 }
 
+// Every delegate and auxiliary call inherits the selected client and model.
 // BuildEinoSubAgentTools exposes the delegates as one tool each, which is how
 // the AgentTool orchestrator consumes them.
-func BuildEinoSubAgentTools(ctx context.Context, mainClient llm.Client, mainModel string, miniClient llm.Client, miniModel string, atomic []agent.BaseTool, specs []config.SubAgentConfig) ([]tool.BaseTool, error) {
-	subs, err := BuildEinoSubAgents(ctx, mainClient, mainModel, miniClient, miniModel, atomic, specs)
+func BuildEinoSubAgentTools(ctx context.Context, client llm.Client, model string, atomic []agent.BaseTool, specs []config.SubAgentConfig) ([]tool.BaseTool, error) {
+	if len(specs) == 0 {
+		specs = DefaultSubAgents()
+	}
+	// The legacy orchestrator shares one function namespace with atomic tools.
+	// Keep native DeepAgent names intact, but alias colliding function delegates
+	// (notably browser) without mutating the caller's registry.
+	specs = append([]config.SubAgentConfig(nil), specs...)
+	atomicNames, reserved := map[string]bool{}, map[string]bool{}
+	for _, t := range atomic {
+		atomicNames[t.Name()], reserved[t.Name()] = true, true
+	}
+	for _, sp := range specs {
+		reserved[sp.Name] = true
+	}
+	for i := range specs {
+		if atomicNames[specs[i].Name] {
+			name := "delegate_" + specs[i].Name
+			for reserved[name] {
+				name = "delegate_" + name
+			}
+			specs[i].Name, reserved[name] = name, true
+		}
+	}
+	subs, err := BuildEinoSubAgents(ctx, client, model, atomic, specs)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +214,7 @@ func BuildEinoSubAgentTools(ctx context.Context, mainClient llm.Client, mainMode
 // Returned as agents rather than tools because the two orchestrators consume
 // them differently: the AgentTool one wants a tool per delegate, while DeepAgent
 // takes the agents themselves and exposes a single `task` tool over them.
-func BuildEinoSubAgents(ctx context.Context, mainClient llm.Client, mainModel string, miniClient llm.Client, miniModel string, atomic []agent.BaseTool, specs []config.SubAgentConfig) ([]adk.Agent, error) {
+func BuildEinoSubAgents(ctx context.Context, client llm.Client, model string, atomic []agent.BaseTool, specs []config.SubAgentConfig) ([]adk.Agent, error) {
 	if len(specs) == 0 {
 		specs = DefaultSubAgents()
 	}
@@ -190,6 +223,7 @@ func BuildEinoSubAgents(ctx context.Context, mainClient llm.Client, mainModel st
 		byName[t.Name()] = t
 	}
 	var out []adk.Agent
+	limiter := newWorkerLimiter(executionPolicyFrom(ctx).MaxWorkers)
 	for _, sp := range specs {
 		if sp.Name == "" {
 			continue
@@ -203,51 +237,37 @@ func BuildEinoSubAgents(ctx context.Context, mainClient llm.Client, mainModel st
 		if len(scoped) == 0 {
 			continue // none of this agent's tools available; don't expose a dead agent
 		}
-		client, model := miniClient, miniModel
-		if sp.Model == "main" {
-			client, model = mainClient, mainModel
-		}
 		prompt := sp.Prompt
 		if prompt == "" {
 			prompt = needInput
 		} else {
 			prompt += " " + needInput
 		}
-		iters := sp.MaxIters
-		if iters <= 0 {
-			iters = 12
-		}
+		iters := einoMaxIters
 		sub, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 			Name:        sp.Name,
 			Description: sp.Description,
 			Instruction: prompt,
-			Model:       llm.NewEinoModel(client, model).ForAgent(sp.Name),
+			Model:       newAgentModel(client, model, sp.Name),
 			ToolsConfig: adk.ToolsConfig{
-				ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(scoped)},
+				ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(workerAgentTools(ctx, scoped))},
 			},
 			MaxIterations: iters,
 			// Same resilience as the orchestrator: a delegated worker that dies on a
 			// transient blip still fails the parent step.
-			ModelRetryConfig:    modelRetryConfig(),
-			ModelFailoverConfig: modelFailoverConfig(backupModel(mainClient, mainModel, model)),
-			// A token budget as well as a step budget. MaxIterations bounds model
-			// CYCLES, and once the prompt encourages batching one cycle can emit
-			// several tool calls — so a researcher told to use "~6, at most ~10"
-			// calls was measured making 15. A soft instruction does not bound a
-			// delegate; four of them over-researching is how a run reaches 399k
-			// tokens and still ends unfinished.
-			// The budget bounds what a delegate may SPEND; the context handlers
-			// bound what it carries while spending it. Without the latter a
-			// delegate's own retrieval sat verbatim until the budget cut it off
-			// mid-work, which is the expensive way to learn a context is too big.
-			Handlers: append([]adk.ChatModelAgentMiddleware{
-				newBudgetGuardFor(newDelegateBudget(iters, subAgentMaxTokens)),
-			}, subAgentContextHandlers(ctx, sp.Name, scoped)...),
+			ModelRetryConfig: modelRetryConfig(),
+
+			// Delegates retain context compaction and shared evidence guidance.
+			// They have no separate token or iteration allowance.
+			Handlers: append([]adk.ChatModelAgentMiddleware{newGateMiddleware(toolGateFrom(ctx))}, append(subAgentContextHandlers(ctx, sp.Name, scoped),
+				newResearchGuidance(ctx),
+				newBudgetGuardFor(newDelegateBudget(0, 0)),
+			)...),
 		})
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, sub)
+		out = append(out, limiter.wrap(sub))
 	}
 	return out, nil
 }
@@ -280,8 +300,8 @@ func BuildEinoSubAgents(ctx context.Context, mainClient llm.Client, mainModel st
 //   - Handlers: the budget guard, tool gate, context probe, reduction and
 //     summarization all carry incidents behind them and transfer unchanged —
 //     adk.ChatModelAgentMiddleware is exactly what DeepAgent's Handlers take.
-func BuildEinoDeepOrchestrator(ctx context.Context, mainClient llm.Client, mainModel string, miniClient llm.Client, miniModel, instruction string, atomic []agent.BaseTool, specs []config.SubAgentConfig, maxIters int, summarize bool, extra ...adk.ChatModelAgentMiddleware) (adk.Agent, error) {
-	subs, err := BuildEinoSubAgents(ctx, mainClient, mainModel, miniClient, miniModel, atomic, specs)
+func BuildEinoDeepOrchestrator(ctx context.Context, client llm.Client, model, instruction string, atomic []agent.BaseTool, specs []config.SubAgentConfig, maxIters int, summarize bool, extra ...adk.ChatModelAgentMiddleware) (adk.Agent, error) {
+	subs, err := BuildEinoSubAgents(ctx, client, model, atomic, deepSubAgentSpecs(atomic, specs))
 	if err != nil {
 		return nil, err
 	}
@@ -293,16 +313,17 @@ func BuildEinoDeepOrchestrator(ctx context.Context, mainClient llm.Client, mainM
 		newGateMiddleware(toolGateFrom(ctx)),
 	}, extra...)
 	if summarize {
-		handlers = append(handlers, summarizationHandlers(ctx, miniClient, miniModel)...)
+		handlers = append(handlers, summarizationHandlers(ctx, client, model)...)
 	}
+	handlers = append(handlers, newResearchGuidance(ctx))
 	return deep.New(ctx, &deep.Config{
 		Name:        einoOrchestratorName,
 		Description: "Orka orchestrator",
-		ChatModel:   llm.NewEinoModel(mainClient, mainModel).ForAgent(einoOrchestratorName),
+		ChatModel:   newAgentModel(client, model, einoOrchestratorName),
 		Instruction: instruction,
 		SubAgents:   subs,
 		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: EinoTools(withFindTools(withPlan(withClarify(atomic))))},
+			ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(mainAgentTools(ctx, atomic))},
 			ReturnDirectly:  clarifyReturnDirectly(),
 			// Stream delegate events up so the UI keeps its per-agent lanes.
 			EmitInternalEvents: true,
@@ -312,10 +333,12 @@ func BuildEinoDeepOrchestrator(ctx context.Context, mainClient llm.Client, mainM
 		WithoutWriteTodos: true,
 		// The whole point. A step that matches no specialist still has somewhere
 		// to go, which is what four prompt rewrites could not achieve.
-		WithoutGeneralSubAgent: false,
+		// Every worker is wrapped by the run-scoped limiter above. Eino's implicit
+		// general worker cannot be wrapped, so keep delegation within the explicit
+		// registry where the three-worker invariant is enforceable.
+		WithoutGeneralSubAgent: true,
 		Handlers:               handlers,
 		ModelRetryConfig:       modelRetryConfig(),
-		ModelFailoverConfig:    modelFailoverConfig(backupModel(miniClient, miniModel, mainModel)),
 	})
 }
 
@@ -324,82 +347,44 @@ func BuildEinoDeepOrchestrator(ctx context.Context, mainClient llm.Client, mainM
 // user (tagged by AgentName → meta.agent_id for lane grouping).
 // extra middlewares (e.g. the context-management chain) run before the built-in
 // summarization backstop.
-func BuildEinoOrchestrator(ctx context.Context, mainClient llm.Client, mainModel string, miniClient llm.Client, miniModel, instruction string, atomic []agent.BaseTool, specs []config.SubAgentConfig, maxIters int, summarize bool, extra ...adk.ChatModelAgentMiddleware) (adk.Agent, error) {
-	subTools, err := BuildEinoSubAgentTools(ctx, mainClient, mainModel, miniClient, miniModel, atomic, specs)
+func BuildEinoOrchestrator(ctx context.Context, client llm.Client, model, instruction string, atomic []agent.BaseTool, specs []config.SubAgentConfig, maxIters int, summarize bool, extra ...adk.ChatModelAgentMiddleware) (adk.Agent, error) {
+	subTools, err := BuildEinoSubAgentTools(ctx, client, model, atomic, specs)
 	if err != nil {
 		return nil, err
 	}
 	if maxIters <= 0 {
-		maxIters = 16
+		maxIters = einoMaxIters
 	}
-	allTools := append(EinoTools(withFindTools(withPlan(withClarify(atomic)))), subTools...)
+	allTools := append(EinoTools(mainAgentTools(ctx, atomic)), subTools...)
 	handlers := append([]adk.ChatModelAgentMiddleware{newBudgetGuardFor(agentBudget(ctx, maxIters)), newGateMiddleware(toolGateFrom(ctx))}, extra...)
 	if summarize {
-		// Summarize history compression on the FAST mini model — it's an auxiliary
-		// step, not user-facing synthesis, so it doesn't need the strong model.
-		handlers = append(handlers, summarizationHandlers(ctx, miniClient, miniModel)...)
+		// Compression uses the same selected model as the rest of the run.
+		handlers = append(handlers, summarizationHandlers(ctx, client, model)...)
 	}
+	handlers = append(handlers, newResearchGuidance(ctx))
 	return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        einoOrchestratorName,
 		Description: "Orka orchestrator",
 		Instruction: instruction,
-		Model:       llm.NewEinoModel(mainClient, mainModel).ForAgent(einoOrchestratorName),
+		Model:       newAgentModel(client, model, einoOrchestratorName),
 		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: allTools},
+			ToolsNodeConfig:    compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: allTools},
 			ReturnDirectly:     clarifyReturnDirectly(),
 			EmitInternalEvents: true, // stream sub-agent events up for lane rendering
 		},
 		MaxIterations: maxIters,
-		// A long orchestrated run makes many model calls; one transient blip must
-		// not end it. Retry mid-stream failures, then fail over to the mini tier.
-		ModelRetryConfig:    modelRetryConfig(),
-		ModelFailoverConfig: modelFailoverConfig(backupModel(miniClient, miniModel, mainModel)),
-		Handlers:            handlers,
+		// A long orchestrated run makes many model calls; retry transient errors
+		// without switching to a different model.
+		ModelRetryConfig: modelRetryConfig(),
+
+		Handlers: handlers,
 	})
 }
 
-// subAgentMaxTokens caps what ONE delegation may spend.
-//
-// The comment used to say this bounded "context growth", and the name still
-// suggests it. It does not: the budget sums TotalTokens per call, which is
-// prompt plus completion, and the prompt is re-counted in full every cycle. The
-// figure therefore grows super-linearly with the work done rather than tracking
-// how much context is being carried. Measured on one delegate: 1.4k per call for
-// the first four cycles, 6.2k by the fifth, 14.6k by the tenth, cumulative 62k —
-// so 80k buys about eleven cycles, not the open-ended research the name implies.
-//
-// Delegations were coming back as "工具已停用" status reports for exactly this
-// reason. Raised to a figure that lets a delegate finish while still stopping a
-// runaway well short of the run's own 800k, and named for what it measures.
-const subAgentMaxTokens = 250_000
-
-// einoMaxIters is the orchestrator/agent generation-cycle cap for the prod path.
-//
-// It was 16, which the budget guard turns into 15 usable cycles, and that was
-// the ceiling on how complex a task could BE. Measured across 333 runs, the
-// completion rate is flat at 67-71% up to 30 tool calls and collapses to 18%
-// beyond it — and 30 calls is exactly 15 cycles at the 2.1 calls-per-cycle the
-// batching prompt achieves. The runs that did finish real work spent 43 and 94
-// calls; under a 15-cycle budget neither could have.
-//
-// The number was sized for an orchestrator that delegates, spending its cycles
-// on fan-out rather than atomic work. Delegation runs at 1.17% of tool calls
-// (2.33% after the prompt rewrite in ff0141a), so in practice the orchestrator
-// does the atomic work itself and pays a cycle for every couple of tool calls.
-// Raising the ceiling is the honest response to what it actually does; the
-// prompt has already been tried.
-//
-// 40 was still a ceiling on task complexity rather than on cost. Every long run
-// measured afterwards ended the same way: exactly 40 cycles, then partial, with
-// the deliverable unwritten. A step count answers "how many moves may this take",
-// which is a property of the task and not something the platform should decide.
-//
-// So this is now a safety cliff and nothing else, and the binding limits are the
-// ones denominated in what a run actually spends: runMaxTokens (800k) and
-// runMaxWall (2h). A runaway loop still terminates — sooner, in fact, since a
-// loop burns tokens fast — while a task that genuinely needs sixty steps is no
-// longer cut off at forty for being complicated.
-const einoMaxIters = 200
+// Eino interprets zero/negative MaxIterations as its 20-cycle default.
+// Use the platform integer range only at this adapter boundary; Orka itself
+// has no task iteration quota and termination remains cancellable.
+const einoMaxIters = int(^uint(0) >> 1)
 
 // RunEinoOnce runs the agent to completion on a single user message and returns
 // the final assistant text. Tool steps and intermediate assistant turns are
@@ -407,7 +392,8 @@ const einoMaxIters = 200
 // fan these events out to SSE instead of collapsing them.)
 func RunEinoOnce(ctx context.Context, ag adk.Agent, userMessage string) (string, error) {
 	runner := adk.NewRunner(ctx, adk.RunnerConfig{Agent: ag})
-	iter := runner.Query(ctx, userMessage)
+	input := toEinoMessages([]messages.Message{humanChat(userMessage, messages.Meta{})})
+	iter := runner.Run(ctx, input)
 	var final string
 	for {
 		ev, ok := iter.Next()
@@ -439,7 +425,14 @@ func toEinoMessages(msgs []messages.Message) []*schema.Message {
 		}
 		switch m.Role {
 		case messages.RoleUser:
-			out = append(out, schema.UserMessage(m.Content))
+			input := schema.UserMessage(m.Content)
+			switch m.Action {
+			case humanInputAction:
+				input.Extra = map[string]any{humanRequestTag: true, "orka_human_message_id": m.ID}
+			case runtimeContextAction:
+				input = runtimeUserMessage(m.Content)
+			}
+			out = append(out, input)
 		case messages.RoleAssistant:
 			out = append(out, schema.AssistantMessage(m.Content, nil))
 		}
@@ -469,7 +462,7 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 	// earlier attempt that died. Resuming replays what was already established
 	// instead of paying for it again.
 	input := toEinoMessages(rc.Messages)
-	if rr := runResumeFrom(ctx); rr != nil {
+	if rr := runResumeFrom(ctx); rr != nil && len(rr.Messages) > 0 {
 		input = rr.Messages
 	}
 	journal := journalFrom(ctx)
@@ -479,17 +472,27 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 	defer journal.flush()
 
 	var iter *adk.AsyncIterator[*adk.AgentEvent]
+	inbox := steeringFrom(ctx)
+	defer inbox.close()
+	newOptions := func() []adk.AgentRunOption {
+		opt, cancel := adk.WithCancel()
+		if store != nil && ckptID != "" {
+			inbox.bind(cancel)
+		}
+		return []adk.AgentRunOption{opt}
+	}
+	opts := newOptions()
 	if rs := resumeFrom(ctx); rs != nil && store != nil && ckptID != "" {
 		var err error
 		iter, err = runner.ResumeWithParams(ctx, ckptID,
-			&adk.ResumeParams{Targets: map[string]any{rs.Target: rs.Data}})
+			&adk.ResumeParams{Targets: map[string]any{rs.Target: rs.Data}}, opts...)
 		if err != nil {
 			return err
 		}
 	} else if store != nil && ckptID != "" {
-		iter = runner.Run(ctx, input, adk.WithCheckPointID(ckptID))
+		iter = runner.Run(ctx, input, append(opts, adk.WithCheckPointID(ckptID))...)
 	} else {
-		iter = runner.Run(ctx, input)
+		iter = runner.Run(ctx, input, opts...)
 	}
 
 	type pendingCall struct {
@@ -507,10 +510,34 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 		}
 	}()
 
+	transcript := append([]*schema.Message(nil), input...)
+	cancelled := false
 	for {
 		ev, ok := iter.Next()
 		if !ok {
-			break
+			if cancelled {
+				var err error
+				iter, err = runner.Resume(ctx, ckptID, newOptions()...)
+				if err != nil {
+					return err
+				}
+				cancelled = false
+				continue
+			}
+			if inbox.finish() {
+				break
+			}
+			// A message arrived during the final model call. Continue under the
+			// same execution, transcript and budget before emitting task.done.
+			if t := inbox.transcript(); len(t) > 0 {
+				transcript = t
+			}
+			opts := newOptions()
+			if store != nil && ckptID != "" {
+				opts = append(opts, adk.WithCheckPointID(ckptID))
+			}
+			iter = runner.Run(ctx, transcript, opts...)
+			continue
 		}
 		// A danger tool asked for approval: the Runner has checkpointed the run,
 		// so surface the request and RETURN. Nothing is blocked — /chat/confirm
@@ -526,6 +553,11 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 			}
 		}
 		if ev.Err != nil {
+			var stopped *adk.CancelError
+			if errors.As(ev.Err, &stopped) && ctx.Err() == nil && inbox != nil && store != nil {
+				cancelled = true
+				continue // drain fully before resuming the saved native state
+			}
 			// Graceful degradation: hitting the iteration cap shouldn't hard-fail
 			// a long, expensive run — surface a note and return what we have so the
 			// run is recorded as done-with-partial rather than failed.
@@ -554,7 +586,11 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 
 		var m *schema.Message
 		if mv.IsStreaming {
-			full, err := drainEinoStream(mv.MessageStream, mv.Role, eventMeta, emit)
+			streamEmit := emit
+			if bufferDeliveryContent(ctx, eventMeta.AgentID) {
+				streamEmit = func(messages.Message) {}
+			}
+			full, err := drainEinoStream(mv.MessageStream, mv.Role, eventMeta, streamEmit)
 			if err != nil {
 				return err
 			}
@@ -570,11 +606,18 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 			tokens += m.ResponseMeta.Usage.TotalTokens
 		}
 
-		// Journal every authoritative message. This is the run's transcript, and
-		// the only thing that makes a mid-run failure recoverable rather than
-		// total. Sub-agent turns are journaled too: they are part of what the
-		// orchestrator has already established.
-		journal.append(m)
+		if eventMeta.AgentID == "" {
+			m = deliveryResponse(ctx, m)
+		}
+
+		// The parent result contains the delegate's handoff. Keep the parent
+		// transcript coherent; delegate events remain in the event store.
+		if ev.AgentName == "" || ev.AgentName == einoOrchestratorName {
+			transcript = append(transcript, m)
+			journal.append(m)
+		} else {
+			journal.appendDelegate(ev.AgentName, m)
+		}
 
 		switch m.Role {
 		case schema.Assistant:
@@ -611,12 +654,12 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 				return nil
 			}
 			toolCalls++
-			payload := map[string]any{"tool": name, "args": pc.args, "result": m.Content}
-			emit(messages.Tool("call", payload, eventMeta))
+			payload := map[string]any{"tool": name, "args": toolDisplayArgs(name, pc.args), "result": m.Content}
 			// Durability boundary: the work this result describes has already
 			// happened, so persist the transcript now. Tens of writes per run —
 			// nothing next to the model call that produced it.
 			journal.flush()
+			emit(messages.Tool("call", payload, eventMeta))
 		}
 	}
 	return nil
@@ -676,24 +719,40 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	// can see storage config; this is how they reach an offload backend of their
 	// own (see subAgentContextHandlers).
 	ctx = withOffloadRoot(ctx, s.Cfg.Storage.BaseStoragePath)
+	// One session spans the main agent and its delegates. HTTP tools remain
+	// unaware of run identity; the adapter applies this retrieval policy.
+	evidenceDir := offloadDirFor(ctx)
+	if runIDFrom(ctx) == "" {
+		// A missing audit store must not pool independent executions' evidence.
+		evidenceDir = filepath.Join(evidenceDir, messages.NewID())
+	}
+	backend := newWorkspaceBackend(s.Cfg.Storage.BaseStoragePath, runUserEmail(rc), rc.Meta.ConversationID)
+	exposeRecoveryArchive(ctx, backend, evidenceDir)
+	research := newResearchSession(backend,
+		filepath.Join(evidenceDir, "evidence"), budgetFrom(ctx), s.Cfg.Agent.ResearchMaxCalls)
+	if rr := runResumeFrom(ctx); rr != nil && rr.Checkpoint != nil {
+		research.restoreCheckpoint(ctx, rr.Checkpoint)
+	}
+	ctx = withResearchSession(ctx, research)
+	rc.Ctx = ctx
+	journalFrom(ctx).trackState(ctx)
+	tools = append([]agent.BaseTool(nil), tools...)
+	if !executionPolicyFrom(ctx).StrictSources {
+		tools = append(tools, evidenceSearchTool{research})
+	}
 	// Context-window management (truncate oversized tool output to a workspace
 	// file, clear stale tool results, repair dangling tool calls). Runs ahead of
 	// the summarization backstop.
+	maxIters := executionIterationLimit(ctx)
 	ctxMW := contextHandlers(ctx, s.Cfg.Storage.BaseStoragePath, runUserEmail(rc), einoOrchestratorName, tools, s.Cfg.Agent.SubAgents)
-	// Automatic tier selection, when asked for. Prepended so it decides before
-	// the other middlewares see the call.
+	if steering := s.prepareSteering(ctx, rc); steering != nil {
+		ctxMW = append([]adk.ChatModelAgentMiddleware{steering}, ctxMW...)
+	}
+	// Automatic reasoning escalation, when asked for (selected_version=auto).
+	// Prepended so it decides before the other middlewares see the call.
 	if r := s.routerFor(rc, model); r != nil {
 		ctxMW = append([]adk.ChatModelAgentMiddleware{r}, ctxMW...)
 		rc.Put(varModelRouter, r)
-	}
-	// A message the user typed after this run started goes in ahead of all of
-	// them: the router should pick a tier for the request as it now stands, and
-	// the reducer should account for the message it is about to send. Only the
-	// orchestrator gets this — sub-agents build their own chain, and draining
-	// consumes, so a sub-agent could otherwise swallow the message where the
-	// user cannot see it.
-	if box := steerBoxFrom(ctx); box != nil {
-		ctxMW = append([]adk.ChatModelAgentMiddleware{newSteerInjector(box)}, ctxMW...)
 	}
 	// Bound how long the orchestrator may reason before acting. Orchestrator
 	// only for now: it is the turn a run ends on, and the one measured doing the
@@ -701,52 +760,41 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	if mw := newReasoningBudget(s.llmConf().ReasoningBudgetRunes, einoOrchestratorName); mw != nil {
 		ctxMW = append(ctxMW, mw)
 	}
-	if s.Cfg.Agent.MultiAgent {
+	if s.deepAgentEnabled(ctx) {
 		if instruction == "" {
 			instruction = OrchestratorPrompt
 		}
-		miniModel := s.llmConf().DefaultModel()
-		if miniModel == "" {
-			miniModel = model
-		}
+		// Pin relative-date interpretation for every model path, including the
+		// multi-agent orchestrator and its single-agent fallback.
+		instruction = executionPolicyFrom(ctx).decorateInstruction(withRuntimeDate(instruction))
 		// einoMaxIters, not a literal: this is eino's own hard cycle cliff, and the
 		// run budget is built from the same constant. Drifting apart means either
 		// the guard never fires (and eino errors out instead of reporting) or it
 		// fires far too early.
-		ag, err = BuildEinoDeepOrchestrator(ctx, client, model, s.Mini, miniModel, instruction, tools, s.Cfg.Agent.SubAgents, einoMaxIters, !s.DisableSummary, ctxMW...)
+		ag, err = BuildEinoDeepOrchestrator(ctx, client, model, instruction, tools, s.Cfg.Agent.SubAgents, maxIters, !s.DisableSummary, ctxMW...)
 	} else {
 		if instruction == "" {
 			instruction = middlewares.DefaultSystemPrompt
 		}
+		instruction = executionPolicyFrom(ctx).decorateInstruction(withRuntimeDate(instruction))
 		var sum []adk.ChatModelAgentMiddleware
 		if !s.DisableSummary {
-			// Auxiliary history compression runs on the fast mini model.
-			sumClient, sumModel := s.Mini, s.llmConf().DefaultModel()
-			if sumClient == nil {
-				sumClient, sumModel = client, model
-			}
-			if sumModel == "" {
-				sumModel = model
-			}
-			sum = summarizationHandlers(ctx, sumClient, sumModel)
+			// Auxiliary history compression uses the run's selected model.
+			sum = summarizationHandlers(ctx, client, model)
 		}
 		if len(ctxMW) > 0 {
 			sum = append(append([]adk.ChatModelAgentMiddleware{}, ctxMW...), sum...)
 		}
-		// Fail over to the other model tier when the primary exhausts its retries.
-		ag, err = BuildEinoAgent(ctx, client, model, instruction, tools, einoMaxIters,
-			backupModel(s.Mini, s.llmConf().DefaultModel(), model), sum...)
+		// Retry the selected model without switching to another tier.
+		ag, err = BuildEinoAgent(ctx, client, model, instruction, tools, maxIters,
+			sum...)
 	}
 	if err != nil {
 		return err
 	}
-	// Run with rc.Ctx (carries the emit sink + run meta), so tools invoked by the
-	// eino runner — e.g. the confirmation gate — can stream events into the SSE.
-	runCtx := ctx
-	if rc.Ctx != nil {
-		runCtx = rc.Ctx
-	}
-	return StreamEinoRun(runCtx, rc, ag, rc.Emit)
+	// ctx derives from rc.Ctx and also carries the research session/offload
+	// root. Construction and invocation must see the same execution state.
+	return StreamEinoRun(ctx, rc, ag, rc.Emit)
 }
 
 func parseJSONArgs(s string) map[string]any {
@@ -758,4 +806,11 @@ func parseJSONArgs(s string) map[string]any {
 		return map[string]any{"_raw": s}
 	}
 	return m
+}
+
+func executionIterationLimit(ctx context.Context) int {
+	if b := budgetFrom(ctx); b != nil && b.maxSteps > 0 {
+		return b.maxSteps
+	}
+	return einoMaxIters
 }

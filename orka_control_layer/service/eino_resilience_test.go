@@ -55,7 +55,7 @@ func TestMidStreamFailureSurvivesViaADKRetry(t *testing.T) {
 	ctx := context.Background()
 	flaky := &flakyStreamClient{failFirst: 1, reply: "recovered answer"}
 
-	ag, err := BuildEinoAgent(ctx, flaky, "m", "You are a helpful assistant.", nil, 4, nil)
+	ag, err := BuildEinoAgent(ctx, flaky, "m", "You are a helpful assistant.", nil, 4)
 	if err != nil {
 		t.Fatalf("build agent: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestNonTransientIsNotRetried(t *testing.T) {
 	ctx := context.Background()
 	authFail := &statusErrClient{status: 401}
 
-	ag, err := BuildEinoAgent(ctx, authFail, "m", "sys", nil, 4, nil)
+	ag, err := BuildEinoAgent(ctx, authFail, "m", "sys", nil, 4)
 	if err != nil {
 		t.Fatalf("build agent: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestStreamResetEmittedOnRetry(t *testing.T) {
 	})
 
 	flaky := &flakyStreamClient{failFirst: 1, reply: "ok"}
-	ag, err := BuildEinoAgent(emitCtx, flaky, "m", "sys", nil, 4, nil)
+	ag, err := BuildEinoAgent(emitCtx, flaky, "m", "sys", nil, 4)
 	if err != nil {
 		t.Fatalf("build agent: %v", err)
 	}

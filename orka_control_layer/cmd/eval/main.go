@@ -16,7 +16,7 @@
 // Usage:
 //
 //	eval --url http://localhost:8088 --email you@example.com --password ... \
-//	     --tasks evals/tasks.yaml --out evals/results/$(date +%F).json
+//	     --live --tasks evals/tasks.yaml --out evals/results/$(date +%F).json
 //	eval ... --baseline evals/results/2026-08-30.json
 package main
 
@@ -114,9 +114,14 @@ func main() {
 		out      = flag.String("out", "", "write the scorecard here")
 		baseline = flag.String("baseline", "", "compare against a previous scorecard")
 		only     = flag.String("only", "", "run just this task id")
-		model    = flag.String("model", "", "selected_version to run on: \"\" main, mini, auto, or a model name; also recorded in the scorecard")
+		model    = flag.String("model", "", "selected_version: empty/auto uses the first configured model, or specify an allowed model name")
+		live     = flag.Bool("live", false, "explicitly enable live tasks that may incur model charges")
 	)
 	flag.Parse()
+	if !*live {
+		fmt.Fprintln(os.Stderr, "eval: live model calls require --live; use make eval for offline contracts")
+		os.Exit(2)
+	}
 
 	// Check the flags that only matter at the END before spending ten minutes of
 	// model calls to reach them. A baseline that cannot be read, or a run whose
@@ -202,12 +207,15 @@ func (c *client) runTask(t task) result {
 	if timeout == 0 {
 		timeout = 5 * time.Minute
 	}
-	conv := fmt.Sprintf("eval_%s_%d", t.ID, time.Now().UnixNano())
+	conv, err := c.createConversation("Eval: " + t.ID)
+	if err != nil {
+		return result{ID: t.ID, Reasons: []string{err.Error()}}
+	}
 	// Delete the files this task asserts BEFORE running it. Without this the
 	// suite grades itself on the previous run's leftovers: a task that no longer
 	// writes anything still "passes" because the file is already there, which is
 	// precisely the regression the suite exists to catch.
-	c.clearExpected(t)
+	c.clearExpected(t, conv)
 	started := time.Now()
 
 	r := result{ID: t.ID, Pass: true}
@@ -217,7 +225,7 @@ func (c *client) runTask(t task) result {
 		return result{ID: t.ID, Seconds: r.Seconds, Reasons: []string{err.Error()}}
 	}
 	r.Status, r.Tools, r.Tokens = turn.status, turn.tools, turn.tokens
-	r.Reasons = check(c, t.Expect, turn)
+	r.Reasons = check(c, conv, t.Expect, turn)
 
 	if t.Followup != nil && len(r.Reasons) == 0 {
 		f, ferr := c.turn(conv, t.Followup.Prompt, timeout)
@@ -227,7 +235,7 @@ func (c *client) runTask(t task) result {
 		} else {
 			r.Tools += f.tools
 			r.Tokens += f.tokens
-			for _, why := range check(c, t.Followup.Expect, f) {
+			for _, why := range check(c, conv, t.Followup.Expect, f) {
 				r.Reasons = append(r.Reasons, "followup: "+why)
 			}
 		}
@@ -238,7 +246,7 @@ func (c *client) runTask(t task) result {
 
 // check evaluates one expectation, returning every reason it failed rather than
 // the first — one run is expensive, so it should report everything it can.
-func check(c *client, e expectation, t *turnResult) []string {
+func check(c *client, conv string, e expectation, t *turnResult) []string {
 	var why []string
 	want := e.Status
 	if want == "" {
@@ -259,7 +267,7 @@ func check(c *client, e expectation, t *turnResult) []string {
 		}
 	}
 	for _, f := range e.Files {
-		if !c.fileExists(f) {
+		if !c.fileExists(conv, f) {
 			why = append(why, "missing file "+quote(f))
 		}
 	}
@@ -289,7 +297,7 @@ func check(c *client, e expectation, t *turnResult) []string {
 		why = append(why, fmt.Sprintf("%d tool calls > max %d", t.tools, *e.MaxTools))
 	}
 	for path, subs := range e.FileContains {
-		body, ferr := c.readFile(path)
+		body, ferr := c.readFile(conv, path)
 		if ferr != nil {
 			why = append(why, "cannot read "+quote(path)+": "+ferr.Error())
 			continue
@@ -363,9 +371,8 @@ func compare(prev, cur scorecard) {
 type client struct {
 	base  string
 	token string
-	// model is the selected_version every task runs on, so a suite can be scored
-	// per tier. The per-round-trip floor is ~15s on the strong tier here, which
-	// makes "which tier" the dominant cost of a multi-step task.
+	// model is the explicit selected_version; empty/auto uses the configured
+	// first model. The scorecard records this selection for comparisons.
 	model string
 }
 
@@ -393,6 +400,24 @@ func (c *client) login(email, password string) error {
 	}
 	c.token = out.Data.Token
 	return nil
+}
+
+// createConversation provisions an authenticated workspace before execution or
+// file checks. Always use the server-issued ID, including for follow-up turns.
+func (c *client) createConversation(title string) (string, error) {
+	var out struct {
+		Code int `json:"code"`
+		Data struct {
+			ConversationID string `json:"conversation_id"`
+		} `json:"data"`
+	}
+	if err := c.postJSON("/api/v1/controller/conversation/create-conversation", map[string]string{"title": title}, &out); err != nil {
+		return "", fmt.Errorf("create conversation: %w", err)
+	}
+	if out.Code != 0 || strings.TrimSpace(out.Data.ConversationID) == "" {
+		return "", fmt.Errorf("create conversation: no valid conversation returned")
+	}
+	return out.Data.ConversationID, nil
 }
 
 // turn sends one message and consumes the SSE stream to the end, tallying what
@@ -490,22 +515,22 @@ func (c *client) runVerdict(conv string) (string, int) {
 
 // clearExpected removes every file the task (and its follow-up) asserts, so
 // each run starts from a known-empty state.
-func (c *client) clearExpected(t task) {
+func (c *client) clearExpected(t task, conv string) {
 	paths := append([]string(nil), t.Expect.Files...)
 	if t.Followup != nil {
 		paths = append(paths, t.Followup.Expect.Files...)
 	}
 	for _, p := range paths {
 		var out any
-		_ = c.postJSON("/api/v1/controller/file/delete", map[string]string{"path": p}, &out)
+		_ = c.postJSON("/api/v1/controller/file/delete", map[string]string{"path": p, "conversation_id": conv}, &out)
 	}
 }
 
 // readFile fetches a produced file's content so assertions can inspect the
 // deliverable itself, not only what the agent said about it.
-func (c *client) readFile(path string) (string, error) {
+func (c *client) readFile(conv, path string) (string, error) {
 	req, _ := http.NewRequest("GET",
-		c.base+"/api/v1/controller/file/download?path="+url.QueryEscape(path), nil)
+		c.base+"/api/v1/controller/file/download?path="+url.QueryEscape(path)+"&conv="+url.QueryEscape(conv), nil)
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
@@ -521,7 +546,7 @@ func (c *client) readFile(path string) (string, error) {
 	return string(b), err
 }
 
-func (c *client) fileExists(path string) bool {
+func (c *client) fileExists(conv, path string) bool {
 	var out struct {
 		Data []struct {
 			Name string `json:"name"`
@@ -531,7 +556,7 @@ func (c *client) fileExists(path string) bool {
 	if dir == "" {
 		dir = "."
 	}
-	if c.postJSON("/api/v1/controller/file/list", map[string]string{"path": strings.TrimSuffix(dir, "/")}, &out) != nil {
+	if c.postJSON("/api/v1/controller/file/list", map[string]string{"path": strings.TrimSuffix(dir, "/"), "conversation_id": conv}, &out) != nil {
 		return false
 	}
 	for _, e := range out.Data {

@@ -34,6 +34,16 @@ func (m *ToolsManager) GetTools(ctx context.Context) ([]agent.BaseTool, error) {
 		}
 		out = append(out, ts...)
 	}
+	seen := map[string]bool{}
+	for _, t := range out {
+		if t == nil || t.Name() == "" {
+			return nil, fmt.Errorf("toolsmanager: invalid unnamed tool")
+		}
+		if seen[t.Name()] {
+			return nil, fmt.Errorf("toolsmanager: duplicate tool name %q", t.Name())
+		}
+		seen[t.Name()] = true
+	}
 	return out, nil
 }
 

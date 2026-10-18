@@ -6,6 +6,7 @@ package pathsafe
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -30,6 +31,20 @@ func Resolve(root, rel string) (string, error) {
 	}
 	if r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
 		return "", ErrEscapes
+	}
+	// Refuse symlinks in every existing component, including the root itself.
+	// Callers needing protection against concurrent renames must also use os.Root.
+	for p := joined; ; p = filepath.Dir(p) {
+		st, err := os.Lstat(p)
+		if err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+		if err == nil && st.Mode()&os.ModeSymlink != 0 {
+			return "", ErrEscapes
+		}
+		if parent := filepath.Dir(p); parent == p {
+			break
+		}
 	}
 	return joined, nil
 }
@@ -71,4 +86,34 @@ func segment(s string) string {
 	s = strings.ReplaceAll(s, "\\", "_")
 	s = strings.ReplaceAll(s, "..", "_")
 	return s
+}
+
+// SessionRoot returns a workspace for a trusted owner and conversation. Missing
+// or malformed context is an error; it must never fall back to the user root.
+func SessionRoot(base, user, conversationID string) (string, error) {
+	if strings.TrimSpace(base) == "" || strings.TrimSpace(user) == "" ||
+		user != strings.TrimSpace(user) || user == "." || strings.Contains(user, "..") || strings.ContainsAny(user, "/\\\x00") {
+		return "", fmt.Errorf("workspace requires a valid owner and storage base")
+	}
+	if conversationID == "" || len(conversationID) > 128 {
+		return "", fmt.Errorf("conversation_id required (maximum 128 characters)")
+	}
+	for _, c := range conversationID {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return "", fmt.Errorf("invalid conversation_id")
+		}
+	}
+	return Resolve(UserRoot(base, user), filepath.Join("sessions", conversationID))
+}
+
+// EnsureSession creates an empty session workspace without moving legacy files.
+func EnsureSession(base, user, conversationID string) (string, error) {
+	root, err := SessionRoot(base, user, conversationID)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(root, WorkspaceDirMode); err != nil {
+		return "", err
+	}
+	return root, nil
 }

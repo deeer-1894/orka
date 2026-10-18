@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/schema"
-
-	"github.com/orka-oss/orka_core/messages"
 )
 
 // This file gives a run a BUDGET and a DEFINITION OF DONE — the two things a
@@ -31,6 +29,11 @@ import (
 // runBudget is one run's remaining allowance. Safe for concurrent use: sub-agent
 // middlewares consult it from their own goroutines.
 type runBudget struct {
+	explicitSteps        bool
+	carriedSteps         int
+	carriedUnknownCalls  int
+	carriedUnknownTokens int
+
 	maxSteps  int // model generation cycles (0 = unlimited)
 	maxTokens int // cumulative tokens across the run (0 = unlimited)
 	deadline  time.Time
@@ -49,11 +52,17 @@ type runBudget struct {
 	// every other delegation's calls.
 	metered bool
 
-	mu     sync.Mutex
-	steps  int
-	tokens int
-	spent  int    // billed tokens reported by AddUsage; metered budgets only
-	hit    string // "" until exhausted, then steps | tokens | time
+	successfulTools int    // acknowledged work, carried in checkpoints; not semantic validation
+	lastCallError   string // exact model limit error retained with the execution state
+	mu              sync.Mutex
+	steps           int
+	tokens          int
+	usageReported   bool   // even a zero-cost completed exchange is authoritative
+	carried         int    // tokens consumed by preceding attempts
+	spent           int    // billed tokens reported by AddUsage; metered budgets only
+	reserved        int    // in-flight calls; managed by BudgetSession
+	sharedSteps     int    // logical cycles shared across branches, independent of compaction
+	hit             string // "" until exhausted, then steps | tokens | time
 }
 
 // AddUsage books one completed model call. Implements llm.UsageSink.
@@ -66,8 +75,19 @@ func (b *runBudget) AddUsage(promptTokens, completionTokens int) {
 		return
 	}
 	b.mu.Lock()
-	b.spent += promptTokens + completionTokens
+	b.spent = saturatingUsageSum(b.spent, saturatingUsageSum(promptTokens, completionTokens))
+	b.usageReported = true
 	b.mu.Unlock()
+}
+
+// usageRecorded distinguishes an unused meter from a reported zero-cost call.
+func (b *runBudget) usageRecorded() bool {
+	if b == nil {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.usageReported
 }
 
 // spentTokens reports what this budget has booked so far.
@@ -78,6 +98,18 @@ func (b *runBudget) spentTokens() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.spent
+}
+
+// totalSpentTokens is the task allowance ledger; spentTokens is this attempt's
+// bill. In-flight reservations survive checkpoint recovery conservatively as
+// committed allowance; a crashed exchange must not reopen the parent's budget.
+func (b *runBudget) totalSpentTokens() int {
+	if b == nil {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return saturatingUsageSum(b.carried, saturatingUsageSum(b.spent, b.reserved))
 }
 
 func newRunBudget(maxSteps, maxTokens int, wall time.Duration) *runBudget {
@@ -145,7 +177,12 @@ func (b *runBudget) observe(msgs []*schema.Message) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.metered {
-		tokens = b.spent
+		tokens = saturatingUsageSum(b.carried, b.spent)
+	}
+	if b.explicitSteps {
+		steps = b.sharedSteps
+	} else {
+		steps = max(steps, b.sharedSteps)
 	}
 	b.steps, b.tokens = steps, tokens
 	if b.hit != "" && b.sticky {
@@ -171,6 +208,16 @@ func (b *runBudget) exhausted() string {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	// A rejected last call still incurred usage and elapsed time. There may be
+	// no next BeforeModel observation to latch these terminal limits.
+	if b.hit == "" {
+		switch {
+		case b.metered && b.maxTokens > 0 && saturatingUsageSum(b.carried, b.spent) >= b.maxTokens:
+			b.hit = "tokens"
+		case !b.deadline.IsZero() && time.Now().After(b.deadline):
+			b.hit = "time"
+		}
+	}
 	return b.hit
 }
 
@@ -197,70 +244,12 @@ func budgetNotice(reason string) *schema.Message {
 	if why == "" {
 		why = "已达到本轮预算上限"
 	}
-	return schema.UserMessage("[系统] " + why + ",工具已停用,这是最后一次回复。\n" +
+	return runtimeUserMessage("[系统] " + why + ",工具已停用,这是最后一次回复。\n" +
 		"不要编造未完成的结论。请如实汇报:\n" +
 		"1. 已经完成了什么(附已产出的文件/结果)\n" +
 		"2. 还剩什么没做\n" +
 		"3. 若要继续,下一步应该做什么\n" +
 		"用户可以据此让你继续。")
-}
-
-// ---- plan completion ----
-
-// planTracker keeps the latest checklist the agent published via update_plan, so
-// a run can be checked against what it said it would do. Without it "done" means
-// only "the model stopped calling tools", which is not a completion signal at
-// all — it is equally true of a finished run and an abandoned one.
-type planTracker struct {
-	mu    sync.Mutex
-	steps []messages.PlanStep
-}
-
-func (p *planTracker) record(steps []messages.PlanStep) {
-	if p == nil {
-		return
-	}
-	p.mu.Lock()
-	p.steps = append([]messages.PlanStep(nil), steps...)
-	p.mu.Unlock()
-}
-
-// same reports whether steps are identical to the plan already recorded, so a
-// re-post of an unchanged checklist can be answered without spending an event.
-// An empty tracker is never "the same": the first plan of a run is always news.
-func (p *planTracker) same(steps []messages.PlanStep) bool {
-	if p == nil {
-		return false
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.steps) == 0 || len(p.steps) != len(steps) {
-		return false
-	}
-	for i := range steps {
-		if steps[i].Title != p.steps[i].Title || steps[i].Status != p.steps[i].Status {
-			return false
-		}
-	}
-	return true
-}
-
-// unfinished returns the titles of steps still pending or active. A plan the
-// agent never published yields nothing, which correctly means "no claim to
-// check" rather than "incomplete".
-func (p *planTracker) unfinished() []string {
-	if p == nil {
-		return nil
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	var out []string
-	for _, s := range p.steps {
-		if s.Status != "done" {
-			out = append(out, s.Title)
-		}
-	}
-	return out
 }
 
 // agentBudget returns the run-scoped budget when the caller installed one (so

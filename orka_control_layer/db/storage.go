@@ -87,16 +87,16 @@ func (s *Storage) EnsureIndexes(ctx context.Context) error {
 		}},
 		// messages: list a conversation's history newest-first.
 		{s.Messages, mongo.IndexModel{
-			Keys: bson.D{{Key: "conversation_id", Value: 1}, {Key: "created_at", Value: -1}},
+			Keys:    bson.D{{Key: "conversation_id", Value: 1}, {Key: "created_at", Value: -1}},
 			Options: options.Index().SetName("conv_created"),
 		}},
 		// tasks: a user's tasks newest-first.
 		{s.Tasks, mongo.IndexModel{
-			Keys: bson.D{{Key: "owner_email", Value: 1}, {Key: "created_at", Value: -1}},
+			Keys:    bson.D{{Key: "owner_email", Value: 1}, {Key: "created_at", Value: -1}},
 			Options: options.Index().SetName("owner_created"),
 		}},
 		{s.Tasks, mongo.IndexModel{
-			Keys: bson.D{{Key: "task_id", Value: 1}},
+			Keys:    bson.D{{Key: "task_id", Value: 1}},
 			Options: options.Index().SetName("task_id"),
 		}},
 		// runs: a user's run history newest-first, plus lookup by id.
@@ -122,11 +122,11 @@ func (s *Storage) EnsureIndexes(ctx context.Context) error {
 		}},
 		// conversations: a user's conversations newest-first.
 		{s.Conversations, mongo.IndexModel{
-			Keys: bson.D{{Key: "owner_email", Value: 1}, {Key: "created_at", Value: -1}},
+			Keys:    bson.D{{Key: "owner_email", Value: 1}, {Key: "created_at", Value: -1}},
 			Options: options.Index().SetName("owner_created"),
 		}},
 		{s.Conversations, mongo.IndexModel{
-			Keys: bson.D{{Key: "conversation_id", Value: 1}},
+			Keys:    bson.D{{Key: "conversation_id", Value: 1}},
 			Options: options.Index().SetName("conversation_id"),
 		}},
 		{s.Artifacts, mongo.IndexModel{
@@ -729,6 +729,16 @@ func (s *Storage) SetRunResumable(ctx context.Context, runID string, steps int) 
 		return fmt.Errorf("set run resumable: %w", err)
 	}
 	return nil
+}
+
+// ClaimRunResume atomically consumes a recovery offer, preventing two callers
+// from starting attempts against the same checkpoint.
+func (s *Storage) ClaimRunResume(ctx context.Context, runID string) (bool, error) {
+	result, err := s.Runs.UpdateOne(ctx, bson.M{"run_id": runID, "resumable": true}, bson.M{"$set": bson.M{"resumable": false}})
+	if err != nil {
+		return false, fmt.Errorf("claim run resume: %w", err)
+	}
+	return result.ModifiedCount == 1, nil
 }
 
 // ClearRunResumable drops the flag once a run's transcript has been consumed,

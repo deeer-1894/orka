@@ -59,10 +59,10 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/task/webhook/disable", a.DisableWebhook)
 
 	g.POST("/chat/run", a.ChatRun)
+	g.POST("/chat/steer", a.ChatSteer)
 	g.GET("/chat/attach", a.ChatAttach) // reconnect + replay missed SSE events
 	g.GET("/chat/active", a.ChatActive) // is a run live for this conversation? (rejoin on open)
 	g.POST("/chat/kill", a.ChatKill)
-	g.POST("/chat/steer", a.ChatSteer) // a message typed while the run is still going
 	g.POST("/internal/chat/run", a.ChatRun)
 
 	g.POST("/file/upload", a.FileUpload)
@@ -77,18 +77,28 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 
 	g.GET("/events", a.Events) // per-user SSE bus: push UI-invalidation signals
 	g.GET("/metrics", a.MetricsSnapshot)
+	g.GET("/system/status", a.SystemStatus)
 	g.GET("/models", a.ListModels)
+	g.POST("/model-profiles/get", a.GetModelProfiles)
+	g.POST("/model-profiles/save", a.SaveModelProfiles)
+	g.POST("/model-profiles/probe", a.ProbeModelProfile)
+	g.POST("/model-settings/get", a.GetModelSettings)
+	g.POST("/model-settings/save", a.SaveModelSettings)
+	g.POST("/model-settings/discover", a.DiscoverModels)
 	g.GET("/tools/catalog", a.ToolsCatalog)  // available tools + descriptions for the picker
 	g.POST("/chat/confirm", a.ConfirmAction) // approve/reject a paused risky tool call
 	g.POST("/chat/resume_run", a.ResumeRun)  // continue a run that died mid-flight
-	g.GET("/settings", a.GetSettings)        // endpoint + models, editable from the UI
+	g.GET("/settings", a.GetSettings)        // deployment endpoint + models, editable from the UI
 	g.POST("/settings", a.SaveSettings)      // persisted to the user's orka.json, applied live
 	g.POST("/settings/test", a.TestSettings) // probe an endpoint before saving it
-
-	g.POST("/chat/followups", a.Followups) // suggested next questions for a Q&A turn
+	g.POST("/chat/followups", a.Followups)   // suggested next questions for a Q&A turn
 
 	g.POST("/run/list", a.ListRuns) // execution history (run records)
 	g.POST("/run/get", a.GetRun)
+	g.GET("/run/:run_id/budget", a.GetRunBudget)
+	g.POST("/run/acceptance", a.GetAcceptance)
+	g.POST("/delivery/list", a.ListDeliveries)
+	g.GET("/delivery/download", a.DownloadDelivery)
 	g.POST("/run/rerun", a.RerunRun)
 
 	g.POST("/connector/list", a.ListConnectors) // external MCP integrations
@@ -99,6 +109,7 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/notification/list", a.ListNotifications)
 	g.POST("/notification/read", a.ReadNotifications)
 
+	g.GET("/workflows/runs/:run_id", a.WorkflowRunStatus)
 	g.POST("/workflow/list", a.ListWorkflows) // definable multi-step pipelines
 	g.POST("/workflow/create", a.CreateWorkflow)
 	g.POST("/workflow/delete", a.DeleteWorkflow)

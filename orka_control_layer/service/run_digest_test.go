@@ -31,10 +31,18 @@ func TestDigestFactsAreMechanical(t *testing.T) {
 		t.Fatalf("fact lost the path: %q", d.Facts[0])
 	}
 	if d.Learned != "" {
-		t.Fatal("buildDigest must not invent the model half; that is filled in asynchronously")
+		t.Fatal("tool-only transcript invented a finding")
 	}
 	if d.Tools != 2 {
 		t.Fatalf("tools = %d, want 2", d.Tools)
+	}
+}
+
+func TestDigestReusesDeliveredAnswerWithoutAnotherModelCall(t *testing.T) {
+	msgs := append(callAndResult("1", "web_search", `{}`, "source body"), schema.AssistantMessage("已交付的结论", nil))
+	d := buildDigest("run_1", "调研", msgs)
+	if d.Learned != "已交付的结论" {
+		t.Fatalf("learned = %q", d.Learned)
 	}
 }
 
@@ -74,32 +82,6 @@ func TestDescribeFactFallsBackToArgs(t *testing.T) {
 	long := strings.Repeat("x", 5000)
 	if got := describeFact("artifact_publish", "", long); len(got) > 300 {
 		t.Fatalf("fact line is %d chars; it would dominate the preamble", len(got))
-	}
-}
-
-func TestDigestSourceSkipsFactsAndKeepsOrder(t *testing.T) {
-	var msgs []*schema.Message
-	msgs = append(msgs, callAndResult("1", "web_search", "{}", "第一个发现")...)
-	msgs = append(msgs, callAndResult("2", "file_write", "{}", "wrote 1 bytes")...)
-	msgs = append(msgs, callAndResult("3", "fetch_url", "{}", "第二个发现")...)
-
-	src := digestSource(msgs)
-	if contains(src, "wrote 1 bytes") {
-		t.Fatal("file_write output reached the model input; it is already captured exactly")
-	}
-	i, j := strings.Index(src, "第一个发现"), strings.Index(src, "第二个发现")
-	if i < 0 || j < 0 || i > j {
-		t.Fatalf("findings are out of chronological order: %q", src)
-	}
-}
-
-func TestDigestSourceRespectsBudget(t *testing.T) {
-	var msgs []*schema.Message
-	for i := 0; i < 40; i++ {
-		msgs = append(msgs, callAndResult(itoa(i), "fetch_url", "{}", strings.Repeat("y", 3000))...)
-	}
-	if got := len(digestSource(msgs)); got > digestSourceChars+2100 {
-		t.Fatalf("source is %d chars, well past the %d budget", got, digestSourceChars)
 	}
 }
 

@@ -50,7 +50,7 @@ func TestFileTools_BackupOnOverwrite(t *testing.T) {
 	}
 
 	// Overwrite: the old content must be preserved under .orka_trash/<ts>/note.md.
-	out, err := write.Invoke(ctx, map[string]any{"path": "note.md", "content": "v2"})
+	out, err := write.Invoke(ctx, map[string]any{"path": "note.md", "content": "v2", "mode": "replace"})
 	if err != nil {
 		t.Fatal(err)
 	}

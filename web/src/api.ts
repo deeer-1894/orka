@@ -1,3 +1,4 @@
+import { clearSessionRecovery } from './lib/sessionRecovery';
 import type {
   Artifact,
   ArtifactVersion,
@@ -23,12 +24,47 @@ const TOKEN_KEY = "orka.token";
 export const auth = {
   token: () => localStorage.getItem(TOKEN_KEY) || "",
   set: (t: string) => localStorage.setItem(TOKEN_KEY, t),
-  clear: () => localStorage.removeItem(TOKEN_KEY),
+  clear: () => { clearSessionRecovery(); localStorage.removeItem(TOKEN_KEY); },
 };
 
 let unauthorizedHandler: (() => void) | null = null;
+let unauthorizedProbe: { token: string; promise: Promise<boolean> } | null = null;
 export function setOnUnauthorized(fn: () => void) {
   unauthorizedHandler = fn;
+}
+
+function expireSession(token: string) {
+  if (!token || auth.token() !== token) return;
+  auth.clear();
+  unauthorizedHandler?.();
+  toastError("登录已过期，请重新登录");
+}
+
+// A single endpoint can return 401 because its own authorization state is
+// stale. Confirm the token against /auth/me before clearing the whole app.
+async function confirmUnauthorized(path: string) {
+  const token = auth.token();
+  if (!token) return;
+  if (path === "/auth/me") {
+    expireSession(token);
+    return;
+  }
+  if (!unauthorizedProbe || unauthorizedProbe.token !== token) {
+    const probe = {
+      token,
+      promise: fetch(BASE + "/auth/me", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+        body: "{}",
+      }).then((res) => res.status === 401).catch(() => false),
+    };
+    unauthorizedProbe = probe;
+    void probe.promise.finally(() => {
+      if (unauthorizedProbe === probe) unauthorizedProbe = null;
+    });
+  }
+  const probe = unauthorizedProbe;
+  if (await probe.promise) expireSession(token);
 }
 
 function headers(json = true): Record<string, string> {
@@ -54,21 +90,17 @@ async function post<T>(path: string, body: unknown, silent = false): Promise<T> 
     throw new Error("network");
   }
   if (res.status === 401) {
-    // token missing/expired — clear it and let the app fall back to the login
-    // screen on its next render (no jarring full-page reload).
-    auth.clear();
-    unauthorizedHandler?.();
-    toastError("登录已过期，请重新登录");
+    await confirmUnauthorized(path);
     throw new Error("unauthorized");
   }
   const j = await res.json().catch(() => ({}));
   if (j && typeof j.code === "number" && j.code !== 0) {
     if (!silent) toastError(j.msg || `请求失败 (${res.status})`);
-    throw new Error(j.msg || "request failed");
+    throw Object.assign(new Error(j.msg || "request failed"), { status: res.status });
   }
-  if (res.status >= 500) {
+  if (!res.ok) {
     if (!silent) toastError("服务暂时不可用，请稍后再试");
-    throw new Error("server " + res.status);
+    throw Object.assign(new Error("server " + res.status), { status: res.status });
   }
   return (j.data ?? j) as T;
 }
@@ -82,11 +114,13 @@ async function get<T>(path: string): Promise<T> {
     throw new Error("network");
   }
   if (res.status === 401) {
-    auth.clear();
-    unauthorizedHandler?.();
+    await confirmUnauthorized(path);
     throw new Error("unauthorized");
   }
   const j = await res.json().catch(() => ({}));
+  if (!res.ok || (typeof j.code === "number" && j.code !== 0)) {
+    throw new Error(j.msg || `请求失败 (${res.status})`);
+  }
   return (j.data ?? j) as T;
 }
 
@@ -98,6 +132,8 @@ export const tools = {
 };
 
 export const chat = {
+  steer: (conversation_id: string, run_id: string, request_id: string, message: string, file_ids: string[]) =>
+    post<{ message: Message; run_id: string }>("/chat/steer", { conversation_id, run_id, request_id, message, file_ids }),
   // Approve/reject a paused side-effecting tool call.
   confirm: (id: string, approve: boolean, always = false, conversation_id = "") =>
     post<{ resolved: boolean; resumed?: boolean }>("/chat/confirm", { id, approve, always, conversation_id }),
@@ -206,13 +242,14 @@ export const api = {
   unscheduleTask: (task_id: string) => post("/task/unschedule", { task_id }),
   enableWebhook: (task_id: string) => post<{ token: string; path: string }>("/task/webhook/enable", { task_id }),
   disableWebhook: (task_id: string) => post("/task/webhook/disable", { task_id }),
-  listRuns: (filter: { conversation_id?: string; status?: string } = {}) =>
-    post<{ runs: RunRecord[] }>("/run/list", { ...filter, size: 50 }),
+  listRuns: (filter: { conversation_id?: string; status?: string; statuses?: string[]; offset?: number; size?: number } = {}) =>
+    post<{ runs: RunRecord[]; has_more?: boolean }>("/run/list", { size: 50, ...filter }),
+  getRun: (run_id: string) => post<RunRecord>("/run/get", { run_id }),
   rerunRun: (run_id: string) => post<{ status: string }>("/run/rerun", { run_id }),
   // Continue a run that died mid-flight from its surviving transcript, rather
   // than paying for the completed work a second time.
-  resumeRun: (run_id: string) =>
-    post<{ resumed: boolean; conversation_id: string; steps: number }>("/chat/resume_run", { run_id }),
+  resumeRun: (run_id: string, enabled_tools?: string[]) =>
+    post<{ resumed: boolean; conversation_id: string; steps: number }>("/chat/resume_run", { run_id, enabled_tools }),
   listFactors: (status = "") => post<{ factors: Factor[] }>("/quant/factors", { status }),
   setFactorStatus: (factor_id: string, status: string) => post<{ status: string }>("/quant/factor/status", { factor_id, status }),
   listPortfolios: () => post<{ portfolios: WeightedPortfolio[] }>("/quant/portfolios", {}),
@@ -227,11 +264,16 @@ export const api = {
   createWorkflow: (name: string, steps: WorkflowStep[]) => post<Workflow>("/workflow/create", { name, steps }),
   deleteWorkflow: (workflow_id: string) => post("/workflow/delete", { workflow_id }),
   runWorkflow: (workflow_id: string) => post<{ conversation_id: string }>("/workflow/run", { workflow_id }),
-  followups: (prompt: string, answer: string) => post<{ suggestions: string[] }>("/chat/followups", { prompt, answer }),
+  followups: (prompt: string, answer: string, selectedVersion = "auto", modelProfile = "", conversationID = "", runID = "") => post<{ suggestions: string[] }>("/chat/followups", { prompt, answer, selected_version: selectedVersion, model_profile: modelProfile, conversation_id: conversationID, run_id: runID }, true),
   listSkills: () => post<{ skills: { name: string; description: string }[] }>("/skill/list", {}),
   getSkill: (name: string) => post<{ name: string; description: string; prompt: string }>("/skill/get", { name }),
   installSkill: (url: string) => post<{ name: string }>("/skill/install", { url }),
   deleteSkill: (name: string) => post("/skill/delete", { name }),
+  runBudget: (run_id: string) => get<import("./lib/runBudget").RunBudget>(`/run/${encodeURIComponent(run_id)}/budget`),
+  runAcceptance: (run_id: string) => post<import('./lib/runEvidence').RunAcceptance>("/run/acceptance", { run_id }),
+  listDeliveries: (conversation_id: string) => post<{ deliveries: import('./lib/runEvidence').DeliverySnapshot[] }>("/delivery/list", { conversation_id }),
+  deliveryDownloadURL: (conversation_id: string, run_id: string, path: string) => `${BASE}/delivery/download?${new URLSearchParams({ conversation_id, run_id, path, token: auth.token() })}`,
+  systemStatus: () => get<SystemStatus>("/system/status"),
   metrics: async (): Promise<MetricsSnapshot> => {
     const res = await fetch(BASE + "/metrics", { headers: headers(false) });
     const j = await res.json();
@@ -242,21 +284,12 @@ export const api = {
     const j = await res.json();
     return (j.data ?? []) as { version: string; label: string; hint: string }[];
   },
-  kill: (id: string) => post("/chat/kill", { conversation_id: id, task_id: id }),
+  kill: (conversationID: string) => post("/chat/kill", { conversation_id: conversationID }),
   // active: is a run live for this conversation right now? Asked on open, so a
   // run this tab did not start (refresh, second tab, schedule, API) is rejoined
   // instead of shown as a frozen snapshot.
   active: (id: string) =>
     get<{ active: boolean; seq: number }>(`/chat/active?conversation_id=${encodeURIComponent(id)}`).catch(() => ({ active: false, seq: 0 })),
-  // steer hands a message to a run that is still going, to be injected before
-  // its next model call. Resolves false when no live run took it — the run
-  // ended in the moment between typing and sending — and the caller must then
-  // send the same text as an ordinary turn rather than dropping it. Silent:
-  // that outcome is a normal race, not something to interrupt the user with.
-  steer: (id: string, message: string) =>
-    post("/chat/steer", { conversation_id: id, task_id: id, message }, true)
-      .then(() => true)
-      .catch(() => false),
 };
 
 export type LLMSettings = {
@@ -286,53 +319,39 @@ export const settings = {
 
 export type FileVersion = { ts: string; when: number; size: number; path: string };
 
-// Each conversation has its own file workspace, so every file call names one.
-// Rather than thread it through a dozen components as a prop, the open
-// conversation is held here — the same shape as auth.token(), and the same
-// reason: it is ambient to the whole session, not an argument any one caller
-// should have to remember. An explicit `conv` still wins, which is what lets a
-// shared thread read the files of a conversation that is not the open one.
-let activeWorkspace = "";
-
-export const workspace = {
-  // set is called when the open conversation changes. "" = the account root,
-  // which is the parent of every conversation's workspace.
-  set: (id: string) => {
-    activeWorkspace = id || "";
-  },
-  current: () => activeWorkspace,
-};
-
-const ws = (conv?: string) => conv || activeWorkspace;
-const convParam = (conv?: string) => (ws(conv) ? "&conv=" + encodeURIComponent(ws(conv)) : "");
+export type FileEntry = { name: string; dir: boolean; size: number; mtime?: number };
+function fileScope(conversationID: string) {
+  if (!conversationID.trim()) throw new Error("请选择会话后再操作文件");
+  return { conversation_id: conversationID, conv: conversationID };
+}
+function fileQuery(conversationID: string) {
+  return "&" + new URLSearchParams(fileScope(conversationID)).toString();
+}
 
 export const files = {
-  list: (path: string, conv?: string) =>
-    post<{ name: string; dir: boolean; size: number; mtime?: number }[]>("/file/list", {
-      path,
-      conversation_id: ws(conv),
-    }),
-  delete: (path: string, conv?: string) => post("/file/delete", { path, conversation_id: ws(conv) }),
-  versions: (path: string, conv?: string) =>
-    post<FileVersion[]>("/file/versions", { path, conversation_id: ws(conv) }),
-  restore: (path: string, ts: string, conv?: string) =>
-    post<{ restored: string }>("/file/restore", { path, ts, conversation_id: ws(conv) }),
-  downloadURL: (path: string, conv?: string) =>
-    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}${convParam(conv)}`,
+  list: (path: string, conversationID: string, silent = false) =>
+    post<FileEntry[]>("/file/list", { path, ...fileScope(conversationID) }, silent),
+  scopedList: (path: string, conversation_id: string, silent = false) =>
+    post<FileEntry[]>("/file/list", { path, ...fileScope(conversation_id) }, silent),
+  delete: (path: string, conversation_id: string) => post("/file/delete", { path, ...fileScope(conversation_id) }),
+  versions: (path: string, conversation_id: string) => post<FileVersion[]>("/file/versions", { path, ...fileScope(conversation_id) }),
+  restore: (path: string, ts: string, conversation_id: string) => post<{ restored: string }>("/file/restore", { path, ts, ...fileScope(conversation_id) }),
+  // Every file URL is scoped to the selected conversation, including owner views.
+  downloadURL: (path: string, conv: string) =>
+    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}${fileQuery(conv)}`,
   // previewURL serves the same bytes with Content-Disposition: inline so the
   // browser renders them in-page (PDF in an <iframe>) instead of downloading.
-  previewURL: (path: string, conv?: string) =>
-    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}&inline=1${convParam(conv)}`,
-  upload: async (file: File, dir: string, onProgress?: (pct: number) => void, conv?: string) => {
+  previewURL: (path: string, conv: string) =>
+    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}&inline=1${fileQuery(conv)}`,
+  upload: async (file: File, dir: string, onProgress: ((pct: number) => void) | undefined, conversation_id: string) => {
+    fileScope(conversation_id);
     const CHUNK = 256 * 1024;
     const total = Math.max(1, Math.ceil(file.size / CHUNK));
     const uploadID = crypto.randomUUID();
     const filename = (dir ? dir.replace(/\/$/, "") + "/" : "") + file.name;
     for (let i = 0; i < total; i++) {
       const b64 = await blobToB64(file.slice(i * CHUNK, (i + 1) * CHUNK));
-      await post("/file/upload-chunk", {
-        upload_id: uploadID, filename, index: i, total, data: b64, conversation_id: ws(conv),
-      });
+      await post("/file/upload-chunk", { upload_id: uploadID, filename, index: i, total, data: b64, ...fileScope(conversation_id) });
       onProgress?.(Math.round(((i + 1) / total) * 100));
     }
     return filename;
@@ -347,3 +366,28 @@ function blobToB64(b: Blob): Promise<string> {
     r.readAsDataURL(b);
   });
 }
+
+export interface ModelSettingsData {
+  policies?: Record<string,import("./lib/modelPolicies").ModelPolicy>;
+  provider: string;
+  base_url: string;
+  api_key_set: boolean;
+  models: string[];
+  enabled: boolean;
+}
+export type ModelSettingsInput = Omit<ModelSettingsData, "api_key_set"> & { api_key?: string };
+export const modelSettings = {
+  get: () => post<ModelSettingsData>("/model-settings/get", {}),
+  save: (data: ModelSettingsInput) => post<ModelSettingsData>("/model-settings/save", data),
+  discover: (data: { provider: string; base_url: string; api_key?: string }) =>
+    post<{ models: string[]; source?: "remote" | "preset"; notice?: string }>("/model-settings/discover", data, true),
+};
+
+export const modelProfiles = {
+ get: () => post<import('./lib/modelProfiles').ModelProfiles>('/model-profiles/get', {}),
+ save: (data: {active_profile_id:string;profiles:ReturnType<typeof import('./lib/modelProfiles').profileInput>[]}) => post<import('./lib/modelProfiles').ModelProfiles>('/model-profiles/save', data),
+ discover: (data: {profile_id:string;protocol:string;provider:string;base_url:string;api_key?:string}) => post<{models:string[];source?:string;notice?:string}>('/model-settings/discover', data, true),
+ probe: (data: {profile_id:string;model:string;capabilities:import('./lib/modelProfiles').Capability[]}) => post<import('./lib/modelProfiles').ModelVerification>('/model-profiles/probe', data, true),
+};
+
+export interface SystemStatus {version:string;build_time:string;modified:boolean;started_at:string;ready:boolean;services:{name:string;status:string;detail:string}[];model_probe:string}

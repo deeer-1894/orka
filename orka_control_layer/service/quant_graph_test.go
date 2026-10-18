@@ -26,7 +26,7 @@ func TestDeterministicStagesNeedNoModel(t *testing.T) {
 	s, base := graphSvc(t)
 	s.Cfg.Storage.BaseStoragePath = base
 	owner := "graph@test.com"
-	ctx := agent.WithMeta(context.Background(), messages.Meta{UserEmail: owner})
+	ctx := agent.WithMeta(context.Background(), messages.Meta{UserEmail: owner, ConversationID: "quant-test"})
 
 	mk := func(name, expr, rationale string) Factor {
 		return Factor{Name: name, Expression: expr, Rationale: rationale, Direction: "long"}
@@ -134,7 +134,7 @@ func TestParseNumberedList(t *testing.T) {
 func TestRecallSimilarFactors(t *testing.T) {
 	base := t.TempDir()
 	owner := "recall@test.com"
-	ctx := agent.WithMeta(context.Background(), messages.Meta{UserEmail: owner})
+	ctx := agent.WithMeta(context.Background(), messages.Meta{UserEmail: owner, ConversationID: "quant-test"})
 	if err := saveFactor(base, owner, Factor{
 		FactorID: "f1", Name: "momentum_20d", Direction: "long",
 		Rationale:  "stocks with strong twenty day momentum keep outperforming",

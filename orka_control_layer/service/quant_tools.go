@@ -72,8 +72,12 @@ func (t backtestTool) Invoke(ctx context.Context, args map[string]any) (string, 
 		return `{"error":"expression required"}`, nil
 	}
 	email := agent.MetaFrom(ctx).UserEmail
-	seedQuantAssets(t.baseStorage, email)
-	root := pathsafe.UserRoot(t.baseStorage, email)
+	conv := agent.MetaFrom(ctx).ConversationID
+	root, err := pathsafe.EnsureSession(t.baseStorage, email, conv)
+	if err != nil {
+		return "", err
+	}
+	seedQuantAssets(t.baseStorage, email, conv)
 	m, source := runBacktest(ctx, root, expr, argStr(args, "horizon"))
 	out := map[string]any{
 		"expression": expr,
@@ -108,7 +112,7 @@ func (gpEvolveTool) Schema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"expression": map[string]any{"type": "string", "description": "the seed factor expression to evolve"},
+			"expression":  map[string]any{"type": "string", "description": "the seed factor expression to evolve"},
 			"generations": map[string]any{"type": "integer", "description": "GP generations (optional)"},
 		},
 		"required": []string{"expression"},
@@ -121,8 +125,12 @@ func (t gpEvolveTool) Invoke(ctx context.Context, args map[string]any) (string, 
 		return `{"error":"expression required"}`, nil
 	}
 	email := agent.MetaFrom(ctx).UserEmail
-	seedQuantAssets(t.baseStorage, email)
-	root := pathsafe.UserRoot(t.baseStorage, email)
+	conv := agent.MetaFrom(ctx).ConversationID
+	root, err := pathsafe.EnsureSession(t.baseStorage, email, conv)
+	if err != nil {
+		return "", err
+	}
+	seedQuantAssets(t.baseStorage, email, conv)
 	script := filepath.Join(root, "quant", "gp_evolve.py")
 	if fileExists(script) {
 		if out, ok := runPyJSON(ctx, root, script, "--seed-expression", seed); ok {
@@ -185,6 +193,7 @@ func runPyJSON(ctx context.Context, root, script string, args ...string) (map[st
 	defer cancel()
 	cmd := exec.CommandContext(cctx, quantPython(), append([]string{script}, args...)...)
 	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "HOME="+root)
 	outBytes, err := cmd.Output()
 	if err != nil {
 		return nil, false

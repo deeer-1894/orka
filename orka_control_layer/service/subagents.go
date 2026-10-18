@@ -2,11 +2,12 @@ package service
 
 import (
 	"github.com/orka-oss/orka_control_layer/service/middlewares"
+	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/config"
 )
 
 // This file defines the registry of sub-agents the eino orchestrator can delegate
-// to. Each spec (name, description, scoped tools, model) is turned into a native
+// to. Each spec (name, description, scoped tools) is turned into a native
 // eino sub-agent inside runEino; the orchestrator sees each as a named tool.
 
 // needInput is appended to every sub-agent prompt (built-in or user-supplied) so
@@ -37,9 +38,9 @@ const researcherPrompt = "You are a rigorous research worker. Use web_search the
 
 const writerPrompt = "You are a writing/file worker. Produce the requested document and, when asked to save it, use file_write with a plain relative filename. Return a short confirmation: what you wrote and the filename."
 
-const browserPrompt = "You are a browser-automation worker. Use run_agent to interact with web pages (navigate, click, type) and return what you found. If a page can't be reached or parsed, report what you DID observe rather than retrying endlessly."
+const browserPrompt = "You are a browser-automation worker. Use the browser tool, when available, for DOM navigation, snapshots, unique CSS selectors, page JavaScript, screenshots and downloads. Use run_agent, when available, for visual interaction or unsupported frames/popups. Both use the same browser session. Follow the enabled tools and report only what you observed. If a page can't be reached or parsed, report the failure rather than retrying endlessly."
 
-const engineerPrompt = "You are a software-engineering worker with a real terminal. Workflow: write code/config to files with file_write (plain relative paths), then run and test it with shell (e.g. `python3 app.py`, `node x.js`, `go run .`, `bash build.sh`), read outputs with file_read, and ITERATE until it works — fix errors you see in the shell output and re-run. " +
+const engineerPrompt = "You are a software-engineering worker. Only tools registered in this invocation are available. If shell/python is absent, report the actual restricted range or unavailable execution service through the orchestrator; never claim commands ran. When execution is available, workflow: write code/config to files with file_write (plain relative paths), then run and test it with shell (e.g. `python3 app.py`, `node x.js`, `go run .`, `bash build.sh`), read outputs with file_read, and ITERATE until it works — fix errors you see in the shell output and re-run. " +
 	"Keep everything inside the workspace (relative paths only). Don't install heavy dependencies unless the task needs them. " +
 	"When done, return a concise report: what you built (the files), the exact commands you ran, and the final result/output. If a command keeps failing for reasons you can't fix, report what you tried and the error rather than looping."
 
@@ -71,52 +72,73 @@ func DefaultSubAgents() []config.SubAgentConfig {
 			// file_write/file_read are what let the findings outlive the delegate:
 			// without them the reader physically cannot record anything, so every
 			// fact has to transit the orchestrator's context as prose or be lost.
-			Tools: []string{"web_search", "fetch_url", "http_request", "current_time", "file_write", "file_read"},
-			Model: "mini",
+			Tools: []string{"web_search", "fetch_url", "discover_docs", "read_section", "search_evidence", "http_request", "current_time", "file_write", "file_read"},
 		},
 		{
 			Name:        "writer",
 			Description: "Delegate producing and saving a long document (report, summary, notes). Input: a brief of what to write, the desired filename and any source material. Returns a confirmation.",
 			Prompt:      writerPrompt,
 			Tools:       []string{"file_write", "file_read", "file_list"},
-			Model:       "main",
 		},
 		{
 			Name:        "browser",
 			Description: "Delegate a multi-step browser task (log in, click, fill forms, read a JS-heavy/dynamic page) — also the fallback when web_search/fetch_url are blocked or return nothing and the info must be obtained by browsing. Input: a self-contained instruction including the URL. Returns what was observed.",
 			Prompt:      browserPrompt,
-			Tools:       []string{"run_agent"},
-			Model:       "mini",
+			Tools:       []string{"browser", "run_agent"},
 		},
 		{
 			Name:        "engineer",
 			Description: "Delegate a coding/build task that needs running code in the terminal or spans multiple files: write a script and run it, scaffold a small project, process data with code, run tests, or use git. Input: a self-contained engineering brief including any filenames. Returns the files built, commands run, and final output.",
 			Prompt:      engineerPrompt,
 			Tools:       []string{"shell", "file_write", "file_read", "file_list"},
-			Model:       "main",
 		},
 		{
 			Name:        "report_parser",
 			Description: "Delegate parsing a financial research report (PDF/HTML/MD) into its natural-language investment theses. Input: the report filename/URL. Returns a numbered list of distinct, testable investment claims.",
 			Prompt:      reportParserPrompt,
 			Tools:       []string{"pdf_extract", "fetch_url", "file_read", "file_list"},
-			Model:       "mini",
 		},
 		{
 			Name:        "factor_proposer",
 			Description: "Delegate turning investment theses into validated, backtestable quant factor specs (JSON). Input: the theses (and report id). Returns a JSON array of schema-valid factors. Self-validates with validate_factor.",
 			Prompt:      factorProposerPrompt,
 			Tools:       []string{"file_read", "validate_factor", "recall_similar_factors"},
-			Model:       "main",
 		},
 		{
 			Name:        "factor_reviewer",
 			Description: "Delegate preparing a human review sheet for proposed factors and their backtest metrics. Input: the factors + metrics. Returns a concise recommendation table (does NOT ingest).",
 			Prompt:      factorReviewerPrompt,
 			Tools:       []string{"file_read", "sql_query"},
-			Model:       "mini",
 		},
 	}
+}
+
+// deepSubAgentSpecs makes Eino's general worker explicit so it can share the
+// same run-scoped concurrency limiter as every specialist. The built-in general
+// worker is otherwise created inside Eino and cannot be wrapped.
+func deepSubAgentSpecs(tools []agent.BaseTool, specs []config.SubAgentConfig) []config.SubAgentConfig {
+	if len(specs) == 0 {
+		specs = DefaultSubAgents()
+	} else {
+		specs = append([]config.SubAgentConfig(nil), specs...)
+	}
+	for _, spec := range specs {
+		if spec.Name == "general-purpose" {
+			return specs
+		}
+	}
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		if tool != nil && tool.Name() != "" {
+			names = append(names, tool.Name())
+		}
+	}
+	return append(specs, config.SubAgentConfig{
+		Name:        "general-purpose",
+		Description: "Handle an isolated multi-step subtask that does not fit a specialist. Use only the supplied tools and return a compact evidence-based result.",
+		Prompt:      "Complete the delegated subtask autonomously with the supplied tools. Keep the result concise, cite tool receipts or files, and do not repeat work already stated in the brief.",
+		Tools:       names,
+	})
 }
 
 // OrchestratorPrompt augments the base prompt with delegation guidance so the
@@ -137,7 +159,7 @@ func DefaultSubAgents() []config.SubAgentConfig {
 // named as the mistake it is, because on this endpoint every extra round-trip
 // costs 15-25 seconds of wall clock.
 const OrchestratorPrompt = middlewares.DefaultSystemPrompt + "\n\n" +
-	"You are an ORCHESTRATOR. Sub-agents (researcher, writer, browser, engineer) appear as tools. Rules:\n" +
+	"You are an ORCHESTRATOR. Delegate through the available specialist tools (researcher, writer, delegate_browser or legacy browser, engineer). The browser tool with an action parameter is an atomic DOM tool, not a delegate. Rules:\n" +
 	"- PARALLELISE INDEPENDENT WORK. When a task splits into subtasks that do not depend on each " +
 	"other — researching three products, checking four sources, drafting several sections — delegate " +
 	"them ALL IN ONE TURN, one sub-agent per subtask. They run concurrently, so N subtasks cost about " +

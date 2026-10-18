@@ -20,6 +20,15 @@ import (
 // silently run with a publicly-known signing key.
 const DefaultDevSecret = "dev-only-change-me"
 
+// Deprecated limit constants remain source-compatible. Zero means no quota.
+const (
+	DefaultRunMaxTokens           = 0
+	DefaultRunMaxWallSeconds      = 0
+	DefaultRunMaxSteps            = 0
+	DefaultUserDailyTokens        = 0
+	DefaultUsageReservationTokens = 32_768
+)
+
 // Config is the full application configuration.
 type Config struct {
 	Server   ServerConfig   `yaml:"server"`
@@ -39,20 +48,14 @@ type ServerConfig struct {
 type LLMConfig struct {
 	OpenAIBaseURL string `yaml:"openai_base_url"`
 	OpenAIAPIKey  string `yaml:"openai_api_key"`
-	// Model and MiniModel are LEGACY. There are no longer two tiers: a
-	// deployment has one ordered list of models, the user picks one per
-	// conversation, and `auto` escalates by letting the model think MORE rather
-	// than by swapping it for a bigger one (see modelRouter).
-	//
-	// Two tiers meant two names to keep straight for one endpoint that already
-	// serves nine models, and they were never two connections — the mini client
-	// was literally `miniLLM = mainLLM`, the same client with a different name.
-	// Kept only so an existing MODEL / MINI_MODEL still starts: both fold into
-	// the front of Models, first one winning as the default.
-	Model     string `yaml:"model"`
-	MiniModel string `yaml:"mini_model"`
-	VLMModel  string `yaml:"vlm_model"`
-	MaxRetries    int    `yaml:"max_retries"` // total LLM attempts incl. first on transient 429/5xx/network (default 3)
+	Model         string `yaml:"model"`
+	// MiniModel is a deprecated compatibility alias of Model; it is never a
+	// separate selection. A deployment has one ordered list of models, the user
+	// picks one per conversation, and `auto` escalates by letting the model think
+	// MORE rather than by swapping it for a bigger one (see modelRouter).
+	MiniModel  string `yaml:"mini_model"`
+	VLMModel   string `yaml:"vlm_model"`
+	MaxRetries int    `yaml:"max_retries"` // total LLM attempts incl. first on transient 429/5xx/network (default 3)
 	// MaxTokens caps a single turn's output. 0 (the default) leaves the
 	// provider's own ceiling in place: too low a cap truncates a legitimately
 	// large single deliverable, and a 40k-character SVG file is a real answer.
@@ -89,20 +92,17 @@ type LLMConfig struct {
 	// providers do not reliably honour Reasoning. 0 = off. Skipped when the user
 	// turns deep thinking on.
 	ReasoningBudgetRunes int `yaml:"reasoning_budget_runes"`
-	// Models is the ordered list a user may pick from, FIRST being the default.
-	// Providers that host many models behind one endpoint (Ark, OpenRouter…)
-	// serve any of them from the same client — only the model NAME changes — so
-	// this is an allow-list, not a set of connections.
+	// Ordered model choices. The first is the default for Auto.
+	// Legacy Model is prepended when loading older deployment configuration.
 	Models []string `yaml:"models"`
 }
 
-// SelectableModels returns the models a request may ask for, in order, the
-// first being the default. Legacy Model / MiniModel fold into the front so an
-// existing deployment keeps working without editing anything.
+// SelectableModels returns the legacy default followed by the ordered list,
+// with whitespace/duplicates removed. MiniModel never adds an implicit choice.
 func (c LLMConfig) SelectableModels() []string {
 	out := make([]string, 0, len(c.Models)+2)
 	seen := map[string]bool{}
-	for _, m := range append([]string{c.Model, c.MiniModel}, c.Models...) {
+	for _, m := range append([]string{c.Model}, c.Models...) {
 		m = strings.TrimSpace(m)
 		if m != "" && !seen[m] {
 			seen[m] = true
@@ -122,7 +122,7 @@ func (c LLMConfig) DefaultModel() string {
 }
 
 // AllowsModel reports whether a caller may run on the named model. An empty
-// allow-list means only the configured tiers are reachable, so a request cannot
+// allow-list means only the configured default is reachable, so a request cannot
 // invent a model name and have it forwarded to the provider.
 func (c LLMConfig) AllowsModel(name string) bool {
 	for _, m := range c.SelectableModels() {
@@ -141,27 +141,36 @@ type StorageConfig struct {
 }
 
 type AgentConfig struct {
+	// Deprecated: accepted for old configuration files, ignored at runtime.
+	RunMaxTokens          int `yaml:"run_max_tokens"`
+	RunMaxWallSeconds     int `yaml:"run_max_wall_seconds"`
+	RunMaxSteps           int `yaml:"run_max_steps"`
+	RunTokenCeiling       int `yaml:"run_token_ceiling"`
+	RunWallSecondsCeiling int `yaml:"run_wall_seconds_ceiling"`
+	RunStepsCeiling       int `yaml:"run_steps_ceiling"`
+	// Fallback reservation when a caller cannot estimate its input/output cost.
+	UsageReservationTokens int `yaml:"usage_reservation_tokens"`
+	// ResearchMaxCalls bounds external research per run; zero uses the built-in limit.
+	ResearchMaxCalls int              `yaml:"research_max_calls"`
 	CheckpointTTLSec int              `yaml:"checkpoint_ttl_sec"`
 	GUIAgentWSURL    string           `yaml:"gui_agent_ws_url"`
 	MultiAgent       bool             `yaml:"multi_agent"` // expose orchestrator sub-agents the model can delegate to
 	SubAgents        []SubAgentConfig `yaml:"sub_agents"`  // optional custom registry; empty = built-in researcher/writer/browser/engineer
 	SkillsDir        string           `yaml:"skills_dir"`  // global dir of Claude-Code-style SKILL.md packages (default ./skills)
-	// UserDailyTokens caps one user's rolling 24h spend. 0 uses the built-in
-	// default. Exposed because the refusal it produces tells the user to "raise
-	// it in config", which was not true of a hardcoded constant.
+	// Deprecated: account usage is measured without a token quota.
 	UserDailyTokens int `yaml:"user_daily_tokens"`
 }
 
 // SubAgentConfig declares one orchestrator-facing sub-agent. The Name+Description
 // drive the model's delegation decision (the sub-agent appears as a tool); Tools
-// scopes which atomic tools it may use; Model picks "main" or "mini"; MaxIters
+// scopes which atomic tools it may use; MaxIters
 // caps its per-delegation tool-iteration budget.
 type SubAgentConfig struct {
 	Name        string   `yaml:"name"`
 	Description string   `yaml:"description"`
 	Prompt      string   `yaml:"prompt"`    // system prompt (a NEED_USER_INPUT hint is always appended)
 	Tools       []string `yaml:"tools"`     // atomic tool names this agent may call
-	Model       string   `yaml:"model"`     // "main" | "mini" (default "mini")
+	Model       string   `yaml:"model"`     // Deprecated: ignored; delegates inherit the run's selected model
 	MaxIters    int      `yaml:"max_iters"` // tool-iteration cap (default 12)
 }
 
@@ -185,6 +194,9 @@ func IsDev() bool {
 // missing or placeholder HMAC secret is fatal: with a known signing key an
 // attacker could forge context tokens (bypassing tool RBAC) and user sessions.
 func (c *Config) Validate() error {
+	if err := c.Agent.ValidateBudget(); err != nil {
+		return err
+	}
 	s := c.Security.CtxTokenSecret
 	if IsDev() {
 		return nil
@@ -226,8 +238,14 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("config read %q: %w", path, err)
 		}
 	}
+	if err := validateBudgetEnv(); err != nil {
+		return nil, err
+	}
 	c.applyEnv()
 	c.applyDefaults()
+	if err := c.Agent.ValidateBudget(); err != nil {
+		return nil, err
+	}
 	return &c, nil
 }
 
@@ -252,10 +270,11 @@ func (c *Config) applyEnv() {
 	envStr(&c.Storage.MongoDB, "MONGO_DB")
 	envStr(&c.Storage.RedisAddr, "REDIS_ADDR")
 	envStr(&c.Storage.BaseStoragePath, "BASE_STORAGE_PATH")
+	envInt(&c.Agent.ResearchMaxCalls, "RESEARCH_MAX_CALLS")
 	envInt(&c.Agent.CheckpointTTLSec, "CHECKPOINT_TTL_SEC")
 	envStr(&c.Agent.GUIAgentWSURL, "GUI_AGENT_WS_URL")
 	envStr(&c.Agent.SkillsDir, "SKILLS_DIR")
-	envInt(&c.Agent.UserDailyTokens, "USER_DAILY_TOKENS")
+	envInt(&c.Agent.UsageReservationTokens, "USAGE_RESERVATION_TOKENS")
 	if os.Getenv("MULTI_AGENT") == "1" {
 		c.Agent.MultiAgent = true
 	}
@@ -268,6 +287,7 @@ func (c *Config) applyEnv() {
 }
 
 func (c *Config) applyDefaults() {
+	c.Agent = c.Agent.WithBudgetDefaults()
 	setDefault(&c.Server.ControlAddr, ":8080")
 	setDefault(&c.Server.ToolsAddr, ":8090")
 	if len(c.Server.CORSAllowedHosts) == 0 {
@@ -279,8 +299,12 @@ func (c *Config) applyDefaults() {
 	setDefault(&c.Storage.BaseStoragePath, "./data/storage")
 	setDefault(&c.Agent.SkillsDir, "./skills")
 	setDefaultInt(&c.Agent.CheckpointTTLSec, 86400)
-	setDefault(&c.LLM.Model, "gpt-4o-mini")
-	setDefault(&c.LLM.MiniModel, c.LLM.Model)
+	c.LLM.Models = c.LLM.SelectableModels()
+	if len(c.LLM.Models) == 0 {
+		c.LLM.Models = []string{"gpt-4o-mini"}
+	}
+	c.LLM.Model = c.LLM.Models[0]
+	c.LLM.MiniModel = c.LLM.Model                   // old fields remain readable as aliases only
 	setDefaultInt(&c.Security.CtxTokenTTLSec, 1800) // cover long agentic runs (the MCP client binds its token at run start)
 	setDefault(&c.Obs.LogLevel, "info")
 	if c.Obs.PersistSampling == 0 {
@@ -337,4 +361,35 @@ func splitComma(s string) []string {
 		}
 	}
 	return out
+}
+
+// WithBudgetDefaults also supports callers constructing Config directly in tests
+// or embedding Orka without the YAML loader.
+func (a AgentConfig) WithBudgetDefaults() AgentConfig {
+	a.RunMaxTokens, a.RunMaxWallSeconds, a.RunMaxSteps = 0, 0, 0
+	a.RunTokenCeiling, a.RunWallSecondsCeiling, a.RunStepsCeiling = 0, 0, 0
+	a.UserDailyTokens = 0
+	setDefaultInt(&a.UsageReservationTokens, DefaultUsageReservationTokens)
+	return a
+}
+
+// Only the fallback usage estimate still has configuration semantics.
+func (a AgentConfig) ValidateBudget() error {
+	if a.UsageReservationTokens < 0 {
+		return errors.New("agent.usage_reservation_tokens must be nonnegative")
+	}
+	return nil
+}
+
+// Reject malformed fallback usage estimates; retired quota variables are ignored.
+func validateBudgetEnv() error {
+	for _, key := range []string{"USAGE_RESERVATION_TOKENS"} {
+		if value, ok := os.LookupEnv(key); ok {
+			n, err := strconv.Atoi(value)
+			if err != nil || n < 0 {
+				return fmt.Errorf("%s must be a nonnegative integer", key)
+			}
+		}
+	}
+	return nil
 }

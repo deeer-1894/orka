@@ -2,192 +2,230 @@ package service
 
 import (
 	"context"
-	"log/slog"
+	"errors"
 	"strings"
 	"sync"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
-
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/messages"
 )
 
-// steering.go — a message typed while the run is still going.
-//
-// Until now the composer simply dropped it: send() returned early on `busy`,
-// and since the textarea was never disabled you could type a full sentence,
-// press enter, and watch it vanish without a word. The only ways into a live
-// run were the ones the AGENT opened — a clarify question, or the confirm gate.
-// The user could not say anything the agent had not asked for.
-//
-// Steering makes the run listen. A message posted mid-run is held in a mailbox
-// and injected into the history right before the next model call, so it lands
-// in the CURRENT turn rather than queueing behind it: the model sees the
-// correction on its very next step and can change course while the work is
-// still in flight. That is the whole point — a correction that arrives after
-// the run finishes is not a correction, it is the next task.
-//
-// eino gives this an exact seam. BeforeModelRewriteState is the hook that runs
-// before every model call, so injection needs no change to the ADK loop and
-// cannot land halfway through one. It is installed on the ORCHESTRATOR only
-// (in runEino, alongside the model router). Sub-agents build their own chain,
-// and draining consumes — a message injected into whichever sub-agent happened
-// to call the model first would be delivered somewhere the user cannot see,
-// and only there.
+var ErrSteeringUnavailable = errors.New("当前任务尚未就绪或已结束，请保留输入并稍后重试")
 
-const (
-	// steerMaxPending caps the mailbox. Beyond this the run is not keeping up
-	// and the honest answer is to refuse the message, not to accept one the
-	// model may see far too late.
-	steerMaxPending = 8
-	// steerMaxChars bounds a single message. Steering is for corrections, not
-	// for pasting a new corpus into a run already in progress.
-	steerMaxChars = 4000
-	// steerTailRounds bounds the continuation passes. Steering lands at the
-	// run's NEXT model call, and a message sent during the final one has no next
-	// call to land in — so the run continues with it rather than dropping it.
-	// Bounded because each pass can itself be steered, and a user typing as fast
-	// as the model answers must not be able to make a run immortal.
-	steerTailRounds = 3
-	// steerPrefix marks the message as having arrived mid-run. Without it the
-	// model reads a user turn wedged between tool results as part of the
-	// original request; with it, it knows this is new information that arrived
-	// after it had already started, and that it may need to abandon what it was
-	// doing.
-	steerPrefix = "[用户在本次任务执行过程中追加的消息]\n"
-)
+// Steering changes instructions, never the active run's model, budget or grants.
+type SteeringRequest struct {
+	ConversationID string   `json:"conversation_id"`
+	RunID          string   `json:"run_id"`
+	RequestID      string   `json:"request_id"`
+	Message        string   `json:"message"`
+	FileIDs        []string `json:"file_ids"`
+}
 
-// steerBox is one run's mailbox. deliver is how an injected message reaches the
-// transcript, and is set once at run start.
-type steerBox struct {
+type steeringItem struct {
+	request SteeringRequest
+	message messages.Message
+}
+
+// One inbox belongs to one admitted execution. The same lock serializes acceptance
+// with closing, so an acknowledged message cannot fall between two executions.
+type steeringInbox struct {
 	mu      sync.Mutex
-	pending []string
-	deliver func(string)
+	closed  bool
+	pending []steeringItem
+	seen    map[string]steeringItem
+	accept  func(SteeringRequest) (messages.Message, error)
+	cancel  adk.AgentCancelFunc
+	state   []*schema.Message
 }
 
-func newSteerBox(deliver func(string)) *steerBox {
-	return &steerBox{deliver: deliver}
+func newSteeringInbox() *steeringInbox { return &steeringInbox{seen: make(map[string]steeringItem)} }
+
+func steeringFrom(ctx context.Context) *steeringInbox {
+	entry, _ := ctx.Value(executionAdmissionKey{}).(*executionEntry)
+	if entry == nil {
+		return nil
+	}
+	return entry.steering
 }
 
-// add accepts a message for the next model call. Reports false when it was not
-// accepted, which the caller must surface: the user has to learn that their
-// message is not coming, and the frontend falls back to sending it as an
-// ordinary turn.
-func (b *steerBox) add(text string) bool {
-	text = strings.TrimSpace(text)
-	if b == nil || text == "" || len([]rune(text)) > steerMaxChars {
+func (s *ChatService) Steer(ctx context.Context, owner string, req SteeringRequest) (messages.Message, error) {
+	if req.RequestID == "" || len(req.RequestID) > 128 || req.RunID == "" ||
+		(len(strings.TrimSpace(req.Message)) == 0 && len(req.FileIDs) == 0) || len(req.Message) > 64<<10 || len(req.FileIDs) > 32 {
+		return messages.Message{}, errors.New("追加消息为空或超过大小限制")
+	}
+	s.executions.mu.Lock()
+	entry := s.executions.entries[req.RunID]
+	s.executions.mu.Unlock()
+	if entry == nil || entry.parentID != "" || entry.owner != owner || entry.conversation != req.ConversationID || entry.ctx.Err() != nil {
+		return messages.Message{}, ErrSteeringUnavailable
+	}
+	if err := ctx.Err(); err != nil {
+		return messages.Message{}, err
+	}
+	return entry.steering.push(req)
+}
+
+func (i *steeringInbox) push(req SteeringRequest) (messages.Message, error) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if old, ok := i.seen[req.RequestID]; ok {
+		if old.request.Message != req.Message || strings.Join(old.request.FileIDs, "\x00") != strings.Join(req.FileIDs, "\x00") {
+			return messages.Message{}, errors.New("重复请求的内容不一致")
+		}
+		return old.message, nil
+	}
+	if i.closed || i.accept == nil {
+		return messages.Message{}, ErrSteeringUnavailable
+	}
+	if len(i.pending) >= 16 || len(i.seen) >= 128 {
+		return messages.Message{}, errors.New("追加消息过多，请等待模型处理")
+	}
+	m, err := i.accept(req)
+	if err != nil {
+		return messages.Message{}, err
+	}
+	item := steeringItem{request: req, message: m}
+	i.seen[req.RequestID] = item
+	i.pending = append(i.pending, item)
+	if i.cancel != nil {
+		// Finish the in-flight tool batch; do not cancel/replay a side effect.
+		i.cancel(adk.WithAgentCancelMode(adk.CancelAfterToolCalls))
+	}
+	return m, nil
+}
+
+func (i *steeringInbox) bind(cancel adk.AgentCancelFunc) {
+	if i == nil {
+		return
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.cancel = cancel
+}
+
+func (i *steeringInbox) close() {
+	if i == nil {
+		return
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.closed, i.cancel = true, nil
+}
+
+// Called after the iterator drains. A pending instruction must be processed
+// before terminal events; otherwise close atomically against the HTTP handler.
+func (i *steeringInbox) finish() bool {
+	if i == nil {
+		return true
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if len(i.pending) > 0 {
 		return false
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if len(b.pending) >= steerMaxPending {
-		return false
-	}
-	b.pending = append(b.pending, text)
+	i.closed, i.cancel = true, nil
 	return true
 }
 
-// drain takes everything waiting and empties the box.
-func (b *steerBox) drain() []string {
-	if b == nil {
+func (i *steeringInbox) transcript() []*schema.Message {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return append([]*schema.Message(nil), i.state...)
+}
+
+type steeringMiddleware struct {
+	*adk.BaseChatModelAgentMiddleware
+	inbox      *steeringInbox
+	service    *ChatService
+	rc         *agent.RunContext
+	restored   []messages.Message
+	restoreErr error
+}
+
+func (s *ChatService) prepareSteering(ctx context.Context, rc *agent.RunContext) *steeringMiddleware {
+	i := steeringFrom(ctx)
+	if i == nil {
 		return nil
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	out := b.pending
-	b.pending = nil
-	return out
-}
-
-// waiting reports how many messages the run has not yet shown the model. Read
-// at run end: anything still here was never seen, and saying so is the only way
-// the caller can avoid claiming a message was delivered when it was not.
-func (b *steerBox) waiting() int {
-	if b == nil {
-		return 0
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return len(b.pending)
-}
-
-// steerInjector appends the mailbox's contents to the history immediately
-// before the model is called.
-type steerInjector struct {
-	*adk.BaseChatModelAgentMiddleware
-	box *steerBox
-}
-
-func newSteerInjector(box *steerBox) *steerInjector {
-	return &steerInjector{BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{}, box: box}
-}
-
-func (m *steerInjector) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, _ *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
-	pending := m.box.drain()
-	if len(pending) == 0 || state == nil {
-		return ctx, state, nil
-	}
-	slog.Info("steer inject", "count", len(pending), "history_msgs", len(state.Messages))
-	for _, text := range pending {
-		state.Messages = append(state.Messages, schema.UserMessage(steerPrefix+text))
-		// Announce only once it is actually in the history the model is about to
-		// read. Persisting on arrival instead would let a run that ended in the
-		// meantime leave a user turn in the transcript that nothing ever saw.
-		if m.box.deliver != nil {
-			m.box.deliver(text)
+	i.mu.Lock()
+	i.accept = func(req SteeringRequest) (messages.Message, error) {
+		m := humanChat(req.Message, rc.Meta)
+		m.Payload = map[string]any{"file_ids": req.FileIDs, "request_id": req.RequestID}
+		if err := persistSteeringRequest(ctx, m); err != nil {
+			return messages.Message{}, err
 		}
+		rc.Emit(m)
+		return m, nil
+	}
+	i.mu.Unlock()
+	h := &steeringMiddleware{BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{}, inbox: i, service: s, rc: rc}
+	if runResumeFrom(ctx) != nil || resumeFrom(ctx) != nil {
+		h.restored, h.restoreErr = loadSteeringRequests(ctx)
+	}
+	return h
+}
+
+func (h *steeringMiddleware) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, _ *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
+	if h.restoreErr != nil {
+		return ctx, state, h.restoreErr
+	}
+	h.inbox.mu.Lock()
+	items := h.inbox.pending
+	h.inbox.pending = nil
+	h.inbox.mu.Unlock()
+	// Checkpoint state may precede acceptance of a steering message (for
+	// example an approval raced with submission). Recover it exactly once.
+	known := make(map[string]bool)
+	for _, m := range state.Messages {
+		if id, ok := m.Extra["orka_human_message_id"].(string); ok {
+			known[id] = true
+		}
+	}
+	for _, item := range items {
+		known[item.message.ID] = true
+	}
+	for _, m := range h.restored {
+		if known[m.ID] {
+			continue
+		}
+		known[m.ID] = true
+		req := SteeringRequest{Message: m.Content}
+		if payload, ok := m.Payload.(map[string]any); ok {
+			if paths, ok := payload["file_ids"].([]any); ok {
+				for _, p := range paths {
+					if path, ok := p.(string); ok {
+						req.FileIDs = append(req.FileIDs, path)
+					}
+				}
+			}
+		}
+		items = append(items, steeringItem{request: req, message: m})
+	}
+	h.restored = nil
+	for _, item := range items {
+		input := h.service.withAttachments(ctx, []messages.Message{item.message}, ChatRunRequest{
+			Message: item.request.Message, FileIDs: item.request.FileIDs,
+			UserEmail: h.rc.Meta.UserEmail, ConversationID: h.rc.Meta.ConversationID,
+		}, h.rc.Meta)
+		for _, m := range toEinoMessages(input) {
+			state.Messages = append(state.Messages, m)
+			journalFrom(ctx).append(m)
+		}
+	}
+	if len(items) > 0 {
+		journalFrom(ctx).flush()
 	}
 	return ctx, state, nil
 }
 
-type steerBoxKey struct{}
-
-func withSteerBox(ctx context.Context, b *steerBox) context.Context {
-	if b == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, steerBoxKey{}, b)
+func (h *steeringMiddleware) AfterModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, _ *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
+	h.inbox.mu.Lock()
+	h.inbox.state = append([]*schema.Message(nil), state.Messages...)
+	h.inbox.mu.Unlock()
+	return ctx, state, nil
 }
 
-func steerBoxFrom(ctx context.Context) *steerBox {
-	b, _ := ctx.Value(steerBoxKey{}).(*steerBox)
-	return b
-}
-
-func (s *ChatService) registerSteer(id string, box *steerBox) {
-	if id == "" {
-		return
-	}
-	s.mu.Lock()
-	if s.steers == nil {
-		s.steers = map[string]*steerBox{}
-	}
-	s.steers[id] = box
-	s.mu.Unlock()
-}
-
-func (s *ChatService) unregisterSteer(id string) {
-	s.mu.Lock()
-	delete(s.steers, id)
-	s.mu.Unlock()
-}
-
-// Steer hands a message to a live run. Reports false when there is no run to
-// hand it to, or when the run's mailbox refused it — in both cases the caller
-// should send the message as a normal turn instead of dropping it.
-func (s *ChatService) Steer(id, text string) bool {
-	s.mu.Lock()
-	box := s.steers[id]
-	s.mu.Unlock()
-	return box.add(text)
-}
-
-// steerDeliver builds the announcement hook for a run: an injected message is
-// persisted and streamed as an ordinary user turn, so it appears in the thread
-// at the point the model actually received it and survives a reload.
-func (s *ChatService) steerDeliver(rc *agent.RunContext, raw func(messages.Message), meta messages.Meta) func(string) {
-	return func(text string) {
-		s.Msg.Deliver(rc, raw, messages.Chat(messages.RoleUser, text, meta), true)
-	}
-}
+// Compile-time check: state changes use Eino's native persisted-state hook.
+var _ adk.ChatModelAgentMiddleware = (*steeringMiddleware)(nil)

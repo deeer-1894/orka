@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/cloudwego/eino/adk"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,30 +16,35 @@ import (
 	cp "github.com/orka-oss/orka_core/checkpoint"
 	"github.com/orka-oss/orka_core/config"
 	"github.com/orka-oss/orka_core/messages"
+	"github.com/orka-oss/orka_core/pathsafe"
 	"github.com/orka-oss/orka_core/trace"
 
+	"github.com/orka-oss/orka_control_layer/browsertool"
 	"github.com/orka-oss/orka_control_layer/checkpoint"
 	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_control_layer/llm"
 	"github.com/orka-oss/orka_control_layer/message_utils"
+	"github.com/orka-oss/orka_control_layer/modelsettings"
 	"github.com/orka-oss/orka_control_layer/obs"
 	"github.com/orka-oss/orka_control_layer/service/middlewares"
 )
 
 // ChatRunRequest is the /chat/run payload.
 type ChatRunRequest struct {
-	Message         string   `json:"message"`
-	ConversationID  string   `json:"conversation_id"`
-	TaskID          string   `json:"task_id"`
-	EnabledTools    []string `json:"enabled_tools"`
-	FileIDs         []string `json:"file_ids"`
-	TemplateID      string   `json:"template_id"`
-	SelectedVersion string   `json:"selected_version"`
-	ResumeKey       string   `json:"resume_key"`
-	UserEmail       string   `json:"user_email"`
-	ActiveSkill     string   `json:"active_skill"`  // user-locked skill mode (deterministic prompt injection)
-	Trigger         string   `json:"trigger"`       // manual | schedule (audit: how the run was started)
-	ConfirmRisky    bool     `json:"confirm_risky"` // gate side-effecting tools behind user approval
+	Budget          TaskBudgetRequest `json:"budget,omitempty"`
+	ModelProfile    string            `json:"model_profile,omitempty"`
+	Message         string            `json:"message"`
+	ConversationID  string            `json:"conversation_id"`
+	TaskID          string            `json:"task_id"`
+	EnabledTools    []string          `json:"enabled_tools"`
+	FileIDs         []string          `json:"file_ids"`
+	TemplateID      string            `json:"template_id"`
+	SelectedVersion string            `json:"selected_version"`
+	ResumeKey       string            `json:"resume_key"`
+	UserEmail       string            `json:"user_email"`
+	ActiveSkill     string            `json:"active_skill"`  // user-locked skill mode (deterministic prompt injection)
+	Trigger         string            `json:"trigger"`       // manual | schedule (audit: how the run was started)
+	ConfirmRisky    bool              `json:"confirm_risky"` // gate side-effecting tools behind user approval
 	// DeepThinking is the user's intent for THIS task: "on" lets the model think
 	// as much as it wants, "off" sends the configured reduction, "" follows the
 	// deployment default. Intent, not a provider field — which field a model
@@ -47,9 +52,11 @@ type ChatRunRequest struct {
 	DeepThinking string `json:"deep_thinking"`
 
 	// Internal (never bound from JSON): set when resuming an interrupted run.
-	resumeTarget string     // InterruptCtx.ID of the paused tool call
-	resumeData   any        // the user's decision, handed to that tool
-	resumeFrom   *runResume // recovered transcript of a run that died mid-flight
+	resumeCheckpoint *runCheckpoint
+	resumeTarget     string     // InterruptCtx.ID of the paused tool call
+	resumeData       any        // the user's decision, handed to that tool
+	resumeFrom       *runResume // recovered transcript of a run that died mid-flight
+	executionPolicy  *executionPolicy
 }
 
 // ToolsProvider supplies the tool set for a request and an optional cleanup
@@ -58,14 +65,17 @@ type ToolsProvider func(ctx context.Context, req ChatRunRequest) (tools []agent.
 
 // ChatService runs the end-to-end chat path.
 type ChatService struct {
-	Cfg      *config.Config
-	Main     llm.Client
-	Mini     llm.Client
-	CP       checkpoint.Store
-	Msg      *message_utils.Messenger
-	Metrics  *obs.Metrics
-	Log      *slog.Logger
-	ToolsFor ToolsProvider
+	UsageLedger   db.UsageLedger
+	ModelSettings *modelsettings.Store
+	modelClients  modelClientPool
+	followups     followupCache
+	Cfg           *config.Config
+	Client        llm.Client
+	CP            checkpoint.Store
+	Msg           *message_utils.Messenger
+	Metrics       *obs.Metrics
+	Log           *slog.Logger
+	ToolsFor      ToolsProvider
 	// InvalidateTools busts a user's cached tool connections (e.g. after they
 	// add/remove an MCP connector). Set by main when the pooled provider is wired.
 	InvalidateTools func(email string)
@@ -97,20 +107,18 @@ type ChatService struct {
 	// endpoint does not need a restart. Nil when main wired a plain client.
 	provider *llm.Swappable
 
-	mu   sync.Mutex
-	runs map[string]context.CancelFunc
-	// Mailboxes for messages typed while a run is in flight, keyed the same way
-	// as runs. Separate from runs so /chat/kill's path keeps its shape.
-	steers map[string]*steerBox
+	executions executionRegistry
 }
 
 // NewChatService builds a ChatService with sane defaults. By default it serves
-// the real local filesystem tools (per-user root) plus the GUI mock; callers may
+// the real local filesystem tools (per-session root) plus an unavailable GUI adapter; callers may
 // override ToolsFor to add MCP tools from tools_server.
-func NewChatService(cfg *config.Config, main, mini llm.Client, store checkpoint.Store, msg *message_utils.Messenger, metrics *obs.Metrics, log *slog.Logger) *ChatService {
+func NewChatService(cfg *config.Config, client llm.Client, store checkpoint.Store, msg *message_utils.Messenger, metrics *obs.Metrics, log *slog.Logger) *ChatService {
 	s := &ChatService{
-		Cfg: cfg, Main: main, Mini: mini, CP: store, Msg: msg, Metrics: metrics, Log: log,
-		runs: map[string]context.CancelFunc{},
+		Cfg: cfg, Client: client, ModelSettings: modelsettings.New(cfg.Storage.BaseStoragePath), CP: store, Msg: msg, Metrics: metrics, Log: log,
+	}
+	if cfg.Storage.BaseStoragePath == "" {
+		s.ModelSettings = nil
 	}
 	s.ToolsFor = LocalToolsProvider(cfg.Storage.BaseStoragePath)
 	if cfg != nil {
@@ -159,62 +167,27 @@ func (s *ChatService) ApplySettings(set config.SettingsLLM) config.LLMConfig {
 	return next
 }
 
-// modelFor resolves a request's selected_version to a client and model name.
-//
-// "" is the main tier and "mini" the fast one, as before. Anything else is
-// treated as an explicit model NAME: providers that host many models behind one
-// endpoint serve all of them from the same client, so picking one is a matter
-// of the name alone. Unknown names fall back to the default rather than being
-// forwarded — a request must not be able to bill an arbitrary model.
-//
-// There is one tier. "main" and "mini" are gone: they were two names for one
-// client (`miniLLM = mainLLM`) and two things to keep straight for an endpoint
-// that already fronts nine models. ModelAuto is not a model either — it runs on
-// the same one and escalates how hard it THINKS (see modelRouter), which is why
-// this can answer with a single name for every case.
-//
-// "mini" is still accepted so an in-flight request or a stored task that names
-// it keeps working; it resolves to the default like anything else.
+// modelFor resolves Auto/empty to the first deployment model and explicit
+// allowed names to themselves. Unknown legacy selections use the default.
 func (s *ChatService) modelFor(version string) (llm.Client, string) {
-	switch version {
-	case "", "mini", ModelAuto:
-		return s.Main, s.llmConf().DefaultModel()
-	}
-	if s.llmConf().AllowsModel(version) {
-		return s.Main, version
-	}
-	return s.Main, s.llmConf().DefaultModel()
-}
-
-func (s *ChatService) register(id string, cancel context.CancelFunc) {
-	s.mu.Lock()
-	s.runs[id] = cancel
-	s.mu.Unlock()
-}
-
-func (s *ChatService) unregister(id string) {
-	s.mu.Lock()
-	delete(s.runs, id)
-	s.mu.Unlock()
-}
-
-// Kill cancels a running session by id (task_id or conversation_id). Returns
-// true if a session was found. Uses channel/context cancellation, not polling.
-func (s *ChatService) Kill(id string) bool {
-	s.mu.Lock()
-	cancel, ok := s.runs[id]
-	s.mu.Unlock()
-	if ok {
-		cancel()
-	}
-	return ok
+	return s.defaultModels().modelFor(version)
 }
 
 // Run executes one chat request, streaming events through raw. It blocks until
 // the run completes, interrupts (clarify) or is cancelled. raw writes SSE frames.
 func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(messages.Message)) string {
+	if raw == nil {
+		raw = func(messages.Message) {}
+	}
+	parent, release, admissionErr := s.AdmitExecution(parent, req.UserEmail, req.ConversationID, req.TaskID)
+	if admissionErr != nil {
+		raw(taskFailed(messages.Meta{ConversationID: req.ConversationID, TaskID: req.TaskID, UserEmail: req.UserEmail}, admissionErr.Error()))
+		return db.RunFailed
+	}
+	defer release()
 	traceID := trace.NewTraceID()
 	meta := messages.Meta{
+		RunID:          ExecutionID(parent),
 		ConversationID: req.ConversationID,
 		TaskID:         req.TaskID,
 		TraceID:        traceID,
@@ -224,9 +197,6 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	runID := firstNonEmpty(req.TaskID, req.ConversationID, traceID)
-	s.register(runID, cancel)
-	defer s.unregister(runID)
 
 	if s.Metrics != nil {
 		s.Metrics.ActiveSessions.Add(1)
@@ -238,11 +208,31 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	defer hbCancel()
 	go s.heartbeat(hbCtx, meta, raw)
 
-	model, modelName := s.modelFor(req.SelectedVersion)
+	ctx, settingsErr := s.withUserModels(ctx, req.UserEmail)
+	if settingsErr != nil {
+		raw(taskFailed(meta, "模型配置无法读取，请检查模型设置。"))
+		return db.RunFailed
+	}
+	if err := s.modelsForContext(ctx).validateSelection(req.SelectedVersion); err != nil {
+		raw(taskFailed(meta, err.Error()))
+		return db.RunFailed
+	}
+	if req.ModelProfile != "" && req.ModelProfile != s.modelsForContext(ctx).profile {
+		raw(taskFailed(meta, "原请求使用的模型配置已更改，请明确选择当前配置后重新发送。"))
+		return db.RunFailed
+	}
+	meta.ModelProfile = s.modelsForContext(ctx).profile
+	ctx = s.withSelectedModel(ctx, req.SelectedVersion)
+	model, modelName := s.modelsForContext(ctx).modelFor(req.SelectedVersion)
+	policy := compileExecutionPolicy(req)
+	req.executionPolicy = &policy
 
 	// Root trace span for the whole run; tool spans (in tools-mid) nest under it.
 	spanCtx, endSpan := trace.StartSpan(trace.WithTraceID(ctx, traceID), "chat.run", map[string]string{
 		"conversation_id": req.ConversationID,
+		"execution_mode":  string(policy.Mode),
+		"deep_agent":      boolStr(policy.UseDeepAgent),
+		"strict_sources":  boolStr(policy.StrictSources),
 		"model":           modelName,
 		"runtime":         "eino",
 		"resume":          boolStr(req.ResumeKey != ""),
@@ -251,13 +241,30 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	ctx = spanCtx
 	// Local tools (e.g. artifact_publish) learn whose run they're in from ctx.
 	ctx = WithRunInfo(ctx, req.ConversationID, req.UserEmail)
+	ctx = middlewares.WithSkillOwner(ctx, s.Cfg.Storage.BaseStoragePath, req.UserEmail)
+	ctx = withExecutionPolicy(ctx, policy)
+	if policy.Mode == executionBrowser && policy.SourceVerificationOnly {
+		ctx = browsertool.WithObservationProfile(ctx, browsertool.ObservationResearch)
+	}
+	budgetCtx, session, cancelBudget, budgetErr := s.prepareRunBudget(ctx, &req)
+	if budgetErr != nil {
+		raw(taskFailed(meta, "无法开始任务："+budgetErr.Error()))
+		return db.RunFailed
+	}
+	defer cancelBudget()
+	ctx = budgetCtx
+	budget := session.Budget()
 
 	deps := PipelineDeps{LLM: model, Model: modelName, Metrics: s.Metrics}
 
-	tools, cleanup, err := s.ToolsFor(ctx, req)
-	if err != nil && s.Log != nil {
-		s.Log.Warn("tools provider degraded", "trace_id", traceID, "err", err)
+	tools, cleanup, toolsErr := s.ToolsFor(ctx, req)
+	tools = filterToolsForRequest(ctx, tools, req)
+	if toolsErr != nil && s.Log != nil {
+		s.Log.Warn("tools provider degraded", "trace_id", traceID, "err", toolsErr)
 	}
+	// Tool discovery may degrade independently of execution. In particular,
+	// a successful tool-free answer must not inherit the provider's error.
+	var err error
 	if cleanup != nil {
 		defer cleanup()
 	}
@@ -266,20 +273,17 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// A checkpoint store lets an approval PAUSE the run (persisted, resumable)
 	// rather than park a goroutine; without one the gate blocks as before.
 	ckptStore := s.checkpointStore()
-	if req.ConfirmRisky && req.Trigger != "schedule" && req.Trigger != "workflow" {
-		tools = s.wrapConfirm(tools, ckptStore != nil && req.ConversationID != "")
-	}
 
-	// Multi-agent: the orchestrator (main model) gets the atomic tools PLUS native
-	// eino sub-agents (researcher/writer/browser/engineer, mini model) it can
+	// Multi-agent: the orchestrator gets the atomic tools PLUS native
+	// eino sub-agents (researcher/writer/browser/engineer, same selected model) it can
 	// delegate to. The sub-agents are built inside runEino from the atomic tool set.
-	if s.Cfg.Agent.MultiAgent {
+	if s.deepAgentEnabled(ctx) {
 		deps.SystemPrompt = OrchestratorPrompt
 	}
 
 	// A user-locked skill deterministically injects its expert guidance into the
 	// system prompt (vs. waiting for the model to adopt it via apply_skill).
-	if sp, ok := middlewares.SkillPrompt(req.ActiveSkill); ok {
+	if sp, ok := middlewares.SkillPromptFor(ctx, req.ActiveSkill); ok {
 		base := deps.SystemPrompt
 		if base == "" {
 			base = middlewares.DefaultSystemPrompt
@@ -309,9 +313,27 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// Give this run a budget and a place to record the plan it commits to. Both
 	// are read back at finalize: a run that ran out of budget, or that left its
 	// own checklist unfinished, must not be filed as a success.
-	budget := newRunBudget(einoMaxIters, runMaxTokens, runMaxWall)
 	plan := &planTracker{}
-	rc.Ctx = llm.WithUsageSink(withPlanTracker(withBudget(rc.Ctx, budget), plan), budget)
+	if s.Cfg.Storage.BaseStoragePath != "" {
+		root, err := pathsafe.EnsureSession(s.Cfg.Storage.BaseStoragePath, req.UserEmail, req.ConversationID)
+		if err == nil {
+			rc.Ctx = withDelivery(rc.Ctx, newDeliveryTracker(root))
+		}
+	}
+	if req.resumeCheckpoint != nil {
+		restoreCheckpoint(req.resumeCheckpoint, budget, plan, deliveryFrom(rc.Ctx))
+	}
+	if req.resumeFrom != nil {
+		restoreCheckpoint(req.resumeFrom.Checkpoint, budget, plan, deliveryFrom(rc.Ctx))
+	}
+	restoreToolProgress(budget, req.resumeFrom)
+	tools = trackToolProgress(tools, budget)
+	// Count actual operations inside the approval gate, never a declined call.
+	if req.ConfirmRisky && req.Trigger != "schedule" && req.Trigger != "workflow" {
+		tools = s.wrapConfirm(tools, ckptStore != nil && req.ConversationID != "")
+	}
+	rc.Tools = tools
+	rc.Ctx = withPlanTracker(withBudget(rc.Ctx, budget), plan)
 	// Narrow the tool surface to what this run plausibly needs; find_tools opens
 	// the rest on demand. Per run, so one conversation unlocking the CSV tools
 	// does not make every other conversation pay for them.
@@ -322,14 +344,6 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// Break the tail-end spin: a run that has finished its work but cannot
 	// confirm it will otherwise repeat the same check until the budget is gone.
 	rc.Ctx = withLoopDetector(rc.Ctx, newLoopDetector())
-	// Accept messages typed while this run is in flight. Registered under the
-	// same id as the kill switch, so /chat/steer resolves a run exactly the way
-	// /chat/kill does, and registered here — before any model call — so a message
-	// sent in the first moments of a run is not refused for arriving too early.
-	steer := newSteerBox(s.steerDeliver(rc, raw, meta))
-	s.registerSteer(runID, steer)
-	defer s.unregisterSteer(runID)
-	rc.Ctx = withSteerBox(rc.Ctx, steer)
 	// The user's reasoning intent for this task, resolved per model down in the
 	// provider client.
 	rc.Ctx = llm.WithThinking(rc.Ctx, req.DeepThinking)
@@ -347,15 +361,6 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	if req.ResumeKey != "" {
 		trigger = "resume"
 	}
-	// Refuse a run that would exceed the caller's rolling cost ceiling. Checked
-	// here, after the run context exists but before any model call, so nothing is
-	// spent discovering the limit.
-	if over := s.quotaExceeded(ctx, req.UserEmail); over != "" {
-		s.Msg.Deliver(rc, raw, messages.Chat(messages.RoleAssistant, over, meta), true)
-		s.Msg.Deliver(rc, raw, messages.Task("failed", meta), true)
-		return db.RunFailed
-	}
-
 	runRecID := s.createRun(ctx, req, meta, trigger)
 	// Keep the run's record alive while it executes, so a record left at
 	// "running" reliably means "abandoned" rather than "we never cleaned up".
@@ -365,34 +370,45 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	journal := newRunJournal(s.Cfg.Storage.BaseStoragePath, runRecID, nil)
 	rc.Ctx = withRunID(withJournal(rc.Ctx, journal), runRecID)
 	if req.resumeFrom != nil {
+		journal.inherit(req.resumeFrom)
+		defer func() {
+			req.resumeFrom.Advanced = budget.spentTokens() > 0 || journal.steps() > 0
+			req.resumeFrom.Checkpoint = checkpointFrom(rc.Ctx)
+		}()
+	}
+	if req.resumeCheckpoint != nil {
+		rc.Ctx = withRunResume(rc.Ctx, &runResume{Checkpoint: req.resumeCheckpoint})
+	}
+	if req.resumeFrom != nil {
 		rc.Ctx = withRunResume(rc.Ctx, req.resumeFrom)
 	}
+	contractRunID := runRecID
+	if contractRunID == "" && s.Cfg.Storage.BaseStoragePath != "" && req.UserEmail != "" && req.ConversationID != "" {
+		contractRunID = ExecutionID(ctx)
+	}
+	rc.Ctx = withAcceptance(rc.Ctx, s.Cfg.Storage.BaseStoragePath, req.UserEmail, req.ConversationID, contractRunID)
+	journal.trackState(rc.Ctx)
 
+	ctx = rc.Ctx
+	s.prepareSteering(ctx, rc)
+	defer steeringFrom(ctx).close()
 	if req.ResumeKey != "" {
 		err = s.resume(ctx, rc, req, raw, deps, tools, model, modelName)
-		if err != nil {
-			return s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err()) // resume() already emitted the failure event
-		}
+		// All exits share finish/finalize/journal settlement, including call limits
+		// after a resumed tool has already produced useful work.
 	} else {
 		// Seed with prior turns (memory) + persist the new user message
 		// (raw=nil: persist only; the SSE echo is rendered optimistically).
 		history := s.loadChatHistory(ctx, req.ConversationID, meta)
-		// First turn → title the conversation. Set a snippet immediately (so the
-		// sidebar updates right away) then refine it with a mini LLM summary
-		// asynchronously (does not block the run, survives SSE disconnect).
+		// First turn: derive the title deterministically. A separate title model
+		// used to compete with the task model and delayed short requests.
 		if len(history) == 0 && req.ConversationID != "" && s.Msg != nil && s.Msg.Store != nil {
 			_ = s.Msg.Store.UpdateConversationTitle(ctx, req.ConversationID, titleSnippet(req.Message))
-			s.titleAsync(req.ConversationID, req.Message)
 		}
-		userMsg := messages.Chat(messages.RoleUser, req.Message, meta)
-		// Fold any uploaded attachments (text inline; images via a VLM pre-pass)
-		// into the message the model sees — the optimistic UI echo keeps the
-		// user's original text, so this context is invisible in the bubble.
-		modelMsg := userMsg
-		if extra := s.processAttachments(ctx, req); extra != "" {
-			modelMsg.Content += extra
-		}
-		rc.Messages = append(history, modelMsg)
+		userMsg := humanChat(req.Message, meta)
+		rc.Messages = append(history, userMsg)
+		s.persistPreparedAcceptance(rc, req)
+		rc.Messages = s.withAttachments(rc.Ctx, rc.Messages, req, meta)
 		s.Msg.Deliver(rc, nil, userMsg, true)
 		s.Msg.Deliver(rc, raw, messages.Task("start", meta), true)
 		// A question that needs no tools does not need an agent: measured here,
@@ -400,14 +416,12 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		// and 2.6s/651 direct, and 28% of runs make no tool calls at all. The
 		// attempt is skipped unless a free heuristic likes the request, and the
 		// model can bail out to the agent if it turns out to need tools.
-		if !s.tryFastPath(ctx, rc, req, model, modelName, raw) {
+		if !s.tryFastPath(rc.Ctx, rc, req, model, modelName, raw) || !steeringFrom(ctx).finish() {
 			err = s.runEino(ctx, rc, deps, tools, model, modelName, raw)
 			// The run stopping is not the same as the run being finished. Three
 			// things can make it keep going, and all three are the same move —
 			// append and re-enter:
 			//
-			//   - a message the user steered in during the FINAL model call, which
-			//     had no next call to land in;
 			//   - a turn the provider truncated before the model called anything;
 			//   - the model's own checklist, left unfinished.
 			//
@@ -419,17 +433,6 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 			for round := 0; round < continuationRounds; round++ {
 				if err != nil || ctx.Err() != nil || rc.Interrupt != nil {
 					break
-				}
-				// The user's own words go in as user turns, and take precedence:
-				// they may well be what makes the rest moot.
-				if left := steer.drain(); len(left) > 0 {
-					for _, text := range left {
-						m := messages.Chat(messages.RoleUser, text, meta)
-						s.Msg.Deliver(rc, raw, m, true)
-						rc.Messages = append(rc.Messages, m)
-					}
-					err = s.runEino(ctx, rc, deps, tools, model, modelName, raw)
-					continue
 				}
 				nudge := continuationNudge(rc.Ctx)
 				if nudge == "" {
@@ -444,28 +447,23 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 			}
 		}
 	}
-	// Whatever is still in the mailbox was never shown to the model — the run
-	// failed, was cancelled, paused, or outran the continuation budget. The user
-	// watched it send, so say plainly that it did not arrive. Silence here is the
-	// exact failure this replaces, just moved later.
-	for _, text := range steer.drain() {
-		s.Msg.Deliver(rc, raw, messages.Chat(messages.RoleAssistant,
-			"⚠️ 这条消息没能进入本次任务:「"+text+"」\n任务已经结束或暂停,重新发一次即可。", meta), true)
+	// Persist deterministic memory outside the response critical path. It makes
+	// no model call and survives cancellation of the request stream.
+	if t := journal.transcript(); len(t) > 0 {
+		s.digestAsync(rc.Ctx, req.ConversationID, buildDigest(runRecID, req.Message, t))
 	}
-
 	s.finish(ctx, rc, meta, req, raw, err)
 	status := s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err())
-	// Compact what this run did into the conversation's memory, BEFORE the
-	// journal is settled — the transcript is the only place the tool work exists,
-	// and a successful run is about to delete it.
-	if t := journal.transcript(); len(t) > 0 {
-		s.digestAsync(req.ConversationID, buildDigest(runRecID, req.Message, t), t)
-	}
+
 	// The journal exists to rescue a run that died with work behind it. Keep it
 	// only when both halves are true — the run ended badly AND it got far enough
 	// that resuming beats restarting — and delete it otherwise, so journals do
 	// not accumulate for every successful run.
-	s.settleJournal(runRecID, journal, status)
+	journal.trackState(rc.Ctx)
+	durable := s.settleJournal(runRecID, journal, status)
+	if req.resumeFrom != nil {
+		req.resumeFrom.SuccessorDurable = durable
+	}
 	return status
 }
 
@@ -500,7 +498,10 @@ func (s *ChatService) createRun(ctx context.Context, req ChatRunRequest, meta me
 	if s.Msg == nil || s.Msg.Store == nil || req.UserEmail == "" {
 		return ""
 	}
-	id := "run_" + messages.NewID()
+	id := ExecutionID(ctx)
+	if id == "" {
+		id = "run_" + messages.NewID()
+	}
 	r := &db.RunRecord{
 		RunID:          id,
 		TaskID:         req.TaskID,
@@ -521,37 +522,18 @@ func (s *ChatService) createRun(ctx context.Context, req ChatRunRequest, meta me
 // finalizeRun stamps a run's terminal state + execution stats. Uses a background
 // context since the request context may already be cancelled.
 func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt int64, req ChatRunRequest, runErr, ctxErr error) string {
-	status, errStr := db.RunDone, ""
-	switch {
-	case runErr == context.Canceled || ctxErr == context.Canceled:
-		status, errStr = db.RunFailed, "cancelled"
-	case runErr != nil:
-		status, errStr = db.RunFailed, runErr.Error()
-	case rc.Interrupt != nil:
-		status = db.RunPaused
+	outcome, published := rc.Vars[varPublishedRunOutcome].(runOutcome)
+	if !published {
+		outcome = assessRunOutcome(rc, runErr, ctxErr)
 	}
-	// A run that reached the end of its rope is not a success, however confident
-	// its closing paragraph reads. Two independent signals demote it: it ran out
-	// of budget, or it never finished the checklist it published. Both are only
-	// meaningful for a run that otherwise completed — a failure is already worse.
-	var budgetHit string
-	var unfinished []string
-	// With automatic routing the request no longer says which model ran, so the
-	// record has to.
-	servingModel, escalated := req.SelectedVersion, false
-	if mr, ok := rc.Vars[varModelRouter].(*modelRouter); ok {
-		servingModel, escalated = mr.chosen()
-	}
+	status, errStr := outcome.status, outcome.errorDetail
+	budgetHit, unfinished := outcome.budgetHit, outcome.unfinished
+	// A run whose LAST word was cut off mid-sentence did not finish, whatever
+	// the text reads like: one 693-second run was a single truncated turn with
+	// no tool call and no file, filed as done.
 	if status == db.RunDone && rc.Ctx != nil {
-		budgetHit = budgetFrom(rc.Ctx).exhausted()
-		unfinished = planTrackerFrom(rc.Ctx).unfinished()
-		// A run whose LAST word was cut off mid-sentence did not finish, whatever
-		// the text reads like. This was the whole of one 693-second run: a single
-		// truncated turn, no tool call, no file — filed as done.
 		if last := turnTrackerFrom(rc.Ctx).lastTurn(); last.Truncated() {
 			budgetHit = firstNonEmpty(budgetHit, "output truncated")
-		}
-		if budgetHit != "" || len(unfinished) > 0 {
 			status = db.RunPartial
 		}
 	}
@@ -560,20 +542,24 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 	}
 	now := time.Now().UnixMilli()
 	out := middlewares.Final(rc)
-	tokens := middlewares.RunTokens(rc)
-	toolCalls := middlewares.RunTools(rc)
+	stats := s.runAccounting(rc, req)
+	// With automatic routing the record has to say whether the run was
+	// escalated to deep thinking.
+	if mr, ok := rc.Vars[varModelRouter].(*modelRouter); ok {
+		_, stats.escalated = mr.chosen()
+	}
 	bg := context.Background()
 	_ = s.Msg.Store.FinalizeRun(bg, db.RunRecord{
 		RunID: runID, Status: status, Error: errStr,
-		Output: trunc(out, 400), Result: extractJSON(out), Tokens: tokens, ToolCalls: toolCalls,
+		Output: trunc(out, 400), Result: extractJSON(out), Tokens: stats.tokens, ToolCalls: stats.toolCalls,
 		FinishedAt: now, DurationMs: now - startedAt,
 		BudgetHit: budgetHit, Unfinished: unfinished,
-		Model: servingModel, Escalated: escalated,
+		Model: stats.model, Escalated: stats.escalated,
 	})
 	// Advance the scheduled-task circuit breaker. A partial run counts as a
 	// success for this purpose: it did work and stopped honestly, which is not
 	// the repeated hard failure the breaker exists to catch.
-	s.recordTaskOutcome(bg, req.TaskID, req.UserEmail, status != db.RunFailed)
+	s.recordTaskOutcome(bg, req.TaskID, req.UserEmail, status == db.RunDone)
 	// Alert on UNATTENDED failures (scheduled/webhook/rerun) — a manual failure
 	// the user is already watching on screen.
 	if status == db.RunFailed && req.Trigger != "" && req.Trigger != "manual" && req.UserEmail != "" {
@@ -658,11 +644,17 @@ func (s *ChatService) loadChatHistory(ctx context.Context, convID string, meta m
 	// work and the reason follow-up questions used to hit an amnesiac agent.
 	if ds, derr := s.Msg.Store.GetRunDigests(ctx, convID); derr == nil {
 		if pre := digestPreamble(ds); pre != "" {
-			out = append(out, messages.Chat(messages.RoleUser, pre, meta))
+			memory := messages.Chat(messages.RoleUser, pre, meta)
+			memory.Action = runtimeContextAction
+			out = append(out, memory)
 		}
 	}
 	for i := len(rows) - 1; i >= 0; i-- { // newest-first; reverse to chronological
-		out = append(out, messages.Chat(rows[i].Role, rows[i].Content, meta))
+		m := messages.Chat(rows[i].Role, rows[i].Content, meta)
+		if rows[i].Role == messages.RoleUser {
+			m.Action = humanInputAction
+		}
+		out = append(out, m)
 	}
 	return out
 }
@@ -678,6 +670,16 @@ func (s *ChatService) resume(ctx context.Context, rc *agent.RunContext, req Chat
 	if s.Metrics != nil {
 		s.Metrics.Checkpoints.Add(-1)
 	}
+	if len(c.Runtime) > 0 {
+		var saved runCheckpoint
+		if err := json.Unmarshal(c.Runtime, &saved); err != nil {
+			return fmt.Errorf("invalid runtime checkpoint: %w", err)
+		}
+		restoreCheckpoint(&saved, budgetFrom(rc.Ctx), planTrackerFrom(rc.Ctx), deliveryFrom(rc.Ctx))
+		rc.Ctx = withRunResume(rc.Ctx, &runResume{Checkpoint: &saved})
+		rc.Ctx = withAcceptance(rc.Ctx, s.Cfg.Storage.BaseStoragePath, req.UserEmail, req.ConversationID, runIDFrom(rc.Ctx))
+		journalFrom(rc.Ctx).trackState(rc.Ctx)
+	}
 	rc.Messages = c.Messages
 	rc.Cursor = c.Cursor
 	if c.Vars != nil {
@@ -688,36 +690,57 @@ func (s *ChatService) resume(ctx context.Context, rc *agent.RunContext, req Chat
 	// agent over the augmented messages (the clarify question was already recorded
 	// into the checkpoint's history before the pause).
 	if req.Message != "" {
-		um := messages.Chat(messages.RoleUser, req.Message, rc.Meta)
+		um := humanChat(req.Message, rc.Meta)
 		rc.Messages = append(rc.Messages, um)
 		s.Msg.Deliver(rc, nil, um, true)
 	}
 	rc.Interrupt = nil
+	s.persistPreparedAcceptance(rc, req)
 	return s.runEino(ctx, rc, deps, tools, model, modelName, raw)
 }
 
 // finish handles the terminal state: error, clarify interrupt, or done.
 func (s *ChatService) finish(ctx context.Context, rc *agent.RunContext, meta messages.Meta, req ChatRunRequest, raw func(messages.Message), err error) {
 	switch {
-	case err == context.Canceled || ctx.Err() == context.Canceled:
-		s.Msg.Deliver(rc, raw, taskFailed(meta, "cancelled"), true)
+	case errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled):
+		s.publishRunOutcome(ctx, rc, meta, raw, assessRunOutcome(rc, err, context.Canceled))
+	case llm.IsCallLimit(err):
+		outcome := assessRunOutcome(rc, err, ctx.Err())
+		if outcome.errorDetail == "cancelled" || errors.Is(ctx.Err(), context.Canceled) {
+			s.publishRunOutcome(ctx, rc, meta, raw, outcome)
+			return
+		}
+		notice := callLimitNotice(outcome)
+		middlewares.SetFinal(rc, notice)
+		if s.Log != nil {
+			s.Log.Warn("model call limit", "trace_id", meta.TraceID, "err", err, "status", outcome.status)
+		}
+		s.Msg.Deliver(rc, raw, messages.Chat(messages.RoleAssistant, notice, meta), true)
+		s.publishRunOutcome(ctx, rc, meta, raw, outcome)
 	case err != nil:
 		if s.Log != nil {
 			s.Log.Error("chat run failed", "trace_id", meta.TraceID, "err", err)
 		}
 		// Surface a friendly assistant message (not the raw upstream error).
 		s.Msg.Deliver(rc, raw, messages.Chat(messages.RoleAssistant, friendlyErr(err), meta), true)
-		s.Msg.Deliver(rc, raw, taskFailed(meta, err.Error()), true)
+		s.publishRunOutcome(ctx, rc, meta, raw, assessRunOutcome(rc, err, ctx.Err()))
 	case rc.Interrupt != nil && rc.Interrupt.Clarify != nil:
 		s.persistClarify(ctx, rc, meta, raw)
 	case rc.Interrupt != nil && rc.Interrupt.Reason == "confirm":
 		// Paused on a danger-tool approval. The Runner already checkpointed the
 		// run; remember what it takes to rebuild it so /chat/confirm can resume —
-		// including after a control-plane restart. No "done" task: the run is
-		// pending, not finished.
+		// including after a control-plane restart. Publish the paused outcome
+		// through the same budget/event boundary as every other completed attempt.
 		s.persistPendingConfirm(rc, req)
+		s.publishRunOutcome(ctx, rc, meta, raw, assessRunOutcome(rc, nil, ctx.Err()))
 	default:
-		s.Msg.Deliver(rc, raw, messages.Task("done", meta), true)
+		outcome := assessRunOutcome(rc, nil, ctx.Err())
+		if outcome.status == db.RunPartial {
+			notice := partialRunNotice(outcome)
+			middlewares.SetFinal(rc, notice)
+			s.Msg.Deliver(rc, raw, messages.Chat(messages.RoleAssistant, notice, meta), true)
+		}
+		s.publishRunOutcome(ctx, rc, meta, raw, outcome)
 	}
 }
 
@@ -733,6 +756,7 @@ func (s *ChatService) persistPendingConfirm(rc *agent.RunContext, req ChatRunReq
 	}
 	req.resumeTarget, req.resumeData = "", nil // never persist a stale decision
 	p.Request = req
+	p.Checkpoint = checkpointFrom(rc.Ctx)
 	savePausedRun(s.Cfg.Storage.BaseStoragePath, p)
 }
 
@@ -754,9 +778,14 @@ func (s *ChatService) ResumeConfirm(ctx context.Context, convID string, approve,
 	if !found {
 		return false
 	}
+	if err := applyResumeBudget(s.budgetConfig(), &p.Request, p.Checkpoint); err != nil {
+		raw(messages.Chat(messages.RoleAssistant, "任务预算无法恢复，确认记录已保留："+err.Error(), messages.Meta{ConversationID: convID}))
+		return true
+	}
 	dropPausedRun(s.Cfg.Storage.BaseStoragePath, convID) // one decision per pause
 
 	req := p.Request
+	req.resumeCheckpoint = p.Checkpoint
 	req.ConversationID = convID
 	req.resumeTarget = p.Target
 	req.resumeData = confirmDecision{Approve: approve, Always: always}
@@ -776,7 +805,9 @@ func (s *ChatService) ResumeConfirm(ctx context.Context, convID string, approve,
 // persistClarify saves the checkpoint and emits the clarify question.
 func (s *ChatService) persistClarify(ctx context.Context, rc *agent.RunContext, meta messages.Meta, raw func(messages.Message)) {
 	key := "cp_" + messages.NewID()
+	runtimeState, _ := json.Marshal(checkpointFrom(rc.Ctx))
 	c := &cp.Checkpoint{
+		Runtime:   runtimeState,
 		Messages:  rc.Messages,
 		Cursor:    rc.Cursor,
 		Vars:      rc.Vars,
@@ -789,7 +820,7 @@ func (s *ChatService) persistClarify(ctx context.Context, rc *agent.RunContext, 
 		if s.Log != nil {
 			s.Log.Error("save checkpoint", "trace_id", meta.TraceID, "err", err)
 		}
-		s.Msg.Deliver(rc, raw, taskFailed(meta, "failed to persist clarify checkpoint"), true)
+		s.publishRunOutcome(ctx, rc, meta, raw, assessRunOutcome(rc, fmt.Errorf("failed to persist clarify checkpoint: %w", err), ctx.Err()))
 		return
 	}
 	if s.Metrics != nil {
@@ -798,7 +829,7 @@ func (s *ChatService) persistClarify(ctx context.Context, rc *agent.RunContext, 
 	clar := *rc.Interrupt.Clarify
 	clar.ResumeKey = key
 	s.Msg.Deliver(rc, raw, messages.Clarify(clar, meta), true)
-	s.Msg.Deliver(rc, raw, messages.Task("paused", meta), true)
+	s.publishRunOutcome(ctx, rc, meta, raw, assessRunOutcome(rc, nil, ctx.Err()))
 }
 
 func (s *ChatService) heartbeat(ctx context.Context, meta messages.Meta, raw func(messages.Message)) {
@@ -819,6 +850,13 @@ func (s *ChatService) heartbeat(ctx context.Context, meta messages.Meta, raw fun
 // brittle error-string matching; the status body is only inspected for the
 // provider-specific content-moderation signal.
 func friendlyErr(err error) string {
+	if reset, exhausted := llm.QuotaExhaustion(err); exhausted {
+		notice := "模型服务账户额度已用尽，重复重试不会恢复额度。"
+		if !reset.IsZero() {
+			notice += "服务商提示重置时间：" + reset.Format("2006-01-02 15:04:05 -0700") + "。"
+		}
+		return notice + "请在额度恢复后续跑，或选择可用的模型配置。"
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "处理超时了,请重试或简化任务。"
 	}
@@ -852,65 +890,6 @@ func taskFailed(meta messages.Meta, reason string) messages.Message {
 	return m
 }
 
-// titleAsync refines the conversation title using a mini LLM summary of the
-// first message. It runs in the background with its own short-lived context so
-// it neither blocks the chat run nor dies when the SSE connection closes.
-// titleAsync refines a conversation's snippet title with a short model call.
-//
-// Off by default now (ORKA_LLM_TITLES=1 turns it on). It is a cosmetic touch-up
-// on a label the sidebar already shows, and on a reasoning model it is not
-// cheap: measured here, 374 reasoning tokens and 3.3s for one chat title, and
-// 2 of 7 attempts spent the whole 15-second deadline and then failed —
-// burning the time and falling back to the snippet anyway. Across the log,
-// titles and suggested follow-ups accounted for 40% of ALL reasoning tokens
-// spent, for work that needs none.
-func (s *ChatService) titleAsync(convID, message string) {
-	if !titlePolishEnabled() {
-		return // the snippet title already set by the caller stands
-	}
-	model, modelName := s.modelFor("mini")
-	if model == nil || s.Msg == nil || s.Msg.Store == nil {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		// A title needs no deliberation; ask for none where the model honours it.
-		resp, err := model.Chat(llm.WithThinking(llm.WithAgent(ctx, "title"), llm.ThinkingOff), llm.Request{Model: modelName, Messages: []llm.ChatMessage{
-			{Role: llm.RoleSystem, Content: "You generate a very short chat title (max 6 words) summarizing the user's first message. Reply with ONLY the title — same language as the message, no quotes, no punctuation at the end, no prefixes."},
-			{Role: llm.RoleUser, Content: message},
-		}})
-		if err != nil {
-			return // keep the snippet title
-		}
-		title := cleanTitle(resp.Content)
-		if title == "" {
-			return
-		}
-		_ = s.Msg.Store.UpdateConversationTitle(ctx, convID, title)
-	}()
-}
-
-// titlePolishEnabled reports whether the cosmetic title refinement runs.
-func titlePolishEnabled() bool {
-	v := os.Getenv("ORKA_LLM_TITLES")
-	return v == "1" || strings.EqualFold(v, "true")
-}
-
-// cleanTitle trims the model's title output to a safe single-line label.
-func cleanTitle(s string) string {
-	t := strings.TrimSpace(s)
-	t = strings.Trim(t, "\"'“”「」 \t\n")
-	if i := strings.IndexAny(t, "\n\r"); i >= 0 {
-		t = t[:i]
-	}
-	r := []rune(t)
-	if len(r) > 30 {
-		t = string(r[:30]) + "…"
-	}
-	return strings.TrimSpace(t)
-}
-
 // titleSnippet derives a short conversation title from the first message.
 func titleSnippet(msg string) string {
 	t := strings.TrimSpace(strings.ReplaceAll(msg, "\n", " "))
@@ -938,4 +917,37 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// persistPreparedAcceptance runs after real input/recovery messages are ready,
+// once per execution and before the first generation. Runtime notes and unknown
+// legacy user-role strings cannot become new task requirements.
+func (s *ChatService) persistPreparedAcceptance(rc *agent.RunContext, req ChatRunRequest) {
+	requests := preparedHumanRequests(rc, req)
+	if err := persistAcceptanceContract(rc.Ctx, requests); err != nil && s.Log != nil && runIDFrom(rc.Ctx) != "" {
+		s.Log.Warn("acceptance contract unavailable", "run_id", runIDFrom(rc.Ctx), "err", err)
+	}
+}
+func preparedHumanRequests(rc *agent.RunContext, req ChatRunRequest) []string {
+	requests := []string{}
+	seen := map[string]bool{}
+	add := func(text string) {
+		if strings.TrimSpace(text) != "" && !seen[text] {
+			seen[text] = true
+			requests = append(requests, text)
+		}
+	}
+	if req.resumeFrom != nil {
+		for _, m := range req.resumeFrom.Messages {
+			if isHumanRequest(m) {
+				add(m.Content)
+			}
+		}
+	}
+	for _, m := range rc.Messages {
+		if m.Role == messages.RoleUser && m.Action == humanInputAction {
+			add(m.Content)
+		}
+	}
+	return requests
 }

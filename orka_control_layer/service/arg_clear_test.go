@@ -36,9 +36,12 @@ func TestFileWriteArgumentPointsAtTheFileItWrote(t *testing.T) {
 	if obj["path"] != "search-lab/corpus.py" {
 		t.Errorf("path field lost; the call no longer reads as a request: %v", obj["path"])
 	}
-	body, _ := obj["content"].(string)
-	if !strings.Contains(body, "search-lab/corpus.py") || !strings.Contains(body, readFileToolName) {
-		t.Errorf("placeholder does not say how to get the content back: %q", body)
+	if _, exists := obj["content"]; exists {
+		t.Fatal("compressed history must not contain executable replacement content")
+	}
+	note, _ := obj["_orka_history"].(string)
+	if !strings.Contains(note, "search-lab/corpus.py") || !strings.Contains(note, readFileToolName) {
+		t.Errorf("history note does not explain recovery: %q", note)
 	}
 	if strings.Contains(got.Text, "return compute") {
 		t.Error("payload still in context")

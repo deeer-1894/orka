@@ -9,6 +9,19 @@
 # (unchanged TOOLS_MCP_URL). The workspace volume is shared so files the agent
 # writes in the container appear for the host file API and vice-versa.
 services:
+  # Bridge only the browser's outbound TCP connection to the host egress
+  # proxy. The GUI container stays on the normal isolated Docker network.
+  browser-proxy-bridge:
+    image: alpine/socat:1.8.0.1
+    container_name: orka-browser-proxy-bridge
+    network_mode: host
+    command:
+      - "TCP-LISTEN:${BROWSER_RELAY_PORT:-17877},bind=${BROWSER_RELAY_BIND:-172.17.0.1},fork,reuseaddr,keepalive"
+      - "TCP:${BROWSER_HOST_PROXY_HOST:-127.0.0.1}:${BROWSER_HOST_PROXY_PORT:-7877}"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
   tools:
     build:
       context: .
@@ -20,6 +33,10 @@ services:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     image: orka-tools
     container_name: orka-tools
+    # Reap orphaned command descendants after timeout/process-group cleanup.
+    init: true
+    # Match the owner of the host bind-mounted workspace.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     ports:
       - "127.0.0.1:8090:8090"
     volumes:
@@ -28,7 +45,8 @@ services:
     environment:
       # Must match the control layer so the HMAC context token validates.
       - CTX_TOKEN_SECRET=${CTX_TOKEN_SECRET:?set CTX_TOKEN_SECRET}
-      - SHELL_TOOL=1
+      - CODE_EXECUTION=${CODE_EXECUTION:-0}
+      - CODE_SANDBOX_MODE=bwrap
       - TOOLS_ADDR=:8090
       - BASE_STORAGE_PATH=/workspace
       - LOG_LEVEL=${LOG_LEVEL:-info}
@@ -44,16 +62,17 @@ services:
     # Tighten the container: drop privileges, no new privileges via setuid.
     security_opt:
       - no-new-privileges:true
+      - seccomp=./tools_server/security/seccomp-bwrap.json
+    cap_drop:
+      - ALL
     # Cap resources so a runaway command can't exhaust the host.
     mem_limit: 2g
     pids_limit: 256
 
-  # The GUI executor backing the run_agent tool: a headful Chromium driven by
-  # Playwright on a virtual X display, streamed live over noVNC. The control
-  # layer (on the host) reaches it at ws://localhost:8100 (GUI_AGENT_WS_URL);
-  # the live browser view is at http://localhost:6080/vnc.html. Planner runs in
-  # `llm` mode — numbered DOM elements go to a TEXT model (MiMo), so no separate
-  # vision model is needed.
+  # GUI execution receives a frozen, verified per-run model connection from
+  # the control service. No provider credential is loaded from this container.
+  # noVNC is a loopback-only administrator debugging surface; product users
+  # receive only their own run's screenshot/action events.
   gui:
     build:
       context: ./gui_agent
@@ -63,16 +82,24 @@ services:
     ports:
       - "127.0.0.1:8100:8100" # WebSocket exec API (run_agent)
       - "127.0.0.1:6080:6080" # noVNC live browser view
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - browser-proxy-bridge
     environment:
       - GUI_PORT=8100
-      - GUI_PLANNER=llm # text Set-of-Marks: any chat model can click/type
-      - VLM_ENABLE=0
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:?set OPENAI_BASE_URL}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:?set OPENAI_API_KEY}
-      - MODEL=${MODEL:-mimo-v2.5-pro}
-      # Optional shared secret; when set, the control layer must send the same
-      # GUI_AUTH_TOKEN. Left empty in dev (port is bound to 127.0.0.1 only).
-      - GUI_AUTH_TOKEN=${GUI_AUTH_TOKEN:-}
+      - GUI_PLANNER=${GUI_PLANNER:-vlm}
+      - MACRO_ENABLE=0
+      - GUI_AUTH_TOKEN=${GUI_AUTH_TOKEN:?set GUI_AUTH_TOKEN}
+      # Playwright does not automatically inherit the host proxy. Without this,
+      # Chromium waits for its full navigation timeout on otherwise reachable
+      # sites while the control layer can access them normally.
+      - BROWSER_PROXY_SERVER=${BROWSER_PROXY_SERVER:-http://host.docker.internal:17877}
+      - BROWSER_PROXY_BYPASS=${BROWSER_PROXY_BYPASS:-}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - ALL_PROXY=${ALL_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1}
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true

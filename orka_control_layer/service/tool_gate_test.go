@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/adk"
@@ -241,5 +243,112 @@ func TestGateSearchFallbackIsBounded(t *testing.T) {
 	}
 	if got := len(g.search("file zzz")); got > 4 {
 		t.Fatalf("a vague query unlocked %d tools", got)
+	}
+}
+
+func TestFindToolsExplicitReportNameAvoidsUnrelatedSchemas(t *testing.T) {
+	g := newToolGate()
+	g.all = []*schema.ToolInfo{
+		{Name: "backtest", Desc: "backtest CSV report"},
+		{Name: "chart", Desc: "render chart CSV"},
+		{Name: "csv_join", Desc: "join CSV files"},
+		{Name: "render_report", Desc: "render report markdown from CSV bindings and a template"},
+	}
+	g.unlock([]string{"chart"})
+	ctx := withToolGate(context.Background(), g)
+	out, err := (findTools{}).Invoke(ctx, map[string]any{"query": "render_report CSV bindings template placeholder render report markdown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(out, "已启用 1 个工具") || !contains(out, "- render_report:") {
+		t.Fatalf("explicit name enabled unrelated schemas: %s", out)
+	}
+	got := names(g.visible())
+	if len(got) != 2 || !got["chart"] || !got["render_report"] {
+		t.Fatalf("activation lost prior unlock or added unrelated tools: %v", got)
+	}
+}
+
+func TestGateSearchExplicitNamesAndFuzzyBoundaries(t *testing.T) {
+	g := newToolGate()
+	g.all = []*schema.ToolInfo{
+		nil,
+		{Name: "render_report", Desc: "CSV report template"},
+		{Name: "csv_join", Desc: "CSV join"},
+		{Name: "shell", Desc: "execute commands"},
+		{Name: "python", Desc: "execute code"},
+		{Name: "chart", Desc: "plot"},
+		{Name: "backtest", Desc: "chart results"},
+		{Name: "mcp.render_report", Desc: "remote renderer"},
+	}
+	for _, tc := range []struct {
+		query string
+		want  []string
+	}{
+		{"render_report CSV bindings template placeholder", []string{"render_report"}},
+		{"Use `render_report`, (csv_join); render_report", []string{"csv_join", "render_report"}},
+		{"  RENDER_REPORT  ", []string{"render_report"}},
+		{"shell", []string{"shell"}},
+		{"python", []string{"python"}},
+		{"chart", []string{"chart"}},
+		{"mcp.render_report", []string{"mcp.render_report"}},
+		{"shell python CSV", []string{"csv_join", "render_report"}},
+		{"render_report_v2 CSV", []string{"csv_join", "render_report"}},
+		{"prerender_report CSV", []string{"csv_join", "render_report"}},
+		{"render_report-extra CSV", []string{"csv_join", "render_report"}},
+		{"unknown_tool CSV", []string{"csv_join", "render_report"}},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			var got []string
+			for _, ti := range g.search(tc.query) {
+				got = append(got, ti.Name)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("search(%q)=%v want %v", tc.query, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestGateExplicitNamesRespectScopeAndSharedUnlocks(t *testing.T) {
+	parent := newToolGate()
+	parent.remember(infos("render_report", "csv_join", "pdf_extract"))
+	parent.unlock([]string{"pdf_extract"})
+	worker := &toolGate{mu: parent.mu, unlocked: parent.unlocked, all: infos("csv_join", "pdf_extract")}
+	ctx := withToolGate(context.Background(), worker)
+	out, err := (findTools{}).Invoke(ctx, map[string]any{"query": "render_report csv_join"})
+	if err != nil || !contains(out, "已启用 1 个工具") || contains(out, "render_report") {
+		t.Fatalf("scope leaked: %s %v", out, err)
+	}
+	for _, g := range []*toolGate{parent, worker} {
+		got := names(g.visible())
+		if len(got) != 2 || !got["pdf_extract"] || !got["csv_join"] {
+			t.Fatalf("shared unlock changed: %v", got)
+		}
+	}
+	if hits := worker.search("pdf_extract CSV"); len(hits) != 1 || hits[0].Name != "pdf_extract" {
+		t.Fatalf("already-unlocked explicit name lost: %v", hits)
+	}
+}
+
+func TestExecutionDiscoveryDoesNotSuggestUnrelatedToolsWhenDisabled(t *testing.T) {
+	g := newToolGate()
+	g.remember(infos("find_tools", "calculator", "file_write", "hash_text"))
+	ctx := withToolGate(context.Background(), g)
+	for _, query := range []string{"python", "execute python code", "run scripts"} {
+		got, err := (findTools{}).Invoke(ctx, map[string]any{"query": query})
+		if err != nil || !strings.Contains(got, "无须逐项勾选") || strings.Contains(got, "已启用") {
+			t.Fatalf("%s: %s %v", query, got, err)
+		}
+	}
+	for _, ti := range g.visible() {
+		if ti.Name == "find_tools" && !strings.Contains(ti.Desc, "Code execution") {
+			t.Fatal("missing capability silently hidden")
+		}
+	}
+	g.all = append(g.all, infos("python")...)
+	got, err := (findTools{}).Invoke(ctx, map[string]any{"query": "python"})
+	if err != nil || !strings.Contains(got, "已启用 1") {
+		t.Fatal(got, err)
 	}
 }

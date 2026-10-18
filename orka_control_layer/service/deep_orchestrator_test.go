@@ -22,7 +22,7 @@ func deepTestTools() []agent.BaseTool {
 // One tool per specialist is what left "read that file and check X" with nothing
 // to delegate to, and the orchestrator doing 120 of its 124 calls itself.
 func TestSubAgentsBuildAsAgents(t *testing.T) {
-	subs, err := BuildEinoSubAgents(context.Background(), nil, "main", nil, "mini", deepTestTools(), nil)
+	subs, err := BuildEinoSubAgents(context.Background(), nil, "main", deepTestTools(), nil)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestSubAgentsBuildAsAgents(t *testing.T) {
 		}
 	}
 	// And the tool-shaped view still works, for the AgentTool orchestrator.
-	tools, err := BuildEinoSubAgentTools(context.Background(), nil, "main", nil, "mini", deepTestTools(), nil)
+	tools, err := BuildEinoSubAgentTools(context.Background(), nil, "main", deepTestTools(), nil)
 	if err != nil {
 		t.Fatalf("tool view: %v", err)
 	}
@@ -53,8 +53,7 @@ func TestSubAgentsBuildAsAgents(t *testing.T) {
 // config yields an error the caller turns into "no multi-agent" rather than a
 // crash, and the run then behaves like a plain agent for reasons nobody sees.
 func TestDeepOrchestratorBuilds(t *testing.T) {
-	ag, err := BuildEinoDeepOrchestrator(context.Background(), nil, "main", nil, "mini",
-		"you are a test orchestrator", deepTestTools(), nil, einoMaxIters, false)
+	ag, err := BuildEinoDeepOrchestrator(context.Background(), nil, "main", "you are a test orchestrator", deepTestTools(), nil, einoMaxIters, false)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -72,15 +71,14 @@ func TestDeepOrchestratorHonoursCustomRegistry(t *testing.T) {
 	specs := []config.SubAgentConfig{
 		{Name: "analyst", Description: "d", Tools: []string{"file_read"}, Model: "mini"},
 	}
-	subs, err := BuildEinoSubAgents(context.Background(), nil, "main", nil, "mini", deepTestTools(), specs)
+	subs, err := BuildEinoSubAgents(context.Background(), nil, "main", deepTestTools(), specs)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
 	if len(subs) != 1 || subs[0].Name(context.Background()) != "analyst" {
 		t.Fatalf("custom registry ignored: %d delegates", len(subs))
 	}
-	if _, err := BuildEinoDeepOrchestrator(context.Background(), nil, "main", nil, "mini",
-		"i", deepTestTools(), specs, einoMaxIters, false); err != nil {
+	if _, err := BuildEinoDeepOrchestrator(context.Background(), nil, "main", "i", deepTestTools(), specs, einoMaxIters, false); err != nil {
 		t.Fatalf("build with custom registry: %v", err)
 	}
 }
@@ -92,7 +90,7 @@ func TestDeepOrchestratorDropsUnbackedDelegates(t *testing.T) {
 		{Name: "ghost", Description: "d", Tools: []string{"nonexistent_tool"}, Model: "mini"},
 		{Name: "real", Description: "d", Tools: []string{"file_read"}, Model: "mini"},
 	}
-	subs, err := BuildEinoSubAgents(context.Background(), nil, "main", nil, "mini", deepTestTools(), specs)
+	subs, err := BuildEinoSubAgents(context.Background(), nil, "main", deepTestTools(), specs)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

@@ -37,12 +37,14 @@ const (
 
 // Meta is carried on every message for routing, persistence and tracing.
 type Meta struct {
+	RunID          string `json:"run_id,omitempty" bson:"run_id,omitempty"`
+	ModelProfile   string `json:"model_profile,omitempty" bson:"model_profile,omitempty"` // opaque configuration revision; never a credential
 	ConversationID string `json:"conversation_id" bson:"conversation_id"`
 	TaskID         string `json:"task_id" bson:"task_id"`
 	ModelVersion   string `json:"model_version,omitempty" bson:"model_version,omitempty"`
-	TraceID        string `json:"trace_id" bson:"trace_id"`                             // links one request end-to-end
-	UserEmail      string `json:"user_email,omitempty" bson:"user_email,omitempty"`     // identity for trace/isolation
-	AgentID        string `json:"agent_id,omitempty" bson:"agent_id,omitempty"`         // which (sub-)agent emitted this; "" = orchestrator
+	TraceID        string `json:"trace_id" bson:"trace_id"`                                   // links one request end-to-end
+	UserEmail      string `json:"user_email,omitempty" bson:"user_email,omitempty"`           // identity for trace/isolation
+	AgentID        string `json:"agent_id,omitempty" bson:"agent_id,omitempty"`               // which (sub-)agent emitted this; "" = orchestrator
 	ParentAgentID  string `json:"parent_agent_id,omitempty" bson:"parent_agent_id,omitempty"` // the agent that delegated to AgentID
 }
 
@@ -114,7 +116,6 @@ func ReasoningDelta(content string, meta Meta) Message {
 	return m
 }
 
-
 // Tool builds a tool-event message.
 func Tool(action string, payload any, meta Meta) Message {
 	m := New(EventTool, RoleTool, meta)
@@ -146,11 +147,14 @@ func Confirm(c ConfirmRequest, meta Meta) Message {
 }
 
 // PlanStep is one item in the agent's declared task checklist. Status is one of
-// "pending" | "active" | "done" so the UI can show real per-step progress
+// "pending" | "active" | "blocked" | "done" so the UI can show real per-step progress
 // instead of an all-or-nothing list.
 type PlanStep struct {
-	Title  string `json:"title"`
-	Status string `json:"status"`
+	ID          string   `json:"id,omitempty"`
+	Title       string   `json:"title"`
+	Status      string   `json:"status"`
+	Reason      string   `json:"reason,omitempty"`
+	EvidenceIDs []string `json:"evidence_ids,omitempty"`
 }
 
 // PlanUpdate is the payload of an EventPlan message: the agent's current plan and

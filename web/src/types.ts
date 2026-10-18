@@ -18,7 +18,9 @@ export interface Meta {
   conversation_id: string;
   task_id: string;
   model_version?: string;
+  model_profile?: string; // opaque provider configuration revision for auxiliary requests
   trace_id: string;
+  run_id?: string; // execution identity; legacy messages may only have trace_id
   user_email?: string;
   agent_id?: string;
   parent_agent_id?: string;
@@ -48,15 +50,18 @@ export interface ConfirmPayload {
   summary: string;
 }
 
-export type PlanStepStatus = "pending" | "active" | "done";
+export type PlanStepStatus = "pending" | "active" | "done" | "blocked";
 
 export interface PlanStep {
   title: string;
   status: PlanStepStatus;
+  reason?: string;
+  evidence_ids?: string[];
 }
 
 export interface PlanPayload {
   steps: PlanStep[];
+  outputs?: string[];
 }
 
 export interface ToolPayload {
@@ -64,6 +69,7 @@ export interface ToolPayload {
   args?: Record<string, unknown>;
   result?: string;
   error?: string;
+  elapsed_ms?: number; // measured tool duration, when supplied by the server
 }
 
 export interface WeatherCardData {

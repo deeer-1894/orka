@@ -8,6 +8,7 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
 	"github.com/orka-oss/orka_core/config"
+	"github.com/orka-oss/tools_server/runner"
 	"github.com/orka-oss/tools_server/server"
 )
 
@@ -27,6 +28,10 @@ func main() {
 	var blacklist []string
 	if v := os.Getenv("TOOLS_BLACKLIST"); v != "" {
 		blacklist = strings.Split(v, ",")
+	}
+
+	if runner.FromEnv().Mode == "unsafe-dev" {
+		log.Print("WARNING: CODE_SANDBOX_MODE=unsafe-dev disables process filesystem/network isolation; trusted local development only")
 	}
 
 	gw := server.New(server.Config{

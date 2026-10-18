@@ -69,8 +69,8 @@ func TestConversationSurvivesTheRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	if got.Conversation != "conv-a" {
-		t.Fatalf("conversation = %q, want conv-a", got.Conversation)
+	if got.ConversationID != "conv-a" {
+		t.Fatalf("conversation = %q, want conv-a", got.ConversationID)
 	}
 }
 
@@ -99,7 +99,7 @@ func TestATokenWithoutAConversationIsStillValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	if got.Conversation != "" {
-		t.Fatalf("conversation = %q, want empty", got.Conversation)
+	if got.ConversationID != "" {
+		t.Fatalf("conversation = %q, want empty", got.ConversationID)
 	}
 }

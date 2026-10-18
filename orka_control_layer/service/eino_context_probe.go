@@ -81,6 +81,7 @@ func (p *ctxProbe) BeforeModelRewriteState(ctx context.Context, state *adk.ChatM
 	if !p.st.seen {
 		return ctx, state, nil // post without a pre: nothing to compare against
 	}
+	threshold := reductionProfileFor(ctx).clearAboveTokens
 	// Reported together so one line answers "how big was it, what did reduction
 	// take, and how far is that from the threshold that would have taken more".
 	slog.Default().Info("ctx probe",
@@ -88,8 +89,8 @@ func (p *ctxProbe) BeforeModelRewriteState(ctx context.Context, state *adk.ChatM
 		"msgs_pre", p.st.preMsgs, "msgs_post", msgs,
 		"tok_pre", p.st.preTok, "tok_post", tok,
 		"tok_reclaimed", p.st.preTok-tok,
-		"clear_threshold", int64(clearAboveTokens),
-		"pct_of_threshold", pct(p.st.preTok, clearAboveTokens),
+		"clear_threshold", int64(threshold),
+		"pct_of_threshold", pct(p.st.preTok, threshold),
 		"tools_schema_tok", schemaTokens(state.ToolInfos),
 		"biggest_tool_msg_tok", biggest, "biggest_tool", biggestName,
 	)

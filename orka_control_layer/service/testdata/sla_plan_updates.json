@@ -1,0 +1,220 @@
+[
+  {
+    "outputs": [
+      "outputs/clean_tickets.csv",
+      "outputs/exceptions.csv",
+      "outputs/sla_summary.csv",
+      "outputs/audit.py",
+      "outputs/dashboard.html",
+      "outputs/report.md",
+      "outputs/sources.json"
+    ],
+    "steps": [
+      {
+        "status": "active",
+        "title": "读取完整 inputs/tickets.csv 并理解数据"
+      },
+      {
+        "status": "pending",
+        "title": "实现清洗+SLA计算逻辑 audit.py（标准库）"
+      },
+      {
+        "status": "pending",
+        "title": "运行 audit.py 生成三个CSV并写入clean_tickets等"
+      },
+      {
+        "status": "pending",
+        "title": "编写独立验证脚本校验一致性/边界"
+      },
+      {
+        "status": "pending",
+        "title": "生成 dashboard.html 与 report.md"
+      },
+      {
+        "status": "pending",
+        "title": "研究 GitHub/GitLab Issues API 文档并生成 sources.json"
+      },
+      {
+        "status": "pending",
+        "title": "在子目录复跑 audit.py 比对输出并完成验收"
+      }
+    ]
+  },
+  {
+    "steps": [
+      {
+        "status": "done",
+        "title": "读取完整 inputs/tickets.csv 并理解数据"
+      },
+      {
+        "status": "active",
+        "title": "实现清洗+SLA计算逻辑 audit.py（标准库）"
+      },
+      {
+        "status": "pending",
+        "title": "运行 audit.py 生成三个CSV并写入clean_tickets等"
+      },
+      {
+        "status": "pending",
+        "title": "编写独立验证脚本校验一致性/边界"
+      },
+      {
+        "status": "pending",
+        "title": "生成 dashboard.html 与 report.md"
+      },
+      {
+        "status": "pending",
+        "title": "研究 GitHub/GitLab Issues API 文档并生成 sources.json"
+      },
+      {
+        "status": "pending",
+        "title": "在子目录复跑 audit.py 比对输出并完成验收"
+      }
+    ]
+  },
+  {
+    "steps": [
+      {
+        "status": "done",
+        "title": "读取完整 inputs/tickets.csv 并理解数据"
+      },
+      {
+        "status": "done",
+        "title": "实现清洗+SLA计算逻辑 audit.py（标准库）"
+      },
+      {
+        "status": "done",
+        "title": "运行 audit.py 生成三个CSV并写入clean_tickets等"
+      },
+      {
+        "status": "active",
+        "title": "编写独立验证脚本校验一致性/边界"
+      },
+      {
+        "status": "pending",
+        "title": "生成 dashboard.html 与 report.md"
+      },
+      {
+        "status": "pending",
+        "title": "研究 GitHub/GitLab Issues API 文档并生成 sources.json"
+      },
+      {
+        "status": "pending",
+        "title": "在子目录复跑 audit.py 比对输出并完成验收"
+      }
+    ]
+  },
+  {
+    "steps": [
+      {
+        "status": "done",
+        "title": "读取完整 inputs/tickets.csv 并理解数据"
+      },
+      {
+        "status": "done",
+        "title": "实现清洗+SLA计算逻辑 audit.py（标准库）"
+      },
+      {
+        "status": "done",
+        "title": "运行 audit.py 生成三个CSV并写入clean_tickets等"
+      },
+      {
+        "status": "done",
+        "title": "编写独立验证脚本校验一致性/边界"
+      },
+      {
+        "status": "active",
+        "title": "研究 GitHub/GitLab Issues API 文档并生成 sources.json"
+      },
+      {
+        "status": "pending",
+        "title": "生成 dashboard.html 与 report.md"
+      },
+      {
+        "status": "pending",
+        "title": "在子目录复跑 audit.py 比对输出并完成验收"
+      }
+    ]
+  },
+  {
+    "outputs": [
+      "outputs/clean_tickets.csv",
+      "outputs/exceptions.csv",
+      "outputs/sla_summary.csv",
+      "outputs/audit.py",
+      "outputs/dashboard.html",
+      "outputs/report.md",
+      "outputs/sources.json"
+    ],
+    "steps": [
+      {
+        "status": "in_progress",
+        "title": "生成 dashboard.html（中文自足页面）"
+      },
+      {
+        "status": "pending",
+        "title": "生成 report.md（发现/数据质量/3条建议）"
+      },
+      {
+        "status": "pending",
+        "title": "生成 sources.json（GitHub/GitLab API 对比，≥3官方页）"
+      },
+      {
+        "status": "pending",
+        "title": "在子目录复跑 audit.py 并比对输出一致性"
+      },
+      {
+        "status": "pending",
+        "title": "最终验收（守恒/一致性/下载链接）"
+      }
+    ]
+  },
+  {
+    "steps": [
+      {
+        "status": "done",
+        "title": "生成 dashboard.html（中文自足页面）"
+      },
+      {
+        "status": "done",
+        "title": "生成 report.md（发现/数据质量/3条建议）"
+      },
+      {
+        "status": "done",
+        "title": "生成 sources.json（GitHub/GitLab API 对比，≥3官方页）"
+      },
+      {
+        "status": "done",
+        "title": "在子目录复跑 audit.py 并比对输出一致性"
+      },
+      {
+        "status": "in_progress",
+        "title": "最终验收（守恒/一致性/下载链接）"
+      }
+    ]
+  },
+  {
+    "steps": [
+      {
+        "status": "done",
+        "title": "生成 dashboard.html（中文自足页面）"
+      },
+      {
+        "status": "done",
+        "title": "生成 report.md（发现/数据质量/3条建议）"
+      },
+      {
+        "status": "done",
+        "title": "生成 sources.json（GitHub/GitLab API 对比，≥3官方页）"
+      },
+      {
+        "status": "done",
+        "title": "在子目录复跑 audit.py 并比对输出一致性"
+      },
+      {
+        "status": "done",
+        "title": "最终验收（守恒/一致性/下载链接）"
+      }
+    ]
+  }
+]

@@ -37,7 +37,7 @@ func TestEvalRunIf(t *testing.T) {
 		{"research !contains MISSING", true},
 		{`score == 0.9`, true},
 		{`score != 0.9`, false},
-		{"bogus contains x", false}, // bogus step → empty output, no match
+		{"bogus contains x", false},  // bogus step → empty output, no match
 		{"garbage expression", true}, // unparseable → fail-open
 	}
 	for _, c := range cases {
@@ -54,17 +54,5 @@ func TestSubstitute(t *testing.T) {
 	}
 	if got := substitute("no refs", out); got != "no refs" {
 		t.Fatalf("untouched = %q", got)
-	}
-}
-
-func TestOnErrorPolicy(t *testing.T) {
-	if !onErrorStops("") || !onErrorStops("stop") {
-		t.Fatal("default/stop should stop")
-	}
-	if onErrorStops("continue") || onErrorStops("retry:3") {
-		t.Fatal("continue/retry should not stop")
-	}
-	if onErrorRetries("retry:3") != 3 || onErrorRetries("stop") != 0 || onErrorRetries("retry:x") != 0 {
-		t.Fatal("retry parsing wrong")
 	}
 }

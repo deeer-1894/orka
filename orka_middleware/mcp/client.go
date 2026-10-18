@@ -28,6 +28,7 @@ const (
 
 // Config configures an MCP client connection.
 type Config struct {
+	Namespace string // stable source ID; external connectors cannot shadow builtins
 	Transport Transport
 	URL       string // for http/streamable_http
 	Headers   map[string]string
@@ -42,8 +43,9 @@ type Config struct {
 
 // Client wraps an mcp-go client with our conveniences.
 type Client struct {
-	raw  *mcpgo.Client
-	name string
+	raw       *mcpgo.Client
+	name      string
+	namespace string
 }
 
 // New builds, starts and initializes an MCP client for the given transport.
@@ -65,7 +67,7 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	if _, err := raw.Initialize(ctx, initReq); err != nil {
 		return nil, fmt.Errorf("mcp initialize: %w", err)
 	}
-	return &Client{raw: raw, name: name}, nil
+	return &Client{raw: raw, name: name, namespace: cfg.Namespace}, nil
 }
 
 // dial picks the transport constructor (the transport_adapter).
@@ -116,10 +118,11 @@ func (c *Client) ListTools(ctx context.Context) ([]agent.BaseTool, error) {
 	out := make([]agent.BaseTool, 0, len(res.Tools))
 	for _, t := range res.Tools {
 		out = append(out, &remoteTool{
-			client: c,
-			name:   t.Name,
-			desc:   t.Description,
-			schema: schemaToMap(t.InputSchema),
+			client:    c,
+			name:      t.Name,
+			qualified: qualifiedToolName(c.namespace, t.Name),
+			desc:      t.Description,
+			schema:    schemaToMap(t.InputSchema),
 		})
 	}
 	return out, nil

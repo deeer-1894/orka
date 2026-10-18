@@ -1,0 +1,96 @@
+package browsertool
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"time"
+
+	"github.com/orka-oss/orka_control_layer/connectors"
+	"github.com/orka-oss/orka_core/agent"
+)
+
+type tool struct {
+	engine      *Engine
+	baseStorage string
+	navigation  *navigationRetryGuard
+}
+
+// New constructs immutable metadata and a model-free operation tool. It never
+// opens a browser or creates a workspace; absent configuration stays unavailable.
+func New(dialer connectors.BrowserDialer, baseStorage string) agent.BaseTool {
+	t := &tool{baseStorage: baseStorage, navigation: newNavigationRetryGuard()}
+	if dialer != nil {
+		t.engine = NewEngine(dialer)
+	}
+	return t
+}
+func (*tool) Name() string  { return "browser" }
+func (*tool) Group() string { return "browser" }
+func (*tool) Description() string {
+	return "Observe and operate the shared browser page through bounded DOM snapshots, unique CSS selectors or snapshot refs. HTTP(S) links expose an absolute href: use action=open with that URL when the destination content is the goal, instead of clicking and taking another discovery snapshot. For generated local pages, use action=preview with the existing conversation-relative HTML path; the service transfers the actual file without copying HTML into model messages. Preview supports self-contained UTF-8 HTML up to 1 MiB, inline JS/CSS and data images; external resources, fetch, relative asset files and server-backed apps are unavailable in this offline preview. It returns a source-file hash and page snapshot, not proof that all interactions work. Then use click/fill/select/evaluate/screenshot to verify behavior, or GUI on the same page. open accepts HTTP(S), never file://. The code sandbox has separate filesystem/network namespaces: do not guess absolute paths, start local servers or manually paste page chunks to cross that boundary. On preview failure inspect the named file/limit once; preserve the failure and report unsupported requirements instead of repeating the same workaround. No extra model is called. Refs remain valid for unchanged elements in the same document/run/GUI epoch; use a new snapshot after stale_ref. Use fill_form for ordered fields without submitting; partial failures report completed fields. Actions wait briefly for an available target before dispatch, never replay uncertain mutations. Default action receipts contain changed text and current controls; snapshot or view=full returns full bounded text. Read actions, ready_state, change and progress before deciding the next step. A successful action already includes the latest page observation: act from that receipt instead of taking another full snapshot by habit. Use wait for a specific outstanding page condition; request a full snapshot when the observation is missing, stale, or insufficient for the next target. observation_failed means observe again, not repeat the preceding click or form submission. Same-origin frames support frame selector paths; cross-origin frames and pixel-only content require GUI on this same page, then a fresh DOM snapshot. Actions report observations, not verified business success."
+}
+func (*tool) Schema() map[string]any { return toolSchema() }
+func (t *tool) Invoke(ctx context.Context, args map[string]any) (string, error) {
+	req, err := parseRequest(args)
+	if err != nil {
+		return encodeToolResult(Result{Action: req.Action, Error: NewActionError("invalid_arguments", err.Error())})
+	}
+	if t.engine == nil {
+		return encodeToolResult(Result{Action: req.Action, Error: NewActionError("unavailable", "browser service is not configured; no action was performed")})
+	}
+	req.observation = observationLimitsFrom(ctx)
+	identity, err := connectors.GUIIdentityFromContext(ctx)
+	if err != nil {
+		return encodeToolResult(Result{Action: req.Action, Error: NewActionError("identity_required", "browser requires trusted owner, conversation and run identity")})
+	}
+	if blocked := t.navigation.blocked(identity, req); blocked != nil {
+		return encodeToolResult(Result{Action: req.Action, Error: blocked})
+	}
+	result, err := t.engine.Run(ctx, identity, req, NewFiles(t.baseStorage, identity))
+	if shouldRecoverObservation(req, result, err) {
+		recoveryCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		observed, observeErr := t.engine.Run(recoveryCtx, identity, Request{Action: "snapshot", View: "full", TimeoutMS: 4000, observation: req.observation}, NewFiles(t.baseStorage, identity))
+		cancel()
+		if observeErr == nil && observed.OK && observed.Snapshot != nil {
+			observed.Action = req.Action
+			observed.ElapsedMS += result.ElapsedMS
+			observed.Form, observed.Files, observed.Preview, observed.Value = result.Form, result.Files, result.Preview, result.Value
+			observed.Recovery = &Recovery{From: "observation_failed", ActionAcknowledged: true}
+			result, err = observed, nil
+		}
+	}
+	if err != nil {
+		result.OK = false
+		if result.Error == nil {
+			var actionErr *ActionError
+			if errors.As(err, &actionErr) {
+				result.Error = actionErr
+			} else {
+				result.Error = NewActionError("outcome_unknown", "browser operation could not be confirmed; inspect the page before retrying")
+			}
+		}
+	}
+	result.Action = req.Action
+	t.navigation.record(identity, req, result)
+	return encodeToolResult(result)
+}
+
+func shouldRecoverObservation(req Request, result Result, err error) bool {
+	if err == nil || result.Error == nil || result.Error.Code != "observation_failed" {
+		return false
+	}
+	switch req.Action {
+	case "open", "preview", "click", "fill", "select", "press", "scroll", "fill_form":
+		return true
+	default:
+		return false
+	}
+}
+func encodeToolResult(result Result) (string, error) {
+	raw, err := json.Marshal(result)
+	if err != nil || len(raw) > MaxSnapshotBytes {
+		raw, _ = json.Marshal(Result{Action: result.Action, PageID: result.PageID, PageEpoch: result.PageEpoch, Error: NewActionError("output_limit", "browser result exceeded its output bound; prior actions were not rolled back")})
+	}
+	return string(raw), nil
+}

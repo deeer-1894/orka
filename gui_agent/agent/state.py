@@ -15,6 +15,9 @@ class GraphState(TypedDict, total=False):
     marks: list[Any]          # Set-of-Marks: numbered interactive elements (with handles)
     marks_text: str           # textual mark index fed to the llm/vlm planner
     prediction: dict[str, Any]  # the next action chosen by predict
+    evidence: list[dict[str, Any]]  # bounded sanitized execution receipts + observations
+    task_memory: dict[str, Any]  # bounded model observations, not execution receipts
+    outcome: str             # done (planner stopped) | partial (budget/no progress)
     history: list[dict[str, Any]]  # executed actions + results
     status: str               # "running" | "END" | "ERROR" | "CALL_USER"
     step: int
@@ -22,4 +25,3 @@ class GraphState(TypedDict, total=False):
     result: str               # final summary on END
     error: str                # message on ERROR
     call_user: str            # reason on CALL_USER
-    use_vision: bool          # True once DOM-first locate failed and we fell back to VLM

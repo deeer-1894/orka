@@ -34,9 +34,10 @@ type ToolCall struct {
 
 // ChatMessage is one entry in the model conversation.
 type ChatMessage struct {
+	Reasoning  string     `json:"reasoning_content,omitempty"`
 	Role       string     `json:"role"`
 	Content    string     `json:"content"`
-	Images     []string   `json:"-"`                      // data URLs sent alongside Content (vision models)
+	Images     []string   `json:"-"` // data URLs sent alongside Content (vision models)
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"` // set when Role == tool
 	Name       string     `json:"name,omitempty"`         // tool name for tool results
@@ -51,15 +52,23 @@ type ToolSpec struct {
 
 // Request is a chat-completions request.
 type Request struct {
-	Model       string
-	Messages    []ChatMessage
-	Tools       []ToolSpec
-	Temperature float32
-	MaxTokens   int // 0 = provider default; caps output (also bounds reasoning latency)
+	Model           string
+	Messages        []ChatMessage
+	Tools           []ToolSpec
+	TemperatureSet  bool // distinguishes an explicit zero from the provider default
+	Temperature     float32
+	MaxTokens       int    // 0 = provider default; caps output (also bounds reasoning latency)
+	ReasoningEffort string // empty omits the provider-specific optional parameter
 }
 
 // Usage reports token consumption for a call (when the provider returns it).
 type Usage struct {
+	// Known affirms complete authoritative counts, including explicit zero.
+	Known bool
+	// Incomplete marks observed missing/partial/malformed provider usage. It
+	// overrides Known and legacy positive-count inference. Both flags false
+	// preserve older in-process clients without provenance.
+	Incomplete       bool
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int

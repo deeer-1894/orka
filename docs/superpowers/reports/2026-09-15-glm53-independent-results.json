@@ -1,0 +1,53 @@
+{
+  "archive_sha256": "0b1c16f6ddac9499e12539f585ab04d9f0e0c8fc7772b77cb134955d6979e225",
+  "project": "/tmp/orka-ledgerdock-independent-h0bswid6",
+  "python": "3.12.3 (main, Aug 31 2026, 10:18:26) [GCC 13.3.0]",
+  "unwanted_archive_members": [],
+  "checks": [
+    {
+      "name": "core",
+      "exit_code": 0,
+      "tail": "d_and_reverse_flow (__main__.T.test_orders_listed_and_reverse_flow) ... ok\ntest_restart_persistence (__main__.T.test_restart_persistence) ... ok\ntest_v2_cancel_refunds_actual_amount (__main__.T.test_v2_cancel_refunds_actual_amount) ... ok\ntest_v2_discount_threshold_and_rounding (__main__.T.test_v2_discount_threshold_and_rounding) ... ok\ntest_v2_no_discount_below_threshold (__main__.T.test_v2_no_discount_below_threshold) ... ok\ntest_v2_rounding_half_up (__main__.T.test_v2_rounding_half_up) ... ok\n\n----------------------------------------------------------------------\nRan 37 tests in 1.959s\n\nOK\n"
+    },
+    {
+      "name": "v1",
+      "exit_code": 0,
+      "tail": "ctual_amount (run_all_tests.T.test_v2_cancel_refunds_actual_amount) ... skipped 'v1 mode: discount disabled'\ntest_v2_discount_threshold_and_rounding (run_all_tests.T.test_v2_discount_threshold_and_rounding) ... skipped 'v1 mode: discount disabled'\ntest_v2_no_discount_below_threshold (run_all_tests.T.test_v2_no_discount_below_threshold) ... skipped 'v1 mode: discount disabled'\ntest_v2_rounding_half_up (run_all_tests.T.test_v2_rounding_half_up) ... skipped 'v1 mode: discount disabled'\n\n----------------------------------------------------------------------\nRan 37 tests in 1.874s\n\nOK (skipped=4)\n\n"
+    },
+    {
+      "name": "http",
+      "exit_code": 0,
+      "tail": "... ok\ntest_06_orders_list_and_cancel (__main__.HttpSubprocessTests.test_06_orders_list_and_cancel) ... ok\ntest_07_summary (__main__.HttpSubprocessTests.test_07_summary) ... ok\ntest_08_server_still_alive_after_errors (__main__.HttpSubprocessTests.test_08_server_still_alive_after_errors) ... ok\ntest_09_import_rollback_report (__main__.HttpSubprocessTests.test_09_import_rollback_report) ... ok\ntest_10_port0_outputs_actual_port (__main__.HttpSubprocessTests.test_10_port0_outputs_actual_port) ... ok\n\n----------------------------------------------------------------------\nRan 10 tests in 0.225s\n\nOK\n"
+    },
+    {
+      "name": "cli",
+      "exit_code": 0,
+      "tail": "el_exit0_and_idempotent (__main__.CliSubprocessTests.test_09_cancel_exit0_and_idempotent) ... ok\ntest_10_cancel_unknown_exit4 (__main__.CliSubprocessTests.test_10_cancel_unknown_exit4) ... ok\ntest_11_summary_exit0 (__main__.CliSubprocessTests.test_11_summary_exit0) ... ok\ntest_12_import_bad_csv_exit_nonzero (__main__.CliSubprocessTests.test_12_import_bad_csv_exit_nonzero) ... ok\ntest_13_import_missing_file_exit_nonzero (__main__.CliSubprocessTests.test_13_import_missing_file_exit_nonzero) ... ok\n\n----------------------------------------------------------------------\nRan 13 tests in 1.502s\n\nOK\n"
+    },
+    {
+      "name": "acceptance",
+      "exit_code": 0,
+      "tail": "'A1': 8, 'A2': 3, 'A3': 4, 'A4': 500, 'A5': 3} after={'A1': 10, 'A2': 3, 'A3': 5, 'A4': 500, 'A5': 3}\nPASS - 取消幂等返回一致 cancelled\nPASS - 退款=成交额 13299\nPASS - 历史订单金额不被改价影响 [{'unit_price_cents': 2500, 'line_cents': 4750}, {'unit_price_cents': 8999, 'line_cents': 8549}]\nPASS - 最终库存守恒（取消后） after={'A1': 10, 'A2': 3, 'A3': 5, 'A4': 500, 'A5': 3} sold={'A2': 17}\nPASS - summary 订单计数 {'products': 5, 'total_stock_units': 521, 'orders_total': 3, 'active_orders': 2, 'cancelled_orders': 1, 'active_orders_value_cents': 20423}\nPASS - summary 活跃订单金额 20423 vs 20423\nPASS - summary 库存总量 521 vs 521\n\n独立验收：19 通过，0 失败\n"
+    },
+    {
+      "name": "sample",
+      "exit_code": 0,
+      "tail": "[1] 导入 {'imported': 22} 个商品（含中文与引号内逗号）\n[2] 商品数: 22，示例: {'sku': 'P001', 'name': '机械键盘', 'price_cents': 2500, 'stock': 40}\n[3] 订单1 总额(分): 13299（期望 13299：行级折扣后 4750+8549）\n[4] 相同 request_id 重放返回同一订单 1\n[5] 订单1 已取消，退款(分): 13299，库存恢复\n[6] 汇总: {'products': 22, 'total_stock_units': 1971, 'orders_total': 1, 'active_orders': 0, 'cancelled_orders': 1, 'active_orders_value_cents': 0}\n样例流程完成 ✔\n"
+    },
+    {
+      "name": "order-rounding",
+      "exit_code": 1,
+      "tail": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nAssertionError: whole-order rounding violated\nactual= 9520 expected=9519\n"
+    },
+    {
+      "name": "readme-order",
+      "exit_code": 2,
+      "tail": "usage: ledgerdock order [-h] --request-id REQUEST_ID [--out OUT] items\nledgerdock order: error: the following arguments are required: --request-id\n"
+    },
+    {
+      "name": "required-serve-syntax",
+      "exit_code": 2,
+      "tail": "usage: ledgerdock [-h] --db DB\n                  {import,products,orders,order,cancel,summary,serve} ...\nledgerdock: error: the following arguments are required: --db\n"
+    }
+  ]
+}

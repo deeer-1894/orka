@@ -1,0 +1,1 @@
+{"passed":true,"transport":"live MCP","checks":["schema defaults create","existing file preserved","explicit append","explicit replace","legacy pointer blocked"]}

@@ -2,95 +2,199 @@ package scheduled_task
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/orka-oss/orka_control_layer/db"
+	"github.com/orka-oss/orka_core/messages"
 )
 
-// Source supplies the tasks that are due to run.
-type Source func(ctx context.Context) ([]db.TaskMeta, error)
+// Source supplies due task snapshots. Claim must compare the snapshot's due
+// time with durable state before allowing a run.
+type Source func(context.Context) ([]db.TaskMeta, error)
 
-// Trigger runs one task with the rendered prompt content.
-type Trigger func(ctx context.Context, task db.TaskMeta, content string) error
+// Trigger blocks until the actual run exits, including all cancellation cleanup.
+// It must not launch detached work. Return OutcomeError(chat.Run(...)) to retain
+// partial and paused outcomes; nil means explicitly completed.
+type Trigger func(context.Context, db.TaskMeta, string) error
 
-// Scheduler periodically scans due tasks, renders their prompt template from
-// Variables["prompt_template"], and triggers a chat run.
-// Advance pushes a task's next-due time forward after a successful run.
-type Advance func(ctx context.Context, taskID string, nextRunAt int64) error
+// Advance is retained for source compatibility only. It cannot authorize work.
+// Deprecated: wire Claims; a Scheduler with only Advance fails closed.
+type Advance func(context.Context, string, int64) error
 
-type Scheduler struct {
-	Source   Source
-	Trigger  Trigger
-	Advance  Advance
-	Interval time.Duration
-	Log      *slog.Logger
+type ClaimStore interface {
+	ClaimScheduledTask(context.Context, db.TaskMeta, string, int64) (bool, error)
+	CompleteScheduledTask(context.Context, db.TaskMeta, string, string, int64) error
+	RenewScheduledTask(context.Context, string, string, int64) (bool, error)
 }
 
-// RunDue processes all currently-due tasks once. Returns the number triggered.
+type Scheduler struct {
+	Source        Source
+	Trigger       Trigger
+	Claims        ClaimStore
+	Advance       Advance
+	Interval      time.Duration
+	RenewInterval time.Duration
+	Log           *slog.Logger
+	Now           func() time.Time
+}
+
+type outcomeError struct{ status string }
+
+func (e outcomeError) Error() string { return "scheduled run ended: " + e.status }
+
+// OutcomeError prevents partial/paused/unknown runs from being reported as done.
+func OutcomeError(status string) error {
+	if status == db.RunDone {
+		return nil
+	}
+	return outcomeError{status}
+}
+func resultStatus(err error) string {
+	if err == nil {
+		return db.RunDone
+	}
+	var outcome outcomeError
+	if errors.As(err, &outcome) {
+		switch outcome.status {
+		case db.RunPartial, db.RunPaused, db.RunInterrupted:
+			return outcome.status
+		}
+	}
+	return db.RunFailed
+}
+func (s *Scheduler) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
+}
+
+// RunDue claims all due tasks and executes different tasks concurrently. It joins
+// every trigger before returning. Overlapping periods of an active task are
+// skipped by the durable store, not queued. The count is actual trigger attempts.
 func (s *Scheduler) RunDue(ctx context.Context) (int, error) {
+	if s.Source == nil || s.Trigger == nil || s.Claims == nil {
+		return 0, errors.New("scheduler source, synchronous trigger and atomic claim store required")
+	}
 	tasks, err := s.Source(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("scheduler source: %w", err)
 	}
+	type result struct{ err error }
+	results := make(chan result, len(tasks))
 	n := 0
-	for _, t := range tasks {
-		// CLAIM FIRST: push next_run_at forward BEFORE triggering. The trigger may
-		// be slow or long-running, so if we advanced afterwards the next tick could
-		// re-select the same still-due task and fire it again. Advancing first makes
-		// an interval task fire at most once per period (idempotent). If the claim
-		// write fails we skip the task rather than risk a double-fire — a later tick
-		// will pick it up.
-		if s.Advance != nil && t.IntervalSec > 0 {
-			next := time.Now().Add(time.Duration(t.IntervalSec) * time.Second).UnixMilli()
-			if err := s.Advance(ctx, t.TaskID, next); err != nil {
-				if s.Log != nil {
-					s.Log.Warn("advance task; skipping to avoid double-fire", "task_id", t.TaskID, "err", err)
-				}
-				continue
-			}
+	var errs error
+	for _, task := range tasks {
+		if ctx.Err() != nil {
+			errs = errors.Join(errs, ctx.Err())
+			break
 		}
-		tmpl, _ := t.Variables["prompt_template"].(string)
-		content := Render(tmpl, t.Variables)
-		if err := s.Trigger(ctx, t, content); err != nil {
+		claimID := "schedule_" + messages.NewID()
+		claimed, err := s.Claims.ClaimScheduledTask(ctx, task, claimID, s.now().UnixMilli())
+		if err != nil {
+			errs = errors.Join(errs, fmt.Errorf("claim %s: %w", task.TaskID, err))
+			continue
+		}
+		if !claimed {
 			if s.Log != nil {
-				s.Log.Error("trigger task", "task_id", t.TaskID, "err", err)
+				s.Log.Debug("schedule skipped: active run or stale due time", "task_id", task.TaskID, "overlap_policy", "skip")
 			}
 			continue
 		}
 		n++
+		go func(task db.TaskMeta, claimID string) { results <- result{s.execute(ctx, task, claimID)} }(task, claimID)
 	}
-	return n, nil
+	for i := 0; i < n; i++ {
+		errs = errors.Join(errs, (<-results).err)
+	}
+	return n, errs
 }
 
-// Start runs RunDue on a ticker until ctx is cancelled.
+// Start lets new periods scan while long runs are active. CAS remains the
+// authority across ticks and processes. Shutdown cancels and joins all runs.
 func (s *Scheduler) Start(ctx context.Context) {
 	interval := s.Interval
 	if interval <= 0 {
 		interval = time.Minute
 	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
+	timer := time.NewTicker(interval)
+	defer timer.Stop()
+	var active sync.WaitGroup
+	defer active.Wait()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
-			if _, err := s.RunDue(ctx); err != nil && s.Log != nil {
-				s.Log.Error("run due", "err", err)
-			}
+		case <-timer.C:
+			active.Add(1)
+			go func() {
+				defer active.Done()
+				if _, err := s.RunDue(ctx); err != nil && s.Log != nil {
+					s.Log.Error("run due", "error", err)
+				}
+			}()
 		}
 	}
 }
 
-// CronSource returns a Source backed by storage tasks with cron_status == "on"
-// whose next_run_at is due (<= now).
 func CronSource(store *db.Storage) Source {
 	return func(ctx context.Context) ([]db.TaskMeta, error) {
-		return store.ListTasks(ctx, map[string]any{
-			"cron_status": "on",
-			"next_run_at": map[string]any{"$lte": time.Now().UnixMilli()},
-		}, 0, 1000)
+		return store.ListTasks(ctx, map[string]any{"cron_status": "on", "next_run_at": map[string]any{"$lte": time.Now().UnixMilli()}}, 0, 1000)
 	}
+}
+
+// execute owns the trigger and its heartbeat as one lifetime. A failed renewal
+// cancels the trigger and prevents the old owner from completing a successor.
+// Parent cancellation does not stop renewal until the trigger finishes cleanup.
+func (s *Scheduler) execute(parent context.Context, task db.TaskMeta, claimID string) (runErr error) {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	stop := make(chan struct{})
+	renewed := make(chan error, 1)
+	interval := s.RenewInterval
+	if interval <= 0 || interval > db.ScheduleClaimTTL/3 {
+		interval = db.ScheduleClaimTTL / 3
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				renewed <- nil
+				return
+			case <-ticker.C:
+				leaseCtx, c := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				ok, err := s.Claims.RenewScheduledTask(leaseCtx, task.TaskID, claimID, s.now().UnixMilli())
+				c()
+				if err != nil || !ok {
+					if err == nil {
+						err = db.ErrScheduleClaimLost
+					}
+					cancel()
+					renewed <- err
+					return
+				}
+			}
+		}
+	}()
+	defer func() {
+		if p := recover(); p != nil {
+			runErr = fmt.Errorf("trigger panic: %v", p)
+		}
+		close(stop)
+		if err := <-renewed; err != nil {
+			runErr = errors.Join(runErr, err)
+			return
+		}
+		finishCtx, c := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+		defer c()
+		runErr = errors.Join(runErr, s.Claims.CompleteScheduledTask(finishCtx, task, claimID, resultStatus(runErr), s.now().UnixMilli()))
+	}()
+	tmpl, _ := task.Variables["prompt_template"].(string)
+	return s.Trigger(ctx, task, Render(tmpl, task.Variables))
 }

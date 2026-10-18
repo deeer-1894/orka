@@ -189,11 +189,12 @@ func resumeFrom(ctx context.Context) *resumeSpec {
 // including after a control-plane restart, which is the whole point of moving
 // off a parked goroutine.
 type pausedRun struct {
-	Request ChatRunRequest `json:"request"`
-	Target  string         `json:"target"` // interrupt address to resume
-	Tool    string         `json:"tool"`
-	Summary string         `json:"summary"`
-	SavedAt int64          `json:"saved_at"`
+	Checkpoint *runCheckpoint `json:"execution_checkpoint,omitempty"`
+	Request    ChatRunRequest `json:"request"`
+	Target     string         `json:"target"` // interrupt address to resume
+	Tool       string         `json:"tool"`
+	Summary    string         `json:"summary"`
+	SavedAt    int64          `json:"saved_at"`
 }
 
 func pausedPath(baseStorage, convID string) string {

@@ -1,0 +1,141 @@
+{
+  "seconds": 13.992946440004744,
+  "frames": [
+    {
+      "type": "observe",
+      "mode": "vision",
+      "marks": 0,
+      "tokens": 1,
+      "session_id": "flash-reset-evidence-check",
+      "evidence": {
+        "seq": 1,
+        "step": 0,
+        "kind": "observation",
+        "content": "[page] TITLE: \nTEXT: \n[elements] "
+      }
+    },
+    {
+      "type": "action",
+      "action": "navigate",
+      "target": "http://172.18.0.1:8766/",
+      "result": "navigated to http://172.18.0.1:8766/",
+      "evidence": {
+        "seq": 2,
+        "step": 1,
+        "kind": "action",
+        "action": "navigate",
+        "target": "http://172.18.0.1:8766/",
+        "result": "navigated to http://172.18.0.1:8766/"
+      },
+      "session_id": "flash-reset-evidence-check"
+    },
+    {
+      "type": "observe",
+      "mode": "vision",
+      "marks": 8,
+      "tokens": 1,
+      "session_id": "flash-reset-evidence-check",
+      "evidence": {
+        "seq": 3,
+        "step": 1,
+        "kind": "observation",
+        "content": "[page] TITLE: NimbusDesk Visual Operations Lab\nTEXT: NimbusDesk · Visual Operations Lab Fictional data. Revenue / ingredient cost in CNY. Orders are counts. Canvas contains the only visible numeric table. NorthCentralSouth Q2Q3 Cost inflation (%) Apply scenarioReset scenario North / Q2 / scenario 0%\n[elements] [0] button: North\n[1] button: Central\n[2] button: South\n[3] button: Q2\n[4] button: Q3\n[5] input: 0\n[6] button: Apply scenario\n[7] button: Reset scenario"
+      }
+    },
+    {
+      "type": "action",
+      "action": "type",
+      "target": "[5] 0",
+      "result": "typed into mark [5] 0",
+      "evidence": {
+        "seq": 4,
+        "step": 2,
+        "kind": "action",
+        "action": "type",
+        "target": "[5] 0",
+        "mark": 5,
+        "text": "15",
+        "input_mode": "fill",
+        "result": "typed into mark [5] 0"
+      },
+      "session_id": "flash-reset-evidence-check"
+    },
+    {
+      "type": "observe",
+      "mode": "vision",
+      "marks": 8,
+      "tokens": 1,
+      "session_id": "flash-reset-evidence-check",
+      "evidence": {
+        "seq": 5,
+        "step": 2,
+        "kind": "observation",
+        "content": "[page] TITLE: NimbusDesk Visual Operations Lab\nTEXT: NimbusDesk · Visual Operations Lab Fictional data. Revenue / ingredient cost in CNY. Orders are counts. Canvas contains the only visible numeric table. NorthCentralSouth Q2Q3 Cost inflation (%) Apply scenarioReset scenario North / Q2 / scenario 0%\n[elements] [0] button: North\n[1] button: Central\n[2] button: South\n[3] button: Q2\n[4] button: Q3\n[5] input: 15\n[6] button: Apply scenario\n[7] button: Reset scenario"
+      }
+    },
+    {
+      "type": "action",
+      "action": "click",
+      "target": "[6] Apply scenario",
+      "result": "clicked mark [6] Apply scenario",
+      "evidence": {
+        "seq": 6,
+        "step": 3,
+        "kind": "action",
+        "action": "click",
+        "target": "[6] Apply scenario",
+        "mark": 6,
+        "result": "clicked mark [6] Apply scenario"
+      },
+      "session_id": "flash-reset-evidence-check"
+    },
+    {
+      "type": "observe",
+      "mode": "vision",
+      "marks": 8,
+      "tokens": 1,
+      "session_id": "flash-reset-evidence-check",
+      "evidence": {
+        "seq": 7,
+        "step": 3,
+        "kind": "observation",
+        "content": "[page] TITLE: NimbusDesk Visual Operations Lab\nTEXT: NimbusDesk · Visual Operations Lab Fictional data. Revenue / ingredient cost in CNY. Orders are counts. Canvas contains the only visible numeric table. NorthCentralSouth Q2Q3 Cost inflation (%) Apply scenarioReset scenario North / Q2 / scenario 15%\n[elements] [0] button: North\n[1] button: Central\n[2] button: South\n[3] button: Q2\n[4] button: Q3\n[5] input: 15\n[6] button: Apply scenario\n[7] button: Reset scenario"
+      }
+    },
+    {
+      "type": "action",
+      "action": "click",
+      "target": "[7] Reset scenario",
+      "result": "clicked mark [7] Reset scenario",
+      "evidence": {
+        "seq": 8,
+        "step": 4,
+        "kind": "action",
+        "action": "click",
+        "target": "[7] Reset scenario",
+        "mark": 7,
+        "result": "clicked mark [7] Reset scenario"
+      },
+      "session_id": "flash-reset-evidence-check"
+    },
+    {
+      "type": "observe",
+      "mode": "vision",
+      "marks": 8,
+      "tokens": 1,
+      "session_id": "flash-reset-evidence-check",
+      "evidence": {
+        "seq": 9,
+        "step": 4,
+        "kind": "observation",
+        "content": "[page] TITLE: NimbusDesk Visual Operations Lab\nTEXT: NimbusDesk · Visual Operations Lab Fictional data. Revenue / ingredient cost in CNY. Orders are counts. Canvas contains the only visible numeric table. NorthCentralSouth Q2Q3 Cost inflation (%) Apply scenarioReset scenario North / Q2 / scenario 0%\n[elements] [0] button: North\n[1] button: Central\n[2] button: South\n[3] button: Q2\n[4] button: Q3\n[5] input: 0\n[6] button: Apply scenario\n[7] button: Reset scenario"
+      }
+    },
+    {
+      "type": "done",
+      "summary": "Reset works. After typing 15 and clicking Apply scenario, the header read 'North / Q2 / scenario 15%'. Clicking Reset scenario restored: header line 'North / Q2 / scenario 0%'; Cost inflation input shows 0; no status message is displayed; canvas heading 'North · Q2 · Ingredient cost inflation 0%' with TOTAL row: Revenue 288000.00, Cost 98440.00, Orders 9800, Gross margin 65.82%. URL: http://172.18.0.1:8766/\n\n[final url] http://172.18.0.1:8766/\n[page content]\nTITLE: NimbusDesk Visual Operations Lab\nTEXT: NimbusDesk · Visual Operations Lab Fictional data. Revenue / ingredient cost in CNY. Orders are counts. Canvas contains the only visible numeric table. NorthCentralSouth Q2Q3 Cost inflation (%) Apply scenarioReset scenario North / Q2 / scenario 0%",
+      "outcome": "done",
+      "session_id": "flash-reset-evidence-check"
+    }
+  ]
+}

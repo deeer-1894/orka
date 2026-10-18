@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_control_layer/llm"
+	"github.com/orka-oss/orka_core/agent"
 )
 
 // echoTool is a minimal BaseTool used by the eino end-to-end test: it counts
@@ -13,7 +13,7 @@ import (
 type echoTool struct{ calls *int }
 
 func (echoTool) Name() string        { return "echo" }
-func (echoTool) Description() string  { return "Echo back the provided text." }
+func (echoTool) Description() string { return "Echo back the provided text." }
 func (echoTool) Schema() map[string]any {
 	return map[string]any{
 		"type":       "object",
@@ -47,7 +47,7 @@ func TestEinoAgentDrivesAdaptersEndToEnd(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	ag, err := BuildEinoAgent(ctx, mock, "m", "You are a helpful assistant.", []agent.BaseTool{echo}, 8, nil)
+	ag, err := BuildEinoAgent(ctx, mock, "m", "You are a helpful assistant.", []agent.BaseTool{echo}, 8)
 	if err != nil {
 		t.Fatalf("build eino agent: %v", err)
 	}

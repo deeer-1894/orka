@@ -14,6 +14,7 @@ import (
 
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/config"
+	"github.com/orka-oss/orka_core/messages"
 	filesystem2 "github.com/orka-oss/orka_middleware/local/filesystem"
 )
 
@@ -23,8 +24,8 @@ import (
 // would point the model at a file none of Orka's tools can open).
 func TestWorkspaceBackendOffload(t *testing.T) {
 	base := t.TempDir()
-	email, conv := "ctx@test.com", "conv-1"
-	be := newWorkspaceBackend(base, email, conv)
+	email := "ctx@test.com"
+	be := newWorkspaceBackend(base, email, "test-session")
 	if be == nil {
 		t.Fatal("expected a backend when storage is configured")
 	}
@@ -35,11 +36,8 @@ func TestWorkspaceBackendOffload(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	// It must be a real file inside THIS CONVERSATION's workspace, under the
-	// offload dir. The account root is not good enough: the file tools are
-	// conversation-scoped, so a placeholder pointing one level up names a file
-	// the model cannot open.
-	onDisk := filepath.Join(base, email, conv, offloadDir, "call-123")
+	// It must be a real file inside the user's workspace, under the offload dir.
+	onDisk := filepath.Join(base, email, "sessions", "test-session", offloadDir, "call-123")
 	if _, err := os.Stat(onDisk); err != nil {
 		t.Fatalf("offloaded content is not in the conversation's workspace: %v", err)
 	}
@@ -78,9 +76,20 @@ func TestWorkspaceBackendConfinement(t *testing.T) {
 // TestContextHandlersBuild asserts the P1 chain actually constructs (a silent
 // build failure would leave runs with no context management at all).
 func TestContextHandlersBuild(t *testing.T) {
-	mw := contextHandlers(context.Background(), t.TempDir(), "ctx@test.com", "test", nil, nil)
+	mw := contextHandlers(agent.WithMeta(context.Background(), messages.Meta{UserEmail: "ctx@test.com", ConversationID: "test-session"}), t.TempDir(), "ctx@test.com", "test", nil, nil)
 	if len(mw) < 2 {
 		t.Fatalf("expected patchtoolcalls + reduction handlers, got %d", len(mw))
+	}
+}
+
+func TestSourceVerificationUsesEarlierReductionProfile(t *testing.T) {
+	ctx := withExecutionPolicy(context.Background(), executionPolicy{SourceVerificationOnly: true})
+	got := reductionProfileFor(ctx)
+	if got.maxToolOutputChars != sourceMaxToolOutputChars || got.clearAboveTokens != sourceClearAboveTokens || got.clearFloorTokens != sourceClearFloorTokens {
+		t.Fatalf("source reduction profile = %+v", got)
+	}
+	if got.clearAboveTokens >= reductionProfileFor(context.Background()).clearAboveTokens {
+		t.Fatalf("source threshold %d must be below default", got.clearAboveTokens)
 	}
 }
 
@@ -134,7 +143,7 @@ func TestCustomSubAgentsAreProtected(t *testing.T) {
 // (fetch_url averages 3k chars here, http_request 14k, over as many as 15 calls)
 // accumulated verbatim until the budget cut it off mid-work.
 func TestSubAgentsGetContextHandlers(t *testing.T) {
-	ctx := withOffloadRoot(context.Background(), t.TempDir())
+	ctx := withOffloadRoot(agent.WithMeta(context.Background(), messages.Meta{UserEmail: "ctx@test.com", ConversationID: "test-session"}), t.TempDir())
 	tools := []agent.BaseTool{gateStubTool{name: "fetch_url"}, gateStubTool{name: "web_search"}}
 
 	mw := subAgentContextHandlers(ctx, "researcher", tools)
@@ -173,9 +182,9 @@ func TestOffloadRootRoundTrips(t *testing.T) {
 // resolves inside its workspace to a file that was never written — every
 // offloaded result was unreachable.
 func TestOffloadPathIsReadableByFileRead(t *testing.T) {
-	base, email, conv := t.TempDir(), "ctx@test.com", "conv-1"
-	be := newWorkspaceBackend(base, email, conv)
-	root := filepath.Join(base, email, conv)
+	base, email := t.TempDir(), "ctx@test.com"
+	be := newWorkspaceBackend(base, email, "test-session")
+	root := filepath.Join(base, email, "sessions", "test-session")
 
 	gen := offloadPathFor(context.Background(), "clear")
 	advertised, err := gen(context.Background(), &reduction.ToolDetail{

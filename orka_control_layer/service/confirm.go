@@ -73,9 +73,12 @@ func (h *confirmHub) isAllowed(conv, tool string) bool {
 
 // resolve fulfills a pending confirmation; when approve+always, the tool becomes
 // pre-approved for that conversation. Returns false if the id is unknown.
-func (h *confirmHub) resolve(id string, approve, always bool) bool {
+func (h *confirmHub) resolve(id string, approve, always bool, conversationID ...string) bool {
 	h.mu.Lock()
 	p, ok := h.pending[id]
+	if ok && len(conversationID) > 0 && p.conv != conversationID[0] {
+		ok = false
+	}
 	if ok {
 		delete(h.pending, id)
 		if approve && always && p.conv != "" {
@@ -157,6 +160,14 @@ func (h *confirmHub) persist() {
 // always = approve for the rest of this conversation.
 func (s *ChatService) ResolveConfirm(id string, approve, always bool) bool {
 	return s.confirmReady().resolve(id, approve, always)
+}
+
+// ResolveConfirmInConversation only resolves an action in the authorized session.
+func (s *ChatService) ResolveConfirmInConversation(id, conv string, approve, always bool) bool {
+	if conv == "" {
+		return false
+	}
+	return s.confirmReady().resolve(id, approve, always, conv)
 }
 
 // confirmTimeout bounds how long a tool call waits for the user before it is
@@ -263,7 +274,7 @@ func (s *ChatService) wrapConfirm(tools []agent.BaseTool, interruptible bool) []
 	hub := s.confirmReady()
 	out := make([]agent.BaseTool, len(tools))
 	for i, t := range tools {
-		if dangerTools[t.Name()] {
+		if dangerousToolName(t.Name()) {
 			out[i] = confirmGate{inner: t, hub: hub, interruptible: interruptible}
 		} else {
 			out[i] = t
@@ -284,6 +295,14 @@ func (s *ChatService) wrapConfirm(tools []agent.BaseTool, interruptible bool) []
 // Only the method is inspected. Everything else on the list runs arbitrary code
 // or commits a consequential change however it is called, so it stays gated.
 func needsConfirm(tool string, args map[string]any) bool {
+	if tool == "browser" {
+		switch asStr(args["action"]) {
+		case "snapshot", "wait", "screenshot":
+			return false
+		default:
+			return true
+		}
+	}
 	if tool != "http_request" {
 		return true
 	}
@@ -305,6 +324,8 @@ func summarizeAction(tool string, args map[string]any) string {
 		return ""
 	}
 	switch tool {
+	case "browser":
+		return "在当前网页执行 DOM 操作: " + trunc(s("action"), 32) + "（输入值与脚本已隐藏）"
 	case "shell":
 		return "在工作区执行命令: " + trunc(s("command")+s("cmd"), 200)
 	case "run_agent":

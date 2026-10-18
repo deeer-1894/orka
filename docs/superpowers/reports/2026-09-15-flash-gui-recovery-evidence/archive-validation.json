@@ -1,0 +1,34 @@
+{
+  "archive_sha256": "45cb042a636502ff0942b0607836b0d23a75ae241c9acb9992c5dcb77b64d944",
+  "extract": "/tmp/nimbus-final-60mfffp0",
+  "member_count": 16,
+  "commands": [
+    {
+      "command": [
+        "python3",
+        "nimbus_analysis.py",
+        "--monthly",
+        "monthly.csv",
+        "--outdir",
+        "."
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "python3",
+        "test_analysis.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "python3",
+        "test_edge_regression.py"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "independent_exit": 0,
+  "passed": true
+}

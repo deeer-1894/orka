@@ -72,7 +72,8 @@ func TestThePassthroughCannotRewriteTheRequest(t *testing.T) {
 
 // Nothing configured must change nothing — this runs on every request.
 func TestNoPassthroughLeavesTheBodyAlone(t *testing.T) {
-	wr := wireRequest{Model: "m", Temperature: 0.5}
+	temp := float32(0.5)
+	wr := wireRequest{Model: "m", Temperature: &temp}
 	plain, _ := json.Marshal(wr)
 	for _, extra := range []map[string]any{nil, {}} {
 		got, err := withExtra(wr, extra)

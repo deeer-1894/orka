@@ -50,7 +50,10 @@ const (
 	autoLongPrompt = 220
 )
 
-// ModelAuto is the request's selected_version value for automatic routing.
+// ModelAuto is the request's selected_version value for automatic routing. It
+// resolves to the first model in the effective ordered list and never switches
+// models mid-run; what it adds is escalating how hard that model THINKS (see
+// modelRouter).
 const ModelAuto = "auto"
 
 // complexMarkers are phrases that reliably precede multi-step work. Matching is
@@ -85,7 +88,7 @@ const varModelRouter = "model_router"
 
 // routerFor builds the router for a run, or nil when routing is not requested.
 // Only ModelAuto routes: an explicit pick is the user's decision and must not be
-// second-guessed, and the fixed tiers are already explicit.
+// second-guessed.
 func (s *ChatService) routerFor(rc *agent.RunContext, startModel string) *modelRouter {
 	if rc == nil || rc.Meta.ModelVersion != ModelAuto {
 		return nil

@@ -90,7 +90,7 @@ func TestMissingPathErrorWithNoArguments(t *testing.T) {
 func TestListingAWorkspaceThatHasNoDirectoryYet(t *testing.T) {
 	base := t.TempDir() // nothing created under it: a brand-new conversation
 	ctx := identity.With(context.Background(), identity.Identity{
-		Email: "u@x.com", Conversation: "conv-new", Scopes: []string{"*"},
+		Email: "u@x.com", ConversationID: "conv-new", Scopes: []string{"*"},
 	})
 	res, err := fileList(base)(ctx, callWith(map[string]any{}))
 	if err != nil {
@@ -109,7 +109,7 @@ func TestListingAWorkspaceThatHasNoDirectoryYet(t *testing.T) {
 func TestListingAMissingSubdirectoryIsStillAnError(t *testing.T) {
 	base := t.TempDir()
 	ctx := identity.With(context.Background(), identity.Identity{
-		Email: "u@x.com", Conversation: "conv-new", Scopes: []string{"*"},
+		Email: "u@x.com", ConversationID: "conv-new", Scopes: []string{"*"},
 	})
 	res, _ := fileList(base)(ctx, callWith(map[string]any{"path": "reports"}))
 	if !res.IsError {
@@ -122,7 +122,7 @@ func TestFileToolsKeepConversationsApart(t *testing.T) {
 	base := t.TempDir()
 	ctxOf := func(conv string) context.Context {
 		return identity.With(context.Background(), identity.Identity{
-			Email: "u@x.com", Conversation: conv, Scopes: []string{"*"},
+			Email: "u@x.com", ConversationID: conv, Scopes: []string{"*"},
 		})
 	}
 	if res, _ := fileWrite(base)(ctxOf("conv-a"), callWith(map[string]any{

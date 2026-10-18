@@ -22,14 +22,10 @@ var (
 
 // ContextToken is the signed identity + capability claim.
 type ContextToken struct {
-	UserEmail string   `json:"user_email"`
-	Scopes    []string `json:"scopes"` // capability allowlist (RBAC)
-	Exp       int64    `json:"exp"`    // unix seconds; 0 = no expiry
-	// Conversation scopes the caller's file workspace to one conversation.
-	// Signed rather than sent as a header for the same reason identity is: it
-	// decides which directory a tool may read and write, so a caller must not be
-	// able to choose it. Empty = the account root (scheduled tasks, quant).
-	Conversation string `json:"conv,omitempty"`
+	ConversationID string   `json:"conversation_id,omitempty"`
+	UserEmail      string   `json:"user_email"`
+	Scopes         []string `json:"scopes"` // capability allowlist (RBAC)
+	Exp            int64    `json:"exp"`    // unix seconds; 0 = no expiry
 }
 
 // NewToken builds a token valid for ttl from now.
@@ -42,10 +38,9 @@ func NewToken(email string, scopes []string, ttl time.Duration) ContextToken {
 }
 
 // InConversation scopes the token's file workspace to one conversation. Chained
-// off NewToken so the common call reads as one expression, and so a caller that
-// forgets it gets the account root rather than someone else's conversation.
+// off NewToken so the common call reads as one expression.
 func (t ContextToken) InConversation(conv string) ContextToken {
-	t.Conversation = conv
+	t.ConversationID = conv
 	return t
 }
 

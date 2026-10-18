@@ -1,0 +1,10 @@
+# The gateway build needs these modules only. Never send workspace data or .env.
+**
+!orka_core/
+!orka_core/**
+!tools_server/
+!tools_server/**
+**/.env
+**/.env.*
+**/__pycache__
+**/*.pyc

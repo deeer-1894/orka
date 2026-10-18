@@ -1,3 +1,4 @@
+import type { SessionRecoveryStore } from '../lib/sessionRecovery';
 import { useEffect, useRef, useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
 import {
@@ -10,49 +11,62 @@ import {
   type CatalogGroup,
 } from "../lib/toolGroups";
 import { api, files as fileApi, tools as toolsApi, type ToolInfo } from "../api";
+import { invalidateSessionFiles, useFileRevision } from "../hooks/useFileRevision";
+import { useConversationDraft } from "../hooks/useConversationDraft";
 import { toast, toastError } from "../lib/toast";
-import { Icon } from "./Icon";
+import { Icon, type IconName } from "./Icon";
 
 // Icons/labels for the built-in skills; installed/custom skills get a default.
-const SKILL_ICON: Record<string, { icon: string; label: string }> = {
-  researcher: { icon: "🔎", label: "调研" },
-  writer: { icon: "✍️", label: "写作" },
-  coder: { icon: "💻", label: "编程" },
-  analyst: { icon: "📊", label: "分析" },
-  translator: { icon: "🌐", label: "翻译" },
+const SKILL_ICON: Record<string, { icon: IconName; label: string }> = {
+  researcher: { icon: "search", label: "调研" },
+  writer: { icon: "rename", label: "写作" },
+  coder: { icon: "code", label: "编程" },
+  analyst: { icon: "chart", label: "分析" },
+  translator: { icon: "globe", label: "翻译" },
 };
 
-interface Attachment { name: string; path: string; image: boolean }
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
 
 // Mirrors the built-in skills registered in the control layer (skills_registry.go).
 // Selecting one prepends a directive the model honours via apply_skill.
 export const SKILLS = [
-  { name: "researcher", label: "调研", icon: "🔎", desc: "多来源交叉验证 + 引用" },
-  { name: "writer", label: "写作", icon: "✍️", desc: "结构化专业文案" },
-  { name: "coder", label: "编程", icon: "💻", desc: "可运行代码 + 设计权衡" },
-  { name: "analyst", label: "分析", icon: "📊", desc: "结构化拆解 + 建议" },
-  { name: "translator", label: "翻译", icon: "🌐", desc: "自然地道的翻译" },
+  { name: "researcher", label: "调研", icon: "search", desc: "多来源交叉验证 + 引用" },
+  { name: "writer", label: "写作", icon: "rename", desc: "结构化专业文案" },
+  { name: "coder", label: "编程", icon: "code", desc: "可运行代码 + 设计权衡" },
+  { name: "analyst", label: "分析", icon: "chart", desc: "结构化拆解 + 建议" },
+  { name: "translator", label: "翻译", icon: "globe", desc: "自然地道的翻译" },
 ];
 
-export function Composer({
-  status,
-  onSend,
-  onKill,
-  enabledTools,
-  onSetTools,
-  activeSkill,
-  onPickSkill,
-}: {
+interface ComposerProps {
+  sessionRecovery?: SessionRecoveryStore;
+  draftState?: ReturnType<typeof useConversationDraft>;
   status: RunStatus;
-  onSend: (msg: string, fileIDs?: string[]) => void;
+  blocked?: boolean;
+  onSend: (msg: string, fileIDs?: string[], conversationID?: string) => void | Promise<unknown>;
   onKill: () => void;
   enabledTools: Set<string>;
   onSetTools: (next: Set<string>) => void;
   activeSkill: string | null;
   onPickSkill: (name: string | null) => void;
-}) {
-  const [text, setText] = useState("");
+  conversationID: string;
+  ensureConversation: () => Promise<string>;
+}
+
+export function Composer(props: ComposerProps) {
+  return props.draftState ? <ComposerForm {...props} draft={props.draftState} /> : <StandaloneComposer {...props} />;
+}
+function StandaloneComposer(props: ComposerProps) {
+  const draft = useConversationDraft(props.conversationID, props.sessionRecovery);
+  return <ComposerForm {...props} draft={draft} />;
+}
+function ComposerForm({
+  draft, blocked = false, status, onSend, onKill, enabledTools, onSetTools,
+  activeSkill, onPickSkill, conversationID, ensureConversation,
+}: ComposerProps & { draft: ReturnType<typeof useConversationDraft> }) {
+  const { text, setText, attachments, setAttachments } = draft;
+  const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
+  const [sendError, setSendError] = useState<{ cid: string; message: string } | null>(null);
   const [menu, setMenu] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [catalog, setCatalog] = useState<ToolInfo[] | null>(null);
@@ -69,9 +83,23 @@ export function Composer({
   const [previewCache, setPreviewCache] = useState<Record<string, string>>({});
   // @-mention: reference a workspace file as context (Cursor-style).
   const [atOpen, setAtOpen] = useState(false);
+  const [atDir, setAtDir] = useState(".");
+  const [atError, setAtError] = useState("");
+  const fileRevision = useFileRevision(conversationID);
   const [atQuery, setAtQuery] = useState("");
   const [atSel, setAtSel] = useState(0);
-  const [atFiles, setAtFiles] = useState<{ name: string; dir: boolean; size: number }[]>([]);
+  const [atListing, setAtListing] = useState<{ conversationID: string; items: { name: string; dir: boolean; size: number }[] }>({ conversationID: "", items: [] });
+  const atFiles = atListing.conversationID === conversationID ? atListing.items : [];
+  const uploadScope = useRef({ conversationID, generation: 0, creating: null as Promise<string> | null, createdID: "" });
+  if (uploadScope.current.conversationID !== conversationID) {
+    const scope = uploadScope.current;
+    // Creating the initial conversation belongs to this upload batch. Other
+    // navigation invalidates its attachment callbacks immediately.
+    if (!(scope.conversationID === "" && conversationID === scope.createdID)) {
+      scope.generation++; scope.creating = null; scope.createdID = "";
+    }
+    scope.conversationID = conversationID;
+  }
 
   const togglePreview = async (name: string) => {
     if (previewName === name) { setPreviewName(null); return; }
@@ -135,7 +163,9 @@ export function Composer({
       setDeleting(null);
     }
   };
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  useEffect(() => {
+    setAtListing({ conversationID, items: [] }); setAtSel(0); setAtDir(".");
+  }, [conversationID]);
   const [uploading, setUploading] = useState(0);
   const [dragging, setDragging] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -153,18 +183,32 @@ export function Composer({
 
   const onFiles = async (list: FileList | null) => {
     if (!list?.length) return;
-    setUploading((n) => n + list.length);
-    for (const f of Array.from(list)) {
-      try {
-        const path = await fileApi.upload(f, "");
-        setAttachments((a) => [...a, { name: f.name, path, image: IMAGE_RE.test(f.name) }]);
-      } catch {
-        toastError("上传失败：" + f.name);
-      } finally {
-        setUploading((n) => n - 1);
+    const batch = Array.from(list);
+    const generation = uploadScope.current.generation;
+    setUploading(n => n + batch.length);
+    try {
+      let cid = conversationID;
+      if (!cid) {
+        const scope = uploadScope.current;
+        if (!scope.creating) scope.creating = ensureConversation().then(id => {
+          if (scope.generation === generation) { scope.createdID = id; draft.move("", id); }
+          return id;
+        }).finally(() => { if (scope.generation === generation) scope.creating = null; });
+        cid = await scope.creating;
       }
+      for (const f of batch) {
+        if (uploadScope.current.generation !== generation) break;
+        try {
+          const path = await fileApi.upload(f, "", undefined, cid);
+          invalidateSessionFiles(cid);
+          if (uploadScope.current.generation === generation) draft.addAttachment({ name: f.name, path, image: IMAGE_RE.test(f.name), conversationID: cid });
+        } catch { toastError("上传失败：" + f.name); }
+      }
+    } catch { toastError("无法创建上传文件的会话"); }
+    finally {
+      setUploading(n => n - batch.length);
+      if (fileRef.current) fileRef.current.value = "";
     }
-    if (fileRef.current) fileRef.current.value = "";
   };
 
   // Paste an image straight from the clipboard (e.g. a screenshot) → upload it.
@@ -190,10 +234,16 @@ export function Composer({
     if (text === "/") setMenu(true);
   }, [text]);
 
-  // Lazy-load workspace files the first time an @-mention opens.
+  // Reload on each picker opening and conversation change; ignore late results.
   useEffect(() => {
-    if (atOpen && atFiles.length === 0) fileApi.list(".").then(setAtFiles).catch(() => {});
-  }, [atOpen, atFiles.length]);
+    let current = true;
+    if (!atOpen || !conversationID) return;
+    setAtError("");
+    fileApi.scopedList(atDir, conversationID, true)
+      .then(items => { if (current) setAtListing({ conversationID, items }); })
+      .catch(() => { if (current) setAtListing({ conversationID, items: [] }); setAtError("文件读取失败，请重新打开引用列表"); });
+    return () => { current = false; };
+  }, [atOpen, conversationID, atDir, fileRevision]);
 
   // Detect an `@token` being typed at the cursor → open the file picker.
   const syncAt = (value: string, cursor: number | null) => {
@@ -202,9 +252,14 @@ export function Composer({
     if (m) { setAtOpen(true); setAtQuery(m[2]); setAtSel(0); } else setAtOpen(false);
   };
   const atMatches = atFiles
-    .filter((f) => !f.dir && f.name.toLowerCase().includes(atQuery.toLowerCase()))
+    .filter((f) => f.name.toLowerCase().includes(atQuery.toLowerCase()))
     .slice(0, 8);
 
+  const chooseFile = (file: { name: string; dir: boolean }) => {
+    const path = atDir === '.' ? file.name : `${atDir}/${file.name}`;
+    if (file.dir) { setAtListing({ conversationID, items: [] }); setAtDir(path); setAtQuery(''); setAtSel(0); }
+    else pickFile(path);
+  };
   // Insert the picked file as a context attachment and strip the @token.
   const pickFile = (name: string) => {
     const ta = taRef.current;
@@ -212,22 +267,22 @@ export function Composer({
     const before = text.slice(0, cursor).replace(/(^|\s)@([^\s@]*)$/, (_full, pre) => pre);
     setText(before + text.slice(cursor));
     setAtOpen(false);
-    setAttachments((a) => (a.some((x) => x.path === name) ? a : [...a, { name, path: name, image: IMAGE_RE.test(name) }]));
+    setAttachments((a) => (a.some((x) => x.path === name && x.conversationID === conversationID) ? a : [...a, { name, path: name, image: IMAGE_RE.test(name), conversationID }]));
     requestAnimationFrame(() => ta?.focus());
   };
 
-  // While a run is going, a plain message is not blocked — it is steered into
-  // that run (App routes it) and reaches the agent at its next model call.
-  // Attachments are the exception: they need the upload pre-pass the running
-  // turn is already past, so they wait rather than being silently dropped.
-  const holdForAttachments = busy && attachments.length > 0;
-
-  const send = () => {
-    if ((!text.trim() && attachments.length === 0) || uploading > 0 || holdForAttachments) return;
-    onSend(text.trim(), attachments.map((a) => a.path));
-    setText("");
-    setAttachments([]);
-    setMenu(false);
+  const send = async () => {
+    if (blocked || sendingRef.current || uploading > 0 || (!text.trim() && !attachments.length)) return;
+    let cid = conversationID;
+    const sent = { text, attachments };
+    sendingRef.current = true; setSending(true); setSendError(null);
+    try {
+      if (!cid) { cid = await ensureConversation(); draft.move("", cid); }
+      await onSend(text.trim(), attachments.map(a => a.path), cid);
+      draft.clearAccepted(cid, sent); setMenu(false);
+    } catch (error) {
+      setSendError({ cid, message: "发送失败：" + (error instanceof Error ? error.message : "请重试") });
+    } finally { sendingRef.current = false; setSending(false); }
   };
 
   // Skills are now a locked "mode" (structured active_skill the backend injects
@@ -239,7 +294,7 @@ export function Composer({
     setText((t) => t.replace(/^\/\w*\s*/, ""));
     requestAnimationFrame(() => taRef.current?.focus());
   };
-  const skill = activeSkill ? { icon: SKILL_ICON[activeSkill]?.icon || "🧩", label: SKILL_ICON[activeSkill]?.label || activeSkill } : null;
+  const skill: { icon: IconName; label: string } | null = activeSkill ? { icon: SKILL_ICON[activeSkill]?.icon || "sparkle", label: SKILL_ICON[activeSkill]?.label || activeSkill } : null;
 
   return (
     <div className="px-5 pb-5">
@@ -260,7 +315,7 @@ export function Composer({
                         onClick={() => pickSkill(s.name)}
                         className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left"
                       >
-                        <span className="text-[18px]">{meta?.icon || "🧩"}</span>
+                        <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface2 text-muted"><Icon name={meta?.icon || "sparkle"} size={18} /></span>
                         <span className="min-w-0">
                           <span className="block text-[13px] text-ink">
                             {meta?.label || s.name} <span className="text-faint">/{s.name}</span>
@@ -302,8 +357,8 @@ export function Composer({
                 );
               })}
             </div>
-            <div className="mt-1 border-t border-border px-1 pt-1.5">
-              <div className="mb-1 px-1 text-[11px] text-faint">从网上安装技能 (SKILL.md 链接)</div>
+            <details className="mt-1 border-t border-border px-1 pt-1.5">
+              <summary className="mb-1 cursor-pointer px-1 text-[11px] text-faint">高级 · 安装技能</summary>
               <div className="flex items-center gap-1">
                 <input
                   value={installUrl}
@@ -320,19 +375,22 @@ export function Composer({
                   {installing ? "…" : "安装"}
                 </button>
               </div>
-            </div>
+            </details>
           </div>
         )}
 
-        {atOpen && atMatches.length > 0 && (
+        {atOpen && (
           <div className="absolute bottom-[calc(100%+8px)] left-0 z-20 w-80 rounded-2xl border border-border bg-surface p-1.5 shadow-lg">
-            <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-faint">引用工作区文件作为上下文</div>
+            <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-faint">引用工作区文件作为上下文 · {atDir}</div>
+            {atDir !== "." && <button onClick={() => { setAtDir(atDir.includes("/") ? atDir.slice(0, atDir.lastIndexOf("/")) : "."); setAtListing({ conversationID, items: [] }); }}>返回上级目录</button>}
+            {atError && <p role="alert">{atError}</p>}
             <div className="max-h-[40vh] overflow-y-auto">
               {atMatches.map((f, i) => (
                 <button
                   key={f.name}
                   onMouseEnter={() => setAtSel(i)}
-                  onClick={() => pickFile(f.name)}
+                  onClick={() => chooseFile(f)}
+                  aria-label={f.dir ? "打开目录 " + f.name : "引用 " + (atDir === "." ? f.name : atDir + "/" + f.name)}
                   className={"flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left " + (i === atSel ? "bg-surface2" : "hover:bg-surface2")}
                 >
                   <span className="text-[15px]">{IMAGE_RE.test(f.name) ? "🖼️" : "📄"}</span>
@@ -362,29 +420,23 @@ export function Composer({
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
           {skill && (
             <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-accentsoft px-2 py-1 text-[12px] text-accent">
-              {skill.icon} {skill.label} 模式
+              <Icon name={skill.icon} size={13} /> {skill.label} 模式
               <button onClick={() => onPickSkill(null)} aria-label="退出技能模式" className="hover:text-ink"><Icon name="close" size={12} /></button>
             </span>
           )}
         </div>
 
+        {sendError?.cid === conversationID && <p role="alert" className="mb-2 text-sm text-accent">{sendError.message}</p>}
         {(attachments.length > 0 || uploading > 0) && (
           <div className="mb-2 flex flex-wrap gap-1.5">
-            {attachments.map((a, i) => (
+            {attachments.map((a) => (
               <span key={a.path} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface2/60 px-2 py-1 text-[12px] text-ink">
                 <span>{a.image ? "🖼️" : "📄"}</span>
                 <span className="max-w-[160px] truncate">{a.name}</span>
-                <button onClick={() => setAttachments((xs) => xs.filter((_, j) => j !== i))} aria-label={"移除 " + a.name} className="text-faint hover:text-accent"><Icon name="close" size={12} /></button>
+                <button onClick={() => setAttachments(xs => xs.filter(item => item !== a))} aria-label={"移除 " + a.name} className="text-faint hover:text-accent"><Icon name="close" size={12} /></button>
               </span>
             ))}
             {uploading > 0 && <span className="rounded-lg bg-surface2/60 px-2 py-1 text-[12px] text-faint">上传中 {uploading}…</span>}
-            {/* A disabled send button with no stated reason is the same silent
-                failure this change removes. Say why. */}
-            {holdForAttachments && (
-              <span className="inline-flex items-center rounded-lg bg-accentsoft px-2 py-1 text-[12px] text-accent">
-                运行中不能追加附件 · 等这一轮结束再发
-              </span>
-            )}
           </div>
         )}
 
@@ -393,7 +445,7 @@ export function Composer({
           onDragLeave={(e) => { if (e.currentTarget === e.target) setDragging(false); }}
           onDrop={onDrop}
           className={
-            "relative flex items-end gap-2 rounded-[26px] border bg-surface px-2 py-2 shadow-[0_2px_18px_rgba(40,38,32,0.06)] transition " +
+            "composer-input-shell relative flex items-end gap-2 rounded-[26px] border bg-surface px-2 py-2 shadow-[0_2px_18px_rgba(40,38,32,0.06)] transition " +
             (dragging ? "border-accent border-dashed bg-accentsoft/30" : "border-border")
           }
         >
@@ -402,9 +454,10 @@ export function Composer({
               松开即可上传文件 / 图片
             </div>
           )}
+          <div className="composer-toolbar" role="group" aria-label="消息附件与能力">
           <button
             onClick={() => fileRef.current?.click()}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-muted hover:bg-surface2 transition"
+            className="composer-icon"
             title="上传文件 / 图片（也可拖拽或粘贴）"
             aria-label="上传文件或图片"
           >
@@ -420,8 +473,9 @@ export function Composer({
           />
           {/* Surface the two hidden affordances as real buttons (discoverability) */}
           <button
-            onClick={() => { setMenu(true); taRef.current?.focus(); }}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-muted hover:bg-surface2 transition"
+            onClick={() => { setMenu(v => !v); setToolsOpen(false); taRef.current?.focus(); }}
+            aria-expanded={menu}
+            className="composer-icon"
             title="选技能(也可输入 /)"
             aria-label="选技能"
           >
@@ -434,37 +488,36 @@ export function Composer({
               taRef.current?.focus();
               syncAt(v, v.length);
             }}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-muted hover:bg-surface2 transition"
+            className="composer-icon"
             title="引用工作区文件(也可输入 @)"
             aria-label="引用文件"
           >
             <Icon name="at" size={17} />
           </button>
           <button
-            onClick={() => setToolsOpen((o) => !o)}
-            className={
-              "grid h-10 shrink-0 place-items-center rounded-full transition " +
-              (enabledTools.size > 0
-                ? "w-auto gap-1 px-2.5 text-[12px] text-accent bg-accentsoft"
-                : "w-10 text-muted hover:bg-surface2") +
-              (toolsOpen ? " bg-surface2" : "")
-            }
-            title={enabledTools.size === 0 ? "默认按任务自动选择工具，点击可限定范围" : `已限定 ${enabledTools.size} 类工具，点击调整`}
+            onClick={() => { setToolsOpen(o => !o); setMenu(false); }}
+            aria-expanded={toolsOpen}
+            data-selected={enabledTools.size > 0}
+            className="composer-icon"
+            title={enabledTools.size === 0 ? "自动模式：按任务使用全部可用工具，无需逐项勾选" : `已限定 ${enabledTools.size} 类工具，点击调整`}
             aria-label="工具范围"
           >
             <Icon name="wrench" size={17} />
-            {enabledTools.size > 0 && <span>{enabledTools.size}</span>}
+            {enabledTools.size > 0 && <span className="composer-tool-count">{enabledTools.size}</span>}
           </button>
+          </div>
           <textarea
+            id="chat-input"
             ref={taRef}
             value={text}
             onChange={(e) => { setText(e.target.value); syncAt(e.target.value, e.target.selectionStart); }}
             onPaste={onPaste}
             onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing) return;
               if (atOpen && atMatches.length) {
                 if (e.key === "ArrowDown") { e.preventDefault(); setAtSel((s) => Math.min(s + 1, atMatches.length - 1)); return; }
                 if (e.key === "ArrowUp") { e.preventDefault(); setAtSel((s) => Math.max(s - 1, 0)); return; }
-                if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pickFile(atMatches[atSel].name); return; }
+                if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); chooseFile(atMatches[atSel]); return; }
                 if (e.key === "Escape") { e.preventDefault(); setAtOpen(false); return; }
               }
               // Enter sends; Shift+Enter is a newline. ⌘/Ctrl+Enter also sends —
@@ -481,26 +534,24 @@ export function Composer({
             }}
             rows={1}
             placeholder={busy ? "运行中 · 发消息可以立即插入当前任务" : "给 Orka 发消息…"}
-            className="block max-h-[200px] flex-1 resize-none bg-transparent px-1 py-2 text-[15px] outline-none placeholder:text-faint"
+            className="block min-w-0 max-h-[200px] flex-1 resize-none bg-transparent px-1 py-2 text-[15px] outline-none placeholder:text-faint"
           />
-          {/* Stop stays the action while the box is empty — that is what the
-              button is FOR during a run. As soon as there is something to say,
-              it becomes send, because the message goes into the running task. */}
-          {busy && !text.trim() ? (
+          {busy && !text.trim() && attachments.length === 0 ? (
             <button
               onClick={onKill}
-              className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-ink text-bg hover:opacity-80 transition"
-              title="Stop"
+              className="composer-primary-action grid h-10 w-10 shrink-0 place-items-center rounded-full bg-ink text-bg hover:opacity-80 transition"
+              title="停止"
+              aria-label="停止"
             >
               <span className="h-3 w-3 rounded-[3px] bg-bg" />
             </button>
           ) : (
             <button
               onClick={send}
-              disabled={(!text.trim() && attachments.length === 0) || uploading > 0 || holdForAttachments}
-              className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-accent text-white hover:brightness-105 disabled:opacity-30 transition"
-              title={holdForAttachments ? "运行中不能追加附件,等这一轮结束再发" : busy ? "插入当前任务" : "Send"}
-              aria-label={busy ? "插入当前任务" : "发送"}
+              disabled={sending || blocked || (!text.trim() && attachments.length === 0) || uploading > 0}
+              className="composer-primary-action grid h-10 w-10 shrink-0 place-items-center rounded-full bg-accent text-white hover:brightness-105 disabled:opacity-30 transition"
+              title="发送"
+              aria-label="发送"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                 <path d="M12 19V5M12 5l-6 6M12 5l6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
@@ -531,9 +582,9 @@ function ToolPicker({
   return (
     <div className="rounded-xl border border-border bg-surface p-2">
       <div className="mb-1.5 flex items-center gap-2 px-1">
-        <span className="text-[11px] text-faint">限定工具范围 · 默认自动选择全部</span>
+        <span className="text-[11px] text-faint">自动使用全部可用工具 · 手动选择可限定范围</span>
         {selected.size > 0 && (
-          <button onClick={() => onSet(new Set())} className="text-[11px] text-faint hover:text-accent" title="恢复按任务自动选择">重置为自动</button>
+          <button onClick={() => onSet(new Set())} className="text-[11px] text-faint hover:text-accent" title="恢复自动使用全部可用工具">重置为自动</button>
         )}
         <button onClick={onClose} className="ml-auto text-[11px] text-faint hover:text-ink">收起</button>
       </div>
@@ -553,11 +604,11 @@ function ToolPicker({
                     aria-pressed={on}
                     title={g.desc}
                     className={
-                      "rounded-full border px-2 py-0.5 text-[12px] transition " +
+                      "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[12px] transition " +
                       (on ? "border-accent/40 bg-accentsoft text-accent" : partial ? "border-accent/30 text-accent" : "border-border text-faint hover:bg-surface2")
                     }
                   >
-                    {g.icon} {g.label}
+                    <Icon name={g.icon} size={13} /> {g.label}
                     {partial && <span className="ml-1 text-[10px]">部分</span>}
                   </button>
                   <span className="truncate text-[11px] text-faint">{g.tools.length} 个工具</span>

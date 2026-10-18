@@ -3,8 +3,6 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"sync"
-	"time"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -12,40 +10,6 @@ import (
 
 	"github.com/orka-oss/orka_core/agent"
 )
-
-// toolCacheable lists read-only tools whose result for identical args is stable
-// for a short window. Memoizing them dedupes the agent's repeated identical
-// lookups (common in long research runs) — same data in, same data out, so it
-// cannot change accuracy, only avoids re-paying slow network round-trips.
-var toolCacheable = map[string]bool{"web_search": true, "fetch_url": true}
-
-const toolCacheTTL = 5 * time.Minute
-
-type toolCacheEntry struct {
-	out string
-	at  time.Time
-}
-
-var (
-	toolCacheMu sync.Mutex
-	toolCache   = map[string]toolCacheEntry{}
-)
-
-func toolCacheGet(key string) (string, bool) {
-	toolCacheMu.Lock()
-	defer toolCacheMu.Unlock()
-	e, ok := toolCache[key]
-	if !ok || time.Since(e.at) > toolCacheTTL {
-		return "", false
-	}
-	return e.out, true
-}
-
-func toolCachePut(key, out string) {
-	toolCacheMu.Lock()
-	defer toolCacheMu.Unlock()
-	toolCache[key] = toolCacheEntry{out: out, at: time.Now()}
-}
 
 // einoTool adapts our agent.BaseTool to eino's tool.InvokableTool, so the
 // existing tool suite (local + MCP) can be handed to an eino ChatModelAgent
@@ -73,6 +37,12 @@ func (t *einoTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 		if err := json.Unmarshal(b, &js); err != nil {
 			return nil, err
 		}
+		if t.base.Name() == "browser" {
+			if js.Properties == nil {
+				js.Properties = jsonschema.NewProperties()
+			}
+			js.Properties.Set("plan_step_id", &jsonschema.Schema{Type: "string", Description: "Stable update_plan step id owning this action. Required when more than one step is active; otherwise the only active step is inferred."})
+		}
 		info.ParamsOneOf = schema.NewParamsOneOfByJSONSchema(&js)
 	}
 	return info, nil
@@ -94,22 +64,40 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 			return "tool call failed: invalid arguments JSON: " + err.Error(), nil
 		}
 	}
-	// Short-TTL memoization for read-only tools: skip a redundant slow round-trip
-	// when the agent repeats an identical query.
 	name := t.base.Name()
-	cacheable := toolCacheable[name]
-	cacheKey := name + "\x00" + argumentsInJSON
-	if cacheable {
-		if cached, ok := toolCacheGet(cacheKey); ok {
-			return cached, nil
+	browserCall := planBrowserCall{}
+	if name == "browser" {
+		stepID, _ := args["plan_step_id"].(string)
+		var admissionErr error
+		browserCall, admissionErr = planTrackerFrom(ctx).beginBrowserCall(stepID, args)
+		if admissionErr != nil {
+			return "tool call failed: " + admissionErr.Error(), nil
 		}
+		delete(args, "plan_step_id")
 	}
+	canonicalArgs, _ := json.Marshal(args)
+	cacheKey := name + "\x00" + string(canonicalArgs)
 	// Retry infrastructure failures before giving up. A dropped MCP socket is not
 	// a result the model should have to reason about, and it was the single
 	// biggest source of tool failures here.
-	out, err, retries := retryTransient(ctx, func() (string, error) { return t.base.Invoke(ctx, args) })
+	var revisions executionRevisionSnapshot
+	if name == "shell" || name == "python" {
+		revisions.scope = "declared_outputs"
+		if len(deliveryFrom(ctx).snapshot()) == 0 {
+			revisions.scope = "workspace_sample"
+		}
+		revisions.files, revisions.partial = executionRevisions(ctx)
+	}
+	retries := 0
+	out, err := researchFrom(ctx).invoke(ctx, name, args, func() (string, error) {
+		result, callErr, n := retryTransient(ctx, func() (string, error) { return t.base.Invoke(ctx, args) })
+		retries = n
+		return result, callErr
+	})
 	if err != nil {
 		if ctx.Err() != nil {
+			// Cancellation after dispatch cannot prove that the operation was not applied.
+			planTrackerFrom(ctx).completeBrowserCall(browserCall, `{"ok":false,"error":{"code":"outcome_unknown"}}`)
 			return "", ctx.Err()
 		}
 		// An interrupt is CONTROL FLOW, not a tool failure: the confirm gate uses
@@ -120,20 +108,33 @@ func (t *einoTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ .
 		// compose.Interrupt returns an *adk.InterruptSignal — NOT the interruptError
 		// that compose.ExtractInterruptInfo looks for — so match the signal itself.
 		if isInterruptErr(err) {
+			planTrackerFrom(ctx).discardBrowserCall(browserCall)
 			return "", err
 		}
-		return toolErrorMessage(name, err, retries), nil
+		planNote := planTrackerFrom(ctx).completeBrowserCall(browserCall, `{"ok":false,"error":{"code":"transport_error"}}`)
+		return toolErrorMessage(name, err, retries) + planNote +
+			loopDetectorFrom(ctx).observe(cacheKey, err.Error()) +
+			recordExecution(ctx, name, args, err.Error(), revisions), nil
 	}
-	if cacheable && out != "" {
-		toolCachePut(cacheKey, out)
+	planNote := ""
+	if name == "browser" {
+		planNote = planTrackerFrom(ctx).completeBrowserCall(browserCall, out)
+	}
+
+	evidenceNote := recordExecution(ctx, name, args, out, revisions)
+	deliveryNote := ""
+	if name == "file_write" {
+		if path, ok := args["path"].(string); ok {
+			deliveryNote = deliveryFrom(ctx).noteUndeclaredWrites([]string{path}) + deliveryFrom(ctx).inspectWrittenArchives(ctx, []string{path})
+		}
 	}
 	// Annotate a call the run has already made identically. Not blocked and not
 	// an error — the model is simply told the result is unchanged, which from
 	// inside a loop it cannot tell: every attempt succeeds and looks fresh.
 	if note := loopDetectorFrom(ctx).observe(cacheKey, out); note != "" {
-		return out + note, nil
+		out += note
 	}
-	return out, nil
+	return out + planNote + evidenceNote + deliveryNote + deliveryFrom(ctx).inspectProduced(ctx, name), nil
 }
 
 // EinoTools adapts a slice of BaseTools.

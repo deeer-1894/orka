@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orka-oss/orka_core/config"
-	"github.com/orka-oss/orka_core/messages"
 	"github.com/orka-oss/orka_control_layer/checkpoint"
 	"github.com/orka-oss/orka_control_layer/llm"
 	"github.com/orka-oss/orka_control_layer/message_utils"
 	"github.com/orka-oss/orka_control_layer/obs"
+	"github.com/orka-oss/orka_core/config"
+	"github.com/orka-oss/orka_core/messages"
 )
 
 type collector struct {
@@ -46,14 +46,15 @@ func (c *collector) clarifyKey() string {
 	return ""
 }
 
-func testService(t *testing.T, mainLLM llm.Client) (*ChatService, checkpoint.Store) {
+func testService(t *testing.T, client llm.Client) (*ChatService, checkpoint.Store) {
 	t.Helper()
 	cfg := &config.Config{}
 	cfg.LLM.Model = "m"
 	cfg.Agent.CheckpointTTLSec = 3600
 	cpStore := checkpoint.NewMemoryStore()
 	msg := message_utils.New(nil, 1.0, nil) // no Mongo
-	svc := NewChatService(cfg, mainLLM, mainLLM, cpStore, msg, obs.NewMetrics(), nil)
+	svc := NewChatService(cfg, llm.NewAccounted(client), cpStore, msg, obs.NewMetrics(), nil)
+	svc.UsageLedger = &fakeLedger{}
 	svc.DisableSummary = true
 	// The fast path probes with an extra model call before the agent runs, which
 	// would consume the first scripted response of every mock below.

@@ -19,6 +19,8 @@ gui_agent/data/
 node_modules/
 web/node_modules/
 web/dist/
+# Generated visual QA captures (not screenshot baselines)
+web/tests/screenshots/
 
 # python
 __pycache__/
@@ -36,3 +38,6 @@ gui_agent/.venv/
 .superpowers/
 .venv-quant/
 .run/
+
+# User preference: acceptance reports stay local; do not commit or push new reports.
+/docs/superpowers/reports/

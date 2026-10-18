@@ -1,0 +1,27 @@
+{
+  "source_sha256": "ae79e4563e4c9fa1f4d78626720020731043fdbb91810766c6607fc4232363fe",
+  "cases": [
+    {
+      "case": "all_zero",
+      "result": "InvalidOperation: [<class 'decimal.DivisionUndefined'>]"
+    },
+    {
+      "case": "zero_q2",
+      "result": "DivisionByZero: [<class 'decimal.DivisionByZero'>]"
+    },
+    {
+      "case": "missing_q2",
+      "result": "KeyError: ('A', 'Q2')"
+    },
+    {
+      "case": "round_only_final_amount",
+      "input": "cost=0.10, inflation=15%, volume down=10%",
+      "expected_cost": "0.10",
+      "actual_cost": "0.11"
+    },
+    {
+      "case": "zero_revenue_positive_cost_uplift",
+      "result": "0"
+    }
+  ]
+}

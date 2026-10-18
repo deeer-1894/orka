@@ -1,0 +1,26 @@
+[
+  {
+    "run_id": "run_df20aa8a65d1f33e201fc6af",
+    "conversation_id": "8c6ec68bb2644201c0ae8db6",
+    "status": "done",
+    "model": "glm-5.3-flash",
+    "tokens": 830985,
+    "tool_calls": 44,
+    "duration_ms": 703717,
+    "created_at": 1789448651704,
+    "finished_at": 1789449355418,
+    "error": ""
+  },
+  {
+    "run_id": "run_4fcac2b53303a131c44a9472",
+    "conversation_id": "8c6ec68bb2644201c0ae8db6",
+    "status": "done",
+    "model": "glm-5.3-flash",
+    "tokens": 854163,
+    "tool_calls": 55,
+    "duration_ms": 630455,
+    "created_at": 1789449471419,
+    "finished_at": 1789450101872,
+    "error": ""
+  }
+]

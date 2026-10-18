@@ -42,48 +42,17 @@ func TestPlanTrackerSame(t *testing.T) {
 	}
 }
 
-// The step ceiling was the ceiling on how complex a task could be: completion is
-// flat at 67-71% up to 30 tool calls and collapses to 18% past it, and 30 calls
-// is 15 cycles at the measured 2.1 calls per cycle. The runs that did finish
-// real work spent 43 and 94 calls.
-func TestStepBudgetAllowsRealWork(t *testing.T) {
-	if einoMaxIters < 40 {
-		t.Fatalf("einoMaxIters = %d; a 15-cycle budget capped tasks at ~31 tool calls", einoMaxIters)
+// The adapter must not silently reinstate Eino's default 20-cycle limit.
+func TestUnlimitedIterationAdapterAndMeter(t *testing.T) {
+	if einoMaxIters != int(^uint(0)>>1) {
+		t.Fatal("unexpected iteration quota")
 	}
-	// The guard leaves the final cycle tool-free so the model can still answer,
-	// so it trips one short of the constant.
-	b := newRunBudget(einoMaxIters, 0, 0)
+	b := newRunBudget(0, 0, 0)
 	var msgs []*schema.Message
-	for i := 0; i < einoMaxIters-2; i++ {
+	for i := 0; i < 1000; i++ {
 		msgs = append(msgs, schema.AssistantMessage("step", nil))
 		if b.observe(msgs) {
-			t.Fatalf("budget tripped at cycle %d of %d", i+1, einoMaxIters)
+			t.Fatalf("usage meter stopped cycle %d", i)
 		}
 	}
-	msgs = append(msgs, schema.AssistantMessage("step", nil))
-	if !b.observe(msgs) {
-		t.Fatal("budget did not trip at its final cycle")
-	}
-	if b.exhausted() != "steps" {
-		t.Errorf("exhausted reason = %q, want steps", b.exhausted())
-	}
-}
-
-// eino's own MaxIterations is a hard error cliff; the guard is meant to reach
-// its tool-stripping cycle FIRST so the run reports honestly instead of
-// erroring. They are built from the same constant, and drifting apart breaks
-// one side or the other silently.
-func TestStepBudgetTripsBeforeEinoCliff(t *testing.T) {
-	b := newRunBudget(einoMaxIters, 0, 0)
-	var msgs []*schema.Message
-	for i := 0; i < einoMaxIters; i++ {
-		msgs = append(msgs, schema.AssistantMessage("step", nil))
-		if b.observe(msgs) {
-			if got := i + 1; got >= einoMaxIters {
-				t.Fatalf("guard tripped at cycle %d, at or past eino's cliff of %d", got, einoMaxIters)
-			}
-			return
-		}
-	}
-	t.Fatalf("guard never tripped within %d cycles", einoMaxIters)
 }
