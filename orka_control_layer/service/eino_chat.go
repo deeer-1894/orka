@@ -260,7 +260,7 @@ func BuildEinoSubAgents(ctx context.Context, client llm.Client, model string, at
 			// Delegates retain context compaction and shared evidence guidance.
 			// They have no separate token or iteration allowance.
 			Handlers: append([]adk.ChatModelAgentMiddleware{newGateMiddleware(toolGateFrom(ctx))}, append(subAgentContextHandlers(ctx, sp.Name, scoped),
-				newResearchGuidance(ctx),
+				newDelegateResearchGuidance(ctx),
 				newBudgetGuardFor(newDelegateBudget(0, 0)),
 			)...),
 		})
