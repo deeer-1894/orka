@@ -22,6 +22,10 @@
 #     tools_used     tools that must have been called
 #     tools_banned   tools that must NOT have been called
 #     max_tools      ceiling on tool calls (catches flailing)
+#     verify         {script, files}: downloads files and runs a deterministic
+#                    Python checker (evals/verifiers/, shared helpers in
+#                    grading.py) that cross-checks deliverables against their
+#                    data; it parses files and never runs model-written code
 
 tasks:
   # --- basic competence: does the plain path still work ---
@@ -150,3 +154,35 @@ tasks:
       expect:
         contains: ["MEMORY_TOKEN_7742"]
         max_tools: 0
+
+  # --- long multi-stage delivery: parallel delegates plus a final report ---
+  #
+  # Before delegates were scoped (2026-10-18) the engineer received the parent's
+  # open plan and required outputs, adopted all six steps, searched for tools it
+  # lacked and never returned: 809s, 1.48M tokens, no report. The verifier
+  # recomputes the top product from sales.csv and checks the report against the
+  # summary, so a report that drifts from its data fails even if every file exists.
+  - id: long_sales_report
+    prompt: "请完成一个多步骤的数据分析交付任务,并在结束时给出可验证的验收结果:\n1. 用 Python(固定随机种子 42)生成 24 个月、5 条产品线的模拟销量 CSV(含季节性与增长趋势),保存为 sales.csv。\n2. 编写 analyze.py,计算每条产品线的环比、同比、季节性指数、Top 增长产品,并输出 summary.json。\n3. 编写单元测试 test_analyze.py 并实际运行,必须全部通过(失败要修复后重跑)。\n4. 用 matplotlib 画 2 张图:趋势对比图 trend.png、季节性热力图 seasonality.png。\n5. 用网络搜索查找“零售 库存周转率 行业基准”,引用至少 2 个真实来源(附链接)。\n6. 汇总成 report.md(含数据结论、图表引用、来源、局限性),并列出所有交付文件。\n请逐项完成,不要跳步。"
+    timeout_s: 1500
+    expect:
+      files: ["sales.csv", "analyze.py", "summary.json", "test_analyze.py", "trend.png", "seasonality.png", "report.md"]
+      max_seconds: 900
+      verify:
+        script: verifiers/long_sales_report.py
+        files: ["sales.csv", "summary.json", "report.md", "trend.png", "seasonality.png", "test_analyze.py"]
+
+  # Facts checked against live PyPI, a thread-safe package with tests, a
+  # benchmark whose recorded allowed/denied counts the report must not
+  # contradict, and xlsx/docx exports. The first run of this task produced a
+  # report claiming every benchmark call passed while ~90% were rejected; the
+  # file-existence checks the agent ran on itself all passed.
+  - id: long_ratelimit_delivery
+    prompt: "请完成下面这个多阶段交付任务,每一项都要真实执行并验证,最后给出验收结果:\n1. 网络核实 FastAPI、Flask、Django 三个框架当前最新稳定版本号、发布日期、许可证,每项都要引用官方来源(PyPI 或官方仓库/文档)链接,不能凭记忆。\n2. 在工作区实现 Python 包 ratelimit/:ratelimit/token_bucket.py 中的 TokenBucket 和 ratelimit/sliding_window.py 中的 SlidingWindow 两种限流器,线程安全,支持注入时钟以便测试。\n3. 在 tests/test_ratelimit.py 编写至少 15 个单元测试(含并发测试和边界情况),实际运行并全部通过;失败要修复后重跑。\n4. 写 bench.py:两种算法在单线程和 8 线程下各调用 10 万次,结果写入 bench.json,格式为 {\"token_bucket\": {\"single\": {...}, \"threads8\": {...}}, \"sliding_window\": {同上}},每项包含 ops_per_sec、allowed、denied 三个数字;并用 matplotlib 画柱状对比图 bench.png。\n5. 把第 1 步的框架对比整理成 comparison.xlsx(每个框架一行,含版本号与来源链接列)。\n6. 写 report.md:包含框架对比表、限流算法设计说明、测试结果、基准数据与图、局限性;再导出一份 report.docx。\n7. 最后列出全部交付文件,并说明每个文件是如何验证的。"
+    timeout_s: 1800
+    expect:
+      files: ["comparison.xlsx", "bench.json", "bench.png", "report.md", "report.docx"]
+      max_seconds: 1000
+      verify:
+        script: verifiers/long_ratelimit_delivery.py
+        files: ["comparison.xlsx", "bench.json", "bench.png", "report.md", "report.docx", "ratelimit/token_bucket.py", "ratelimit/sliding_window.py", "tests/test_ratelimit.py"]

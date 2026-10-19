@@ -40,7 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         bash bubblewrap git curl ca-certificates jq pandoc wkhtmltopdf poppler-utils fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir --index-url "$PIP_INDEX_URL" --retries 5 --timeout 60 \
-        matplotlib pandas numpy openpyxl python-pptx
+        matplotlib pandas numpy openpyxl python-pptx pytest
 # Keep the gateway non-root. Runtime namespace/seccomp/AppArmor policy must
 # permit bwrap setup; the runner refuses execution if setup is unavailable.
 RUN useradd -m -u 10001 orka && mkdir -p /workspace && chown orka:orka /workspace

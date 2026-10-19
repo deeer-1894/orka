@@ -677,6 +677,13 @@ func drainEinoStream(s *schema.StreamReader[*schema.Message], role schema.RoleTy
 		if errors.Is(err, io.EOF) {
 			break
 		}
+		// A transient failure mid-stream ends this attempt with WillRetryError
+		// while ModelRetryConfig re-issues the call as a new event; the attempt
+		// is discarded, not the run.
+		var retrying *adk.WillRetryError
+		if errors.As(err, &retrying) {
+			return nil, nil
+		}
 		if err != nil {
 			return nil, err
 		}

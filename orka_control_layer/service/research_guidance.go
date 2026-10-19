@@ -79,17 +79,27 @@ func (g *researchGuidance) BeforeModelRewriteState(ctx context.Context, state *a
 	}
 	text += executionGuidance(budget)
 	if g.session != nil && (!g.delegate || hasResearchTool(state)) {
-		text += "\n" + g.session.status() + "\nFor a known documentation page URL, fetch_url directly; use discover_docs only when you need to find unknown page links from an index, and read_section for a specific unresolved question. Record version, endpoint, authentication scope and inclusive/exclusive boundaries with API claims; do not generalize them beyond the retrieved evidence. Prefer search_evidence and saved findings to rereading unchanged sources. Once the original user's evidence requirements are met, stop research and execute the next required verification or delivery step."
+		text += "\n" + g.session.status() + "\n" + researchToolGuidance
 	}
 	if g.delegate {
-		text += "\nFor software/data execution report the actual verifier commands and failures; for qualitative research verify sources and dates without creating test scripts. Do not claim unverified results."
-		notice := runtimeUserMessage(text)
-		notice.Extra[researchStateTag] = true
-		state.Messages = append(kept, notice)
-		g.filterExhaustedResearch(state)
-		return ctx, state, nil
+		text += delegateStateNotice
+	} else {
+		text += g.ownerState(ctx)
 	}
-	text += "\nUpdate only genuinely completed plan steps; for software/data execution record actual verifier commands and failures; for qualitative research verify sources and dates without creating test scripts. Do not mark missing or unverified deliverables done."
+	notice := runtimeUserMessage(text)
+	notice.Extra[researchStateTag] = true
+	state.Messages = append(kept, notice)
+	g.filterExhaustedResearch(state)
+	return ctx, state, nil
+}
+
+const researchToolGuidance = "For a known documentation page URL, fetch_url directly; use discover_docs only when you need to find unknown page links from an index, and read_section for a specific unresolved question. Record version, endpoint, authentication scope and inclusive/exclusive boundaries with API claims; do not generalize them beyond the retrieved evidence. Prefer search_evidence and saved findings to rereading unchanged sources. Once the original user's evidence requirements are met, stop research and execute the next required verification or delivery step."
+
+const delegateStateNotice = "\nFor software/data execution report the actual verifier commands and failures; for qualitative research verify sources and dates without creating test scripts. Do not claim unverified results."
+
+// ownerState is the plan and delivery state that only the plan owner can act on.
+func (g *researchGuidance) ownerState(ctx context.Context) string {
+	text := "\nUpdate only genuinely completed plan steps; for software/data execution record actual verifier commands and failures; for qualitative research verify sources and dates without creating test scripts. Do not mark missing or unverified deliverables done."
 	if outputs := deliveryFrom(ctx).snapshot(); len(outputs) > 0 {
 		text += "\nRequired outputs (check_delivery inspects these): " + trunc(strings.Join(outputs, "; "), 2400)
 	}
@@ -106,11 +116,7 @@ func (g *researchGuidance) BeforeModelRewriteState(ctx context.Context, state *a
 	if len(pending) > 0 {
 		text += "\nOpen plan steps (reuse these exact IDs when updating; do not recreate existing obligations under new IDs):\n" + trunc(strings.Join(pending, "\n"), 2400)
 	}
-	notice := runtimeUserMessage(text)
-	notice.Extra[researchStateTag] = true
-	state.Messages = append(kept, notice)
-	g.filterExhaustedResearch(state)
-	return ctx, state, nil
+	return text
 }
 
 func (g *researchGuidance) filterExhaustedResearch(state *adk.ChatModelAgentState) {

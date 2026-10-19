@@ -62,6 +62,11 @@ type expectation struct {
 	// report can claim to be sourced in chat while the document itself carries no
 	// citation at all.
 	FileContains map[string][]string `yaml:"file_contains"`
+	// Verify grades what the deliverables say against each other and against
+	// the source data — the class of error string assertions cannot see, such
+	// as a report claiming every benchmark call succeeded while the recorded
+	// counts show most were rejected.
+	Verify *verifier `yaml:"verify"`
 }
 
 type followup struct {
@@ -169,6 +174,7 @@ func run(base, email, password, token, tasksFile, only, model string) (scorecard
 	if err := yaml.Unmarshal(raw, &s); err != nil {
 		return scorecard{}, fmt.Errorf("parse %s: %w", tasksFile, err)
 	}
+	resolveVerifierScripts(s.Tasks, filepath.Dir(tasksFile))
 	c := &client{base: base, token: token, model: model}
 	if c.token == "" {
 		if email == "" || password == "" {
@@ -308,6 +314,9 @@ func check(c *client, conv string, e expectation, t *turnResult) []string {
 				why = append(why, quote(path)+" is missing "+quote(sub))
 			}
 		}
+	}
+	if e.Verify != nil {
+		why = append(why, runVerifier(c, conv, e.Verify)...)
 	}
 	if e.MaxSeconds != nil && t.seconds > *e.MaxSeconds {
 		why = append(why, fmt.Sprintf("took %.0fs > max %.0fs (work that should run in parallel is being serialised)",
@@ -517,6 +526,9 @@ func (c *client) runVerdict(conv string) (string, int) {
 // each run starts from a known-empty state.
 func (c *client) clearExpected(t task, conv string) {
 	paths := append([]string(nil), t.Expect.Files...)
+	if t.Expect.Verify != nil {
+		paths = append(paths, t.Expect.Verify.Files...)
+	}
 	if t.Followup != nil {
 		paths = append(paths, t.Followup.Expect.Files...)
 	}

@@ -72,6 +72,30 @@ func TestMidStreamFailureSurvivesViaADKRetry(t *testing.T) {
 	}
 }
 
+// The production event loop, unlike RunEinoOnce, reads each attempt's stream
+// itself; eino ends a failed attempt with WillRetryError and continues with the
+// retry. Treating that marker as fatal failed runs on provider overload.
+func TestStreamEinoRunContinuesPastMidStreamRetry(t *testing.T) {
+	ctx := context.Background()
+	flaky := &flakyStreamClient{failFirst: 1, reply: "recovered answer"}
+	ag, err := BuildEinoAgent(ctx, flaky, "m", "sys", nil, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := &agent.RunContext{Ctx: ctx, Vars: map[string]any{}, Messages: []messages.Message{messages.Chat(messages.RoleUser, "hi", messages.Meta{})}}
+	var answer strings.Builder
+	if err := StreamEinoRun(ctx, rc, ag, func(m messages.Message) {
+		if m.Type == messages.EventChat {
+			answer.WriteString(m.Content)
+		}
+	}); err != nil {
+		t.Fatalf("run died on a mid-stream failure that eino was retrying: %v", err)
+	}
+	if flaky.Calls() != 2 || !strings.Contains(answer.String(), "recovered answer") {
+		t.Fatalf("calls=%d answer=%q, want the retried attempt's answer", flaky.Calls(), answer.String())
+	}
+}
+
 // TestNonTransientIsNotRetried guards the other direction: a 4xx (bad key,
 // moderation) must fail fast instead of burning retries.
 func TestNonTransientIsNotRetried(t *testing.T) {

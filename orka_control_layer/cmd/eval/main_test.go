@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -112,5 +114,31 @@ func TestEvalStopsWhenConversationCreationFails(t *testing.T) {
 				t.Fatalf("result=%+v calls=%d", got, calls)
 			}
 		})
+	}
+}
+
+func TestVerifierGradesDownloadedDeliverables(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("conv") != "c1" {
+			t.Errorf("download not scoped to conversation: %s", r.URL)
+		}
+		switch r.URL.Query().Get("path") {
+		case "data/claim.txt":
+			w.Write([]byte("all calls allowed"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	script := filepath.Join(dir, "check.py")
+	os.WriteFile(script, []byte("import os,sys\nbody=open(os.path.join(sys.argv[1],'data','claim.txt')).read()\nif 'allowed' in body: print('FAIL: claim contradicts counts')\nsys.exit(1)\n"), 0o644)
+	c := &client{base: server.URL}
+	why := runVerifier(c, "c1", &verifier{Script: script, Files: []string{"data/claim.txt", "missing.txt"}})
+	if len(why) != 2 || !strings.Contains(why[0], "cannot download \"missing.txt\"") || why[1] != "verify: claim contradicts counts" {
+		t.Fatalf("reasons=%q", why)
+	}
+	if why := runVerifier(c, "c1", &verifier{Script: script, Files: []string{"../escape.txt"}}); len(why) == 0 || !strings.Contains(strings.Join(why, ";"), "unsafe path") {
+		t.Fatalf("path escape not rejected: %q", why)
 	}
 }

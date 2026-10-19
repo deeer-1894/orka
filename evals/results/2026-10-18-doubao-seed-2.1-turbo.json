@@ -1,0 +1,112 @@
+{
+  "at": "2026-10-18T22:19:11+08:00",
+  "model": "",
+  "passed": 10,
+  "total": 12,
+  "results": [
+    {
+      "id": "plain_answer",
+      "pass": true,
+      "status": "done",
+      "tools": 0,
+      "tokens": 1275,
+      "seconds": 5.6812647080000005
+    },
+    {
+      "id": "arithmetic",
+      "pass": true,
+      "status": "done",
+      "tools": 0,
+      "tokens": 2063,
+      "seconds": 18.668329708
+    },
+    {
+      "id": "file_write_read",
+      "pass": true,
+      "status": "done",
+      "tools": 2,
+      "tokens": 29781,
+      "seconds": 12.832606083
+    },
+    {
+      "id": "file_multi_step",
+      "pass": true,
+      "status": "done",
+      "tools": 3,
+      "tokens": 21444,
+      "seconds": 7.1876375
+    },
+    {
+      "id": "plan_completion",
+      "pass": false,
+      "reasons": [
+        "never called update_plan"
+      ],
+      "status": "done",
+      "tools": 14,
+      "tokens": 148141,
+      "seconds": 149.294050541
+    },
+    {
+      "id": "web_search_basic",
+      "pass": true,
+      "status": "done",
+      "tools": 1,
+      "tokens": 17797,
+      "seconds": 12.613348958
+    },
+    {
+      "id": "refuses_to_invent",
+      "pass": true,
+      "status": "done",
+      "tools": 1,
+      "tokens": 19776,
+      "seconds": 12.435264791
+    },
+    {
+      "id": "research_cites_sources",
+      "pass": false,
+      "reasons": [
+        "stream: context deadline exceeded"
+      ],
+      "status": "",
+      "tools": 0,
+      "tokens": 0,
+      "seconds": 300.001422125
+    },
+    {
+      "id": "parallel_writes",
+      "pass": true,
+      "status": "done",
+      "tools": 3,
+      "tokens": 21484,
+      "seconds": 9.055101416
+    },
+    {
+      "id": "memory_recall",
+      "pass": true,
+      "status": "done",
+      "tools": 2,
+      "tokens": 37641,
+      "seconds": 11.683425042
+    },
+    {
+      "id": "long_sales_report",
+      "pass": true,
+      "status": "done",
+      "tools": 29,
+      "tokens": 296023,
+      "seconds": 334.615846459
+    },
+    {
+      "id": "long_ratelimit_delivery",
+      "pass": true,
+      "status": "done",
+      "tools": 48,
+      "tokens": 526762,
+      "seconds": 460.502803083
+    }
+  ],
+  "total_tools": 103,
+  "total_tokens": 1122187
+}
