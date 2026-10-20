@@ -54,6 +54,17 @@ type Result struct {
 	ElapsedMS int64         `json:"elapsed_ms"`
 	Error     *ActionError  `json:"error,omitempty"`
 	Recovery  *Recovery     `json:"recovery,omitempty"`
+	Steps     []StepResult  `json:"steps,omitempty"`
+}
+
+// StepResult summarizes one executed step of a batch; the batch result's own
+// fields are the observation of the last executed step.
+type StepResult struct {
+	Action    string       `json:"action"`
+	OK        bool         `json:"ok"`
+	Value     any          `json:"value,omitempty"`
+	ElapsedMS int64        `json:"elapsed_ms"`
+	Error     *ActionError `json:"error,omitempty"`
 }
 
 // Recovery records a read-only observation repair after an acknowledged

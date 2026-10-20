@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"path"
 	"strings"
@@ -32,6 +33,20 @@ func toolSchema() map[string]any {
 		"path":        str("Conversation-workspace path: existing self-contained UTF-8 .html/.htm input for preview (up to 1 MiB); output path for screenshot/download.", 1024),
 		"mode":        map[string]any{"type": "string", "enum": []string{"create", "replace"}, "description": "File write mode; default create, replace preserves history."},
 		"timeout_ms":  map[string]any{"type": "integer", "minimum": 1, "maximum": 60000, "description": "Bound this operation; open defaults to 15000 ms, other actions to 45000 ms, maximum 60000 ms."},
+	}
+	stepProps := maps.Clone(props)
+	batchable := make([]string, 0, len(batchableActions))
+	for _, action := range props["action"].(map[string]any)["enum"].([]string) {
+		if batchableActions[action] {
+			batchable = append(batchable, action)
+		}
+	}
+	stepProps["action"] = map[string]any{"type": "string", "enum": batchable}
+	props["action"].(map[string]any)["enum"] = append(props["action"].(map[string]any)["enum"].([]string), batchAction)
+	props["steps"] = map[string]any{
+		"type": "array", "minItems": 1, "maxItems": maxBatchSteps,
+		"description": "batch only: in-page actions run in order in one call, stopping at the first failure; completed steps are never replayed. The result is the last executed step's observation plus a per-step summary. open, preview and download are not batchable. A batch-level snapshot_id applies to steps that use ref without their own.",
+		"items":       map[string]any{"type": "object", "properties": stepProps, "required": []string{"action"}, "additionalProperties": false},
 	}
 	return map[string]any{"type": "object", "properties": props, "required": []string{"action"}, "additionalProperties": false}
 }

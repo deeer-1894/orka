@@ -134,3 +134,19 @@ func TestBrowserFormHistoryDoesNotLeakOrModifyLiveFields(t *testing.T) {
 		t.Fatal("live input mutated")
 	}
 }
+
+func TestBrowserBatchStepsDoNotLeakOrModifyLiveInput(t *testing.T) {
+	args := map[string]any{"action": "batch", "steps": []any{
+		map[string]any{"action": "fill", "selector": "#password", "text": "private-batch-secret"},
+		map[string]any{"action": "evaluate", "expression": "private-batch-script"},
+		map[string]any{"action": "click", "selector": "#submit"},
+	}}
+	raw, _ := json.Marshal(toolDisplayArgs("browser", args))
+	if strings.Contains(string(raw), "private-batch") || !strings.Contains(string(raw), "#submit") {
+		t.Fatalf("batch display = %s", raw)
+	}
+	live, _ := json.Marshal(args)
+	if !strings.Contains(string(live), "private-batch-secret") {
+		t.Fatal("live input mutated")
+	}
+}
