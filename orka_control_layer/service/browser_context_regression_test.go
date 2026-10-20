@@ -14,9 +14,9 @@ import (
 )
 
 func TestBrowserResearchClearsConsumedPageObservations(t *testing.T) {
-	ctx := withExecutionPolicy(agent.WithMeta(context.Background(), messages.Meta{
+	ctx := agent.WithMeta(context.Background(), messages.Meta{
 		UserEmail: "reader@test.com", ConversationID: "browser-research",
-	}), executionPolicy{Mode: executionBrowser, StrictSources: true, SourceVerificationOnly: true})
+	})
 	state := &adk.ChatModelAgentState{Messages: []*schema.Message{schema.UserMessage("Read five articles")}}
 	for i := 0; i < 5; i++ {
 		id := fmt.Sprintf("call-%d", i)

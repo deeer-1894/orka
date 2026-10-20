@@ -1,16 +1,7 @@
 import type { SessionRecoveryStore } from '../lib/sessionRecovery';
 import { useEffect, useRef, useState } from "react";
 import type { RunStatus } from "../hooks/useChatStream";
-import {
-  groupCatalog,
-  isGroupOn,
-  isGroupPartial,
-  isToolOn,
-  toggleGroupSel,
-  toggleToolSel,
-  type CatalogGroup,
-} from "../lib/toolGroups";
-import { api, files as fileApi, tools as toolsApi, type ToolInfo } from "../api";
+import { api, files as fileApi } from "../api";
 import { invalidateSessionFiles, useFileRevision } from "../hooks/useFileRevision";
 import { useConversationDraft } from "../hooks/useConversationDraft";
 import { toast, toastError } from "../lib/toast";
@@ -44,8 +35,6 @@ interface ComposerProps {
   blocked?: boolean;
   onSend: (msg: string, fileIDs?: string[], conversationID?: string) => void | Promise<unknown>;
   onKill: () => void;
-  enabledTools: Set<string>;
-  onSetTools: (next: Set<string>) => void;
   activeSkill: string | null;
   onPickSkill: (name: string | null) => void;
   conversationID: string;
@@ -60,7 +49,7 @@ function StandaloneComposer(props: ComposerProps) {
   return <ComposerForm {...props} draft={draft} />;
 }
 function ComposerForm({
-  draft, blocked = false, status, onSend, onKill, enabledTools, onSetTools,
+  draft, blocked = false, status, onSend, onKill,
   activeSkill, onPickSkill, conversationID, ensureConversation,
 }: ComposerProps & { draft: ReturnType<typeof useConversationDraft> }) {
   const { text, setText, attachments, setAttachments } = draft;
@@ -68,14 +57,7 @@ function ComposerForm({
   const sendingRef = useRef(false);
   const [sendError, setSendError] = useState<{ cid: string; message: string } | null>(null);
   const [menu, setMenu] = useState(false);
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const [catalog, setCatalog] = useState<ToolInfo[] | null>(null);
-  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
   const [skills, setSkills] = useState<{ name: string; description: string }[]>([]);
-  // Lazy-load the tool catalog the first time the picker opens.
-  useEffect(() => {
-    if (toolsOpen && catalog === null) toolsApi.catalog().then(setCatalog).catch(() => setCatalog([]));
-  }, [toolsOpen, catalog]);
   const [installUrl, setInstallUrl] = useState("");
   const [installing, setInstalling] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -403,20 +385,6 @@ function ComposerForm({
           </div>
         )}
 
-        {/* Scope picker: opens ABOVE the input instead of occupying a permanent
-            row, so the floating bar is just the input box. */}
-        {toolsOpen && (
-          <div className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-20">
-            <ToolPicker
-              catalog={catalog}
-              selected={enabledTools}
-              expanded={expandedGroup}
-              onExpand={setExpandedGroup}
-              onSet={onSetTools}
-              onClose={() => setToolsOpen(false)}
-            />
-          </div>
-        )}
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
           {skill && (
             <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-accentsoft px-2 py-1 text-[12px] text-accent">
@@ -473,7 +441,7 @@ function ComposerForm({
           />
           {/* Surface the two hidden affordances as real buttons (discoverability) */}
           <button
-            onClick={() => { setMenu(v => !v); setToolsOpen(false); taRef.current?.focus(); }}
+            onClick={() => { setMenu(v => !v); taRef.current?.focus(); }}
             aria-expanded={menu}
             className="composer-icon"
             title="选技能(也可输入 /)"
@@ -493,17 +461,6 @@ function ComposerForm({
             aria-label="引用文件"
           >
             <Icon name="at" size={17} />
-          </button>
-          <button
-            onClick={() => { setToolsOpen(o => !o); setMenu(false); }}
-            aria-expanded={toolsOpen}
-            data-selected={enabledTools.size > 0}
-            className="composer-icon"
-            title={enabledTools.size === 0 ? "自动模式：按任务使用全部可用工具，无需逐项勾选" : `已限定 ${enabledTools.size} 类工具，点击调整`}
-            aria-label="工具范围"
-          >
-            <Icon name="wrench" size={17} />
-            {enabledTools.size > 0 && <span className="composer-tool-count">{enabledTools.size}</span>}
           </button>
           </div>
           <textarea
@@ -561,92 +518,6 @@ function ComposerForm({
         </div>
 
       </div>
-    </div>
-  );
-}
-
-// ToolPicker is the catalog-driven tool selector: groups are toggled whole or
-// expanded to pick individual tools (each showing its real description), so a
-// user never has to know a bare tool id. ⚠ marks code/network tools.
-function ToolPicker({
-  catalog, selected, expanded, onExpand, onSet, onClose,
-}: {
-  catalog: ToolInfo[] | null;
-  selected: Set<string>;
-  expanded: string | null;
-  onExpand: (id: string | null) => void;
-  onSet: (next: Set<string>) => void;
-  onClose: () => void;
-}) {
-  const groups: CatalogGroup[] = catalog ? groupCatalog(catalog) : [];
-  return (
-    <div className="rounded-xl border border-border bg-surface p-2">
-      <div className="mb-1.5 flex items-center gap-2 px-1">
-        <span className="text-[11px] text-faint">自动使用全部可用工具 · 手动选择可限定范围</span>
-        {selected.size > 0 && (
-          <button onClick={() => onSet(new Set())} className="text-[11px] text-faint hover:text-accent" title="恢复自动使用全部可用工具">重置为自动</button>
-        )}
-        <button onClick={onClose} className="ml-auto text-[11px] text-faint hover:text-ink">收起</button>
-      </div>
-      {catalog === null ? (
-        <div className="px-1 py-2 text-[12px] text-faint">加载工具列表…</div>
-      ) : (
-        <div className="flex flex-col gap-1">
-          {groups.map((g) => {
-            const on = isGroupOn(selected, g);
-            const partial = isGroupPartial(selected, g);
-            const open = expanded === g.id;
-            return (
-              <div key={g.id} className="rounded-lg border border-border/60">
-                <div className="flex items-center gap-1.5 px-1.5 py-1">
-                  <button
-                    onClick={() => onSet(toggleGroupSel(selected, g))}
-                    aria-pressed={on}
-                    title={g.desc}
-                    className={
-                      "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[12px] transition " +
-                      (on ? "border-accent/40 bg-accentsoft text-accent" : partial ? "border-accent/30 text-accent" : "border-border text-faint hover:bg-surface2")
-                    }
-                  >
-                    <Icon name={g.icon} size={13} /> {g.label}
-                    {partial && <span className="ml-1 text-[10px]">部分</span>}
-                  </button>
-                  <span className="truncate text-[11px] text-faint">{g.tools.length} 个工具</span>
-                  <button onClick={() => onExpand(open ? null : g.id)} className="ml-auto px-1 text-[11px] text-faint hover:text-ink">
-                    {open ? "▾" : "▸"}
-                  </button>
-                </div>
-                {open && (
-                  <div className="border-t border-border/60 px-1.5 py-1">
-                    {g.tools.map((t) => {
-                      const ton = isToolOn(selected, g, t.name);
-                      return (
-                        <button
-                          key={t.name}
-                          onClick={() => onSet(toggleToolSel(selected, g, t.name))}
-                          className="flex w-full items-start gap-2 rounded-md px-1.5 py-1 text-left hover:bg-surface2"
-                          title={t.description}
-                        >
-                          <span className={"mt-0.5 grid h-3.5 w-3.5 shrink-0 place-items-center rounded border text-[9px] " + (ton ? "border-accent bg-accent text-white" : "border-border")}>
-                            {ton ? "✓" : ""}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="text-[12.5px] text-ink">
-                              {t.name}
-                              {t.danger && <span className="ml-1 text-[10px] text-accent" title="运行代码 / 访问网络">⚠</span>}
-                            </span>
-                            <span className="block truncate text-[11px] text-faint">{t.description}</span>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }

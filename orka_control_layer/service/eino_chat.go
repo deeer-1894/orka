@@ -159,7 +159,7 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 		Instruction: instruction,
 		Model:       newAgentModel(client, model, "orka"),
 		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(mainAgentTools(ctx, tools))},
+			ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(mainAgentTools(tools))},
 			ReturnDirectly:  clarifyReturnDirectly(),
 		},
 		MaxIterations: maxIters,
@@ -223,7 +223,7 @@ func BuildEinoSubAgents(ctx context.Context, client llm.Client, model string, at
 		byName[t.Name()] = t
 	}
 	var out []adk.Agent
-	limiter := newWorkerLimiter(executionPolicyFrom(ctx).MaxWorkers)
+	limiter := newWorkerLimiter(maxDelegateWorkers)
 	for _, sp := range specs {
 		if sp.Name == "" {
 			continue
@@ -250,7 +250,7 @@ func BuildEinoSubAgents(ctx context.Context, client llm.Client, model string, at
 			Instruction: prompt,
 			Model:       newAgentModel(client, model, sp.Name),
 			ToolsConfig: adk.ToolsConfig{
-				ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(workerAgentTools(ctx, scoped))},
+				ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(workerAgentTools(scoped))},
 			},
 			MaxIterations: iters,
 			// Same resilience as the orchestrator: a delegated worker that dies on a
@@ -323,7 +323,7 @@ func BuildEinoDeepOrchestrator(ctx context.Context, client llm.Client, model, in
 		Instruction: instruction,
 		SubAgents:   subs,
 		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(mainAgentTools(ctx, atomic))},
+			ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(mainAgentTools(atomic))},
 			ReturnDirectly:  clarifyReturnDirectly(),
 			// Stream delegate events up so the UI keeps its per-agent lanes.
 			EmitInternalEvents: true,
@@ -355,7 +355,7 @@ func BuildEinoOrchestrator(ctx context.Context, client llm.Client, model, instru
 	if maxIters <= 0 {
 		maxIters = einoMaxIters
 	}
-	allTools := append(EinoTools(mainAgentTools(ctx, atomic)), subTools...)
+	allTools := append(EinoTools(mainAgentTools(atomic)), subTools...)
 	handlers := append([]adk.ChatModelAgentMiddleware{newBudgetGuardFor(agentBudget(ctx, maxIters)), newGateMiddleware(toolGateFrom(ctx))}, extra...)
 	if summarize {
 		// Compression uses the same selected model as the rest of the run.
@@ -744,9 +744,7 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	rc.Ctx = ctx
 	journalFrom(ctx).trackState(ctx)
 	tools = append([]agent.BaseTool(nil), tools...)
-	if !executionPolicyFrom(ctx).StrictSources {
-		tools = append(tools, evidenceSearchTool{research})
-	}
+	tools = append(tools, evidenceSearchTool{research})
 	// Context-window management (truncate oversized tool output to a workspace
 	// file, clear stale tool results, repair dangling tool calls). Runs ahead of
 	// the summarization backstop.
@@ -767,13 +765,13 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 	if mw := newReasoningBudget(s.llmConf().ReasoningBudgetRunes, einoOrchestratorName); mw != nil {
 		ctxMW = append(ctxMW, mw)
 	}
-	if s.deepAgentEnabled(ctx) {
+	if s.deepAgentEnabled() {
 		if instruction == "" {
 			instruction = OrchestratorPrompt
 		}
 		// Pin relative-date interpretation for every model path, including the
 		// multi-agent orchestrator and its single-agent fallback.
-		instruction = executionPolicyFrom(ctx).decorateInstruction(withRuntimeDate(instruction))
+		instruction = withRuntimeDate(instruction)
 		// einoMaxIters, not a literal: this is eino's own hard cycle cliff, and the
 		// run budget is built from the same constant. Drifting apart means either
 		// the guard never fires (and eino errors out instead of reporting) or it
@@ -783,7 +781,7 @@ func (s *ChatService) runEino(ctx context.Context, rc *agent.RunContext, deps Pi
 		if instruction == "" {
 			instruction = middlewares.DefaultSystemPrompt
 		}
-		instruction = executionPolicyFrom(ctx).decorateInstruction(withRuntimeDate(instruction))
+		instruction = withRuntimeDate(instruction)
 		var sum []adk.ChatModelAgentMiddleware
 		if !s.DisableSummary {
 			// Auxiliary history compression uses the run's selected model.

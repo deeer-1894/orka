@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
-	"github.com/orka-oss/orka_core/agent"
 	"strings"
+
+	"github.com/orka-oss/orka_core/agent"
+	"github.com/orka-oss/orka_core/modelprofile"
 )
 
 type quantCapabilityKey struct{}
@@ -35,10 +37,23 @@ func dangerousToolName(name string) bool { return dangerTools[name] || strings.H
 
 type executionScopeKey struct{}
 
-func withRequestedExecutionScope(ctx context.Context, req ChatRunRequest) context.Context {
-	if req.executionPolicy != nil {
-		return context.WithValue(ctx, executionScopeKey{}, req.executionPolicy.allowsExecution() && !catalogOnly(ctx))
+// filterToolsForRequest applies the caller's declared tool whitelist and the
+// selected model's capabilities. Tool choice within that set is the model's.
+func filterToolsForRequest(ctx context.Context, tools []agent.BaseTool, req ChatRunRequest) []agent.BaseTool {
+	tools = filterEnabled(tools, req.EnabledTools)
+	if selected, ok := modelprofile.FromContext(ctx); ok && selected.Capabilities.Vision {
+		return tools
 	}
+	out := make([]agent.BaseTool, 0, len(tools))
+	for _, tool := range tools {
+		if tool != nil && tool.Name() != "run_agent" {
+			out = append(out, tool)
+		}
+	}
+	return out
+}
+
+func withRequestedExecutionScope(ctx context.Context, req ChatRunRequest) context.Context {
 	enabled := len(req.EnabledTools) == 0
 	for _, name := range req.EnabledTools {
 		if name == "code" || name == "python" || name == "shell" {

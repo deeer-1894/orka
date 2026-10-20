@@ -6,7 +6,7 @@ export function useConversationSettings(session: SessionRecoveryStore, conversat
   const [preferences] = useState(() => new ChatPreferencesStore(session.owner, session.readSettings(conversationID)));
   const records = useRef(new Map<string, ConversationSettings>());
   const [, render] = useState(0);
-  const defaults = useCallback((): ConversationSettings => ({ enabledTools: [], activeSkill: null, ...preferences.read() }), [preferences]);
+  const defaults = useCallback((): ConversationSettings => ({ activeSkill: null, ...preferences.read() }), [preferences]);
   const get = useCallback((cid: string) => {
     if (!records.current.has(cid)) records.current.set(cid, session.readSettings(cid) || defaults());
     const value = records.current.get(cid)!;

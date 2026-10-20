@@ -12,11 +12,9 @@ test('accepted resume cannot submit again from a stale history button',async()=>
 test('unconfirmed resume releases lock and remains retryable',async()=>{
  const actions=new RunActions({list:async()=>[run],get:async()=>run,resume:async()=>({resumed:false,conversation_id:'c'})});await assert.rejects(actions.resume(run),/服务未确认/);assert.equal(actions.isBusy('c'),false);
 });
-test('resume passes only the target conversation selection, including explicit empty',async()=>{
- for (const selected of [undefined,[],['code','web']]) {
-  let got;let cid;
-  const actions=new RunActions({list:async()=>[run],get:async()=>run,resume:async(id,tools)=>{got=tools;return {resumed:true,conversation_id:'c'};}},()=>{},key=>{cid=key;return selected;});
-  await actions.resume(run);
-  assert.equal(cid,'c');assert.deepEqual(got,selected);
- }
+test('resume sends only the run id; the run keeps its own recorded tool scope',async()=>{
+ let args;
+ const actions=new RunActions({list:async()=>[run],get:async()=>run,resume:async(...rest)=>{args=rest;return {resumed:true,conversation_id:'c'};}});
+ await actions.resume(run);
+ assert.deepEqual(args,[run.run_id]);
 });

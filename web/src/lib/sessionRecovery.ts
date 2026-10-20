@@ -10,12 +10,11 @@ let generation = 0;
 
 export interface DraftAttachment { name: string; path: string; image: boolean; conversationID: string }
 export interface DraftSnapshot { text: string; attachments: DraftAttachment[] }
-export interface ConversationSettings { enabledTools: string[]; selectedVersion: string; activeSkill: string | null; confirmRisky: boolean }
+export interface ConversationSettings { selectedVersion: string; activeSkill: string | null; confirmRisky: boolean }
 export interface RetrySnapshot {
   message: string;
   conversationID: string;
   userEmail: string;
-  enabledTools: string[];
   selectedVersion?: string;
   modelProfile?: string;
   activeSkill?: string;
@@ -50,13 +49,12 @@ function clean(kind: Kind, value: unknown, owner: string, cid: string): Payload 
     // Legacy budget fields are intentionally discarded; keep the user draft.
     return { text: value.text, attachments };
   }
-  if (!strings(value.enabledTools)) return;
   if (kind === 'settings') {
     if (typeof value.selectedVersion !== 'string' || (value.activeSkill !== null && typeof value.activeSkill !== 'string') || typeof value.confirmRisky !== 'boolean') return;
-    return { enabledTools: [...value.enabledTools], selectedVersion: value.selectedVersion, activeSkill: value.activeSkill, confirmRisky: value.confirmRisky };
+    return { selectedVersion: value.selectedVersion, activeSkill: value.activeSkill, confirmRisky: value.confirmRisky };
   }
   if (value.userEmail !== owner || value.conversationID !== cid || typeof value.message !== 'string') return;
-  const result: RetrySnapshot = { message: value.message, userEmail: owner, conversationID: cid, enabledTools: [...value.enabledTools] };
+  const result: RetrySnapshot = { message: value.message, userEmail: owner, conversationID: cid };
   for (const key of ['selectedVersion', 'modelProfile', 'activeSkill', 'deepThinking'] as const) {
     if (value[key] === undefined) continue;
     if (typeof value[key] !== 'string') return;

@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
-	"github.com/orka-oss/orka_core/agent"
 	"testing"
+
+	"github.com/orka-oss/orka_core/agent"
+	"github.com/orka-oss/orka_core/modelprofile"
 )
 
 func TestQuantToolsDefaultAndExplicitRange(t *testing.T) {
@@ -49,6 +51,60 @@ func TestCatalogNeverReceivesCodeExecutionScope(t *testing.T) {
 	for _, selection := range [][]string{nil, {"code"}} {
 		if requestedExecutionScope(withRequestedExecutionScope(ctx, ChatRunRequest{EnabledTools: selection})) {
 			t.Fatal("metadata discovery received execution authority")
+		}
+	}
+}
+
+func baseToolNames(tools []agent.BaseTool) map[string]bool {
+	out := make(map[string]bool, len(tools))
+	for _, tool := range tools {
+		out[tool.Name()] = true
+	}
+	return out
+}
+
+// Wording once selected the catalog: research or "访问" requests lost file_write
+// and code execution, and a request naming update_plan did not get it.
+func TestRequestWordingDoesNotNarrowTools(t *testing.T) {
+	ctx := modelprofile.WithContext(context.Background(), modelprofile.Snapshot{Capabilities: modelprofile.Capabilities{Tools: true}})
+	all := []agent.BaseTool{namedTool{"file_write"}, namedTool{"shell"}, namedTool{"web_search"}, namedTool{"browser"}}
+	for _, msg := range []string{
+		"调研三家云厂商最新的 GPU 价格并对比,写成 report.md 保存到工作区",
+		"访问数据库里的订单表,统计本月销量",
+		"只能通过浏览器打开官网",
+	} {
+		got := baseToolNames(filterToolsForRequest(ctx, all, ChatRunRequest{Message: msg}))
+		for _, tool := range all {
+			if !got[tool.Name()] {
+				t.Errorf("%q removed %s", msg, tool.Name())
+			}
+		}
+	}
+	got := baseToolNames(filterToolsForRequest(ctx, all, ChatRunRequest{EnabledTools: []string{"web_search"}}))
+	if len(got) != 1 || !got["web_search"] {
+		t.Fatalf("declared whitelist not applied: %v", got)
+	}
+	controls := baseToolNames(mainAgentTools(nil))
+	for _, name := range []string{planToolName, "clarify", findToolsName} {
+		if !controls[name] {
+			t.Errorf("plan owner lacks %s", name)
+		}
+	}
+}
+
+func TestRunAgentRequiresVerifiedVision(t *testing.T) {
+	tools := []agent.BaseTool{namedTool{"browser"}, namedTool{"run_agent"}}
+	for _, tc := range []struct {
+		ctx  context.Context
+		want bool
+	}{
+		{context.Background(), false},
+		{modelprofile.WithContext(context.Background(), modelprofile.Snapshot{Capabilities: modelprofile.Capabilities{Tools: true}}), false},
+		{modelprofile.WithContext(context.Background(), modelprofile.Snapshot{Capabilities: modelprofile.Capabilities{Tools: true, Vision: true}}), true},
+	} {
+		got := baseToolNames(filterToolsForRequest(tc.ctx, tools, ChatRunRequest{}))
+		if !got["browser"] || got["run_agent"] != tc.want {
+			t.Errorf("tools=%v want run_agent=%v", got, tc.want)
 		}
 	}
 }

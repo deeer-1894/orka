@@ -113,6 +113,15 @@ func DefaultSubAgents() []config.SubAgentConfig {
 	}
 }
 
+// maxDelegateWorkers bounds how many delegates of one run execute at once.
+const maxDelegateWorkers = 3
+
+// deepAgentEnabled reports whether runs get the delegating orchestrator. It is
+// deployment configuration; whether to delegate is the model's decision.
+func (s *ChatService) deepAgentEnabled() bool {
+	return s != nil && s.Cfg != nil && s.Cfg.Agent.MultiAgent
+}
+
 // deepSubAgentSpecs makes Eino's general worker explicit so it can share the
 // same run-scoped concurrency limiter as every specialist. The built-in general
 // worker is otherwise created inside Eino and cannot be wrapped.

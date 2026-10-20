@@ -18,7 +18,6 @@ export interface RunParams {
   message: string;
   conversationID: string;
   userEmail: string;
-  enabledTools: string[];
   resumeKey?: string;
   modelProfile?: string; // opaque revision: retries reject stale model configuration
   selectedVersion?: string; // "auto" or an explicit model ID
@@ -100,7 +99,7 @@ export function useChatStreams(session?: SessionRecoveryStore) {
       };
       const updateStatus = (status: RunStatus) => patch(cid, c => current() ? { ...c, status } : c);
       updateStatus("streaming");
-      if (!p.attachOnly && !p.resumeKey) saveInput(cid, { ...p, onAccepted: undefined, onRejected: undefined, fileIDs: [...(p.fileIDs || [])], enabledTools: [...p.enabledTools] });
+      if (!p.attachOnly && !p.resumeKey) saveInput(cid, { ...p, onAccepted: undefined, onRejected: undefined, fileIDs: [...(p.fileIDs || [])] });
       patch(cid, c => ({ ...c, connection: 'connecting', error: '', input: readInput(cid) }));
       let accepted = !!p.attachOnly;
 
@@ -306,7 +305,6 @@ export function useChatStreams(session?: SessionRecoveryStore) {
             message: p.message,
             conversation_id: cid,
             user_email: p.userEmail,
-            enabled_tools: p.enabledTools,
             resume_key: p.resumeKey ?? "",
             selected_version: p.selectedVersion ?? "",
             ...(p.modelProfile ? { model_profile: p.modelProfile } : {}),

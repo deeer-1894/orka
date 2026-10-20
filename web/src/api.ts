@@ -124,13 +124,6 @@ async function get<T>(path: string): Promise<T> {
   return (j.data ?? j) as T;
 }
 
-export type ToolInfo = { name: string; description: string; group: string; danger: boolean };
-
-export const tools = {
-  // Available tools (with descriptions + groups) — drives the tool picker.
-  catalog: () => get<ToolInfo[]>("/tools/catalog"),
-};
-
 export const chat = {
   steer: (conversation_id: string, run_id: string, request_id: string, message: string, file_ids: string[]) =>
     post<{ message: Message; run_id: string }>("/chat/steer", { conversation_id, run_id, request_id, message, file_ids }),
@@ -248,8 +241,8 @@ export const api = {
   rerunRun: (run_id: string) => post<{ status: string }>("/run/rerun", { run_id }),
   // Continue a run that died mid-flight from its surviving transcript, rather
   // than paying for the completed work a second time.
-  resumeRun: (run_id: string, enabled_tools?: string[]) =>
-    post<{ resumed: boolean; conversation_id: string; steps: number }>("/chat/resume_run", { run_id, enabled_tools }),
+  resumeRun: (run_id: string) =>
+    post<{ resumed: boolean; conversation_id: string; steps: number }>("/chat/resume_run", { run_id }),
   listFactors: (status = "") => post<{ factors: Factor[] }>("/quant/factors", { status }),
   setFactorStatus: (factor_id: string, status: string) => post<{ status: string }>("/quant/factor/status", { factor_id, status }),
   listPortfolios: () => post<{ portfolios: WeightedPortfolio[] }>("/quant/portfolios", {}),

@@ -17,7 +17,7 @@ function Fixture() {
   return <div className="h-screen bg-bg text-ink">
     <output data-testid="creates">{creates}</output>
     {state.mode === "drawer" && <ArtifactDrawer open onClose={noop} tab={state.tab} setTab={tab => setState((s: any) => ({ ...s, tab }))} liveTab={null} email="me@example.com" conversationID={state.conversationID} onJumpToConversation={noop} focusArtifact={null} onClearArtifact={noop} />}
-    {state.mode === "composer" && <Composer status="idle" onSend={noop} onKill={noop} enabledTools={new Set()} onSetTools={noop} activeSkill={null} onPickSkill={noop} conversationID={state.conversationID} ensureConversation={async () => {
+    {state.mode === "composer" && <Composer status="idle" onSend={noop} onKill={noop} activeSkill={null} onPickSkill={noop} conversationID={state.conversationID} ensureConversation={async () => {
       setCreates(n => n + 1); await new Promise(r => setTimeout(r, 100));
       setState((s: any) => s.conversationID ? s : ({ ...s, conversationID: "new" })); return "new";
     }} />}

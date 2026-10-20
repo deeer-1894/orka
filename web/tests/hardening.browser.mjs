@@ -151,13 +151,11 @@ test('retry pins the answered model profile and shows a stale-profile rejection'
  }});await a.select('a');await a.page.locator('textarea').fill('original request');await a.page.locator('textarea').press('Enter');await a.page.getByRole('button',{name:'重新生成',exact:true}).click();await a.page.getByText('模型配置已变化，请重新选择模型',{exact:false}).first().waitFor();assert.equal(count,2);a.check();
 });
 
-test('automatic tools require no selection and allow an optional restricted range',async t=>{
- const a=await app(t,{handle:async({path,body,json,route})=>{
-  if(path==='/tools/catalog'){await json([{name:'python',group:'code',description:'Run Python',danger:true},{name:'file_read',group:'file',description:'Read file',danger:false}]);return true;}
+test('runs always use automatic tools and the composer offers no tool picker',async t=>{
+ const a=await app(t,{handle:async({path,body,route})=>{
   if(path==='/chat/run'){await route.fulfill({contentType:'text/event-stream',body:[msg('a2','chat','Tool result',{role:'assistant',meta:{conversation_id:body.conversation_id}}),msg('d3','task','',{action:'done',meta:{conversation_id:body.conversation_id}})].map(m=>`data: ${JSON.stringify(m)}\n\n`).join('')});return true;}
- }});await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.getByText('自动使用全部可用工具',{exact:false}).waitFor();assert.equal(a.requests.filter(r=>r.path==='/conversation/create-conversation').length,0);
- await a.select('a');await a.page.locator('textarea').fill('use available tools automatically');await a.page.locator('textarea').press('Enter');await a.page.getByText('Tool result',{exact:true}).waitFor();assert.deepEqual(a.requests.find(r=>r.path==='/chat/run').body.enabled_tools,[]);
- await a.page.getByRole('button',{name:'代码',exact:true}).click();await a.page.locator('textarea').fill('restrict this run to code');await a.page.locator('textarea').press('Enter');await a.page.getByRole('button',{name:'重新生成',exact:true}).waitFor();assert.ok(a.requests.filter(r=>r.path==='/chat/run').at(-1).body.enabled_tools.includes('code'));assert.equal(await a.page.getByRole('dialog').count(),0);a.check();
+ }});await a.select('a');assert.equal(await a.page.getByRole('button',{name:'工具范围'}).count(),0);
+ await a.page.locator('textarea').fill('use available tools automatically');await a.page.locator('textarea').press('Enter');await a.page.getByText('Tool result',{exact:true}).waitFor();assert.equal('enabled_tools' in a.requests.find(r=>r.path==='/chat/run').body,false);assert.equal(a.requests.filter(r=>r.path==='/tools/catalog').length,0);a.check();
 });
 
 test('stop waits for confirmation and settles without reattaching a stopped task',async t=>{
@@ -262,10 +260,10 @@ test('complete product path from named connection and capability to metered exec
  await openWorkbench(a,'运营台');await a.page.getByRole('button',{name:'验收证据',exact:true}).click();await a.page.getByText('检查通过',{exact:true}).waitFor();await openWorkbench(a,'成果');await a.page.getByRole('button',{name:'交付快照',exact:true}).click();await a.page.getByText('当前工作区',{exact:true}).waitFor();const download=a.page.waitForEvent('download');await a.page.getByRole('link',{name:'下载快照 final.txt'}).click();assert.equal((await download).suggestedFilename(),'final.txt');a.check();
 });
 
-test('session drafts reload with attachments and conversation-specific model and scope',async t=>{
- const a=await app(t,{handle:async({path,json})=>{if(path==='/tools/catalog'){await json([{name:'python',group:'code',description:'Python',danger:true}]);return true;}}});
- await a.select('a');await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'model-a'}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.getByRole('button',{name:'代码',exact:true}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.locator('textarea').fill('persistent draft A');await a.page.locator('input[type=file]').setInputFiles({name:'reload.txt',mimeType:'text/plain',buffer:Buffer.from('fixture')});await a.page.getByRole('button',{name:'移除 reload.txt'}).waitFor();await openBudget(a);await a.select('b');await a.page.locator('textarea').fill('persistent draft B');
- await a.page.reload();await a.select('a');assert.equal(await a.page.locator('textarea').inputValue(),'persistent draft A');await a.page.getByRole('button',{name:'移除 reload.txt'}).waitFor();assert.ok((await a.page.getByRole('button',{name:'选择模型'}).textContent()).includes('model-a'));await openBudget(a);await a.page.locator('textarea').press('Enter');await a.page.getByText('发送失败',{exact:false}).first().waitFor();const sent=a.requests.filter(r=>r.path==='/chat/run').at(-1).body;assert.deepEqual(sent.file_ids,['reload.txt']);assert.deepEqual(sent.enabled_tools,['code']);assert.equal(sent.selected_version,'model-a');assert.equal(sent.budget,undefined);
+test('session drafts reload with attachments and conversation-specific model',async t=>{
+ const a=await app(t);
+ await a.select('a');await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'model-a'}).click();await a.page.locator('textarea').fill('persistent draft A');await a.page.locator('input[type=file]').setInputFiles({name:'reload.txt',mimeType:'text/plain',buffer:Buffer.from('fixture')});await a.page.getByRole('button',{name:'移除 reload.txt'}).waitFor();await openBudget(a);await a.select('b');await a.page.locator('textarea').fill('persistent draft B');
+ await a.page.reload();await a.select('a');assert.equal(await a.page.locator('textarea').inputValue(),'persistent draft A');await a.page.getByRole('button',{name:'移除 reload.txt'}).waitFor();assert.ok((await a.page.getByRole('button',{name:'选择模型'}).textContent()).includes('model-a'));await openBudget(a);await a.page.locator('textarea').press('Enter');await a.page.getByText('发送失败',{exact:false}).first().waitFor();const sent=a.requests.filter(r=>r.path==='/chat/run').at(-1).body;assert.deepEqual(sent.file_ids,['reload.txt']);assert.equal(sent.enabled_tools,undefined);assert.equal(sent.selected_version,'model-a');assert.equal(sent.budget,undefined);
  await a.page.reload();await a.select('a');assert.equal(await a.page.locator('textarea').inputValue(),'persistent draft A');await a.page.getByRole('button',{name:'移除 reload.txt'}).waitFor();await a.select('b');assert.equal(await a.page.locator('textarea').inputValue(),'persistent draft B');a.check();
 });
 
@@ -273,9 +271,8 @@ test('complete retry survives reload and remains separate from the newly edited 
  let history=[];
  const a=await app(t,{handle:async({path,body,json,route})=>{
   if(path==='/conversation/get-messages'){await json(history);return true;}
-  if(path==='/tools/catalog'){await json([{name:'python',group:'code',description:'Python',danger:true}]);return true;}
   if(path==='/chat/run'){history=[msg('u1','chat',body.message),msg('a2','chat','Retry across reload',{role:'assistant',meta:{conversation_id:'a',run_id:'run-a',model_version:'model-a',model_profile:'immutable-revision'}}),msg('d3','task','',{action:'partial'})];await route.fulfill({contentType:'text/event-stream',body:history.slice(1).map(m=>`data: ${JSON.stringify(m)}\n\n`).join('')});return true;}
- }});await a.select('a');await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'model-a'}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.getByRole('button',{name:'代码',exact:true}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.locator('textarea').fill('Original exact input');await a.page.locator('input[type=file]').setInputFiles({name:'original.txt',mimeType:'text/plain',buffer:Buffer.from('fixture')});await a.page.getByRole('button',{name:'移除 original.txt'}).waitFor();await openBudget(a);await a.page.locator('textarea').press('Enter');await a.page.getByText('Retry across reload',{exact:true}).waitFor();await a.page.locator('textarea').fill('Next unsent draft');await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'Auto'}).click();
+ }});await a.select('a');await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'model-a'}).click();await a.page.locator('textarea').fill('Original exact input');await a.page.locator('input[type=file]').setInputFiles({name:'original.txt',mimeType:'text/plain',buffer:Buffer.from('fixture')});await a.page.getByRole('button',{name:'移除 original.txt'}).waitFor();await openBudget(a);await a.page.locator('textarea').press('Enter');await a.page.getByText('Retry across reload',{exact:true}).waitFor();await a.page.locator('textarea').fill('Next unsent draft');await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'Auto'}).click();
  await a.page.reload();await a.select('a');await a.page.getByRole('button',{name:'重新生成',exact:true}).click();await a.page.getByText('Retry across reload',{exact:true}).waitFor();assert.equal(await a.page.locator('textarea').inputValue(),'Next unsent draft');const sends=a.requests.filter(r=>r.path==='/chat/run');assert.equal(sends.length,2);assert.deepEqual(sends[1].body,{...sends[0].body,model_profile:'immutable-revision'});const persisted=await a.page.evaluate(()=>Object.keys(sessionStorage).filter(k=>k.startsWith('orka.session.')).map(k=>[k,sessionStorage.getItem(k)]));assert.ok(persisted.length>0);assert.ok(!JSON.stringify(persisted).includes('isolated-hardening-test'));a.check();
 });
 
@@ -319,11 +316,10 @@ test('pending conversation creation cannot retarget the captured send or its mod
  let release;const created=new Promise(resolve=>release=resolve);
  const a=await app(t,{handle:async({path,json,route})=>{
   if(path==='/conversation/create-conversation'){await created;await json({conversation_id:'new',title:'New',owner_email:'test@example.invalid'});return true;}
-  if(path==='/tools/catalog'){await json([{name:'python',group:'code',description:'Python',danger:true}]);return true;}
   if(path==='/chat/run'){await route.fulfill({status:503,json:{code:503,msg:'fixture rejection'}});return true;}
  }});
- await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'model-a'}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.getByRole('button',{name:'代码',exact:true}).click();await a.page.getByRole('button',{name:'工具范围'}).click();await a.page.getByTitle(/^高危操作需确认/).click();await openBudget(a);await a.page.locator('textarea').fill('Send to the new conversation');const pending=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/conversation/create-conversation'));await a.page.locator('textarea').press('Enter');await pending;
- await a.select('b');await a.page.locator('textarea').fill('Keep conversation B draft');const sent=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/chat/run'));release();const body=(await sent).postDataJSON();assert.equal(body.conversation_id,'new');assert.equal(body.message,'Send to the new conversation');assert.equal(body.selected_version,'model-a');assert.deepEqual(body.enabled_tools,['code']);assert.equal(body.confirm_risky,false);assert.equal(body.budget,undefined);assert.equal(await a.page.locator('textarea').inputValue(),'Keep conversation B draft');a.check();
+ await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'model-a'}).click();await a.page.getByTitle(/^高危操作需确认/).click();await openBudget(a);await a.page.locator('textarea').fill('Send to the new conversation');const pending=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/conversation/create-conversation'));await a.page.locator('textarea').press('Enter');await pending;
+ await a.select('b');await a.page.locator('textarea').fill('Keep conversation B draft');const sent=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/chat/run'));release();const body=(await sent).postDataJSON();assert.equal(body.conversation_id,'new');assert.equal(body.message,'Send to the new conversation');assert.equal(body.selected_version,'model-a');assert.equal(body.enabled_tools,undefined);assert.equal(body.confirm_risky,false);assert.equal(body.budget,undefined);assert.equal(await a.page.locator('textarea').inputValue(),'Keep conversation B draft');a.check();
 });
 
 test('new actions match the compact neutral timeline capsules and keep explanations in tooltips',async t=>{
@@ -400,15 +396,6 @@ test('settlement conflict gets one delayed retry only while the answer remains m
  const third=b.page.waitForResponse(r=>new URL(r.url()).pathname.endsWith('/chat/followups')&&cancelled===3);await b.select('a');await third;await b.select('b');await b.page.waitForTimeout(5500);assert.equal(cancelled,3);a.check();b.check();
 });
 
-test('existing tool picker separates DOM browser from visual GUI without authorizing code',async t=>{
- const a=await app(t,{handle:async({path,json,route})=>{
-  if(path==='/tools/catalog'){await json([{name:'browser',group:'browser',description:'DOM webpage actions',danger:true},{name:'gui_agent',group:'gui_agent',description:'Visual page actions',danger:true},{name:'python',group:'code',description:'Python execution',danger:true}]);return true;}
-  if(path==='/chat/run'){await route.fulfill({status:503,json:{code:503,msg:'fixture rejection'}});return true;}
- }});await a.select('a');await a.page.getByRole('button',{name:'工具范围'}).click();const dom=a.page.getByRole('button',{name:'网页 DOM',exact:true}),gui=a.page.getByRole('button',{name:'GUI 视觉',exact:true});await dom.waitFor();await gui.waitFor();assert.match(await dom.getAttribute('title'),/DOM/);assert.match(await gui.getAttribute('title'),/截图/);
- await dom.click();await a.page.getByRole('button',{name:'工具范围'}).click();let sent=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/chat/run'));await a.page.locator('textarea').fill('DOM only');await a.page.locator('textarea').press('Enter');assert.deepEqual((await sent).postDataJSON().enabled_tools,['browser']);await a.page.getByText('发送失败',{exact:false}).first().waitFor();
- await a.page.getByRole('button',{name:'工具范围'}).click();await dom.click();await gui.click();await a.page.reload();await a.select('a');await a.page.getByRole('button',{name:'工具范围'}).click();assert.equal(await dom.getAttribute('aria-pressed'),'false');assert.equal(await gui.getAttribute('aria-pressed'),'true');await a.page.getByRole('button',{name:'工具范围'}).click();sent=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/chat/run'));await a.page.locator('textarea').fill('Visual GUI only');await a.page.locator('textarea').press('Enter');assert.deepEqual((await sent).postDataJSON().enabled_tools,['gui_agent']);assert.equal(await a.page.locator('header').getByRole('button',{name:/网页 DOM|GUI 视觉/}).count(),0);a.check();
-});
-
 test('one composer control switches with input and steers the live run without a second run', async t => {
  let finish;
  const completion = new Promise(resolve => { finish=resolve; });
@@ -476,21 +463,15 @@ test('home scatter cards select without sending and keep mobile composer usable'
  a.check();
 });
 
-test('resume uses tools selected in its own conversation',async t=>{
- const a=await app(t,{runs:[record()],handle:async({path,json})=>{
-  if(path==='/tools/catalog'){await json([{name:'python',description:'Run Python',group:'code',dangerous:true},{name:'fetch_url',description:'Read web',group:'web'}]);return true;}
- }});
- await a.select('a');
- await a.page.getByRole('button',{name:'工具范围',exact:true}).click();
- await a.page.getByRole('button',{name:'代码',exact:true}).click();
- await a.page.getByRole('button',{name:'收起',exact:true}).click();
+test('resume keeps the recorded tool scope of the run and sends no override',async t=>{
+ const a=await app(t,{runs:[record()]});
  await a.select('b');
  await a.page.getByRole('button',{name:'切换工作台面板'}).click();
  await a.page.getByRole('tab',{name:'运营台',exact:false}).first().click();
  await a.page.getByRole('button',{name:'继续任务',exact:true}).click();
  await a.page.getByText('服务未确认该任务继续运行',{exact:false}).first().waitFor();
  const sent=a.requests.find(r=>r.path==='/chat/resume_run');
- assert.deepEqual(sent.body.enabled_tools,['code']);a.check();
+ assert.deepEqual(sent.body,{run_id:'run-a'});a.check();
 });
 
 test('starting a new run does not animate the previous run tool history',async t=>{

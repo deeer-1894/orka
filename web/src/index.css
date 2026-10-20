@@ -249,7 +249,6 @@ body {
 .composer-icon { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 40px; flex-shrink: 0; border-radius: 999px; color: var(--color-faint); transition: background .2s, color .2s; }
 .composer-icon:hover, .composer-icon[aria-expanded="true"] { color: var(--color-accent); background: var(--color-accentsoft); }
 .composer-icon[data-selected="true"] { color: var(--color-accent); }
-.composer-tool-count { position: absolute; right: 0; top: 0; min-width: 14px; height: 14px; padding: 0 3px; display: grid; place-items: center; border-radius: 999px; background: var(--color-accentsoft); color: var(--color-accent); font-size: 9px; line-height: 1; }
 @media (max-width: 640px) {
   .home-welcome { padding-top: 24px; }
   .home-stage { --scatter-factor: .43; height: 290px; }

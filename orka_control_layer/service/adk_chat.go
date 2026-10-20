@@ -19,7 +19,6 @@ import (
 	"github.com/orka-oss/orka_core/pathsafe"
 	"github.com/orka-oss/orka_core/trace"
 
-	"github.com/orka-oss/orka_control_layer/browsertool"
 	"github.com/orka-oss/orka_control_layer/checkpoint"
 	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_control_layer/llm"
@@ -56,7 +55,6 @@ type ChatRunRequest struct {
 	resumeTarget     string     // InterruptCtx.ID of the paused tool call
 	resumeData       any        // the user's decision, handed to that tool
 	resumeFrom       *runResume // recovered transcript of a run that died mid-flight
-	executionPolicy  *executionPolicy
 }
 
 // ToolsProvider supplies the tool set for a request and an optional cleanup
@@ -224,15 +222,11 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	meta.ModelProfile = s.modelsForContext(ctx).profile
 	ctx = s.withSelectedModel(ctx, req.SelectedVersion)
 	model, modelName := s.modelsForContext(ctx).modelFor(req.SelectedVersion)
-	policy := compileExecutionPolicy(req)
-	req.executionPolicy = &policy
 
 	// Root trace span for the whole run; tool spans (in tools-mid) nest under it.
 	spanCtx, endSpan := trace.StartSpan(trace.WithTraceID(ctx, traceID), "chat.run", map[string]string{
 		"conversation_id": req.ConversationID,
-		"execution_mode":  string(policy.Mode),
-		"deep_agent":      boolStr(policy.UseDeepAgent),
-		"strict_sources":  boolStr(policy.StrictSources),
+		"deep_agent":      boolStr(s.deepAgentEnabled()),
 		"model":           modelName,
 		"runtime":         "eino",
 		"resume":          boolStr(req.ResumeKey != ""),
@@ -242,10 +236,6 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// Local tools (e.g. artifact_publish) learn whose run they're in from ctx.
 	ctx = WithRunInfo(ctx, req.ConversationID, req.UserEmail)
 	ctx = middlewares.WithSkillOwner(ctx, s.Cfg.Storage.BaseStoragePath, req.UserEmail)
-	ctx = withExecutionPolicy(ctx, policy)
-	if policy.Mode == executionBrowser && policy.SourceVerificationOnly {
-		ctx = browsertool.WithObservationProfile(ctx, browsertool.ObservationResearch)
-	}
 	budgetCtx, session, cancelBudget, budgetErr := s.prepareRunBudget(ctx, &req)
 	if budgetErr != nil {
 		raw(taskFailed(meta, "无法开始任务："+budgetErr.Error()))
@@ -277,7 +267,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// Multi-agent: the orchestrator gets the atomic tools PLUS native
 	// eino sub-agents (researcher/writer/browser/engineer, same selected model) it can
 	// delegate to. The sub-agents are built inside runEino from the atomic tool set.
-	if s.deepAgentEnabled(ctx) {
+	if s.deepAgentEnabled() {
 		deps.SystemPrompt = OrchestratorPrompt
 	}
 

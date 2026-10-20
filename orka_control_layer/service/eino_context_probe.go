@@ -81,7 +81,7 @@ func (p *ctxProbe) BeforeModelRewriteState(ctx context.Context, state *adk.ChatM
 	if !p.st.seen {
 		return ctx, state, nil // post without a pre: nothing to compare against
 	}
-	threshold := reductionProfileFor(ctx).clearAboveTokens
+	threshold := clearAboveTokens
 	// Reported together so one line answers "how big was it, what did reduction
 	// take, and how far is that from the threshold that would have taken more".
 	slog.Default().Info("ctx probe",

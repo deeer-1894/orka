@@ -2,7 +2,7 @@ import { ActionChip } from './components/ActionChip';
 import { useConversationDraft } from './hooks/useConversationDraft';
 import { SessionRecoveryStore } from './lib/sessionRecovery';
 import { useConversationSettings } from './hooks/useConversationSettings';
-import { Suspense, lazy, useMemo, useCallback, useSyncExternalStore, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useSyncExternalStore, useEffect, useRef, useState } from "react";
 import { api, auth, setOnUnauthorized } from "./api";
 import { useChatStreams } from "./hooks/useChatStream";
 import { useRunRecovery } from "./hooks/useRunRecovery";
@@ -144,8 +144,6 @@ function Workbench({
   const version = conversationSettings.value.selectedVersion;
   const setVersion = (selectedVersion: string) => conversationSettings.patch({ selectedVersion });
   const [theme, toggleTheme] = useTheme();
-  // Per-conversation scope. Empty uses automatic tool selection.
-  const toolGroups = useMemo(() => new Set(conversationSettings.value.enabledTools), [conversationSettings.value.enabledTools]);
   const [models, setModels] = useState<ModelOption[]>(MODELS_FALLBACK);
   const [scheduleFor, setScheduleFor] = useState<string | null>(null); // prompt to schedule
   const activeSkill = conversationSettings.value.activeSkill;
@@ -303,7 +301,7 @@ function Workbench({
     async (id: string) => {
       if (!id || statusOf(id) === "streaming") return;
       const { active } = await api.active(id);
-      if (active) run({ message: "", conversationID: id, userEmail: user.email, enabledTools: [], attachOnly: true, rejoin: true });
+      if (active) run({ message: "", conversationID: id, userEmail: user.email, attachOnly: true, rejoin: true });
     },
     [run, statusOf, user.email],
   );
@@ -345,8 +343,6 @@ function Workbench({
     else setActiveID("");
   }, [activeID, conversations, shared, selectConversation, ownedListLoaded, sharedListLoaded]);
 
-  const setTools = (next: Set<string>) => conversationSettings.patch({ enabledTools: [...next] });
-
   const creatingConversation = useRef({ activeID, generation: 0, promise: null as Promise<string> | null });
   if (creatingConversation.current.activeID !== activeID) {
     creatingConversation.current.activeID = activeID;
@@ -377,12 +373,12 @@ function Workbench({
   // continuation (and the final answer) actually lands in the thread.
   const onResumed = useCallback(
     (cid: string) => {
-      return run({ message: "", conversationID: cid, userEmail: user.email, enabledTools: [], attachOnly: true });
+      return run({ message: "", conversationID: cid, userEmail: user.email, attachOnly: true });
     },
     [run, user.email],
   );
 
-  const runActions = useRunActions(onResumed, cid => sessionRecovery.readSettings(cid)?.enabledTools);
+  const runActions = useRunActions(onResumed);
   const recovery = useRunRecovery({ conversationID: activeID, messages, status, enabled: !isShared, historyLoaded: historyLoaded.has(activeID) }, onResumed, runRevision, runActions.actions);
 
 
@@ -391,7 +387,7 @@ function Workbench({
     async (msg: string, fileIDs: string[] = [], conversationID?: string) => {
       // Capture the request before any asynchronous conversation creation. The
       // composer may already have created its target while the user navigated.
-      const request = { message: msg, userEmail: user.email, enabledTools: [...toolGroups], selectedVersion: version, activeSkill: activeSkill ?? "", fileIDs: [...fileIDs], confirmRisky, deepThinking: deepThinking ? "on" : "off" };
+      const request = { message: msg, userEmail: user.email, selectedVersion: version, activeSkill: activeSkill ?? "", fileIDs: [...fileIDs], confirmRisky, deepThinking: deepThinking ? "on" : "off" };
       const id = conversationID || activeID || await ensureConversation();
       if (statusOf(id) === "streaming" || recovery.isBusy(id) || runActions.actions.isBusy(id)) {
         await steer(id, msg, fileIDs);
@@ -405,7 +401,7 @@ function Workbench({
       });
       refreshTasks();
     },
-    [ensureConversation, run, steer, user.email, refreshTasks, refreshConversations, version, toolGroups, activeSkill, confirmRisky, deepThinking, recovery.isBusy, runActions.actions, activeID, statusOf],
+    [ensureConversation, run, steer, user.email, refreshTasks, refreshConversations, version, activeSkill, confirmRisky, deepThinking, recovery.isBusy, runActions.actions, activeID, statusOf],
   );
 
   // Re-send the last user message after a failure (network drop, sandbox down…).
@@ -441,7 +437,7 @@ function Workbench({
 
   const onResume = useCallback(
     async (resumeKey: string, answer: string) => {
-      run({ message: answer, conversationID: activeID, userEmail: user.email, enabledTools: [], resumeKey, selectedVersion: version });
+      run({ message: answer, conversationID: activeID, userEmail: user.email, resumeKey, selectedVersion: version });
       refreshTasks();
     },
     [run, activeID, user.email, refreshTasks, version],
@@ -633,7 +629,7 @@ function Workbench({
                 </div>
               </div>
             ) : (
-              <Composer draftState={conversationDraft} sessionRecovery={sessionRecovery} conversationID={activeID} ensureConversation={ensureConversation} blocked={recovery.busy || runActions.actions.isBusy(activeID) || connectionOf(activeID) === "stopping"} status={status} onSend={onSend} onKill={() => kill(activeID)} enabledTools={toolGroups} onSetTools={setTools} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
+              <Composer draftState={conversationDraft} sessionRecovery={sessionRecovery} conversationID={activeID} ensureConversation={ensureConversation} blocked={recovery.busy || runActions.actions.isBusy(activeID) || connectionOf(activeID) === "stopping"} status={status} onSend={onSend} onKill={() => kill(activeID)} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
             )}
           </div>
         </div>

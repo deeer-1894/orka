@@ -20,10 +20,10 @@ test('new chats remember explicit choices, preserve existing conversations and i
   const read = async () => JSON.parse(await page.locator('output').textContent());
   await page.getByLabel('model').fill('glm-5.3-flash');
   await page.getByText('Toggle confirmation', { exact: true }).click();
-  await page.getByText('Choose tools', { exact: true }).click();
+  await page.getByText('Choose skill', { exact: true }).click();
   await page.getByText('Create first', { exact: true }).click();
   await page.getByText('New chat', { exact: true }).click();
-  assert.deepEqual(await read(), { cid: '', selectedVersion: 'glm-5.3-flash', confirmRisky: false, enabledTools: [], activeSkill: null });
+  assert.deepEqual(await read(), { cid: '', selectedVersion: 'glm-5.3-flash', confirmRisky: false, activeSkill: null });
   await page.getByLabel('model').fill('glm-5.3');
   await page.getByText('Open first', { exact: true }).click();
   assert.equal((await read()).selectedVersion, 'glm-5.3-flash');

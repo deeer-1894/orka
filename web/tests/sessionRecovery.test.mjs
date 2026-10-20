@@ -9,7 +9,7 @@ class MemoryStorage {
  getItem(k){return this.data.get(k)??null;} setItem(k,v){this.data.set(k,v);} removeItem(k){this.data.delete(k);}
 }
 const draft=(text='draft',cid='a')=>({text,attachments:[{name:'input.txt',path:'input.txt',image:false,conversationID:cid}]});
-const retry={message:'original',conversationID:'a',userEmail:'owner',enabledTools:['code'],fileIDs:['input.txt'],modelProfile:'opaque-revision',selectedVersion:'model-a',activeSkill:'coder',confirmRisky:true};
+const retry={message:'original',conversationID:'a',userEmail:'owner',fileIDs:['input.txt'],modelProfile:'opaque-revision',selectedVersion:'model-a',activeSkill:'coder',confirmRisky:true};
 test('session records isolate conversation and owner, strip credential fields and survive new handles',()=>{
  const storage=new MemoryStorage();const s=new SessionRecoveryStore('owner',storage);s.writeDraft('a',draft());s.writeRetry('a',{...retry,api_key:'must-not-persist',token:'must-not-persist',onAccepted:()=>{}});const restored=new SessionRecoveryStore('owner',storage);assert.deepEqual(restored.readRetry('a'),retry);assert.deepEqual(restored.readDraft('a'),draft());assert.equal(restored.readDraft('b'),undefined);assert.ok(!JSON.stringify([...storage.data]).includes('must-not-persist'));
  const other=new SessionRecoveryStore('other',storage);assert.equal(other.readRetry('a'),undefined);assert.equal(s.writeRetry('a',retry),false);assert.equal(other.readDraft('a'),undefined);
@@ -30,15 +30,15 @@ test('oversize and quota failures never revive stale snapshots; total and count 
  s.writeRetry('a',retry);storage.setItem=()=>{throw new Error('quota');};assert.equal(s.writeRetry('a',{...retry,message:'new'}),false);assert.equal(s.readRetry('a'),undefined);
 });
 
-test('legacy limits are discarded without losing drafts or retry inputs',()=>{
+test('legacy limits and tool scopes are discarded without losing drafts or retry inputs',()=>{
  const storage=new MemoryStorage(),s=new SessionRecoveryStore('owner',storage);
  s.writeDraft('a',{...draft(),budget:{max_tokens:1,max_steps:1}});
- s.writeRetry('a',{...retry,budget:{max_tokens:1}});
+ s.writeRetry('a',{...retry,budget:{max_tokens:1},enabledTools:['code']});
  assert.deepEqual(s.readDraft('a'),draft());assert.deepEqual(s.readRetry('a'),retry);
  // Simulate an existing pre-migration browser record.
  for(const [key,raw] of [...storage.data]) {
   if(key===SESSION_PREFIX+'owner')continue;
-  const value=JSON.parse(raw);value.payload.budget={max_tokens:1};storage.setItem(key,JSON.stringify(value));
+  const value=JSON.parse(raw);value.payload.budget={max_tokens:1};value.payload.enabledTools=['code'];storage.setItem(key,JSON.stringify(value));
  }
  assert.deepEqual(s.readDraft('a'),draft());assert.deepEqual(s.readRetry('a'),retry);
 });
