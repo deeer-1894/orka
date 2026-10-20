@@ -109,24 +109,38 @@ func (s *evidenceStore) summary() string {
 func (s *evidenceStore) search(query string, limit int) []evidenceRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	terms := strings.Fields(strings.ToLower(query))
+	var terms []string
+	for _, term := range strings.Fields(strings.ToLower(query)) {
+		if term = strings.Trim(term, `"'`); term != "" {
+			terms = append(terms, term)
+		}
+	}
 	type match struct {
 		r     evidenceRecord
 		score int
 	}
 	hits := []match{}
 	for _, r := range s.records {
-		hay := strings.ToLower(r.ID + " " + r.URL + " " + r.Title + " " + r.Query + " " + r.body)
+		// A term naming the source (URL, title, originating query) identifies
+		// which record is meant; the rest locate the passage inside it. Equal
+		// weights let a sibling page sharing generic field names outrank it.
+		identity := strings.ToLower(r.ID + " " + r.URL + " " + r.Title + " " + r.Query)
+		body := strings.ToLower(r.body)
 		score := 0
+		var content []string
 		for _, term := range terms {
-			if strings.Contains(hay, term) {
+			switch {
+			case strings.Contains(identity, term):
+				score += 3
+			case strings.Contains(body, term):
 				score++
+				content = append(content, term)
 			}
 		}
 		if len(terms) > 0 && score == 0 {
 			continue
 		}
-		r.Excerpt = evidenceExcerpt(r.body, terms, 1000)
+		r.Excerpt = evidenceExcerpt(r.body, append(content, terms...), 1000)
 		hits = append(hits, match{r, score})
 	}
 	sort.SliceStable(hits, func(i, j int) bool { return hits[i].score > hits[j].score })
