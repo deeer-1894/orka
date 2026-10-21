@@ -620,7 +620,7 @@ func (s *Storage) SaveTaskDefinition(ctx context.Context, t *TaskMeta) error {
 	_, err := s.Tasks.UpdateOne(ctx, bson.M{"task_id": t.TaskID, "owner_email": t.OwnerEmail}, bson.M{"$set": bson.M{
 		"variables": t.Variables, "trigger": t.Trigger, "cron_status": t.CronStatus, "interval_sec": t.IntervalSec,
 		"next_run_at": t.NextRunAt, "retry_count": t.RetryCount, "webhook_token": t.WebhookToken, "disabled_reason": t.DisabledReason,
-		"consecutive_fails": t.ConsecutiveFails,
+		"consecutive_fails": t.ConsecutiveFails, "tool_policy": t.ToolPolicy,
 	}})
 	if err != nil {
 		return fmt.Errorf("save task: %w", err)

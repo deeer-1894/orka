@@ -44,6 +44,9 @@ type ChatRunRequest struct {
 	ActiveSkill     string            `json:"active_skill"`  // user-locked skill mode (deterministic prompt injection)
 	Trigger         string            `json:"trigger"`       // manual | schedule (audit: how the run was started)
 	ConfirmRisky    bool              `json:"confirm_risky"` // gate side-effecting tools behind user approval
+	// ToolPolicy is the task's declared policy for an unattended run, set by the
+	// trigger that started it; never bound from a client.
+	ToolPolicy *db.TaskToolPolicy `json:"-"`
 	// DeepThinking is the user's intent for THIS task: "on" lets the model think
 	// as much as it wants, "off" sends the configured reduction, "" follows the
 	// deployment default. Intent, not a provider field — which field a model
@@ -149,6 +152,7 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	if raw == nil {
 		raw = func(messages.Message) {}
 	}
+	applyTaskToolPolicy(&req)
 	parent, release, admissionErr := s.AdmitExecution(parent, req.UserEmail, req.ConversationID, req.TaskID)
 	if admissionErr != nil {
 		raw(taskFailed(messages.Meta{ConversationID: req.ConversationID, TaskID: req.TaskID, UserEmail: req.UserEmail}, admissionErr.Error()))

@@ -218,7 +218,7 @@ func (s *Scheduler) execute(parent context.Context, task db.TaskMeta, claimID st
 		if err != nil {
 			return err
 		}
-		content += "\n\n[触发原因] " + reason
+		content += "\n\n" + UntrustedBlock("触发原因", reason)
 	}
 	return s.Trigger(ctx, task, content)
 }

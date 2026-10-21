@@ -332,6 +332,8 @@ type TaskMeta struct {
 	DisabledReason string `bson:"disabled_reason,omitempty" json:"disabled_reason,omitempty"`
 	// Trigger says when the task runs; nil keeps the legacy IntervalSec cadence.
 	Trigger *TaskTrigger `bson:"trigger,omitempty" json:"trigger,omitempty"`
+	// ToolPolicy caps what an unattended run may do; nil means the default.
+	ToolPolicy *TaskToolPolicy `bson:"tool_policy,omitempty" json:"tool_policy,omitempty"`
 	// LastFinishedAt is when the latest scheduled run or condition check ended.
 	LastFinishedAt int64  `bson:"schedule_finished_at,omitempty" json:"last_finished_at,omitempty"`
 	LastStatus     string `bson:"schedule_last_status,omitempty" json:"last_status,omitempty"`
