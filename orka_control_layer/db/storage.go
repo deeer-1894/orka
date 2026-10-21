@@ -1096,6 +1096,19 @@ func (s *Storage) MarkNotificationsRead(ctx context.Context, owner, id string) e
 
 // --- connectors (user-registered external MCP servers) ---
 
+// SaveConnectorOAuth replaces an owner's connector grant (after a refresh, a
+// failed refresh, or re-authorization).
+func (s *Storage) SaveConnectorOAuth(ctx context.Context, id, owner string, grant *ConnectorOAuth) error {
+	res, err := s.Connectors.UpdateOne(ctx, bson.M{"connector_id": id, "owner_email": owner}, bson.M{"$set": bson.M{"oauth": grant}})
+	if err != nil {
+		return fmt.Errorf("save connector grant: %w", err)
+	}
+	if res.MatchedCount == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Storage) CreateConnector(ctx context.Context, c *Connector) error {
 	if _, err := s.Connectors.InsertOne(ctx, c); err != nil {
 		return fmt.Errorf("insert connector: %w", err)

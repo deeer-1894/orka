@@ -112,6 +112,9 @@ func (a *API) DeleteConnector(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusInternalServerError, "delete failed")
 		return
 	}
+	if a.ConnectorOAuth != nil {
+		a.ConnectorOAuth.Forget(req.ConnectorID)
+	}
 	if a.Chat != nil && a.Chat.InvalidateTools != nil {
 		a.Chat.InvalidateTools(authEmail(c))
 	}

@@ -4,6 +4,7 @@ import { api } from "../api";
 import { Icon } from "./Icon";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { confirmDialog } from "../lib/confirm";
+import { COPY } from "../lib/copy";
 
 // Time buckets so a long history reads as 今天/昨天/近7天/更早 instead of one
 // undifferentiated list.
@@ -255,14 +256,14 @@ export function Sidebar({
             onClick={onNew}
             className="w-full flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2.5 text-[14px] text-ink hover:bg-surface transition hover:border-accent/40"
           >
-            <Icon name="plus" size={16} className="text-accent" /> 新对话
+            <Icon name="plus" size={16} className="text-accent" /> {COPY.newChat}
           </button>
           <button
             onClick={() => { onOpenTasks(); onSelectClose?.(); }}
             aria-current={tasksActive ? "page" : undefined}
             className={"mt-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[14px] transition " + (tasksActive ? "bg-accentsoft text-ink" : "text-muted hover:bg-surface")}
           >
-            <Icon name="clock" size={15} /> 定时任务
+            <Icon name="clock" size={15} /> {COPY.tasks}
           </button>
         </div>
 
@@ -280,7 +281,7 @@ export function Sidebar({
 
         <div className="mt-2 flex-1 overflow-y-auto px-2 pb-2">
           {!q && <>
-            <SectionHeader label="项目">
+            <SectionHeader label={COPY.project}>
               <button onClick={onNewProject} aria-label="新建项目" title="新建项目" className="grid h-6 w-6 place-items-center rounded-md text-faint hover:bg-surface hover:text-ink"><Icon name="plus" size={14} /></button>
             </SectionHeader>
             {projects.length === 0 && <p className="px-3 pb-1 text-[12px] leading-relaxed text-faint">把同一课题的对话、文件和要求放在一起。</p>}

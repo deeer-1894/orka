@@ -261,4 +261,15 @@ export interface Connector {
   headers: Record<string, string>;
   enabled: boolean;
   created_at: number;
+  oauth?: { provider: string; account?: string; scopes?: string; expires_at?: number; auth_error?: string };
+}
+
+export interface OAuthProvider {
+  id: string;
+  name: string;
+  description: string;
+  mcp_url?: string;
+  ready: boolean;
+  missing?: string;
+  scan_to_login?: boolean;
 }

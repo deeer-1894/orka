@@ -272,6 +272,25 @@ type Connector struct {
 	Headers     map[string]string `bson:"headers" json:"headers"`     // auth headers (secret; redacted in API list)
 	Enabled     bool              `bson:"enabled" json:"enabled"`
 	CreatedAt   int64             `bson:"created_at" json:"created_at"`
+	// OAuth is set for a connector the user authorized with one click instead
+	// of pasting a token. Secrets in it are sealed and never leave the server.
+	OAuth *ConnectorOAuth `bson:"oauth,omitempty" json:"oauth,omitempty"`
+}
+
+// ConnectorOAuth is an authorized connector's grant. Token fields hold
+// ciphertext (connectoroauth.Sealer); only the transport ever opens them.
+type ConnectorOAuth struct {
+	Provider     string `bson:"provider" json:"provider"` // preset id, or "mcp" for standard MCP authorization
+	Account      string `bson:"account,omitempty" json:"account,omitempty"`
+	Scopes       string `bson:"scopes,omitempty" json:"scopes,omitempty"`
+	ExpiresAt    int64  `bson:"expires_at,omitempty" json:"expires_at,omitempty"` // unix millis, 0 = does not expire
+	AuthError    string `bson:"auth_error,omitempty" json:"auth_error,omitempty"` // set when refresh failed: re-authorize
+	TokenURL     string `bson:"token_url" json:"-"`
+	ClientID     string `bson:"client_id" json:"-"`
+	Resource     string `bson:"resource,omitempty" json:"-"`
+	AccessToken  string `bson:"access_token" json:"-"`
+	RefreshToken string `bson:"refresh_token,omitempty" json:"-"`
+	ClientSecret string `bson:"client_secret,omitempty" json:"-"`
 }
 
 // RunRecord is one EXECUTION of the agent (manual or scheduled) — the audit

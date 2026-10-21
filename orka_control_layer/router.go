@@ -20,6 +20,8 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/auth/login", a.Login)
 	// public webhook trigger — the opaque token in the path is the auth.
 	g.POST("/hook/:token", a.Webhook)
+	// OAuth providers redirect the browser here; the single-use state is the auth.
+	g.GET("/connector/oauth/callback", a.ConnectorOAuthCallback)
 	// public artifact pages — the share token in the query is the auth.
 	g.GET("/pub/a/:slug", a.GetPublicArtifact)
 	g.GET("/pub/a/:slug/stream", a.PublicArtifactStream)
@@ -108,6 +110,8 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.GET("/delivery/download", a.DownloadDelivery)
 	g.POST("/run/rerun", a.RerunRun)
 
+	g.POST("/connector/oauth/providers", a.ListOAuthProviders)
+	g.POST("/connector/oauth/start", a.StartConnectorOAuth)
 	g.POST("/connector/list", a.ListConnectors) // external MCP integrations
 	g.POST("/connector/create", a.CreateConnector)
 	g.POST("/connector/test", a.TestConnector)

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Icon, fileIconName } from "./Icon";
 import { elapsedLabel, type DeliverySummary, type RunProgress } from "../lib/runProgress";
+import { RUN_STATUS } from "../lib/copy";
 
 // ProgressBar stays pinned at the top of the thread while a long run works, so
 // "where is it now" never scrolls away with the tool calls.
@@ -38,7 +39,8 @@ export function ProgressBar({ progress, live, autoResume, onShowPlan, onCancelAu
   </div>;
 }
 
-const STATUS_LABEL: Record<DeliverySummary["status"], string> = { done: "已完成", partial: "部分完成", failed: "未完成", stopped: "已停止" };
+// A failed run that still made a plan delivered part of it: say 未完成, not 失败.
+const STATUS_LABEL: Record<DeliverySummary["status"], string> = { done: RUN_STATUS.done, partial: RUN_STATUS.partial, failed: "未完成", stopped: RUN_STATUS.stopped };
 
 // DeliveryCard closes a planned run with what came of it: the files it set out
 // to deliver, and every step left open with the reason the run gave.

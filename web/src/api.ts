@@ -11,6 +11,7 @@ import type {
   Message,
   Notification,
   OwnerInfo,
+  OAuthProvider,
   Project,
   Personalization,
   Memory,
@@ -261,6 +262,8 @@ export const api = {
     post<{ tasks: TaskMeta[]; owners: Record<string, OwnerInfo> }>("/task/get-tasks", { ...filter, size: 100 }),
   // silent: the task editor shows validation errors inline instead of a toast.
   listConnectors: () => post<{ connectors: Connector[] }>("/connector/list", {}),
+  oauthProviders: () => post<OAuthProvider[]>("/connector/oauth/providers", {}),
+  startConnectorOAuth: (p: { provider: string; mcp_url?: string; connector_id?: string }) => post<{ auth_url: string }>("/connector/oauth/start", p),
   testConnector: (c: ConnectorInput) => post<{ ok: boolean; tools?: string[]; error?: string }>("/connector/test", c, true),
   createConnector: (c: ConnectorInput) => post<Connector>("/connector/create", c, true),
   deleteConnector: (connector_id: string) => post("/connector/delete", { connector_id }),

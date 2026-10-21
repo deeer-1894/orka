@@ -4,6 +4,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"github.com/orka-oss/orka_control_layer/connectoroauth"
 	"log/slog"
 	"time"
 
@@ -25,10 +26,12 @@ type API struct {
 	BaseStorage string                   // file storage root
 	Directory   connectors.UserDirectory // owner enrichment (cached)
 	Secret      string                   // HMAC secret for session tokens
-	chunks      *chunkManager            // resumable upload state
-	authLimiter *rateLimiter             // throttles login/register attempts
-	hub         *streamHub               // SSE replay buffer for reconnects
-	events      *eventHub                // per-user UI-invalidation event bus
+	// ConnectorOAuth runs one-click connector authorization (nil = disabled).
+	ConnectorOAuth *connectoroauth.Manager
+	chunks         *chunkManager // resumable upload state
+	authLimiter    *rateLimiter  // throttles login/register attempts
+	hub            *streamHub    // SSE replay buffer for reconnects
+	events         *eventHub     // per-user UI-invalidation event bus
 }
 
 // authEmail returns the authenticated user's email set by AuthMiddleware.

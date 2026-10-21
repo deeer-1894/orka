@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/orka-oss/orka_control_layer/connectoroauth"
 	"log/slog"
 	"net/http"
 	"os"
@@ -160,6 +161,19 @@ func main() {
 	// Bind GUI and DOM browser tools to this provider instance. Missing
 	// configuration stays unavailable in both local and MCP fallback paths.
 	toolOptions := service.ToolsProviderOptions{}
+	// One-click connectors: grants are sealed with CONNECTOR_SECRET (or a key
+	// derived from the session secret) and attached per request.
+	tokenKey := os.Getenv("CONNECTOR_SECRET")
+	if tokenKey == "" {
+		tokenKey = cfg.SessionSecret()
+	}
+	var connectorOAuth *connectoroauth.Manager
+	if sealer, err := connectoroauth.NewSealer(tokenKey); err == nil {
+		connectorOAuth = &connectoroauth.Manager{Store: store, Sealer: sealer, Client: scheduled_task.WatchClient()}
+		toolOptions.ConnectorAuth = connectorOAuth.Authorize
+	} else {
+		logger.Warn("one-click connectors disabled", "err", err)
+	}
 	if wsURL := cfg.Agent.GUIAgentWSURL; wsURL != "" {
 		guiToken := os.Getenv("GUI_AUTH_TOKEN")
 		toolOptions.GUI = connectors.NewRunAgentTool(wsURL, guiToken)
@@ -216,6 +230,7 @@ func main() {
 	// User session tokens are signed with a key DISTINCT from the control<->tools
 	// context-token key, so the two token types are not interchangeable.
 	a.Secret = cfg.SessionSecret()
+	a.ConnectorOAuth = connectorOAuth
 	a.Directory = connectors.NewCachedDirectory(
 		&connectors.StubDirectory{},
 		state.NewRedisStore(rdb, "orka:dir:"),

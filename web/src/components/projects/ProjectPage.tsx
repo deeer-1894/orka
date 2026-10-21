@@ -5,6 +5,7 @@ import { Icon } from "../Icon";
 import { FilesPanel } from "../FilesPanel";
 import { confirmDialog } from "../../lib/confirm";
 import { toast, toastError } from "../../lib/toast";
+import { COPY } from "../../lib/copy";
 
 // ProjectPage is one project's home: what it is, the standing instructions
 // every run in it follows, its shared files, and its conversations.
@@ -39,10 +40,10 @@ export function ProjectPage({ project, conversations, email, onSaved, onDeleted,
   };
   return <main aria-label={"项目 " + project.name} className="relative flex min-w-0 flex-1 flex-col overflow-y-auto">
     <header className="flex h-14 shrink-0 items-center gap-2 px-2 sm:px-4">
-      <button onClick={onToggleSidebar} className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-surface2" title="显示 / 隐藏侧栏" aria-label="切换侧栏"><Icon name="panel" size={18} /></button>
+      <button onClick={onToggleSidebar} className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-surface2" title={COPY.sidebarHint} aria-label={COPY.toggleSidebar}><Icon name="panel" size={18} /></button>
       <Icon name="folder" size={16} className="text-muted" />
       <span className="min-w-0 flex-1 truncate text-[15px] text-ink">{project.name}</span>
-      <button onClick={onNewConversation} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[13px] text-white hover:opacity-90"><Icon name="plus" size={14} />新对话</button>
+      <button onClick={onNewConversation} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[13px] text-white hover:opacity-90"><Icon name="plus" size={14} />{COPY.newChat}</button>
     </header>
     <div className="mx-auto w-full max-w-3xl space-y-6 px-4 pb-16 pt-2 sm:px-6">
       <section aria-label="项目设置" className="space-y-3 rounded-2xl border border-border bg-surface p-4">

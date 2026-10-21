@@ -11,6 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Icon } from "../Icon";
 import { KIND_ICON, TaskEditor, draftFromTask, type TaskDraft } from "./TaskEditor";
 import { Switch } from "../ui/switch";
+import { COPY, RUN_STATUS } from "../../lib/copy";
 
 type Tab = "mine" | "templates";
 type KindFilter = "all" | TriggerKind;
@@ -76,7 +77,7 @@ export function TasksPage({ onOpenConversation, onToggleSidebar, initialDraft, o
   const filtered = kind !== "all" || status !== "all" || query.trim() !== "";
   return <div className="flex h-full min-h-0 flex-col">
     <header className="flex h-14 shrink-0 items-center px-2 sm:px-4">
-      <button onClick={onToggleSidebar} className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-surface2" aria-label="切换侧栏">
+      <button onClick={onToggleSidebar} className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-surface2" aria-label={COPY.toggleSidebar}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
       </button>
     </header>
@@ -149,7 +150,7 @@ export function TasksPage({ onOpenConversation, onToggleSidebar, initialDraft, o
 
 function statusLine(t: TaskMeta): { text: string; tone: "muted" | "warn" | "ok" } {
   if (t.disabled_reason) return { text: "已自动停用：" + t.disabled_reason, tone: "warn" };
-  if (t.run_status === "running") return { text: "运行中", tone: "ok" };
+  if (t.run_status === "running") return { text: RUN_STATUS.running, tone: "ok" };
   if (t.cron_status !== "on") return { text: "已停用", tone: "muted" };
   if (kindOf(t) === "event") return { text: "等待事件", tone: "muted" };
   const next = t.next_run_at ? "下次 " + formatDateTime(t.next_run_at) : "";
@@ -193,7 +194,7 @@ function TaskRow({ task, pending, onToggle, onEdit, onRun, onOpen, onDelete }: {
 }
 
 const RECENT_RUNS = 5;
-const RUN_LABEL: Record<string, string> = { done: "已完成", partial: "部分完成", failed: "失败", running: "运行中", paused: "等待确认", interrupted: "已中断" };
+const RUN_LABEL = RUN_STATUS;
 const RUN_DOT: Record<string, string> = {
   done: "bg-ok", partial: "border-2 border-ok", failed: "bg-accent", running: "animate-pulse bg-ok/50",
 };

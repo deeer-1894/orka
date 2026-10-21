@@ -35,6 +35,7 @@ async function app(t, options = {}) {
    case '/task/get-tasks': return json({tasks:[]});
    case '/skill/list': return json({skills:[]});
    case '/project/list': return json(options.projects||[]);
+   case '/connector/oauth/providers': return json([]);
    case '/personal/get': return json(options.personal||{about_me:'',reply_style:'',auto_memory:false});
    case '/personal/save': return json(body);
    case '/memory/list': return json(options.memories||[]);
@@ -688,6 +689,27 @@ test('skills: switched off in settings, previewed before install, and only enabl
  assert.equal(a.requests.filter(r=>r.path==='/skill/install').length,0,'nothing installed before the user confirms');
  await dialog.getByRole('button',{name:'安装',exact:true}).click();
  await dialog.getByText('translator',{exact:true}).waitFor();
+ a.check();
+});
+
+test('one-click connectors: authorize in a popup, list the grant, offer re-authorization when it lapses, explain unconfigured presets',async t=>{
+ let connectors=[{connector_id:'old',name:'GitHub',transport:'streamable_http',url:'https://api.githubcopilot.com/mcp/',headers:{},enabled:true,created_at:1,oauth:{provider:'github',account:'octo',auth_error:'授权已失效，请重新授权'}}];
+ const a=await app(t,{handle:async({path,body,json,route})=>{
+  if(path==='/connector/list'){await json({connectors});return true;}
+  if(path==='/connector/oauth/providers'){await json([{id:'notion',name:'Notion',description:'页面、数据库',ready:true},{id:'feishu',name:'飞书',description:'云文档',ready:false,missing:'需要部署方配置飞书企业自建应用',scan_to_login:true},{id:'mcp',name:'其他 MCP 服务',description:'标准 OAuth',ready:true}]);return true;}
+  if(path==='/connector/oauth/start'){await json({auth_url:origin+'/api/v1/controller/connector/oauth/callback?state=s&code=c'});return true;}
+  if(path==='/connector/oauth/callback'){connectors=[...connectors,{connector_id:'n1',name:'Notion',transport:'streamable_http',url:'https://mcp.notion.com/mcp',headers:{},enabled:true,created_at:2,oauth:{provider:'notion'}}];
+   await route.fulfill({contentType:'text/html',body:'<script>window.opener.postMessage({type:"orka-connector-oauth",ok:true,name:"Notion"},location.origin);window.close()</script>'});return true;}
+ }});
+ await a.page.getByRole('button',{name:'设置',exact:true}).click();const dialog=a.page.getByRole('dialog');
+ await dialog.getByRole('button',{name:'连接器',exact:true}).click();
+ const group=dialog.getByRole('group',{name:'一键连接'});await group.waitFor();
+ await group.getByText('需要部署方配置飞书企业自建应用').waitFor();
+ await dialog.getByRole('alert').filter({hasText:'授权已失效'}).waitFor();await dialog.getByRole('button',{name:'重新授权'}).waitFor();
+ await group.getByRole('button',{name:'连接',exact:true}).first().click();
+ await a.page.getByText('已连接 Notion，新任务即可使用它的工具').waitFor();
+ assert.deepEqual(a.requests.find(r=>r.path==='/connector/oauth/start').body,{provider:'notion'});
+ await dialog.getByText('mcp.notion.com',{exact:false}).waitFor();
  a.check();
 });
 

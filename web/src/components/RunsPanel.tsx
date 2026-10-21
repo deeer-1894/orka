@@ -5,14 +5,8 @@ import { api } from '../api';
 import type { RunRecord } from '../types';
 import { resumableRun } from '../lib/runActions';
 import { useRunHistory } from '../hooks/useRunHistory';
-const labels: Record<string, string> = {
-  running: '运行中',
-  done: '已完成',
-  partial: '部分完成',
-  failed: '失败',
-  interrupted: '已中断',
-  paused: '等待确认'
-};
+import { RUN_STATUS } from '../lib/copy';
+const labels = RUN_STATUS;
 const triggers: Record<string, string> = {
   manual: '手动',
   schedule: '定时',

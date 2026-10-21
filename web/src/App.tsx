@@ -35,6 +35,7 @@ import { CHAT, TASKS, hashOf, viewFromHash, type View } from "./lib/view";
 import { ProjectPage } from "./components/projects/ProjectPage";
 import { MoveToProjectDialog } from "./components/projects/MoveToProjectDialog";
 import type { Section as SettingsSection } from "./components/settings/SettingsDialog";
+import { COPY } from "./lib/copy";
 const TasksPage = lazy(() => import("./components/tasks/TasksPage").then(m => ({ default: m.TasksPage })));
 const SettingsDialog = lazy(() => import("./components/settings/SettingsDialog").then(m => ({ default: m.SettingsDialog })));
 
@@ -627,8 +628,8 @@ function Workbench({
           <button
             onClick={() => setSidebarOpen((o) => !o)}
             className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-surface2"
-            title="显示 / 隐藏侧栏"
-            aria-label="切换侧栏"
+            title={COPY.sidebarHint}
+            aria-label={COPY.toggleSidebar}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -638,8 +639,8 @@ function Workbench({
               redundant brand — "Orka" already lives in the sidebar. */}
           <div className="flex min-w-0 items-center gap-1.5">
             {status === "streaming" && <span className="inline-flex shrink-0 items-center" role="status"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ok" title="运行中" /><span className="sr-only">运行中</span></span>}
-            <span className="max-w-[40vw] truncate text-[15px] text-ink md:max-w-[260px]" title={activeConv?.title || "新对话"}>
-              {activeConv?.title || "新对话"}
+            <span className="max-w-[40vw] truncate text-[15px] text-ink md:max-w-[260px]" title={activeConv?.title || COPY.newChat}>
+              {activeConv?.title || COPY.newChat}
             </span>
             {isShared && <span className="shrink-0 text-[11px] text-faint" title={`由 ${activeConv?.owner_email} 分享`}>· 共享</span>}
             {(() => {

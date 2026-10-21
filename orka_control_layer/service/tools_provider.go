@@ -49,6 +49,7 @@ type mcpPool struct {
 	maxAge      time.Duration // refresh entries older than this (< tokenTTL)
 	scopes      []string
 	connectors  ConnectorSource // user's external MCP servers (optional)
+	auth        ConnectorAuth   // per-request headers for OAuth connectors (optional)
 
 	mu      sync.Mutex
 	entries map[string]*mcpEntry
@@ -164,7 +165,10 @@ func (p *mcpPool) get(ctx context.Context, email string, conversationID ...strin
 	if p.connectors != nil {
 		conns, _ := p.connectors(ctx, email)
 		for _, cn := range conns {
-			cl, cerr := mcpclient.New(ctx, connectorConfig(cn))
+			if cn.OAuth != nil && cn.OAuth.AuthError != "" {
+				continue // waiting for the user to authorize again
+			}
+			cl, cerr := mcpclient.New(ctx, connectorConfigWith(cn, p.auth))
 			if cerr != nil {
 				continue
 			}
@@ -256,6 +260,30 @@ func ProbeConnector(ctx context.Context, cn db.Connector) ([]string, error) {
 	return names, nil
 }
 
+// connectorConfigWith adds per-request authorization for an OAuth connector:
+// the token is looked up (and refreshed) on every request, so a pooled
+// connection never sends an expired one.
+func connectorConfigWith(cn db.Connector, auth ConnectorAuth) mcpclient.Config {
+	cfg := connectorConfig(cn)
+	if cn.OAuth != nil && auth != nil {
+		static := cfg.Headers
+		cfg.Headers = nil
+		cfg.HeaderFunc = func(ctx context.Context) map[string]string {
+			out := map[string]string{}
+			for k, v := range static {
+				out[k] = v
+			}
+			if h, err := auth(ctx, cn); err == nil {
+				for k, v := range h {
+					out[k] = v
+				}
+			}
+			return out
+		}
+	}
+	return cfg
+}
+
 // connectorConfig maps a stored Connector to an MCP client config.
 func connectorConfig(cn db.Connector) mcpclient.Config {
 	cfg := mcpclient.Config{Headers: cn.Headers, Command: cn.Command, Args: cn.Args, Name: "orka-connector:" + cn.Name, Namespace: "connector:" + cn.ConnectorID}
@@ -334,7 +362,7 @@ func MCPToolsProviderPooled(baseStorage, mcpURL, secret string, tokenTTL time.Du
 	pool := &mcpPool{
 		builtins:    builtins,
 		baseStorage: baseStorage, mcpURL: mcpURL, secret: secret,
-		tokenTTL: tokenTTL, maxAge: maxAge, scopes: scopes, connectors: connectors,
+		tokenTTL: tokenTTL, maxAge: maxAge, scopes: scopes, connectors: connectors, auth: connectorAuthOf(options),
 		entries: map[string]*mcpEntry{},
 	}
 	go pool.janitor(context.Background()) // evict idle connections for process lifetime

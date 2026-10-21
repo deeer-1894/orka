@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { api, type ConnectorInput, type SystemStatus } from "../../api";
-import type { Connector } from "../../types";
+import type { Connector, OAuthProvider } from "../../types";
+import { authorizeInPopup } from "../../lib/connectorOAuth";
 import { toast } from "../../lib/toast";
 import { Button } from "../ui/button";
 import { Icon, type IconName } from "../Icon";
@@ -85,6 +86,19 @@ function Connectors() {
       void refresh();
     } catch (e) { setProbe({ ok: false, text: (e as Error).message || "添加失败" }); } finally { setBusy(""); }
   };
+  // One-click connectors: authorize in a popup, the server stores the grant.
+  const [providers, setProviders] = useState<OAuthProvider[]>([]);
+  const [customURL, setCustomURL] = useState("");
+  const [authorizing, setAuthorizing] = useState("");
+  useEffect(() => { api.oauthProviders().then(p => setProviders(p || [])).catch(() => {}); }, []);
+  const authorize = async (provider: string, opts: { mcp_url?: string; connector_id?: string } = {}) => {
+    setAuthorizing(opts.connector_id || provider);
+    const r = await authorizeInPopup(async () => (await api.startConnectorOAuth({ provider, ...opts })).auth_url);
+    setAuthorizing("");
+    if (r.ok) { toast(`已连接${r.name ? " " + r.name : ""}，新任务即可使用它的工具`, "success"); setCustomURL(""); }
+    else if (r.error) toast(r.error, "error");
+    void refresh();
+  };
   const remove = async (c: Connector) => {
     setConfirming("");
     try { await api.deleteConnector(c.connector_id); toast("已移除，之后的运行不再使用它的工具", "success"); void refresh(); } catch { /* reported */ }
@@ -92,7 +106,21 @@ function Connectors() {
 
   return <section aria-label="连接器">
     <h2 className="font-serif text-[20px] text-ink">连接器</h2>
-    <p className="mt-1 max-w-lg text-[13px] text-muted">接入 MCP 服务后，它提供的工具会和内置工具一样，由 Orka 在需要时自动调用。</p>
+    <p className="mt-1 max-w-lg text-[13px] text-muted">接入 MCP 服务后，它提供的工具会和内置工具一样，由 Orka 在需要时自动调用。一键连接的授权令牌加密保存在服务端，不会交给模型。</p>
+    {providers.length > 0 && <div aria-label="一键连接" role="group" className="mt-5">
+      <h3 className="text-[13px] font-medium text-ink">一键连接</h3>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        {providers.map(p => <div key={p.id} className="flex flex-col gap-1.5 rounded-xl border border-border p-3">
+          <div className="flex items-center gap-2"><Icon name="plug" size={14} className="text-muted" /><span className="text-[14px] text-ink">{p.name}</span></div>
+          <p className="text-[12px] text-faint">{p.description}</p>
+          {p.id === "mcp" && <input className={field + " py-1.5 text-[13px]"} value={customURL} onChange={e => setCustomURL(e.target.value)} placeholder="https://mcp.example.com/mcp" aria-label="MCP 服务地址" />}
+          {p.ready
+            ? <Button size="sm" variant="outline" className="w-fit" disabled={!!authorizing || (p.id === "mcp" && !/^https:\/\//.test(customURL.trim()))}
+              onClick={() => void authorize(p.id, p.id === "mcp" ? { mcp_url: customURL.trim() } : {})}>{authorizing === p.id ? "等待授权…" : p.scan_to_login ? "扫码连接" : "连接"}</Button>
+            : <p className="text-[12px] text-accent">{p.missing}</p>}
+        </div>)}
+      </div>
+    </div>}
     <div className="mt-5 flex items-center justify-between">
       <span className="text-[12px] text-faint">{list ? `${list.length} 个连接器` : "正在读取…"}</span>
       {!adding && <Button size="sm" onClick={() => setAdding(true)}><Icon name="plus" size={14} />添加连接器</Button>}
@@ -125,8 +153,12 @@ function Connectors() {
       <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-surface2 text-muted"><Icon name="plug" size={16} /></span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-[14px] text-ink">{c.name}</div>
-        <div className="truncate text-[12px] text-faint">{TRANSPORTS.find(t => t.id === c.transport)?.label || c.transport} · {c.url}</div>
+        <div className="truncate text-[12px] text-faint">{c.oauth ? `已授权${c.oauth.account ? " · " + c.oauth.account : ""}` : TRANSPORTS.find(t => t.id === c.transport)?.label || c.transport} · {c.url}</div>
+        {c.oauth?.auth_error && <div role="alert" className="text-[12px] text-accent">{c.oauth.auth_error}</div>}
       </div>
+      {c.oauth && <Button variant={c.oauth.auth_error ? "default" : "ghost"} size="sm" disabled={!!authorizing}
+        onClick={() => void authorize(c.oauth!.provider, { connector_id: c.connector_id, ...(c.oauth!.provider === "mcp" ? { mcp_url: c.url } : {}) })}>
+        {authorizing === c.connector_id ? "等待授权…" : "重新授权"}</Button>}
       {confirming === c.connector_id
         ? <div className="flex shrink-0 gap-1"><Button variant="ghost" size="sm" onClick={() => setConfirming("")}>取消</Button><Button size="sm" onClick={() => void remove(c)}>确认移除</Button></div>
         : <Button variant="ghost" size="icon" aria-label={`移除 ${c.name}`} onClick={() => setConfirming(c.connector_id)}><Icon name="trash" size={15} /></Button>}
