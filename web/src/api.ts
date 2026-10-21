@@ -216,6 +216,7 @@ export interface TaskInput {
   trigger: TaskTrigger;
   enabled: boolean;
   retry_count: number;
+  notify_webhook?: string;
 }
 
 // webhookURL is the public trigger address external systems call.
@@ -252,7 +253,7 @@ export const api = {
   toggleTask: (task_id: string, enabled: boolean) => post<TaskMeta>("/task/toggle", { task_id, enabled }),
   runTaskNow: (task_id: string) => post<{ status: string; conversation_id: string }>("/task/run-now", { task_id }),
   deleteTask: (task_id: string) => post("/task/delete", { task_id }),
-  listRuns: (filter: { conversation_id?: string; status?: string; statuses?: string[]; offset?: number; size?: number } = {}) =>
+  listRuns: (filter: { conversation_id?: string; task_id?: string; status?: string; statuses?: string[]; offset?: number; size?: number } = {}) =>
     post<{ runs: RunRecord[]; has_more?: boolean }>("/run/list", { size: 50, ...filter }),
   getRun: (run_id: string) => post<RunRecord>("/run/get", { run_id }),
   rerunRun: (run_id: string) => post<{ status: string }>("/run/rerun", { run_id }),

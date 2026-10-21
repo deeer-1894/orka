@@ -205,6 +205,10 @@ func main() {
 	// Push per-user UI-invalidation events (run finished / unattended failure) to
 	// open tabs via the API event bus, so the bell/runs refresh without polling.
 	chat.OnEvent = a.PublishEvent
+	chat.TaskNotify = &service.TaskNotifier{
+		Store: store, Client: scheduled_task.WatchClient(), PublicURL: os.Getenv("ORKA_PUBLIC_URL"),
+		OnEvent: a.PublishEvent, Log: logger,
+	}
 	a.BaseStorage = cfg.Storage.BaseStoragePath
 	// User session tokens are signed with a key DISTINCT from the control<->tools
 	// context-token key, so the two token types are not interchangeable.

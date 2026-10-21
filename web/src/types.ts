@@ -135,6 +135,7 @@ export interface TaskMeta {
   last_finished_at?: number;
   last_status?: string;
   disabled_reason?: string;
+  notify_webhook?: string; // group-bot address that receives run summaries
 }
 
 export interface RunRecord {

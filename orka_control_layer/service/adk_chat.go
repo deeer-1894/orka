@@ -55,6 +55,7 @@ type ChatRunRequest struct {
 	resumeTarget     string     // InterruptCtx.ID of the paused tool call
 	resumeData       any        // the user's decision, handed to that tool
 	resumeFrom       *runResume // recovered transcript of a run that died mid-flight
+	retriesLeft      int        // RunHeadless will try again if this attempt fails
 }
 
 // ToolsProvider supplies the tool set for a request and an optional cleanup
@@ -81,6 +82,9 @@ type ChatService struct {
 	// "notification") to the event bus so a user's open tabs refresh immediately
 	// after background work finishes. Wired by main to the API event hub.
 	OnEvent func(email, kind string)
+	// TaskNotify reports finished task runs to their owner (in-app bell and
+	// the task's outbound webhook). nil falls back to failure-only alerts.
+	TaskNotify *TaskNotifier
 	// DisableSummary turns off the eino summarization middleware. Production keeps
 	// it on (folds long context into a running summary); deterministic tests set
 	// it so a scripted mock isn't consumed by the summarizer's extra model call.
@@ -441,6 +445,7 @@ func (s *ChatService) RunHeadless(ctx context.Context, req ChatRunRequest) {
 		}
 	}
 	for attempt := 0; ; attempt++ {
+		req.retriesLeft = retries - attempt
 		status := s.Run(ctx, req, func(messages.Message) {})
 		if status != db.RunFailed || attempt >= retries || ctx.Err() != nil {
 			return
@@ -523,9 +528,18 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 	// success for this purpose: it did work and stopped honestly, which is not
 	// the repeated hard failure the breaker exists to catch.
 	s.recordTaskOutcome(bg, req.TaskID, req.UserEmail, status == db.RunDone)
-	// Alert on UNATTENDED failures (scheduled/webhook/rerun) — a manual failure
-	// the user is already watching on screen.
-	if status == db.RunFailed && req.Trigger != "" && req.Trigger != "manual" && req.UserEmail != "" {
+	// A task's runs happen in a conversation nobody is watching, so every one
+	// is reported — except a failed attempt that is about to be retried; the
+	// retry reports. Other runs alert only on UNATTENDED failures
+	// (scheduled/webhook/rerun) — a manual failure the user is watching.
+	if req.TaskID != "" && s.TaskNotify != nil {
+		if status != db.RunFailed || req.retriesLeft <= 0 || ctxErr != nil {
+			go s.TaskNotify.RunFinished(bg, TaskRunResult{
+				TaskID: req.TaskID, RunID: runID, ConversationID: req.ConversationID, OwnerEmail: req.UserEmail,
+				Status: status, Answer: out, Error: errStr,
+			})
+		}
+	} else if status == db.RunFailed && req.Trigger != "" && req.Trigger != "manual" && req.UserEmail != "" {
 		_ = s.Msg.Store.CreateNotification(bg, &db.Notification{
 			NotificationID: "ntf_" + messages.NewID(),
 			OwnerEmail:     req.UserEmail,

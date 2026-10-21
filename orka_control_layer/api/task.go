@@ -32,6 +32,8 @@ type saveTaskReq struct {
 	Trigger    db.TaskTrigger `json:"trigger"`
 	Enabled    bool           `json:"enabled"`
 	RetryCount int            `json:"retry_count"`
+	// NotifyWebhook is an optional group-bot address for run summaries.
+	NotifyWebhook string `json:"notify_webhook"`
 }
 
 type taskIDReq struct {
@@ -69,6 +71,11 @@ func (a *API) SaveTask(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, "触发条件无效："+err.Error())
 		return
 	}
+	notify, err := service.ValidateNotifyWebhook(req.NotifyWebhook)
+	if err != nil {
+		fail(c, consts.StatusBadRequest, err.Error())
+		return
+	}
 	now := time.Now().UnixMilli()
 	task := &db.TaskMeta{}
 	if req.TaskID != "" {
@@ -84,6 +91,7 @@ func (a *API) SaveTask(ctx context.Context, c *app.RequestContext) {
 	}
 	task.Variables = map[string]any{"prompt_template": req.Prompt, "title": req.Title}
 	task.Trigger, task.IntervalSec, task.RetryCount = &trigger, 0, req.RetryCount
+	task.NotifyWebhook = notify
 	if trigger.Kind == db.TriggerEvent {
 		if task.WebhookToken == "" {
 			task.WebhookToken = newWebhookToken()

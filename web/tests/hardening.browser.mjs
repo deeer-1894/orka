@@ -630,6 +630,53 @@ test('the tasks page is linkable and selecting a conversation returns to chat',a
  await a.page.goBack();await a.page.getByRole('heading',{name:'定时任务'}).waitFor();a.check();
 });
 
+test('task editor saves the result-notification webhook and rejects a malformed one',async t=>{
+ const saves=[];let tasks=[taskFixture({notify_webhook:'https://open.feishu.cn/open-apis/bot/v2/hook/old'})];
+ const a=await app(t,{handle:async({path,body,json})=>{
+  if(path==='/task/get-tasks'){await json({tasks});return true;}
+  if(path==='/task/save'){saves.push(body);tasks=[taskFixture({notify_webhook:body.notify_webhook})];await json(tasks[0]);return true;}
+ }});
+ await openTasks(a);await a.page.getByRole('button',{name:'编辑 每日资讯简报'}).click();
+ await a.page.getByText('结果通知',{exact:true}).waitFor();
+ const hook=a.page.getByLabel('同时推送到群机器人（可选）');
+ assert.equal(await hook.inputValue(),'https://open.feishu.cn/open-apis/bot/v2/hook/old');
+ await hook.fill('open.feishu.cn/hook');await a.page.getByRole('button',{name:'保存',exact:true}).click();
+ await a.page.getByRole('alert').filter({hasText:'推送地址'}).waitFor();assert.equal(saves.length,0);
+ await hook.fill('  https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abc  ');await a.page.getByRole('button',{name:'保存',exact:true}).click();
+ await a.page.getByRole('dialog').waitFor({state:'detached'});
+ assert.equal(saves[0].task_id,'t1');assert.equal(saves[0].notify_webhook,'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abc');
+ await a.page.getByRole('button',{name:'新建任务',exact:true}).first().click();await a.page.getByRole('menuitem',{name:'空白任务'}).click();
+ assert.equal(await a.page.getByLabel('同时推送到群机器人（可选）').inputValue(),'');
+ await a.page.getByLabel('要做什么').fill('每天汇总工单');await a.page.getByRole('button',{name:'保存',exact:true}).click();
+ await a.page.getByRole('dialog').waitFor({state:'detached'});assert.equal(saves[1].notify_webhook,'');a.check();
+});
+
+test('task rows show their recent runs and success rate',async t=>{
+ const now=Date.now(),run=(id,status,ago,task='t1')=>({run_id:id,task_id:task,conversation_id:'task-conv',status,created_at:now-ago-1000,finished_at:status==='running'?0:now-ago});
+ const runs=[run('r4','done',60e3),run('r3','failed',3600e3),run('r2','done',7200e3),run('r1','partial',9000e3),run('x1','failed',10e3,'other')];
+ const a=await app(t,{handle:async({path,body,json})=>{
+  if(path==='/task/get-tasks'){await json({tasks:[taskFixture(),taskFixture({task_id:'t2',conversation_id:'conv-2',variables:{title:'从未运行',prompt_template:'等待'}})]});return true;}
+  if(path==='/run/list'){await json({runs:runs.filter(r=>r.task_id===body.task_id).slice(0,body.size)});return true;}
+ }});
+ await openTasks(a);
+ const row=a.page.getByRole('listitem').filter({hasText:'每日资讯简报'});
+ const history=row.getByRole('list',{name:'最近运行'});await history.waitFor();
+ const labels=await history.getByRole('listitem').evaluateAll(els=>els.map(e=>e.getAttribute('aria-label').split(' · ')[0]));
+ assert.deepEqual(labels,['部分完成','已完成','失败','已完成']);
+ await row.getByText('上次已完成',{exact:false}).waitFor();await row.getByText('近 4 次成功 2 次',{exact:true}).waitFor();
+ const listCalls=a.requests.filter(r=>r.path==='/run/list');
+ assert.ok(listCalls.some(r=>r.body.task_id==='t1'&&r.body.size===5));assert.ok(listCalls.some(r=>r.body.task_id==='t2'));
+ assert.equal(await a.page.getByRole('listitem').filter({hasText:'从未运行'}).getByRole('list',{name:'最近运行'}).count(),0);a.check();
+});
+
+test('a ?c= link opens that conversation and drops the parameter',async t=>{
+ const a=await app(t);
+ await a.page.goto(origin+'/?c=b');await a.page.getByText('Conversation b',{exact:true}).first().waitFor();
+ await a.page.waitForFunction(()=>!location.search.includes('c='));
+ await a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/conversation/get-messages')&&r.postDataJSON()?.conversation_id==='b').catch(()=>{});
+ assert.ok(a.requests.some(r=>r.path==='/conversation/get-messages'&&r.body.conversation_id==='b'));a.check();
+});
+
 test('settings adds a tested connector, removes it after confirmation and shows service status',async t=>{
  let connectors=[];
  const a=await app(t,{handle:async({path,body,json})=>{

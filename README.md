@@ -78,6 +78,7 @@ Persistence conventions:
 | Workspace files | `BASE_STORAGE_PATH` → `./data/storage` or `$HOME/.orka/storage` | the per-user file root; **must not be `/tmp`** |
 | Mongo data | docker volume `orka_mongo_data` (via `docker compose`) | survives container restarts; don't run a second native `mongod` on 27017 (it shadows the container) |
 | Config / secrets | the repo `.env` (gitignored) | the single source of truth the launcher reads |
+| Task notification links | `ORKA_PUBLIC_URL` → the web app's origin, e.g. `https://orka.example.com` | outbound task summaries (飞书/企业微信/钉钉/Slack) link to `<origin>/?c=<conversation>`; unset → they carry the conversation ID instead |
 | Quant harness deps | `ORKA_QUANT_PYTHON` → a venv with `akshare` (`.venv-quant`) | keeps akshare out of system Python; falls back to synthetic data if unset |
 
 ## Running the full stack

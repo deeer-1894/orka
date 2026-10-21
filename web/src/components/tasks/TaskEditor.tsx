@@ -18,6 +18,7 @@ export interface TaskDraft {
   enabled: boolean;
   retry_count: number;
   webhook_token?: string;
+  notify_webhook?: string;
 }
 
 export function draftFromTask(t: TaskMeta): TaskDraft {
@@ -30,6 +31,7 @@ export function draftFromTask(t: TaskMeta): TaskDraft {
     enabled: t.cron_status === "on",
     retry_count: t.retry_count || 0,
     webhook_token: t.webhook_token,
+    notify_webhook: t.notify_webhook || "",
   };
 }
 
@@ -90,10 +92,12 @@ export function TaskEditor({ draft: initial, onClose, onSaved }: { draft: TaskDr
       if (!draft.prompt.trim()) throw new Error("请填写任务要做什么");
       if (/【[^】]*】/.test(draft.prompt)) throw new Error("请把【】中的内容换成你的实际信息");
       trigger = buildTrigger();
+      const notify = (draft.notify_webhook || "").trim();
+      if (notify && !/^https?:\/\/[^/\s]+/.test(notify)) throw new Error("推送地址需是完整的网址，例如 https://open.feishu.cn/open-apis/bot/v2/hook/…");
     } catch (e) { setError((e as Error).message); return; }
     setBusy(true);
     try {
-      const input: TaskInput = { task_id: draft.task_id, title: draft.title.trim(), prompt: draft.prompt.trim(), trigger, enabled: draft.enabled, retry_count: draft.retry_count };
+      const input: TaskInput = { task_id: draft.task_id, title: draft.title.trim(), prompt: draft.prompt.trim(), trigger, enabled: draft.enabled, retry_count: draft.retry_count, notify_webhook: (draft.notify_webhook || "").trim() };
       const saved = await api.saveTask(input);
       onSaved(saved);
       if (!draft.task_id && trigger.kind === "event" && saved.webhook_token) setCreated(saved);
@@ -194,6 +198,13 @@ export function TaskEditor({ draft: initial, onClose, onSaved }: { draft: TaskDr
                 {[0, 1, 2, 3].map(n => <option key={n} value={n}>{n === 0 ? "不重试" : `${n} 次`}</option>)}
               </select>
             </Field>
+            <div className="flex flex-col gap-2">
+              <span className="text-[13px] font-medium text-ink">结果通知</span>
+              <p className="flex items-start gap-1.5 text-[12px] text-faint"><Icon name="bell" size={12} className="mt-[3px] shrink-0" />每次运行结束都会在右上角的通知里提醒你，点开直达任务对话。</p>
+              <Field label="同时推送到群机器人（可选）" htmlFor="task-notify" hint="飞书、企业微信、钉钉或 Slack 群机器人的 Webhook 地址。推送任务名、运行结果、回答开头几行和对话链接。">
+                <input id="task-notify" className={field} inputMode="url" value={draft.notify_webhook || ""} maxLength={2048} placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…" onChange={e => patch({ notify_webhook: e.target.value })} />
+              </Field>
+            </div>
             {error && <p role="alert" className="rounded-lg bg-accentsoft px-3 py-2 text-[13px] text-accent">{error}</p>}
           </form>
           <div className="flex flex-wrap items-center gap-3 border-t border-border px-6 py-4">
