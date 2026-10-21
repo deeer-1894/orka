@@ -6,6 +6,7 @@ import {
   CHECK_INTERVALS, FREQUENCIES, TRIGGER_KINDS, WEEKDAYS, describeTrigger, localTimezone, scheduleForm,
   scheduleTrigger, defaultScheduleForm, type ScheduleForm, type TaskTrigger, type TriggerKind,
 } from "../../lib/taskTrigger";
+import { TASK_CAPABILITIES, describeToolPolicy, toggleCapability, toolPolicyOf, type TaskToolPolicy } from "../../lib/taskToolPolicy";
 import { toast } from "../../lib/toast";
 import { Button } from "../ui/button";
 import { Icon, type IconName } from "../Icon";
@@ -19,6 +20,7 @@ export interface TaskDraft {
   retry_count: number;
   webhook_token?: string;
   notify_webhook?: string;
+  tool_policy?: TaskToolPolicy; // unset: the default
 }
 
 export function draftFromTask(t: TaskMeta): TaskDraft {
@@ -32,6 +34,7 @@ export function draftFromTask(t: TaskMeta): TaskDraft {
     retry_count: t.retry_count || 0,
     webhook_token: t.webhook_token,
     notify_webhook: t.notify_webhook || "",
+    tool_policy: toolPolicyOf(t.tool_policy),
   };
 }
 
@@ -70,6 +73,7 @@ export function TaskEditor({ draft: initial, onClose, onSaved }: { draft: TaskDr
   const [error, setError] = useState("");
   const [created, setCreated] = useState<TaskMeta | null>(null);
   const kind = draft.trigger.kind;
+  const policy = toolPolicyOf(draft.tool_policy);
   const patch = (p: Partial<TaskDraft>) => { setDraft(d => ({ ...d, ...p })); setError(""); };
   const patchSchedule = (p: Partial<ScheduleForm>) => { setSchedule(s => ({ ...s, ...p })); setError(""); };
 
@@ -97,7 +101,7 @@ export function TaskEditor({ draft: initial, onClose, onSaved }: { draft: TaskDr
     } catch (e) { setError((e as Error).message); return; }
     setBusy(true);
     try {
-      const input: TaskInput = { task_id: draft.task_id, title: draft.title.trim(), prompt: draft.prompt.trim(), trigger, enabled: draft.enabled, retry_count: draft.retry_count, notify_webhook: (draft.notify_webhook || "").trim() };
+      const input: TaskInput = { task_id: draft.task_id, title: draft.title.trim(), prompt: draft.prompt.trim(), trigger, enabled: draft.enabled, retry_count: draft.retry_count, tool_policy: policy, notify_webhook: (draft.notify_webhook || "").trim() };
       const saved = await api.saveTask(input);
       onSaved(saved);
       if (!draft.task_id && trigger.kind === "event" && saved.webhook_token) setCreated(saved);
@@ -192,6 +196,18 @@ export function TaskEditor({ draft: initial, onClose, onSaved }: { draft: TaskDr
                 <button key={e} type="button" className={chip(event === e) + " font-mono text-[12px]"} onClick={() => setEvent(e)}>{e}</button>)}</div>
               {token ? <WebhookAddress token={token} /> : <p className="text-[12px] text-faint">保存后生成专属 Webhook 地址。</p>}
             </div>}
+
+            <fieldset className="flex flex-col gap-2">
+              <legend className="mb-2 text-[13px] font-medium text-ink">自动运行时允许</legend>
+              <p className="text-[12px] leading-relaxed text-faint">触发时没人确认操作，且{kind === "event" ? "请求内容" : "网页内容"}可能夹带指令。读取文件和网页始终可以；下面的操作只在勾选后才提供给任务。当前：<span data-testid="task-policy-summary" className="text-muted">{describeToolPolicy(policy)}</span></p>
+              {TASK_CAPABILITIES.map(c => {
+                const on = policy.allow.includes(c.id);
+                return <label key={c.id} className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border px-3 py-2 transition hover:bg-surface2">
+                  <input type="checkbox" className="mt-0.5 h-4 w-4 accent-[var(--color-accent)]" checked={on} onChange={e => patch({ tool_policy: toggleCapability(policy, c.id, e.target.checked) })} />
+                  <span className="flex flex-col"><span className="text-[13px] text-ink">{c.label}</span><span className="text-[12px] text-faint">{c.hint}</span></span>
+                </label>;
+              })}
+            </fieldset>
 
             <Field label="失败后自动重试" htmlFor="task-retry">
               <select id="task-retry" className={field + " w-32"} value={draft.retry_count} onChange={e => patch({ retry_count: Number(e.target.value) })}>

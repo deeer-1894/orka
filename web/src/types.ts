@@ -1,4 +1,5 @@
 import type { TaskTrigger } from './lib/taskTrigger';
+import type { TaskToolPolicy } from './lib/taskToolPolicy';
 // Mirrors the Go event protocol in orka_core/messages.
 
 export type EventType =
@@ -132,6 +133,7 @@ export interface TaskMeta {
   webhook_token?: string;
   retry_count?: number;
   trigger?: TaskTrigger;
+  tool_policy?: TaskToolPolicy;
   last_finished_at?: number;
   last_status?: string;
   disabled_reason?: string;

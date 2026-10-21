@@ -3,6 +3,7 @@ package scheduled_task
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -297,7 +298,7 @@ func TestConditionTaskRunsOnlyWhenTheWatchFires(t *testing.T) {
 		if !fire && (ran != "" || claims.status != StatusWatching) {
 			t.Fatalf("unfired check ran=%q status=%s", ran, claims.status)
 		}
-		if fire && (ran != "hi Sam\n\n[触发原因] 页面变了。" || claims.status != db.RunDone) {
+		if fire && (!strings.HasPrefix(ran, "hi Sam\n\n[外部数据 · 触发原因]") || !strings.Contains(ran, "\n页面变了。\n<<<END UNTRUSTED ") || claims.status != db.RunDone) {
 			t.Fatalf("fired check ran=%q status=%s", ran, claims.status)
 		}
 	}

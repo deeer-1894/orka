@@ -34,6 +34,9 @@ type saveTaskReq struct {
 	RetryCount int            `json:"retry_count"`
 	// NotifyWebhook is an optional group-bot address for run summaries.
 	NotifyWebhook string `json:"notify_webhook"`
+	// ToolPolicy is what unattended runs may do; omitted keeps the task's
+	// current policy, or the default for a new task.
+	ToolPolicy *db.TaskToolPolicy `json:"tool_policy"`
 }
 
 type taskIDReq struct {
@@ -76,6 +79,15 @@ func (a *API) SaveTask(ctx context.Context, c *app.RequestContext) {
 		fail(c, consts.StatusBadRequest, err.Error())
 		return
 	}
+	var policy *db.TaskToolPolicy
+	if req.ToolPolicy != nil {
+		p, err := req.ToolPolicy.Normalize()
+		if err != nil {
+			fail(c, consts.StatusBadRequest, err.Error())
+			return
+		}
+		policy = &p
+	}
 	now := time.Now().UnixMilli()
 	task := &db.TaskMeta{}
 	if req.TaskID != "" {
@@ -92,6 +104,12 @@ func (a *API) SaveTask(ctx context.Context, c *app.RequestContext) {
 	task.Variables = map[string]any{"prompt_template": req.Prompt, "title": req.Title}
 	task.Trigger, task.IntervalSec, task.RetryCount = &trigger, 0, req.RetryCount
 	task.NotifyWebhook = notify
+	if policy != nil {
+		task.ToolPolicy = policy
+	} else if task.ToolPolicy == nil {
+		d := db.DefaultTaskToolPolicy()
+		task.ToolPolicy = &d
+	}
 	if trigger.Kind == db.TriggerEvent {
 		if task.WebhookToken == "" {
 			task.WebhookToken = newWebhookToken()

@@ -9,6 +9,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 
 	"github.com/orka-oss/orka_control_layer/db"
+	"github.com/orka-oss/orka_control_layer/scheduled_task"
 	"github.com/orka-oss/orka_control_layer/service"
 )
 
@@ -30,26 +31,37 @@ func (a *API) Webhook(ctx context.Context, c *app.RequestContext) {
 	var body map[string]any
 	raw := c.Request.Body()
 	_ = json.Unmarshal(raw, &body)
+	event := webhookEvent(string(c.GetHeader("X-GitHub-Event")), body)
+	if t.Trigger != nil && t.Trigger.Kind == db.TriggerEvent {
+		if t.CronStatus != "on" || (t.Trigger.Event != "" && !strings.EqualFold(event, t.Trigger.Event)) {
+			c.JSON(consts.StatusAccepted, map[string]any{"code": 0, "data": map[string]string{"status": "ignored", "event": event}})
+			return
+		}
+	}
+	go a.Chat.RunHeadless(context.Background(), webhookRunRequest(t, event, raw, body))
+	c.JSON(consts.StatusAccepted, map[string]any{"code": 0, "data": map[string]string{"status": "triggered", "task_id": t.TaskID}})
+}
+
+// webhookRunRequest builds the run a webhook call starts. An event task's
+// payload goes in as framed untrusted data, and the run carries the task's
+// tool policy: whoever can make the calling system emit an event can write
+// that payload, so it must not be able to buy more than the task allows.
+func webhookRunRequest(t *db.TaskMeta, event string, raw []byte, body map[string]any) service.ChatRunRequest {
 	msg := taskPromptFor(t.Variables)
 	if m, ok := body["message"].(string); ok && m != "" {
 		msg = m
 	}
 	if t.Trigger != nil && t.Trigger.Kind == db.TriggerEvent {
-		event := webhookEvent(string(c.GetHeader("X-GitHub-Event")), body)
-		if t.CronStatus != "on" || (t.Trigger.Event != "" && !strings.EqualFold(event, t.Trigger.Event)) {
-			c.JSON(consts.StatusAccepted, map[string]any{"code": 0, "data": map[string]string{"status": "ignored", "event": event}})
-			return
-		}
-		msg += "\n\n[触发事件] " + firstNonEmptyStr(event, "webhook") + "\n" + truncRunes(string(raw), 4000)
+		msg += "\n\n" + scheduled_task.UntrustedBlock("触发事件 "+firstNonEmptyStr(event, "webhook"), truncRunes(string(raw), 4000))
 	}
-	go a.Chat.RunHeadless(context.Background(), service.ChatRunRequest{
+	return service.ChatRunRequest{
 		Message:        msg,
 		ConversationID: t.ConversationID,
 		TaskID:         t.TaskID,
 		UserEmail:      t.OwnerEmail,
 		Trigger:        "webhook",
-	})
-	c.JSON(consts.StatusAccepted, map[string]any{"code": 0, "data": map[string]string{"status": "triggered", "task_id": t.TaskID}})
+		ToolPolicy:     t.ToolPolicy,
+	}
 }
 
 func taskPromptFor(vars map[string]any) string {

@@ -232,6 +232,7 @@ func main() {
 				}
 				status := chat.Run(ctx, service.ChatRunRequest{
 					Message: content, ConversationID: task.ConversationID, TaskID: task.TaskID, UserEmail: task.OwnerEmail, Trigger: trigger,
+					ToolPolicy: task.ToolPolicy,
 				}, func(messages.Message) {})
 				return scheduled_task.OutcomeError(status)
 			},

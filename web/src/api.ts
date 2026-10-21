@@ -1,5 +1,6 @@
 import { clearSessionRecovery } from './lib/sessionRecovery';
 import type { TaskTrigger } from './lib/taskTrigger';
+import type { TaskToolPolicy } from './lib/taskToolPolicy';
 import type {
   Connector,
   Artifact,
@@ -217,6 +218,7 @@ export interface TaskInput {
   enabled: boolean;
   retry_count: number;
   notify_webhook?: string;
+  tool_policy: TaskToolPolicy;
 }
 
 // webhookURL is the public trigger address external systems call.
