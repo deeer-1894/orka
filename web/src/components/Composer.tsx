@@ -4,7 +4,7 @@ import type { RunStatus } from "../hooks/useChatStream";
 import { api, files as fileApi } from "../api";
 import { invalidateSessionFiles, useFileRevision } from "../hooks/useFileRevision";
 import { useConversationDraft } from "../hooks/useConversationDraft";
-import { toast, toastError } from "../lib/toast";
+import { toastError } from "../lib/toast";
 import { Icon, fileIconName, type IconName } from "./Icon";
 import { RunSettingsChips, RunSettingsMenu, type RunSettingsValue } from "./RunSettings";
 
@@ -39,6 +39,7 @@ interface ComposerProps {
   activeSkill: string | null;
   onPickSkill: (name: string | null) => void;
   runSettings: RunSettingsValue;
+  onManageSkills?: () => void;
   conversationID: string;
   ensureConversation: () => Promise<string>;
 }
@@ -52,17 +53,14 @@ function StandaloneComposer(props: ComposerProps) {
 }
 function ComposerForm({
   draft, blocked = false, status, onSend, onKill,
-  activeSkill, onPickSkill, runSettings, conversationID, ensureConversation,
+  activeSkill, onPickSkill, runSettings, onManageSkills, conversationID, ensureConversation,
 }: ComposerProps & { draft: ReturnType<typeof useConversationDraft> }) {
   const { text, setText, attachments, setAttachments } = draft;
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   const [sendError, setSendError] = useState<{ cid: string; message: string } | null>(null);
   const [menu, setMenu] = useState(false);
-  const [skills, setSkills] = useState<{ name: string; description: string }[]>([]);
-  const [installUrl, setInstallUrl] = useState("");
-  const [installing, setInstalling] = useState(false);
-  const [deleting, setDeleting] = useState<string | null>(null);
+  const [skills, setSkills] = useState<{ name: string; description: string; enabled?: boolean }[]>([]);
   const [previewName, setPreviewName] = useState<string | null>(null);
   const [previewCache, setPreviewCache] = useState<Record<string, string>>({});
   // @-mention: reference a workspace file as context (Cursor-style).
@@ -100,7 +98,8 @@ function ComposerForm({
 
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const loadSkills = () => api.listSkills().then((r) => setSkills(r.skills || [])).catch(() => {});
+  // Switched-off skills are managed in settings, not offered here.
+  const loadSkills = () => api.listSkills().then((r) => setSkills((r.skills || []).filter(s => s.enabled !== false))).catch(() => {});
   useEffect(() => { loadSkills(); }, []);
   useEffect(() => { if (menu) loadSkills(); }, [menu]);
 
@@ -119,34 +118,6 @@ function ComposerForm({
     return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
   }, [menu]);
 
-  const installSkill = async () => {
-    const url = installUrl.trim();
-    if (!url) return;
-    setInstalling(true);
-    try {
-      const r = await api.installSkill(url);
-      toast(`已安装技能「${r.name}」`, "success");
-      setInstallUrl("");
-      loadSkills();
-    } catch {
-      toastError("安装失败：请确认这是一个可访问的 SKILL.md 链接");
-    } finally {
-      setInstalling(false);
-    }
-  };
-  const removeSkill = async (name: string) => {
-    setDeleting(name);
-    try {
-      await api.deleteSkill(name);
-      toast(`已删除技能「${name}」`, "success");
-      if (activeSkill === name) onPickSkill(null);
-      loadSkills();
-    } catch {
-      toastError("删除失败");
-    } finally {
-      setDeleting(null);
-    }
-  };
   useEffect(() => {
     setAtListing({ conversationID, items: [] }); setAtSel(0); setAtDir(".");
   }, [conversationID]);
@@ -320,17 +291,6 @@ function ComposerForm({
                       >
                         {previewName === s.name ? <Icon name="chevron" size={14} className="rotate-180" /> : <Icon name="eye" size={14} />}
                       </button>
-                      {!builtin && (
-                        <button
-                          onClick={() => removeSkill(s.name)}
-                          disabled={deleting === s.name}
-                          title={"删除技能 " + s.name}
-                          aria-label={"删除技能 " + s.name}
-                          className="mr-1 shrink-0 rounded-md px-1.5 py-1 text-[13px] text-faint opacity-0 hover:bg-surface hover:text-red-500 group-hover:opacity-100 disabled:opacity-40"
-                        >
-                          {deleting === s.name ? "…" : <Icon name="trash" size={14} />}
-                        </button>
-                      )}
                     </div>
                     {previewName === s.name && (
                       <div className="mx-2 mb-1 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-surface2/50 px-2.5 py-2 text-[11.5px] leading-relaxed text-muted">
@@ -341,25 +301,9 @@ function ComposerForm({
                 );
               })}
             </div>
-            <details className="mt-1 border-t border-border px-1 pt-1.5">
-              <summary className="mb-1 cursor-pointer px-1 text-[11px] text-faint">高级 · 安装技能</summary>
-              <div className="flex items-center gap-1">
-                <input
-                  value={installUrl}
-                  onChange={(e) => setInstallUrl(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); installSkill(); } }}
-                  placeholder="https://…/SKILL.md"
-                  className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-accent/50"
-                />
-                <button
-                  onClick={installSkill}
-                  disabled={installing || !installUrl.trim()}
-                  className="shrink-0 rounded-lg bg-accent px-2.5 py-1.5 text-[12px] text-white disabled:opacity-40"
-                >
-                  {installing ? "…" : "安装"}
-                </button>
-              </div>
-            </details>
+            {onManageSkills && <button onClick={() => { setMenu(false); onManageSkills(); }} className="mt-1 flex w-full items-center gap-1.5 border-t border-border px-2 pb-1 pt-2 text-left text-[12px] text-muted hover:text-ink">
+              <Icon name="gear" size={13} />管理技能…
+            </button>}
           </div>
         )}
 

@@ -238,6 +238,24 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	ctx = spanCtx
 	// Local tools (e.g. artifact_publish) learn whose run they're in from ctx.
 	ctx = WithRunInfo(ctx, req.ConversationID, req.UserEmail)
+	// A conversation in a project reads its instructions and shared files; what
+	// the run wrote under project/ goes back to the project when it ends.
+	project := s.openRunProject(ctx, req)
+	projectID := ""
+	if project != nil {
+		projectID = project.ProjectID
+	}
+	personal := s.loadPersonal(ctx, req.UserEmail, projectID)
+	if project != nil {
+		if req.ActiveSkill == "" {
+			req.ActiveSkill = project.DefaultSkill
+		}
+		defer func() {
+			if changed, err := project.publish(); (err != nil || len(changed) > 0) && s.Log != nil {
+				s.Log.Info("project files published", "project_id", project.ProjectID, "files", changed, "err", err)
+			}
+		}()
+	}
 	ctx = middlewares.WithSkillOwner(ctx, s.Cfg.Storage.BaseStoragePath, req.UserEmail)
 	budgetCtx, session, cancelBudget, budgetErr := s.prepareRunBudget(ctx, &req)
 	if budgetErr != nil {
@@ -251,6 +269,9 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	deps := PipelineDeps{LLM: model, Model: modelName, Metrics: s.Metrics}
 
 	tools, cleanup, toolsErr := s.ToolsFor(ctx, req)
+	if personal != nil {
+		tools = append(tools, personal.tools(s.Msg.Store, req, projectID)...)
+	}
 	tools = filterToolsForRequest(ctx, tools, req)
 	if toolsErr != nil && s.Log != nil {
 		s.Log.Warn("tools provider degraded", "trace_id", traceID, "err", toolsErr)
@@ -283,12 +304,14 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		}
 		deps.SystemPrompt = base + "\n\n[Active skill mode]\n" + sp
 	}
+	// Standing context, most general first: who the user is, the project the
+	// conversation belongs to, then what this run was asked to do differently.
+	deps.SystemPrompt = withPromptBlock(deps.SystemPrompt, personal.prompt())
+	if project != nil {
+		deps.SystemPrompt = withPromptBlock(deps.SystemPrompt, project.prompt())
+	}
 	if planReviewActive(req) {
-		base := deps.SystemPrompt
-		if base == "" {
-			base = middlewares.DefaultSystemPrompt
-		}
-		deps.SystemPrompt = base + "\n\n" + planReviewNotice
+		deps.SystemPrompt = withPromptBlock(deps.SystemPrompt, planReviewNotice)
 	}
 
 	rc := &agent.RunContext{Ctx: ctx, Vars: map[string]any{}, Meta: meta, Tools: tools}
@@ -956,6 +979,18 @@ func taskFailed(meta messages.Meta, reason string) messages.Message {
 	m := messages.Task("failed", meta)
 	m.Content = reason
 	return m
+}
+
+// withPromptBlock appends a block to a system prompt, starting from the
+// default prompt when none was chosen. An empty block changes nothing.
+func withPromptBlock(prompt, block string) string {
+	if block == "" {
+		return prompt
+	}
+	if prompt == "" {
+		prompt = middlewares.DefaultSystemPrompt
+	}
+	return prompt + "\n\n" + block
 }
 
 // titleSnippet derives a short conversation title from the first message.

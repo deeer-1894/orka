@@ -117,6 +117,32 @@ export interface Conversation {
   owner_email?: string;
   shares?: ConversationShare[];
   parent_conversation_id?: string; // set when this conversation is a branch fork
+  project_id?: string; // filed under one of the owner's projects
+}
+
+export interface Personalization {
+  about_me: string;
+  reply_style: string;
+  auto_memory: boolean;
+}
+
+export interface Memory {
+  memory_id: string;
+  content: string;
+  project_id?: string;
+  source_conversation_id?: string;
+  created_at: number;
+}
+
+export interface Project {
+  project_id: string;
+  owner_email: string;
+  name: string;
+  description?: string;
+  instructions?: string;
+  default_skill?: string;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface TaskMeta {

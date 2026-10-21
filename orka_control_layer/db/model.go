@@ -61,6 +61,9 @@ type ConversationTable struct {
 	// survived the turn boundary, so an agent that had just researched for ten
 	// minutes could not answer a question about its own findings.
 	Digests []RunDigest `bson:"digests,omitempty" json:"digests,omitempty"`
+	// ProjectID files the conversation under one of its owner's projects ("" =
+	// none): it then reads the project's instructions and shared files.
+	ProjectID string `bson:"project_id,omitempty" json:"project_id,omitempty"`
 }
 
 // RunDigest is a compacted record of one run, carried into later turns.

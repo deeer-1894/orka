@@ -34,6 +34,8 @@ type Storage struct {
 	Workflows     *mongo.Collection
 	Artifacts     *mongo.Collection
 	ArtifactVers  *mongo.Collection
+	Projects      *mongo.Collection
+	Memories      *mongo.Collection
 }
 
 // NewStorage connects to Mongo and pings it.
@@ -66,6 +68,8 @@ func NewStorage(ctx context.Context, uri, dbName string) (*Storage, error) {
 		Workflows:     d.Collection("workflows"),
 		Artifacts:     d.Collection("artifacts"),
 		ArtifactVers:  d.Collection("artifact_versions"),
+		Projects:      d.Collection("projects"),
+		Memories:      d.Collection("memories"),
 	}
 	if err := s.EnsureIndexes(cctx); err != nil {
 		return nil, fmt.Errorf("mongo indexes: %w", err)

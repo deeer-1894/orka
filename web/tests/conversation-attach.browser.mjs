@@ -38,6 +38,7 @@ async function app(t, { history = async () => [], runs = [] } = {}) {
       case '/run/list': return json({ runs });
       case '/task/get-tasks': return json({ tasks: [], owners: {} });
       case '/skill/list': return json({ skills: [] });
+      case '/project/list': return json([]);
       case '/notification/list': return json({ notifications: [], unread: 0 });
       case '/metrics': return json({ total_tokens: 0 });
       case '/artifact/list': return json({ artifacts: [] });

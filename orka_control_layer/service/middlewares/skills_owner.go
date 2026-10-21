@@ -172,6 +172,9 @@ func DeletePersonalSkill(ctx context.Context, name string) error {
 	defer root.Close()
 	return root.Remove(name + ".json")
 }
+// ParseSkillMD reads a SKILL.md without registering it (install preview).
+func ParseSkillMD(content string) (SkillDef, error) { return parseSkillMD(content) }
+
 func InstallPersonalSkill(ctx context.Context, content string) (string, error) {
 	def, err := parseSkillMD(content)
 	if err != nil {
@@ -186,6 +189,6 @@ func SkillPromptFor(ctx context.Context, name string) (string, bool) {
 	if name == "" {
 		return "", false
 	}
-	def, ok, err := GetVisibleSkill(ctx, name)
+	def, ok, err := GetUsableSkill(ctx, name)
 	return def.Prompt, ok && err == nil
 }

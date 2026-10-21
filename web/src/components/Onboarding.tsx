@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Icon, type IconName } from "./Icon";
 
 // The first-run guide: three steps that take a new user from an empty account
@@ -18,13 +19,16 @@ export function onboardingVisible(s: OnboardingState, dismissed: boolean): boole
   return !dismissed && !(s.hasModel && s.hasConversation && s.toured);
 }
 
-export function Onboarding({ state, onConfigureModel, onTry, onTour, onDismiss }: {
+export function Onboarding({ state, onConfigureModel, onTry, onTour, onDismiss, onEnableMemory }: {
   state: OnboardingState;
   onConfigureModel: () => void;
   onTry: () => void;
   onTour: () => void;
   onDismiss: () => void;
+  // Memory is off by default; the guide is where a new user hears about it.
+  onEnableMemory?: () => Promise<void>;
 }) {
+  const [memory, setMemory] = useState<"" | "busy" | "on">("");
   const steps: Step[] = [
     { key: "model", icon: "gear", title: "配置模型", detail: "支持 OpenAI 兼容接口，例如火山方舟、DeepSeek、通义千问。", done: state.hasModel, action: "去配置", run: onConfigureModel },
     { key: "try", icon: "play", title: "试一个任务", detail: "让 Orka 联网搜索并整理一份简报，看它怎样拆步骤、交成果。", done: state.hasConversation, action: "填入示例", run: onTry },
@@ -57,6 +61,13 @@ export function Onboarding({ state, onConfigureModel, onTry, onTour, onDismiss }
           </li>;
         })}
       </ol>
+      {onEnableMemory && <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-border pt-2.5 text-[12px] text-faint">
+        <Icon name="sparkle" size={13} />
+        <span className="min-w-0 flex-1">记忆默认关闭。开启后 Orka 会记下你提到的长期偏好，在之后的对话里参考；可随时在设置里查看和删除。</span>
+        {memory === "on" ? <span className="text-ok">已开启记忆</span>
+          : <button disabled={memory === "busy"} onClick={async () => { setMemory("busy"); try { await onEnableMemory(); setMemory("on"); } catch { setMemory(""); } }}
+            className="rounded-lg border border-border px-2 py-1 text-muted hover:text-ink disabled:opacity-50">开启记忆</button>}
+      </div>}
     </div>
   </section>;
 }

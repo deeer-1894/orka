@@ -26,11 +26,15 @@ import { Toaster, toast } from "./lib/toast";
 import { ConfirmHost } from "./lib/confirm";
 import { useTheme } from "./lib/theme";
 import { useResource, refreshResource, refreshResourcePrefix } from "./lib/useResource";
-import type { Conversation, Message, Notification } from "./types";
+import type { Conversation, Message, Notification, Project } from "./types";
 
 import type { WorkbenchTab as Tab } from "./lib/workbenchTabs";
 import type { TaskDraft } from "./components/tasks/TaskEditor";
 import { Onboarding, TRY_PROMPT, onboardingVisible } from "./components/Onboarding";
+import { CHAT, TASKS, hashOf, viewFromHash, type View } from "./lib/view";
+import { ProjectPage } from "./components/projects/ProjectPage";
+import { MoveToProjectDialog } from "./components/projects/MoveToProjectDialog";
+import type { Section as SettingsSection } from "./components/settings/SettingsDialog";
 const TasksPage = lazy(() => import("./components/tasks/TasksPage").then(m => ({ default: m.TasksPage })));
 const SettingsDialog = lazy(() => import("./components/settings/SettingsDialog").then(m => ({ default: m.SettingsDialog })));
 
@@ -171,26 +175,26 @@ function Workbench({
   // The main area shows a conversation or the tasks page; a prompt sent to
   // "设为定时任务" opens the task editor prefilled with it.
   // The tasks page is addressable (#tasks) so it survives reloads and links.
-  const [view, setViewState] = useState<"chat" | "tasks">(() => location.hash === "#tasks" ? "tasks" : "chat");
-  const setView = useCallback((next: "chat" | "tasks") => {
+  const [view, setViewState] = useState<View>(() => viewFromHash(location.hash));
+  const setView = useCallback((next: View) => {
     setViewState(next);
-    const hash = next === "tasks" ? "#tasks" : "";
+    const hash = hashOf(next);
     if (location.hash !== hash) history.pushState(null, "", location.pathname + location.search + hash);
   }, []);
   useEffect(() => {
-    const sync = () => setViewState(location.hash === "#tasks" ? "tasks" : "chat");
+    const sync = () => setViewState(viewFromHash(location.hash));
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
   }, []);
   // Visiting the tasks page is the guide's last step, however the user got there.
   useEffect(() => {
-    if (view === "tasks" && onboarding && !onboarding.includes("tour")) markOnboarding("tour");
+    if (view.kind === "tasks" && onboarding && !onboarding.includes("tour")) markOnboarding("tour");
   }, [view, onboarding, markOnboarding]);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState<false | SettingsSection>(false);
   const [taskDraft, setTaskDraft] = useState<TaskDraft | null>(null);
   const openSchedule = useCallback((prompt: string) => {
     setTaskDraft({ title: "", prompt, trigger: { kind: "schedule", cron: "0 9 * * 1-5" }, enabled: true, retry_count: 0 });
-    setView("tasks");
+    setView(TASKS);
   }, []);
   const activeSkill = conversationSettings.value.activeSkill;
   const setActiveSkill = (activeSkill: string | null) => conversationSettings.patch({ activeSkill });
@@ -296,6 +300,15 @@ function Workbench({
       .catch(() => {});
   }, []);
 
+  const [projects, setProjects] = useState<Project[]>([]);
+  const refreshProjects = useCallback(() => { api.listProjects().then(p => setProjects(p || [])).catch(() => {}); }, []);
+  useEffect(() => { refreshProjects(); }, [refreshProjects]);
+  // A new conversation started from a project page is created inside it, lazily
+  // like any other, on its first message.
+  const [draftProject, setDraftProject] = useState("");
+  const draftProjectRef = useRef("");
+  draftProjectRef.current = draftProject;
+  const [moveFor, setMoveFor] = useState<Conversation | null>(null);
   const refreshConversations = useCallback(() => {
     api.listConversations().then((c) => { setConversations(c || []); setOwnedListLoaded(true); }).catch(() => {});
     api.sharedWithMe().then((c) => { setShared(c || []); setSharedListLoaded(true); }).catch(() => {});
@@ -335,7 +348,15 @@ function Workbench({
   // "新对话" just resets to the empty state — the server conversation is
   // created lazily on the first send (ensureConversation), so clicking around
   // never accumulates empty "新对话" placeholders.
-  const newConversation = useCallback(() => { setActiveID(""); setView("chat"); }, []);
+  const newConversation = useCallback(() => { setActiveID(""); setDraftProject(""); setView(CHAT); }, []);
+  const newConversationInProject = useCallback((projectID: string) => { setActiveID(""); setDraftProject(projectID); setView(CHAT); }, []);
+  const newProject = useCallback(async () => {
+    try {
+      const p = await api.saveProject({ name: "未命名项目" });
+      setProjects(ps => [p, ...ps]);
+      setView({ kind: "project", id: p.project_id });
+    } catch (e) { toast((e as Error).message || "创建失败", "error"); }
+  }, []);
 
   const onPrune = useCallback(async () => {
     await api.pruneConversations().catch(() => {});
@@ -361,7 +382,7 @@ function Workbench({
   const selectConversation = useCallback(
     async (id: string) => {
       setActiveID(id);
-      setView("chat");
+      setView(CHAT);
       if (seen.current.has(id)) {
         void rejoinIfLive(id); // loaded before, but a run may have started since
         return;
@@ -407,7 +428,7 @@ function Workbench({
     if (state.activeID) return Promise.resolve(state.activeID);
     if (state.promise) return state.promise;
     const generation = state.generation;
-    const promise = api.createConversation("新对话").then(c => {
+    const promise = api.createConversation("新对话", draftProjectRef.current || undefined).then(c => {
       setConversations(cs => cs.some(item => item.conversation_id === c.conversation_id) ? cs : [c, ...cs]);
       // A late creation must not replace a conversation selected in the meantime.
       if (state.generation === generation && !state.activeID) {
@@ -530,8 +551,8 @@ function Workbench({
     { id: "new", group: "操作", icon: "plus", label: "新对话", hint: "⌘J", run: newConversation },
     { id: "share", group: "操作", icon: "share", label: "分享当前对话", run: () => activeConv && setShareFor(conversations.find((c) => c.conversation_id === activeID) || null) },
     { id: "schedule", group: "操作", icon: "clock", label: "把上一条设为定时任务", run: () => lastMsgRef.current && openSchedule(lastMsgRef.current) },
-    { id: "tasks", group: "操作", icon: "clock", label: "打开定时任务", keywords: "schedule trigger task 触发", run: () => setView("tasks") },
-    { id: "settings", group: "设置", icon: "gear", label: "设置 · 连接器", keywords: "settings connector mcp 集成", run: () => setSettingsOpen(true) },
+    { id: "tasks", group: "操作", icon: "clock", label: "打开定时任务", keywords: "schedule trigger task 触发", run: () => setView(TASKS) },
+    { id: "settings", group: "设置", icon: "gear", label: "设置", keywords: "settings connector mcp 集成 个性化 记忆 memory", run: () => setSettingsOpen("personal") },
     { id: "theme", group: "设置", icon: theme === "dark" ? "sun" : "moon", label: theme === "dark" ? "切换到亮色" : "切换到暗色", run: toggleTheme },
     { id: "confirm", group: "设置", icon: "shield", label: confirmRisky ? "关闭高危操作确认" : "开启高危操作确认", run: toggleConfirm },
     { id: "keys", group: "帮助", icon: "keyboard", label: "键盘快捷键", hint: "?", keywords: "shortcut keyboard 快捷键", run: () => setKeysOpen(true) },
@@ -571,15 +592,33 @@ function Workbench({
         onDelete={onDelete}
         onPrune={onPrune}
         onShare={(id) => setShareFor(conversations.find((c) => c.conversation_id === id) || null)}
+        projects={projects}
+        activeProjectID={view.kind === "project" ? view.id : ""}
+        onOpenProject={(id) => setView({ kind: "project", id })}
+        onNewProject={() => void newProject()}
+        onMove={(id) => setMoveFor(conversations.find((c) => c.conversation_id === id) || null)}
         name={user.name}
         email={user.email}
         onSignOut={onSignOut}
-        tasksActive={view === "tasks"}
-        onOpenTasks={() => setView("tasks")}
-        onOpenSettings={() => setSettingsOpen(true)}
+        tasksActive={view.kind === "tasks"}
+        onOpenTasks={() => setView(TASKS)}
+        onOpenSettings={() => setSettingsOpen("personal")}
       />
 
-      {view === "tasks" ? <main className="relative flex min-w-0 flex-1 flex-col">
+      {view.kind === "project" ? (() => {
+        const project = projects.find(p => p.project_id === view.id);
+        if (!project) return <main className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 text-[13px] text-muted">
+          <p>{projects.length ? "这个项目不存在或已被删除。" : "正在加载项目…"}</p>
+          <button onClick={() => setView(CHAT)} className="text-accent hover:underline">返回对话</button>
+        </main>;
+        return <ProjectPage project={project} email={user.email}
+          conversations={conversations.filter(c => c.project_id === project.project_id)}
+          onSaved={p => setProjects(ps => ps.map(x => x.project_id === p.project_id ? p : x))}
+          onDeleted={id => { setProjects(ps => ps.filter(x => x.project_id !== id)); setConversations(cs => cs.map(c => c.project_id === id ? { ...c, project_id: undefined } : c)); setView(CHAT); }}
+          onNewConversation={() => newConversationInProject(project.project_id)}
+          onOpenConversation={id => { void selectConversation(id); }}
+          onToggleSidebar={() => setSidebarOpen(o => !o)} />;
+      })() : view.kind === "tasks" ? <main className="relative flex min-w-0 flex-1 flex-col">
         <Suspense fallback={<p role="status" className="p-6 text-sm text-muted">正在加载定时任务…</p>}>
           <TasksPage onOpenConversation={id => { void selectConversation(id); }} onToggleSidebar={() => setSidebarOpen(o => !o)} initialDraft={taskDraft} onDraftOpened={() => setTaskDraft(null)} />
         </Suspense>
@@ -603,6 +642,14 @@ function Workbench({
               {activeConv?.title || "新对话"}
             </span>
             {isShared && <span className="shrink-0 text-[11px] text-faint" title={`由 ${activeConv?.owner_email} 分享`}>· 共享</span>}
+            {(() => {
+              const pid = activeID ? activeConv?.project_id : draftProject;
+              const project = pid ? projects.find(p => p.project_id === pid) : undefined;
+              return project && <button onClick={() => setView({ kind: "project", id: project.project_id })} title="打开项目"
+                className="inline-flex max-w-[30vw] shrink-0 items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[11.5px] text-muted hover:text-ink">
+                <Icon name="folder" size={12} /><span className="truncate">{project.name}</span>
+              </button>;
+            })()}
           </div>
           <ModelSelect value={version} onChange={setVersion} models={models} onManage={() => setModelSettingsOpen(true)} />
           <span className="flex-1" />
@@ -640,8 +687,9 @@ function Workbench({
           return onboardingVisible(state, onboarding.includes("dismissed")) && <Onboarding state={state}
             onConfigureModel={() => setModelSettingsOpen(true)}
             onTry={() => { conversationDraft.setText(TRY_PROMPT); document.getElementById("chat-input")?.focus(); }}
-            onTour={() => setView("tasks")}
-            onDismiss={() => markOnboarding("dismissed")} />;
+            onTour={() => setView(TASKS)}
+            onDismiss={() => markOnboarding("dismissed")}
+            onEnableMemory={async () => { const p = await api.getPersonal(); await api.savePersonal({ ...p, auto_memory: true }); }} />;
         })()}
         <Thread onExample={text => { conversationDraft.setText(text); document.getElementById("chat-input")?.focus(); }} conversationID={activeID} ownerEmail={activeConv?.owner_email || user.email} recovery={recovery} onContinue={() => void recovery.resume()} onCancelAutoResume={() => void recovery.cancelAutoResume()} canRetry={!readOnly && !!inputOf(activeID) && recovery.run?.status !== "running"} messages={messages} status={status} onResume={onResume} onResumed={onResumed} onPick={msg => { void onSend(msg).catch(e => toast(e.message || "发送失败", "error")); }} onRetry={onRetry} onSchedule={openSchedule} onFork={onFork} fileConv={isShared ? activeID : undefined} bottomInset={composerH} />
         {/* The composer floats OVER the thread (its height is fed back as the
@@ -658,13 +706,13 @@ function Workbench({
                 </div>
               </div>
             ) : (
-              <Composer draftState={conversationDraft} sessionRecovery={sessionRecovery} conversationID={activeID} ensureConversation={ensureConversation} blocked={recovery.busy || runActions.actions.isBusy(activeID) || connectionOf(activeID) === "stopping"} status={status} onSend={onSend} onKill={() => kill(activeID)} activeSkill={activeSkill} onPickSkill={setActiveSkill} runSettings={{ deepThinking, confirmRisky, planReview, toggleThinking, toggleConfirm, togglePlanReview }} />
+              <Composer draftState={conversationDraft} sessionRecovery={sessionRecovery} conversationID={activeID} ensureConversation={ensureConversation} blocked={recovery.busy || runActions.actions.isBusy(activeID) || connectionOf(activeID) === "stopping"} status={status} onSend={onSend} onKill={() => kill(activeID)} activeSkill={activeSkill} onPickSkill={setActiveSkill} runSettings={{ deepThinking, confirmRisky, planReview, toggleThinking, toggleConfirm, togglePlanReview }} onManageSkills={() => setSettingsOpen("skills")} />
             )}
           </div>
         </div>
       </main>}
 
-      {settingsOpen && <Suspense fallback={null}><SettingsDialog onClose={() => setSettingsOpen(false)} /></Suspense>}
+      {settingsOpen && <Suspense fallback={null}><SettingsDialog initial={settingsOpen} onClose={() => setSettingsOpen(false)} /></Suspense>}
       {drawerOpen && <Suspense fallback={<div role="status" className="p-4">正在加载工作台…</div>}><ArtifactDrawer
         onResumeRun={runActions.resume}
         canResumeRun={record => runActions.actions.canResume(record)}
@@ -685,6 +733,8 @@ function Workbench({
 
 
       {modelSettingsOpen && <ModelSettings onClose={() => setModelSettingsOpen(false)} onSaved={() => { setVersion("auto"); api.models().then(m => setModels(m.length ? m : MODELS_FALLBACK)).catch(() => {}); }} />}
+      {moveFor && <MoveToProjectDialog conv={moveFor} projects={projects} onClose={() => setMoveFor(null)}
+        onMoved={(id, projectID) => setConversations(cs => cs.map(c => c.conversation_id === id ? { ...c, project_id: projectID || undefined } : c))} />}
       {shareFor && (
         <ShareDialog
           conv={shareFor}

@@ -5,9 +5,14 @@ import type { Connector } from "../../types";
 import { toast } from "../../lib/toast";
 import { Button } from "../ui/button";
 import { Icon, type IconName } from "../Icon";
+import { MemorySettings, PersonalSettings } from "./PersonalSettings";
+import { SkillSettings } from "./SkillSettings";
 
-type Section = "connectors" | "about";
+export type Section = "personal" | "memory" | "skills" | "connectors" | "about";
 const SECTIONS: { id: Section; label: string; icon: IconName }[] = [
+  { id: "personal", label: "个性化", icon: "users" },
+  { id: "memory", label: "记忆", icon: "sparkle" },
+  { id: "skills", label: "技能", icon: "book" },
   { id: "connectors", label: "连接器", icon: "plug" },
   { id: "about", label: "关于", icon: "gear" },
 ];
@@ -18,8 +23,9 @@ const TRANSPORTS: { id: string; label: string }[] = [
 const field = "w-full rounded-lg border border-border bg-bg px-3 py-2 text-[14px] text-ink outline-none transition focus:border-accent/60";
 
 // SettingsDialog holds account-level configuration that is not part of a
-// conversation: external tool connectors and service information.
-export function SettingsDialog({ onClose, initial = "connectors" }: { onClose: () => void; initial?: Section }) {
+// conversation: personalization, memory, external tool connectors and
+// service information.
+export function SettingsDialog({ onClose, initial = "personal" }: { onClose: () => void; initial?: Section }) {
   const [section, setSection] = useState<Section>(initial);
   return <Dialog.Root open onOpenChange={open => { if (!open) onClose(); }}>
     <Dialog.Portal>
@@ -33,8 +39,8 @@ export function SettingsDialog({ onClose, initial = "connectors" }: { onClose: (
         </nav>
         <div className="relative min-h-0 flex-1 overflow-y-auto px-6 py-5">
           <Dialog.Close asChild><Button variant="ghost" size="icon" aria-label="关闭设置" className="absolute right-3 top-3"><Icon name="close" size={16} /></Button></Dialog.Close>
-          <Dialog.Description className="sr-only">管理连接器并查看服务信息</Dialog.Description>
-          {section === "connectors" ? <Connectors /> : <About />}
+          <Dialog.Description className="sr-only">个性化、记忆、连接器和服务信息</Dialog.Description>
+          {section === "personal" ? <PersonalSettings /> : section === "memory" ? <MemorySettings /> : section === "skills" ? <SkillSettings /> : section === "connectors" ? <Connectors /> : <About />}
         </div>
       </Dialog.Content>
     </Dialog.Portal>

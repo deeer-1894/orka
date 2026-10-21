@@ -129,7 +129,7 @@ export function FilesPanel({ email, conversationID }: { email: string; conversat
 
   return (
     <div className="p-3">
-      {conversationID && <><ActionChip aria-expanded={deliveriesOpen} onClick={() => setDeliveriesOpen(value => !value)} className="mb-3" icon="file">交付快照</ActionChip>
+      {conversationID && !conversationID.startsWith("project:") && <><ActionChip aria-expanded={deliveriesOpen} onClick={() => setDeliveriesOpen(value => !value)} className="mb-3" icon="file">交付快照</ActionChip>
       {deliveriesOpen && <Suspense fallback={<p role="status">正在加载快照…</p>}><DeliverySnapshots key={conversationID} conversationID={conversationID} /></Suspense>}</>}
       <h3 className="mb-2 text-sm font-medium">当前工作区</h3>
       <div className="mb-2 flex items-center justify-between gap-2">

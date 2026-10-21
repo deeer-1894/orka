@@ -34,6 +34,11 @@ async function app(t, options = {}) {
    case '/model-settings/save': return json({...config,...body});
    case '/task/get-tasks': return json({tasks:[]});
    case '/skill/list': return json({skills:[]});
+   case '/project/list': return json(options.projects||[]);
+   case '/personal/get': return json(options.personal||{about_me:'',reply_style:'',auto_memory:false});
+   case '/personal/save': return json(body);
+   case '/memory/list': return json(options.memories||[]);
+   case '/memory/delete': return json({memory_id:body.memory_id});
    case '/notification/list': return json({notifications:[],unread:0});
    case '/system/status': return json({version:'fixture',build_time:'',started_at:'2026-09-15T10:00:00Z',ready:true,services:[],model_probe:'not_run'});
    case '/metrics': return json({total_tokens:0});
@@ -614,6 +619,78 @@ test('plan review: the switch asks for it, the paused plan is edited in place an
  a.check();
 });
 
+test('projects: sidebar section, project page with instructions, new chats start inside the project, conversations move in',async t=>{
+ const project={project_id:'prj_1',owner_email:'test@example.invalid',name:'竞品研究',instructions:'用表格对比',created_at:1,updated_at:1};
+ const bodies=[];
+ const a=await app(t,{projects:[project],handle:async({path,body,json})=>{
+  bodies.push({path,body});
+  if(path==='/project/save'){await json({...project,...body,updated_at:2});return true;}
+  if(path==='/conversation/move'){await json(body);return true;}
+  if(path==='/file/list'&&body.project_id==='prj_1'){await json([{name:'brief.md',dir:false,size:12}]);return true;}
+  if(path==='/conversation/create-conversation'){await json({conversation_id:'new',title:'新对话',owner_email:'test@example.invalid',project_id:body.project_id,created_at:5});return true;}
+  if(path==='/chat/run'){return false;}
+ }});
+ await a.page.getByRole('button',{name:'竞品研究',exact:true}).click();
+ const page=a.page.getByRole('main',{name:'项目 竞品研究'});await page.waitFor();
+ assert.equal(await page.getByLabel('项目指令').inputValue(),'用表格对比');
+ await page.getByRole('button',{name:'brief.md'}).first().waitFor();
+ await page.getByLabel('项目指令').fill('用表格对比，附来源');await page.getByRole('button',{name:'保存',exact:true}).click();
+ await a.page.getByText('项目已保存').waitFor();
+ assert.equal(bodies.find(b=>b.path==='/project/save').body.instructions,'用表格对比，附来源');
+ await page.getByRole('button',{name:'新对话'}).click();
+ await a.page.getByTitle('打开项目').waitFor();
+ await a.page.locator('textarea').fill('开始调研');await a.page.locator('textarea').press('Enter');
+ await expectEventually(()=>bodies.some(b=>b.path==='/conversation/create-conversation'));
+ assert.equal(bodies.find(b=>b.path==='/conversation/create-conversation').body.project_id,'prj_1');
+ await a.page.getByText('Conversation a',{exact:true}).hover();await a.page.getByRole('button',{name:'Conversation a 的更多操作'}).click();
+ await a.page.getByRole('menuitem',{name:'移到项目…'}).click();
+ const dialog=a.page.getByRole('dialog',{name:'移到项目'});await dialog.getByText('竞品研究').click();await dialog.getByRole('button',{name:'移动'}).click();
+ await expectEventually(()=>bodies.some(b=>b.path==='/conversation/move'));
+ assert.deepEqual(bodies.find(b=>b.path==='/conversation/move').body,{conversation_id:'a',project_id:'prj_1'});
+ a.check();
+});
+
+test('personalization and memory: saved once in settings, memories deletable, a fresh memory can be undone in the thread',async t=>{
+ const remembered=msg('t2','tool','',{payload:{tool:'remember',args:{content:'周报用表格'},result:JSON.stringify({saved:true,memory_id:'mem_1',content:'周报用表格'})}});
+ const a=await app(t,{history:[msg('u1','chat','以后周报都用表格'),remembered,msg('a3','chat','好的，已记住。',{role:'assistant'})],memories:[{memory_id:'mem_0',content:'用中文回复',created_at:1}]});
+ await a.select('a');await a.page.getByRole('button',{name:/查看 · 1 步/}).click();
+ await a.page.getByText('已记住',{exact:false}).first().waitFor();
+ await a.page.getByRole('button',{name:'撤销'}).click();await a.page.getByText('· 已撤销').waitFor();
+ assert.ok(a.requests.some(r=>r.path==='/memory/delete'&&r.body.memory_id==='mem_1'));
+ await a.page.getByRole('button',{name:'设置',exact:true}).click();
+ const dialog=a.page.getByRole('dialog');await dialog.getByRole('region',{name:'个性化'}).waitFor();
+ await dialog.getByLabel('回复偏好').fill('先给结论');await dialog.getByRole('button',{name:'保存',exact:true}).click();
+ await expectEventually(()=>a.requests.some(r=>r.path==='/personal/save'&&r.body.reply_style==='先给结论'));
+ await dialog.getByRole('button',{name:'记忆',exact:true}).click();
+ const sw=dialog.getByRole('switch',{name:'自动记忆'});await sw.waitFor();assert.equal(await sw.getAttribute('aria-checked'),'false');
+ await sw.click();await expectEventually(()=>a.requests.some(r=>r.path==='/personal/save'&&r.body.auto_memory===true));
+ await dialog.getByRole('button',{name:'删除记忆：用中文回复'}).click();await dialog.getByText('还没有保存任何记忆。').waitFor();
+ a.check();
+});
+
+test('skills: switched off in settings, previewed before install, and only enabled ones offered in the composer',async t=>{
+ const skills=[{name:'researcher',description:'深度调研',enabled:true,builtin:true},{name:'weekly',description:'周报',enabled:false,builtin:false}];
+ const a=await app(t,{handle:async({path,body,json})=>{
+  if(path==='/skill/list'){await json({skills});return true;}
+  if(path==='/skill/enable'){const s=skills.find(x=>x.name===body.name);s.enabled=body.enabled;await json(body);return true;}
+  if(path==='/skill/preview'){await json({name:'translator',description:'翻译',prompt:'Translate faithfully.'});return true;}
+  if(path==='/skill/install'){skills.push({name:'translator',description:'翻译',enabled:true,builtin:false});await json({name:'translator'});return true;}
+  if(path==='/skill/get'){await json({name:body.name,description:'',prompt:'Be thorough.'});return true;}
+ }});
+ await a.page.getByRole('button',{name:'选技能'}).click();
+ await a.page.getByText('/researcher').waitFor();assert.equal(await a.page.getByText('/weekly').count(),0,'a disabled skill is not offered');
+ await a.page.getByRole('button',{name:'管理技能…'}).click();
+ const dialog=a.page.getByRole('dialog');await dialog.getByRole('region',{name:'技能'}).waitFor();
+ await dialog.getByRole('switch',{name:'停用技能 researcher'}).click();
+ await expectEventually(()=>a.requests.some(r=>r.path==='/skill/enable'&&r.body.name==='researcher'&&r.body.enabled===false));
+ await dialog.getByLabel('SKILL.md 链接').fill('https://example.com/SKILL.md');await dialog.getByRole('button',{name:'预览'}).click();
+ await dialog.getByText('Translate faithfully.').waitFor();
+ assert.equal(a.requests.filter(r=>r.path==='/skill/install').length,0,'nothing installed before the user confirms');
+ await dialog.getByRole('button',{name:'安装',exact:true}).click();
+ await dialog.getByText('translator',{exact:true}).waitFor();
+ a.check();
+});
+
 test('first-run guide tracks real progress, records the tour and can be skipped for good',async t=>{
  const a=await app(t,{onboarding:[],handle:async({path,json})=>{if(path==='/models'){await json([{version:'auto',label:'自动选择',hint:''}]);return true;}}});
  const guide=a.page.getByRole('region',{name:'开始使用'});await guide.waitFor();
@@ -756,7 +833,7 @@ test('settings adds a tested connector, removes it after confirmation and shows 
   if(path==='/connector/delete'){connectors=[];await json({});return true;}
   if(path==='/system/status'){await json({version:'v-test',build_time:'',modified:false,started_at:'2026-10-21T00:00:00Z',ready:true,services:[{name:'tools',status:'ready',detail:''}],model_probe:'not_run'});return true;}
  }});
- await a.page.getByRole('button',{name:'设置',exact:true}).click();await a.page.getByText('还没有连接器',{exact:true}).waitFor();
+ await a.page.getByRole('button',{name:'设置',exact:true}).click();await a.page.getByRole('dialog').getByRole('button',{name:'连接器',exact:true}).click();await a.page.getByText('还没有连接器',{exact:true}).waitFor();
  await a.page.getByRole('button',{name:'添加连接器'}).click();
  await a.page.getByLabel('名称').fill('GitHub');await a.page.getByLabel('服务地址').fill('https://mcp.example.com/mcp');await a.page.getByLabel(/请求头/).fill('Authorization: Bearer fixture');
  await a.page.getByRole('button',{name:'测试连接'}).click();await a.page.getByText(/连接成功，发现 2 个工具/).waitFor();

@@ -56,6 +56,7 @@ test('session file UI: folder navigation, safe previews, scoped requests and asy
     if (url.pathname.endsWith('/file/restore')) restored = true;
     if (url.pathname.endsWith('/artifacts/list')) data = { artifacts: [] };
     if (url.pathname.endsWith('/skill/list')) data = { skills: [] };
+    if (url.pathname.endsWith('/project/list')) data = [];
     await route.fulfill({ json: { code: 0, data } });
   });
   const set = async state => { await page.evaluate(s => window.fileTest.set(s), state); await pause(40); };

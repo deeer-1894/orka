@@ -935,6 +935,19 @@ function AgentLane({ agent, items }: { agent: string; items: Message[] }) {
   );
 }
 
+// RememberUndo lets the user take back a memory the moment it is saved.
+function RememberUndo({ result }: { result: string }) {
+  const [state, setState] = useState<"" | "busy" | "undone">("");
+  let id = "";
+  try { id = (JSON.parse(result) as { memory_id?: string }).memory_id || ""; } catch { /* not a saved memory */ }
+  if (!id) return null;
+  if (state === "undone") return <span className="text-faint"> · 已撤销</span>;
+  return <button disabled={state === "busy"} onClick={async () => {
+    setState("busy");
+    try { await api.deleteMemory(id); setState("undone"); } catch { setState(""); }
+  }} className="ml-1 text-[12px] text-accent hover:underline disabled:opacity-50">撤销</button>;
+}
+
 // toolReceipt turns a tool payload into a readable {icon,label,detail} receipt,
 // so a step reads like "📄 wrote report.md · 1,785 bytes" instead of raw JSON.
 function toolReceipt(p: ToolPayload): { icon: IconName; label: string; detail: string; file?: string } {
@@ -947,6 +960,7 @@ function toolReceipt(p: ToolPayload): { icon: IconName; label: string; detail: s
     file_read: { icon: "file", label: "读取", detail: trunc(res, 70) },
     file_list: { icon: "folder", label: `列目录 ${s("path") || "/"}`, detail: trunc(res, 70) },
     web_search: { icon: "search", label: `搜索 “${s("query")}”`, detail: trunc(res, 70) },
+    remember: { icon: "sparkle", label: "已记住", detail: trunc(s("content"), 80) },
     fetch_url: { icon: "link", label: "读取网页", detail: trunc(s("url") || res, 70) },
     weather: { icon: "sun", label: `天气 ${s("location")}`, detail: "" },
     current_time: { icon: "clock", label: "当前时间", detail: trunc(res, 60) },
@@ -1068,6 +1082,7 @@ function Step({ m }: { m: Message }) {
           <span className="text-muted"> · {r.detail}</span>
         ) : null}
         {!p.error && p.tool === "file_write" && r.file && <FileWriteActions file={r.file} onOpenDiff={() => openFile(r.file!, { history: true })} />}
+        {!p.error && p.tool === "remember" && <RememberUndo result={p.result || ""} />}
       </div>
     );
   }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Conversation, MessageSearchHit } from "../types";
+import type { Conversation, MessageSearchHit, Project } from "../types";
 import { api } from "../api";
 import { Icon } from "./Icon";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
@@ -83,6 +83,11 @@ export function Sidebar({
   onDelete,
   onPrune,
   onShare,
+  projects,
+  activeProjectID,
+  onOpenProject,
+  onNewProject,
+  onMove,
   name,
   email,
   onSignOut,
@@ -103,6 +108,11 @@ export function Sidebar({
   onDelete: (id: string) => void;
   onPrune: () => void;
   onShare: (id: string) => void;
+  projects: Project[];
+  activeProjectID: string;
+  onOpenProject: (id: string) => void;
+  onNewProject: () => void;
+  onMove: (id: string) => void;
   name: string;
   email: string;
   onSignOut: () => void;
@@ -121,7 +131,12 @@ export function Sidebar({
   );
   // Task runs live in conversations of their own; they are kept out of the
   // everyday list and folded into one section, opened when one is active.
-  const own = useMemo(() => filtered.filter((c) => !scheduledIds.has(c.conversation_id)), [filtered, scheduledIds]);
+  const projectIDs = useMemo(() => new Set(projects.map(p => p.project_id)), [projects]);
+  const inProject = (c: Conversation) => !!c.project_id && projectIDs.has(c.project_id);
+  const own = useMemo(() => filtered.filter((c) => !scheduledIds.has(c.conversation_id) && (!!q || !inProject(c))), [filtered, scheduledIds, projectIDs, q]);
+  const activeConvProject = conversations.find(c => c.conversation_id === activeID)?.project_id || "";
+  const [openProjects, setOpenProjects] = useState<Set<string>>(new Set());
+  useEffect(() => { if (activeConvProject) setOpenProjects(s => s.has(activeConvProject) ? s : new Set(s).add(activeConvProject)); }, [activeConvProject]);
   const taskConvs = useMemo(() => filtered.filter((c) => scheduledIds.has(c.conversation_id)), [filtered, scheduledIds]);
   const groups = useMemo(() => groupByTime(own), [own]);
   const [tasksOpen, setTasksOpen] = useState(false);
@@ -211,6 +226,7 @@ export function Sidebar({
           <DropdownMenuContent align="end" className="w-40" onClick={(e) => e.stopPropagation()}>
             <DropdownMenuItem onSelect={() => { setDraft(c.title); setEditing(c.conversation_id); }}><Icon name="rename" size={14} className="text-muted" />重命名</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onShare(c.conversation_id)}><Icon name="share" size={14} className="text-muted" />分享</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onMove(c.conversation_id)}><Icon name="folder" size={14} className="text-muted" />移到项目…</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={async () => { if (await confirmDialog({ title: "删除这个对话？", body: "删除后无法恢复。", confirmText: "删除", danger: true })) onDelete(c.conversation_id); }} className="text-accent"><Icon name="trash" size={14} />删除</DropdownMenuItem>
           </DropdownMenuContent>
@@ -263,6 +279,31 @@ export function Sidebar({
         </div>
 
         <div className="mt-2 flex-1 overflow-y-auto px-2 pb-2">
+          {!q && <>
+            <SectionHeader label="项目">
+              <button onClick={onNewProject} aria-label="新建项目" title="新建项目" className="grid h-6 w-6 place-items-center rounded-md text-faint hover:bg-surface hover:text-ink"><Icon name="plus" size={14} /></button>
+            </SectionHeader>
+            {projects.length === 0 && <p className="px-3 pb-1 text-[12px] leading-relaxed text-faint">把同一课题的对话、文件和要求放在一起。</p>}
+            {projects.map(p => {
+              const convs = conversations.filter(c => c.project_id === p.project_id);
+              const expanded = openProjects.has(p.project_id);
+              const toggle = () => setOpenProjects(s => { const n = new Set(s); if (n.has(p.project_id)) n.delete(p.project_id); else n.add(p.project_id); return n; });
+              return <div key={p.project_id}>
+                <div className={"group flex items-center gap-1 rounded-lg pr-2 transition " + (activeProjectID === p.project_id ? "bg-accentsoft text-ink" : "text-muted hover:bg-surface")}>
+                  <button onClick={toggle} aria-expanded={expanded} aria-label={(expanded ? "收起 " : "展开 ") + p.name} className="grid h-8 w-7 shrink-0 place-items-center text-faint hover:text-ink">
+                    <Icon name="chevron" size={11} className={"transition-transform " + (expanded ? "" : "-rotate-90")} />
+                  </button>
+                  <button onClick={() => { onOpenProject(p.project_id); onSelectClose?.(); }} aria-current={activeProjectID === p.project_id ? "page" : undefined} className="flex min-w-0 flex-1 items-center gap-1.5 py-2 text-left text-[14px]">
+                    <Icon name="folder" size={14} className="shrink-0" /><span className="truncate">{p.name}</span>
+                  </button>
+                  {convs.length > 0 && <span className="shrink-0 text-[11px] text-faint">{convs.length}</span>}
+                </div>
+                {expanded && <div className="ml-5 border-l border-border pl-1">
+                  {convs.length === 0 ? <p className="px-3 py-1.5 text-[12px] text-faint">暂无对话</p> : convs.map(ConvRow)}
+                </div>}
+              </div>;
+            })}
+          </>}
           <SectionHeader label={q ? `${filtered.length} 个结果` : "对话"}>
             {conversations.length > 1 && <DropdownMenu>
               <DropdownMenuTrigger aria-label="对话列表的更多操作" title="更多操作" className="grid h-6 w-6 place-items-center rounded-md text-faint hover:bg-surface hover:text-ink">

@@ -91,19 +91,41 @@ func segment(s string) string {
 // SessionRoot returns a workspace for a trusted owner and conversation. Missing
 // or malformed context is an error; it must never fall back to the user root.
 func SessionRoot(base, user, conversationID string) (string, error) {
+	return ownedRoot(base, user, "sessions", "conversation_id", conversationID)
+}
+
+// ProjectRoot returns the shared file area of one of the owner's projects:
+// base/<user>/projects/<projectID>, validated exactly like a session.
+func ProjectRoot(base, user, projectID string) (string, error) {
+	return ownedRoot(base, user, "projects", "project_id", projectID)
+}
+
+// EnsureProject creates an empty project file area.
+func EnsureProject(base, user, projectID string) (string, error) {
+	root, err := ProjectRoot(base, user, projectID)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(root, WorkspaceDirMode); err != nil {
+		return "", err
+	}
+	return root, nil
+}
+
+func ownedRoot(base, user, kind, label, id string) (string, error) {
 	if strings.TrimSpace(base) == "" || strings.TrimSpace(user) == "" ||
 		user != strings.TrimSpace(user) || user == "." || strings.Contains(user, "..") || strings.ContainsAny(user, "/\\\x00") {
 		return "", fmt.Errorf("workspace requires a valid owner and storage base")
 	}
-	if conversationID == "" || len(conversationID) > 128 {
-		return "", fmt.Errorf("conversation_id required (maximum 128 characters)")
+	if id == "" || len(id) > 128 {
+		return "", fmt.Errorf("%s required (maximum 128 characters)", label)
 	}
-	for _, c := range conversationID {
+	for _, c := range id {
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
-			return "", fmt.Errorf("invalid conversation_id")
+			return "", fmt.Errorf("invalid %s", label)
 		}
 	}
-	return Resolve(UserRoot(base, user), filepath.Join("sessions", conversationID))
+	return Resolve(UserRoot(base, user), filepath.Join(kind, id))
 }
 
 // EnsureSession creates an empty session workspace without moving legacy files.

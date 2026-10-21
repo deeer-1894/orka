@@ -35,7 +35,7 @@ func (findSkillsTool) Invoke(ctx context.Context, args map[string]any) (string, 
 	q := strings.ToLower(strings.TrimSpace(asStr(args["query"])))
 	var b strings.Builder
 	n := 0
-	defs, err := middlewares.VisibleSkills(ctx)
+	defs, err := middlewares.UsableSkills(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -148,7 +148,7 @@ func (applyPersonalSkillTool) Schema() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}}, "required": []string{"name"}}
 }
 func (applyPersonalSkillTool) Invoke(ctx context.Context, args map[string]any) (string, error) {
-	def, ok, err := middlewares.GetVisibleSkill(ctx, asStr(args["name"]))
+	def, ok, err := middlewares.GetUsableSkill(ctx, asStr(args["name"]))
 	if err != nil {
 		return "", err
 	}

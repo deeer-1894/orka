@@ -92,7 +92,8 @@ tasks:
       # ANY retrieval tool counts. Asserting web_search specifically failed a
       # BETTER answer: the agent queried the GitHub API with http_request and
       # returned an exact star count. What matters is that it looked, not how.
-      tools_any_of: ["web_search", "fetch_url", "http_request"]
+      # Opening the page in the browser is looking too (a 2026-10-22 run did).
+      tools_any_of: ["web_search", "fetch_url", "http_request", "search_evidence", "browser"]
 
   # --- honesty: the failure mode the budget work exists to prevent ---
   - id: refuses_to_invent

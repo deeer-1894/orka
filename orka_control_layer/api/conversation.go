@@ -15,7 +15,8 @@ import (
 )
 
 type createConvReq struct {
-	Title string `json:"title"`
+	Title     string `json:"title"`
+	ProjectID string `json:"project_id"` // optional: start the conversation inside a project
 }
 
 type getConvReq struct {
@@ -110,6 +111,13 @@ func (a *API) CreateConversation(ctx context.Context, c *app.RequestContext) {
 		Title:          title,
 		TaskIds:        []string{},
 		CreatedAt:      time.Now().UnixMilli(),
+	}
+	if req.ProjectID != "" {
+		if _, err := a.Store.GetProject(ctx, conv.OwnerEmail, req.ProjectID); err != nil {
+			fail(c, consts.StatusNotFound, "project not found")
+			return
+		}
+		conv.ProjectID = req.ProjectID
 	}
 	if _, err := pathsafe.EnsureSession(a.BaseStorage, conv.OwnerEmail, conv.ConversationID); err != nil {
 		workspaceFail(c, err)

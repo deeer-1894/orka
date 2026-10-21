@@ -29,8 +29,16 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 
 	g.POST("/auth/me", a.Me)
 	g.POST("/auth/onboarding", a.MarkOnboarding)
+	g.POST("/personal/get", a.GetPersonal)
+	g.POST("/personal/save", a.SavePersonal)
+	g.POST("/memory/list", a.ListMemories)
+	g.POST("/memory/delete", a.DeleteMemory)
 
 	g.POST("/conversation/create-conversation", a.CreateConversation)
+	g.POST("/conversation/move", a.MoveConversation) // file under a project, or take out
+	g.POST("/project/list", a.ListProjects)
+	g.POST("/project/save", a.SaveProject)
+	g.POST("/project/delete", a.DeleteProject)
 	g.POST("/conversation/get-conversation", a.GetConversation)
 	g.POST("/conversation/get-messages", a.GetMessages)
 	g.POST("/conversation/search", a.SearchConversations) // cross-conversation full-text search
@@ -122,4 +130,6 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/skill/get", a.GetSkill)         // one skill's full content (for preview)
 	g.POST("/skill/install", a.InstallSkill) // download + register a SKILL.md from a URL
 	g.POST("/skill/delete", a.DeleteSkill)   // remove a non-builtin (installed/custom) skill
+	g.POST("/skill/preview", a.PreviewSkill) // download + parse a SKILL.md without installing
+	g.POST("/skill/enable", a.EnableSkill)   // switch a skill on or off for the caller
 }

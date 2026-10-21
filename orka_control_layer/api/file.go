@@ -29,24 +29,42 @@ func (a *API) workspace(ctx context.Context, c *app.RequestContext, write bool) 
 	if email == "" {
 		return "", "", &workspaceError{401, "login required"}
 	}
-	conv := string(c.Query("conv"))
-	bodyID := ""
+	conv, project := string(c.Query("conv")), string(c.Query("proj"))
+	bodyID, bodyProject := "", ""
 	if strings.Contains(string(c.Request.Header.ContentType()), "multipart/form-data") {
-		bodyID = string(c.FormValue("conversation_id"))
+		bodyID, bodyProject = string(c.FormValue("conversation_id")), string(c.FormValue("project_id"))
 	} else if len(c.Request.Body()) > 0 {
 		var body struct {
 			ConversationID string `json:"conversation_id"`
+			ProjectID      string `json:"project_id"`
 		}
 		if err := json.Unmarshal(c.Request.Body(), &body); err != nil {
 			return "", "", &workspaceError{400, "invalid request body"}
 		}
-		bodyID = body.ConversationID
+		bodyID, bodyProject = body.ConversationID, body.ProjectID
 	}
 	if conv != "" && bodyID != "" && conv != bodyID {
 		return "", "", &workspaceError{400, "conflicting conversation_id"}
 	}
+	if project != "" && bodyProject != "" && project != bodyProject {
+		return "", "", &workspaceError{400, "conflicting project_id"}
+	}
 	if conv == "" {
 		conv = bodyID
+	}
+	if project == "" {
+		project = bodyProject
+	}
+	// A project's shared files are a workspace of their own, owner only.
+	if project != "" {
+		if conv != "" {
+			return "", "", &workspaceError{400, "choose a conversation or a project, not both"}
+		}
+		if _, err := a.Store.GetProject(ctx, email, project); err != nil {
+			return "", "", &workspaceError{404, "project not found"}
+		}
+		root, err := pathsafe.EnsureProject(a.BaseStorage, email, project)
+		return root, projectScope + project, err
 	}
 	record, err := a.authorizedConversation(ctx, c, conv, write)
 	if err != nil {
@@ -55,6 +73,10 @@ func (a *API) workspace(ctx context.Context, c *app.RequestContext, write bool) 
 	root, err := pathsafe.EnsureSession(a.BaseStorage, record.OwnerEmail, conv)
 	return root, conv, err
 }
+
+// projectScope prefixes the scope key workspace returns for project files, so
+// it can never collide with a conversation id.
+const projectScope = "project:"
 
 func (a *API) authorizedConversation(ctx context.Context, c *app.RequestContext, conv string, write bool) (*db.ConversationTable, error) {
 	email := authEmail(c)
@@ -378,6 +400,9 @@ func (a *API) GetFileURL(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	q := url.Values{"path": {p}, "conv": {conv}}
+	if id, ok := strings.CutPrefix(conv, projectScope); ok {
+		q = url.Values{"path": {p}, "proj": {id}}
+	}
 	ok(c, map[string]string{"url": "/api/v1/controller/file/download?" + q.Encode()})
 }
 

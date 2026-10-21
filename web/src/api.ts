@@ -11,6 +11,9 @@ import type {
   Message,
   Notification,
   OwnerInfo,
+  Project,
+  Personalization,
+  Memory,
   RunRecord,
   TaskMeta,
 } from "./types";
@@ -228,8 +231,18 @@ export const api = {
   me: () => post<{ email: string; name: string; onboarding?: string[] }>("/auth/me", {}),
   markOnboarding: (step: "tour" | "dismissed") => post<{ step: string }>("/auth/onboarding", { step }),
   listConversations: () => post<Conversation[]>("/conversation/list", {}),
-  createConversation: (title: string) =>
-    post<Conversation>("/conversation/create-conversation", { title }),
+  createConversation: (title: string, projectID?: string) =>
+    post<Conversation>("/conversation/create-conversation", { title, ...(projectID ? { project_id: projectID } : {}) }),
+  moveConversation: (conversation_id: string, project_id: string) =>
+    post("/conversation/move", { conversation_id, project_id }),
+  listProjects: () => post<Project[]>("/project/list", {}),
+  getPersonal: () => post<Personalization>("/personal/get", {}),
+  savePersonal: (p: Personalization) => post<Personalization>("/personal/save", p),
+  listMemories: () => post<Memory[]>("/memory/list", {}),
+  deleteMemory: (memory_id: string) => post("/memory/delete", { memory_id }),
+  saveProject: (p: { project_id?: string; name: string; description?: string; instructions?: string; default_skill?: string }) =>
+    post<Project>("/project/save", p),
+  deleteProject: (project_id: string) => post("/project/delete", { project_id }),
   renameConversation: (conversation_id: string, title: string) =>
     post("/conversation/rename", { conversation_id, title }),
   deleteConversation: (conversation_id: string) =>
@@ -271,7 +284,9 @@ export const api = {
   listNotifications: () => post<{ notifications: Notification[]; unread: number }>("/notification/list", {}),
   readNotifications: (notification_id = "") => post("/notification/read", { notification_id }),
   followups: (prompt: string, answer: string, selectedVersion = "auto", modelProfile = "", conversationID = "", runID = "") => post<{ suggestions: string[] }>("/chat/followups", { prompt, answer, selected_version: selectedVersion, model_profile: modelProfile, conversation_id: conversationID, run_id: runID }, true),
-  listSkills: () => post<{ skills: { name: string; description: string }[] }>("/skill/list", {}),
+  listSkills: () => post<{ skills: SkillSummary[] }>("/skill/list", {}),
+  previewSkill: (url: string) => post<{ name: string; description: string; prompt: string }>("/skill/preview", { url }),
+  enableSkill: (name: string, enabled: boolean) => post("/skill/enable", { name, enabled }),
   getSkill: (name: string) => post<{ name: string; description: string; prompt: string }>("/skill/get", { name }),
   installSkill: (url: string) => post<{ name: string }>("/skill/install", { url }),
   deleteSkill: (name: string) => post("/skill/delete", { name }),
@@ -306,9 +321,15 @@ export const api = {
 export type FileVersion = { ts: string; when: number; size: number; path: string };
 
 export type FileEntry = { name: string; dir: boolean; size: number; mtime?: number };
-function fileScope(conversationID: string) {
-  if (!conversationID.trim()) throw new Error("请选择对话后再操作文件");
-  return { conversation_id: conversationID, conv: conversationID };
+export interface SkillSummary { name: string; description: string; enabled?: boolean; builtin?: boolean }
+
+// File calls take a scope: a conversation id, or projectScope(id) for a
+// project's shared files.
+export const projectScope = (projectID: string) => "project:" + projectID;
+function fileScope(scope: string): Record<string, string> {
+  if (!scope.trim()) throw new Error("请选择对话后再操作文件");
+  if (scope.startsWith("project:")) { const id = scope.slice("project:".length); return { project_id: id, proj: id }; }
+  return { conversation_id: scope, conv: scope };
 }
 function fileQuery(conversationID: string) {
   return "&" + new URLSearchParams(fileScope(conversationID)).toString();
