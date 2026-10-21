@@ -225,7 +225,8 @@ export interface TaskInput {
 export const webhookURL = (token: string) => `${location.origin}${BASE}/hook/${token}`;
 
 export const api = {
-  me: () => post<{ email: string; name: string }>("/auth/me", {}),
+  me: () => post<{ email: string; name: string; onboarding?: string[] }>("/auth/me", {}),
+  markOnboarding: (step: "tour" | "dismissed") => post<{ step: string }>("/auth/onboarding", { step }),
   listConversations: () => post<Conversation[]>("/conversation/list", {}),
   createConversation: (title: string) =>
     post<Conversation>("/conversation/create-conversation", { title }),
@@ -306,7 +307,7 @@ export type FileVersion = { ts: string; when: number; size: number; path: string
 
 export type FileEntry = { name: string; dir: boolean; size: number; mtime?: number };
 function fileScope(conversationID: string) {
-  if (!conversationID.trim()) throw new Error("请选择会话后再操作文件");
+  if (!conversationID.trim()) throw new Error("请选择对话后再操作文件");
   return { conversation_id: conversationID, conv: conversationID };
 }
 function fileQuery(conversationID: string) {

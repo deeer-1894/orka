@@ -1,11 +1,12 @@
 import { useMemo, useRef, useState } from "react";
 import { useOverlay } from "../lib/useOverlay";
+import { Icon, type IconName } from "./Icon";
 
 export type Command = {
   id: string;
   label: string;
   hint?: string;
-  icon?: string;
+  icon?: IconName;
   group: string;
   keywords?: string;
   run: () => void;
@@ -52,7 +53,7 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
           value={q}
           onChange={(e) => { setQ(e.target.value); setSel(0); }}
           onKeyDown={onKey}
-          placeholder="搜索命令、会话、面板…"
+          placeholder="搜索命令、对话、面板…"
           className="border-b border-border bg-transparent px-4 py-3 text-[15px] outline-none placeholder:text-faint"
         />
         <div ref={listRef} className="flex-1 overflow-y-auto py-1.5">
@@ -71,7 +72,7 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
                     onClick={() => choose(c)}
                     className={"flex w-full items-center gap-2.5 px-4 py-2 text-left " + (active ? "bg-accentsoft" : "hover:bg-surface2")}
                   >
-                    <span className="w-5 shrink-0 text-center text-[14px]">{c.icon || "·"}</span>
+                    <span className="grid w-5 shrink-0 place-items-center text-muted">{c.icon && <Icon name={c.icon} size={15} />}</span>
                     <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink">{c.label}</span>
                     {c.hint && <span className="shrink-0 truncate text-[11.5px] text-faint">{c.hint}</span>}
                   </button>

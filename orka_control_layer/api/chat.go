@@ -301,7 +301,7 @@ func (a *API) ListModels(_ context.Context, c *app.RequestContext) {
 		settingsError(c, err)
 		return
 	}
-	out := []map[string]string{{"version": service.ModelAuto, "label": "Auto", "hint": "使用列表中的第一个模型"}}
+	out := []map[string]string{{"version": service.ModelAuto, "label": "自动选择", "hint": "使用列表中的第一个模型"}}
 	for _, m := range llm.Models {
 		out = append(out, map[string]string{"version": m, "label": m, "hint": "手动指定"})
 	}

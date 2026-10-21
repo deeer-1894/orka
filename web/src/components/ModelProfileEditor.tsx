@@ -31,7 +31,7 @@ export function ModelProfileEditor({
   <label className="block text-sm">连接模型列表<textarea className={input} required={profile.enabled} rows={3} value={profile.models.join('\n')} onChange={e => onChange({
         models: e.target.value.split(/[\n,]/)
       })} /></label>
-  <p className="text-xs text-muted">Auto 使用活动连接的第一个模型。发现列表不代表已验证调用权限。</p>
+  <p className="text-xs text-muted">“自动选择”使用活动连接的第一个模型。发现列表不代表已验证调用权限。</p>
   <label className="flex gap-2 text-sm"><input type="checkbox" checked={profile.enabled} onChange={e => onChange({
         enabled: e.target.checked
       })} />启用此连接</label>

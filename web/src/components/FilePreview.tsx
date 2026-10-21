@@ -6,6 +6,7 @@ import { auth, files as fileApi, type FileVersion } from "../api";
 import { lineDiff, diffStats } from "../lib/diff";
 import { useOverlay } from "../lib/useOverlay";
 import { Markdown } from "./Markdown";
+import { Icon, fileIconName } from "./Icon";
 import { CSV_MAX_COLUMNS, CSV_MAX_ROWS, PREVIEW_MAX_BYTES, highlightCode, languageForFile, parseDelimited, readBoundedText } from "../lib/filePreview";
 
 const XlsxPreview = lazy(() => import("./XlsxPreview"));
@@ -93,19 +94,19 @@ function FilePreviewContent({ name, onClose, conv, readOnly = false, initialHist
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
-          <span className="text-faint">📄</span>
+          <Icon name={fileIconName(name)} size={15} className="shrink-0 text-faint" />
           <span className="flex-1 truncate text-[14px] text-ink">{name}</span>
           {canHistory && (
             <button
               onClick={() => setShowHistory((v) => !v)}
-              className={"text-[12px] hover:underline " + (showHistory ? "text-accent font-medium" : "text-muted")}
+              className={"inline-flex items-center gap-1 text-[12px] hover:underline " + (showHistory ? "text-accent font-medium" : "text-muted")}
               title="版本历史"
             >
-              🕘 历史{hasHistory ? ` · ${versions!.length}` : ""}
+              <Icon name="history" size={13} />历史{hasHistory ? ` · ${versions!.length}` : ""}
             </button>
           )}
           <a href={url} className="text-[12px] text-accent hover:underline">下载</a>
-          <button onClick={onClose} aria-label="关闭预览" className="ml-1 text-faint hover:text-ink">✕</button>
+          <button onClick={onClose} aria-label="关闭预览" title="关闭" className="ml-1 grid h-7 w-7 place-items-center rounded-lg text-faint hover:bg-surface2 hover:text-ink"><Icon name="close" size={15} /></button>
         </div>
         {isHtml && !showHistory && <div className="flex items-center gap-2 border-b border-border px-4 py-2" role="group" aria-label="HTML 视图">
           <ActionChip icon="eye" aria-pressed={htmlMode === "preview"} onClick={() => setHtmlMode("preview")}>页面预览</ActionChip>
@@ -121,7 +122,7 @@ function FilePreviewContent({ name, onClose, conv, readOnly = false, initialHist
             <iframe src={fileApi.previewURL(name, conv)} title={name} className="h-[70vh] w-full border-0 bg-white" />
           ) : !isText ? (
             <div className="px-4 py-10 text-center">
-              <div className="text-[34px]">📄</div>
+              <Icon name="file" size={34} className="mx-auto text-faint" strokeWidth={1.4} />
               <div className="mt-2 text-[13px] text-muted">这是二进制文件,无法在此预览。</div>
               <a href={url} className="mt-3 inline-block rounded-lg bg-accentsoft px-3 py-1.5 text-[12.5px] text-accent hover:underline">
                 下载 {name}
@@ -225,7 +226,7 @@ function FileHistory({
                 disabled={busy}
                 className="ml-auto rounded-lg bg-accentsoft px-2.5 py-1 text-[12px] text-accent hover:underline disabled:opacity-50"
               >
-                {busy ? "恢复中…" : "↩ 恢复此版本"}
+                {busy ? "恢复中…" : <span className="inline-flex items-center gap-1"><Icon name="undo" size={13} />恢复此版本</span>}
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-auto px-1 py-1 font-mono text-[12px]">

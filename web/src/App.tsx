@@ -19,7 +19,7 @@ import { clearFollowUps } from "./components/FollowUps";
 import { ShareDialog } from "./components/ShareDialog";
 import { CommandPalette, type Command } from "./components/CommandPalette";
 import { Icon } from "./components/Icon";
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { PublicArtifactPage, ArtifactBanner } from "./components/Artifacts";
 import { useOverlay } from "./lib/useOverlay";
 import { Toaster, toast } from "./lib/toast";
@@ -30,6 +30,7 @@ import type { Conversation, Message, Notification } from "./types";
 
 import type { WorkbenchTab as Tab } from "./lib/workbenchTabs";
 import type { TaskDraft } from "./components/tasks/TaskEditor";
+import { Onboarding, TRY_PROMPT, onboardingVisible } from "./components/Onboarding";
 const TasksPage = lazy(() => import("./components/tasks/TasksPage").then(m => ({ default: m.TasksPage })));
 const SettingsDialog = lazy(() => import("./components/settings/SettingsDialog").then(m => ({ default: m.SettingsDialog })));
 
@@ -59,7 +60,7 @@ function liveTabFromMessages(messages: Message[], streaming: boolean): Tab | nul
 interface ModelOption { version: string; label: string; hint: string }
 // Fallback until /models resolves (keeps the picker non-empty on first paint).
 const MODELS_FALLBACK: ModelOption[] = [
-  { version: "auto", label: "Auto", hint: "使用列表中的第一个模型" },
+  { version: "auto", label: "自动选择", hint: "使用列表中的第一个模型" },
 ];
 
 export default function App() {
@@ -156,6 +157,17 @@ function Workbench({
   const setVersion = (selectedVersion: string) => conversationSettings.patch({ selectedVersion });
   const [theme, toggleTheme] = useTheme();
   const [models, setModels] = useState<ModelOption[]>(MODELS_FALLBACK);
+  const [modelsLoaded, setModelsLoaded] = useState(false);
+  // First-run guide progress from the server; null until known, so the guide
+  // never flashes for someone who already finished or skipped it.
+  const [onboarding, setOnboarding] = useState<string[] | null>(null);
+  useEffect(() => {
+    api.me().then(u => setOnboarding(u.onboarding || [])).catch(() => setOnboarding(["dismissed"]));
+  }, []);
+  const markOnboarding = useCallback((step: "tour" | "dismissed") => {
+    setOnboarding(o => (o?.includes(step) ? o : [...(o || []), step]));
+    api.markOnboarding(step).catch(() => {});
+  }, []);
   // The main area shows a conversation or the tasks page; a prompt sent to
   // "设为定时任务" opens the task editor prefilled with it.
   // The tasks page is addressable (#tasks) so it survives reloads and links.
@@ -170,6 +182,10 @@ function Workbench({
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
   }, []);
+  // Visiting the tasks page is the guide's last step, however the user got there.
+  useEffect(() => {
+    if (view === "tasks" && onboarding && !onboarding.includes("tour")) markOnboarding("tour");
+  }, [view, onboarding, markOnboarding]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [taskDraft, setTaskDraft] = useState<TaskDraft | null>(null);
   const openSchedule = useCallback((prompt: string) => {
@@ -195,9 +211,9 @@ function Workbench({
   const toggleThinking = useCallback(() => setDeepThinking((v) => { localStorage.setItem("orka.deepThinking", v ? "0" : "1"); return !v; }), []);
 
   useEffect(() => {
-    api.models().then((m) => m.length && setModels(m)).catch(() => {});
+    api.models().then((m) => { if (m.length) setModels(m); }).catch(() => {}).finally(() => setModelsLoaded(true));
   }, []);
-  // conversation_ids that have a scheduled (cron) task → marked 🔁 in the sidebar.
+  // conversation_ids that belong to a task → listed under 任务对话 in the sidebar.
   const [scheduledIds, setScheduledIds] = useState<Set<string>>(new Set());
 
   const { run, steer, kill, hydrateMessages, messagesOf, statusOf, runningIds, connectionOf, errorOf, inputOf } = useChatStreams(sessionRecovery);
@@ -261,14 +277,15 @@ function Workbench({
     return () => window.removeEventListener("keydown", onKey);
   }, [activeID, statusOf, kill]);
 
-  // Pull tasks to learn which conversations are scheduled (for the sidebar 🔁).
+  // Pull tasks to learn which conversations belong to a task, enabled or not:
+  // the sidebar lists those under 任务对话.
   const refreshTasks = useCallback(() => {
     api
       .getTasks()
       .then((r) => {
         const ids = new Set<string>();
         for (const t of r.tasks || []) {
-          if (t.cron_status === "on" && t.conversation_id) ids.add(t.conversation_id);
+          if (t.conversation_id) ids.add(t.conversation_id);
         }
         setScheduledIds(ids);
       })
@@ -311,9 +328,9 @@ function Workbench({
   const isShared = !!activeConv?.owner_email && activeConv.owner_email !== user.email;
   const readOnly = isShared && !(activeConv?.shares ?? []).some((s) => s.email === user.email && s.role === "editor");
 
-  // "New chat" just resets to the empty state — the server conversation is
+  // "新对话" just resets to the empty state — the server conversation is
   // created lazily on the first send (ensureConversation), so clicking around
-  // never accumulates empty "New chat" placeholders.
+  // never accumulates empty "新对话" placeholders.
   const newConversation = useCallback(() => { setActiveID(""); setView("chat"); }, []);
 
   const onPrune = useCallback(async () => {
@@ -386,7 +403,7 @@ function Workbench({
     if (state.activeID) return Promise.resolve(state.activeID);
     if (state.promise) return state.promise;
     const generation = state.generation;
-    const promise = api.createConversation("New chat").then(c => {
+    const promise = api.createConversation("新对话").then(c => {
       setConversations(cs => cs.some(item => item.conversation_id === c.conversation_id) ? cs : [c, ...cs]);
       // A late creation must not replace a conversation selected in the meantime.
       if (state.generation === generation && !state.activeID) {
@@ -506,19 +523,19 @@ function Workbench({
   // ⌘K command palette: collapse the app's scattered actions into one entry.
   const openPanel = (t: Tab) => { setDrawerTab(t); setDrawerOpen(true); };
   const commands: Command[] = [
-    { id: "new", group: "操作", icon: "✚", label: "新建会话", hint: "New chat", run: newConversation },
-    { id: "share", group: "操作", icon: "⤴", label: "分享当前会话", run: () => activeConv && setShareFor(conversations.find((c) => c.conversation_id === activeID) || null) },
-    { id: "schedule", group: "操作", icon: "⏰", label: "把上一条设为定时任务", run: () => lastMsgRef.current && openSchedule(lastMsgRef.current) },
-    { id: "tasks", group: "操作", icon: "🗓", label: "打开定时任务", keywords: "schedule trigger task 触发", run: () => setView("tasks") },
-    { id: "settings", group: "设置", icon: "⚙", label: "设置 · 连接器", keywords: "settings connector mcp 集成", run: () => setSettingsOpen(true) },
-    { id: "theme", group: "设置", icon: theme === "dark" ? "☀" : "☾", label: theme === "dark" ? "切换到亮色" : "切换到暗色", run: toggleTheme },
-    { id: "confirm", group: "设置", icon: "🛡", label: confirmRisky ? "关闭高危操作确认" : "开启高危操作确认", run: toggleConfirm },
-    { id: "keys", group: "帮助", icon: "⌨", label: "键盘快捷键", hint: "?", keywords: "shortcut keyboard 快捷键", run: () => setKeysOpen(true) },
-    ...models.map((m): Command => ({ id: "model:" + m.version, group: "切换模型", icon: "◆", label: m.label, hint: m.hint, keywords: m.version, run: () => setVersion(m.version) })),
+    { id: "new", group: "操作", icon: "plus", label: "新对话", hint: "⌘J", run: newConversation },
+    { id: "share", group: "操作", icon: "share", label: "分享当前对话", run: () => activeConv && setShareFor(conversations.find((c) => c.conversation_id === activeID) || null) },
+    { id: "schedule", group: "操作", icon: "clock", label: "把上一条设为定时任务", run: () => lastMsgRef.current && openSchedule(lastMsgRef.current) },
+    { id: "tasks", group: "操作", icon: "clock", label: "打开定时任务", keywords: "schedule trigger task 触发", run: () => setView("tasks") },
+    { id: "settings", group: "设置", icon: "gear", label: "设置 · 连接器", keywords: "settings connector mcp 集成", run: () => setSettingsOpen(true) },
+    { id: "theme", group: "设置", icon: theme === "dark" ? "sun" : "moon", label: theme === "dark" ? "切换到亮色" : "切换到暗色", run: toggleTheme },
+    { id: "confirm", group: "设置", icon: "shield", label: confirmRisky ? "关闭高危操作确认" : "开启高危操作确认", run: toggleConfirm },
+    { id: "keys", group: "帮助", icon: "keyboard", label: "键盘快捷键", hint: "?", keywords: "shortcut keyboard 快捷键", run: () => setKeysOpen(true) },
+    ...models.map((m): Command => ({ id: "model:" + m.version, group: "切换模型", icon: "sparkle", label: m.label, hint: m.hint, keywords: m.version, run: () => setVersion(m.version) })),
     ...([
       ["files", "文件"], ["artifacts", "页面"], ["runs", "运行记录"],
-    ] as [Tab, string][]).map(([t, label]): Command => ({ id: "panel:" + t, group: "打开面板", icon: "▸", label, run: () => openPanel(t) })),
-    ...conversations.slice(0, 60).map((c): Command => ({ id: "conv:" + c.conversation_id, group: "跳转会话", icon: "💬", label: c.title || "未命名会话", keywords: c.title, run: () => selectConversation(c.conversation_id) })),
+    ] as [Tab, string][]).map(([t, label]): Command => ({ id: "panel:" + t, group: "打开面板", icon: "panel", label, run: () => openPanel(t) })),
+    ...conversations.slice(0, 60).map((c): Command => ({ id: "conv:" + c.conversation_id, group: "跳转对话", icon: "chat", label: c.title || "未命名对话", keywords: c.title, run: () => selectConversation(c.conversation_id) })),
   ];
 
   return (
@@ -567,7 +584,7 @@ function Workbench({
           <button
             onClick={() => setSidebarOpen((o) => !o)}
             className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-surface2"
-            title="Toggle sidebar"
+            title="显示 / 隐藏侧栏"
             aria-label="切换侧栏"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -578,60 +595,14 @@ function Workbench({
               redundant brand — "Orka" already lives in the sidebar. */}
           <div className="flex min-w-0 items-center gap-1.5">
             {status === "streaming" && <span className="inline-flex shrink-0 items-center" role="status"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ok" title="运行中" /><span className="sr-only">运行中</span></span>}
-            <span className="max-w-[40vw] truncate text-[15px] text-ink md:max-w-[260px]" title={activeConv?.title || "新会话"}>
-              {activeConv?.title || "新会话"}
+            <span className="max-w-[40vw] truncate text-[15px] text-ink md:max-w-[260px]" title={activeConv?.title || "新对话"}>
+              {activeConv?.title || "新对话"}
             </span>
             {isShared && <span className="shrink-0 text-[11px] text-faint" title={`由 ${activeConv?.owner_email} 分享`}>· 共享</span>}
           </div>
-          <ModelSelect value={version} onChange={setVersion} models={models} />
-          <ActionChip variant="headerChip" size="headerChip" icon="gear" onClick={() => setModelSettingsOpen(true)} aria-label="模型配置" className="shrink-0"><span className="hidden sm:inline">模型配置</span></ActionChip>
-          {/* Run-mode safety switch. It belongs beside the model picker rather
-              than under the input: both answer "how will this behave when I
-              send", both are persistent session state, and keeping it in the
-              header leaves the composer to be just the message box. */}
-          <button
-            onClick={toggleConfirm}
-            aria-pressed={confirmRisky}
-            title={confirmRisky
-              ? "高危操作需确认:执行终端命令 / 浏览器操作 / 网络请求 / 运行代码前会先征求你确认"
-              : "已关闭确认:Orka 会直接执行终端命令、浏览器操作等高危工具"}
-            className={
-              "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] transition " +
-              (confirmRisky
-                ? "border-accent/40 bg-accentsoft text-accent"
-                : "border-border text-faint hover:bg-surface2")
-            }
-          >
-            <Icon name="shield" size={13} />
-            <span className="hidden sm:inline">{confirmRisky ? "需确认" : "不确认"}</span>
-          </button>
-          {/* Same place for the same reason: it answers "how will this behave
-              when I send", and it belongs next to the model it applies to. */}
-          <button
-            onClick={toggleThinking}
-            aria-pressed={deepThinking}
-            title={deepThinking
-              ? "深度思考已开:模型会先充分推理再动手,适合难题,但更慢更贵"
-              : "深度思考已关:压低模型的推理量,更快更省;遇到难题可以打开"}
-            className={
-              "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] transition " +
-              (deepThinking
-                ? "border-accent/40 bg-accentsoft text-accent"
-                : "border-border text-faint hover:bg-surface2")
-            }
-          >
-            <Icon name="sparkle" size={13} />
-            <span className="hidden sm:inline">{deepThinking ? "深度思考" : "快速"}</span>
-          </button>
+          <ModelSelect value={version} onChange={setVersion} models={models} onManage={() => setModelSettingsOpen(true)} />
+          <span className="flex-1" />
           <NotificationBell onJump={onJumpToConversation} />
-          <button
-            onClick={toggleTheme}
-            className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-surface2"
-            title={theme === "dark" ? "切换到亮色" : "切换到暗色"}
-            aria-label={theme === "dark" ? "切换到亮色模式" : "切换到暗色模式"}
-          >
-            <Icon name={theme === "dark" ? "sun" : "moon"} />
-          </button>
           <ActionChip
             variant="headerChip" size="headerChip" icon="table"
             onClick={() => setDrawerOpen((o) => !o)}
@@ -640,6 +611,12 @@ function Workbench({
             title="工作台：文件 · 页面 · 运行记录"
             className="shrink-0"
           ><span className="hidden sm:inline">工作台</span></ActionChip>
+          <HeaderMenu
+            onShare={activeConv && !isShared ? () => setShareFor(activeConv) : undefined}
+            onModelSettings={() => setModelSettingsOpen(true)}
+            theme={theme} onToggleTheme={toggleTheme}
+            onShortcuts={() => setKeysOpen(true)}
+          />
         </header>
 
         {persistenceWarning && <p role="alert" className="mx-5 mb-2 text-xs text-accent">{persistenceWarning}</p>}
@@ -654,6 +631,14 @@ function Workbench({
             </>}
           </div>
         )}
+        {!readOnly && messages.length === 0 && onboarding && modelsLoaded && (() => {
+          const state = { hasModel: models.length > 1, hasConversation: conversations.length > 0, toured: onboarding.includes("tour") };
+          return onboardingVisible(state, onboarding.includes("dismissed")) && <Onboarding state={state}
+            onConfigureModel={() => setModelSettingsOpen(true)}
+            onTry={() => { conversationDraft.setText(TRY_PROMPT); document.getElementById("chat-input")?.focus(); }}
+            onTour={() => setView("tasks")}
+            onDismiss={() => markOnboarding("dismissed")} />;
+        })()}
         <Thread onExample={text => { conversationDraft.setText(text); document.getElementById("chat-input")?.focus(); }} conversationID={activeID} ownerEmail={activeConv?.owner_email || user.email} recovery={recovery} onContinue={() => void recovery.resume()} onCancelAutoResume={() => void recovery.cancelAutoResume()} canRetry={!readOnly && !!inputOf(activeID) && recovery.run?.status !== "running"} messages={messages} status={status} onResume={onResume} onResumed={onResumed} onPick={msg => { void onSend(msg).catch(e => toast(e.message || "发送失败", "error")); }} onRetry={onRetry} onSchedule={openSchedule} onFork={onFork} fileConv={isShared ? activeID : undefined} bottomInset={composerH} />
         {/* The composer floats OVER the thread (its height is fed back as the
             thread's bottom padding), so the conversation scrolls clear of it
@@ -664,12 +649,12 @@ function Workbench({
             {activeID && <div className="px-5"><ArtifactBanner conversationId={activeID} onOpen={openArtifactInDrawer} /></div>}
             {readOnly ? (
               <div className="mx-auto mb-4 w-full max-w-3xl px-5">
-                <div className="rounded-xl border border-border bg-surface2/50 px-4 py-3 text-center text-[13px] text-muted">
-                  👁 只读会话 · 由 {activeConv?.owner_email} 分享 · 你无法发送消息
+                <div className="flex items-center justify-center gap-1.5 rounded-xl border border-border bg-surface2/50 px-4 py-3 text-center text-[13px] text-muted">
+                  <Icon name="eye" size={14} />只读对话 · 由 {activeConv?.owner_email} 分享 · 你无法发送消息
                 </div>
               </div>
             ) : (
-              <Composer draftState={conversationDraft} sessionRecovery={sessionRecovery} conversationID={activeID} ensureConversation={ensureConversation} blocked={recovery.busy || runActions.actions.isBusy(activeID) || connectionOf(activeID) === "stopping"} status={status} onSend={onSend} onKill={() => kill(activeID)} activeSkill={activeSkill} onPickSkill={setActiveSkill} />
+              <Composer draftState={conversationDraft} sessionRecovery={sessionRecovery} conversationID={activeID} ensureConversation={ensureConversation} blocked={recovery.busy || runActions.actions.isBusy(activeID) || connectionOf(activeID) === "stopping"} status={status} onSend={onSend} onKill={() => kill(activeID)} activeSkill={activeSkill} onPickSkill={setActiveSkill} runSettings={{ deepThinking, confirmRisky, toggleThinking, toggleConfirm }} />
             )}
           </div>
         </div>
@@ -746,7 +731,7 @@ function NotificationBell({ onJump }: { onJump: (cid: string) => void }) {
             {items.length === 0 && (
               <div className="px-3 py-6 text-center">
                 <div className="text-[13px] text-ink">没有新通知</div>
-                <p className="mt-1 text-[12px] text-muted">后台任务跑完、定时任务触发或有人分享会话时,会在这里提醒你。</p>
+                <p className="mt-1 text-[12px] text-muted">后台任务跑完、定时任务触发或有人分享对话时,会在这里提醒你。</p>
               </div>
             )}
             <div className="max-h-[60vh] overflow-y-auto">
@@ -793,16 +778,16 @@ function NotificationBell({ onJump }: { onJump: (cid: string) => void }) {
 // ModelSelect — a Radix DropdownMenu (shadcn/ui). Keyboard nav, focus return,
 // typeahead and outside-click/Esc come from the primitive (replacing the old
 // hand-rolled fixed-overlay menu), themed with the project's warm-paper tokens.
-function ModelSelect({ value, onChange, models }: { value: string; onChange: (v: string) => void; models: ModelOption[] }) {
+function ModelSelect({ value, onChange, models, onManage }: { value: string; onChange: (v: string) => void; models: ModelOption[]; onManage: () => void }) {
   const cur = models.find((m) => m.version === value) || models[0] || MODELS_FALLBACK[0];
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label="选择模型"
-        className="flex items-center gap-1 rounded-full bg-surface2 px-2 py-0.5 text-[11px] text-muted outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-accent/50"
+        className="flex min-w-0 items-center gap-1 rounded-full bg-surface2 px-2.5 py-1 text-[12px] text-muted outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-accent/50"
       >
-        {cur.label}
-        <span className="text-faint">▾</span>
+        <span className="hidden sm:inline">模型：</span><span className="max-w-[120px] truncate">{cur.label}</span>
+        <Icon name="chevron" size={12} className="shrink-0 text-faint" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-56">
         {models.map((m) => (
@@ -815,6 +800,28 @@ function ModelSelect({ value, onChange, models }: { value: string; onChange: (v:
             <span className="shrink-0 text-[11px] text-faint">{m.hint}</span>
           </DropdownMenuItem>
         ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={onManage}><Icon name="gear" size={14} className="text-muted" />模型配置…</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// HeaderMenu holds what the header used to show as separate buttons but is
+// needed rarely: sharing, model connections, theme, shortcuts.
+function HeaderMenu({ onShare, onModelSettings, theme, onToggleTheme, onShortcuts }: {
+  onShare?: () => void; onModelSettings: () => void; theme: string; onToggleTheme: () => void; onShortcuts: () => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger aria-label="更多" title="更多" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted outline-none hover:bg-surface2 focus-visible:ring-2 focus-visible:ring-accent/50">
+        <Icon name="more" size={18} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        {onShare && <DropdownMenuItem onSelect={onShare}><Icon name="share" size={14} className="text-muted" />分享对话</DropdownMenuItem>}
+        <DropdownMenuItem onSelect={onModelSettings}><Icon name="gear" size={14} className="text-muted" />模型配置</DropdownMenuItem>
+        <DropdownMenuItem onSelect={onToggleTheme}><Icon name={theme === "dark" ? "sun" : "moon"} size={14} className="text-muted" />{theme === "dark" ? "切换到亮色模式" : "切换到暗色模式"}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={onShortcuts}><Icon name="keyboard" size={14} className="text-muted" />键盘快捷键</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -823,8 +830,8 @@ function ModelSelect({ value, onChange, models }: { value: string; onChange: (v:
 // ShortcutSheet is the "?" overlay. Power users look for it by reflex, and it is
 // also the only place the non-obvious bindings (⌘J, ⌘B, Esc-to-stop) are stated.
 const SHORTCUTS: { keys: string[]; label: string }[] = [
-  { keys: ["⌘", "K"], label: "命令面板 · 跳会话 / 切模型 / 开面板" },
-  { keys: ["⌘", "J"], label: "新建会话" },
+  { keys: ["⌘", "K"], label: "命令面板 · 跳对话 / 切模型 / 开面板" },
+  { keys: ["⌘", "J"], label: "新对话" },
   { keys: ["⌘", "B"], label: "显示 / 隐藏侧栏" },
   { keys: ["↵"], label: "发送消息" },
   { keys: ["⇧", "↵"], label: "换行(不发送)" },

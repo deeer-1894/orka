@@ -5,7 +5,8 @@ import { api, files as fileApi } from "../api";
 import { invalidateSessionFiles, useFileRevision } from "../hooks/useFileRevision";
 import { useConversationDraft } from "../hooks/useConversationDraft";
 import { toast, toastError } from "../lib/toast";
-import { Icon, type IconName } from "./Icon";
+import { Icon, fileIconName, type IconName } from "./Icon";
+import { RunSettingsChips, RunSettingsMenu, type RunSettingsValue } from "./RunSettings";
 
 // Icons/labels for the built-in skills; installed/custom skills get a default.
 const SKILL_ICON: Record<string, { icon: IconName; label: string }> = {
@@ -37,6 +38,7 @@ interface ComposerProps {
   onKill: () => void;
   activeSkill: string | null;
   onPickSkill: (name: string | null) => void;
+  runSettings: RunSettingsValue;
   conversationID: string;
   ensureConversation: () => Promise<string>;
 }
@@ -50,7 +52,7 @@ function StandaloneComposer(props: ComposerProps) {
 }
 function ComposerForm({
   draft, blocked = false, status, onSend, onKill,
-  activeSkill, onPickSkill, conversationID, ensureConversation,
+  activeSkill, onPickSkill, runSettings, conversationID, ensureConversation,
 }: ComposerProps & { draft: ReturnType<typeof useConversationDraft> }) {
   const { text, setText, attachments, setAttachments } = draft;
   const [sending, setSending] = useState(false);
@@ -186,7 +188,7 @@ function ComposerForm({
           if (uploadScope.current.generation === generation) draft.addAttachment({ name: f.name, path, image: IMAGE_RE.test(f.name), conversationID: cid });
         } catch { toastError("上传失败：" + f.name); }
       }
-    } catch { toastError("无法创建上传文件的会话"); }
+    } catch { toastError("无法创建上传文件的对话"); }
     finally {
       setUploading(n => n - batch.length);
       if (fileRef.current) fileRef.current.value = "";
@@ -375,7 +377,7 @@ function ComposerForm({
                   aria-label={f.dir ? "打开目录 " + f.name : "引用 " + (atDir === "." ? f.name : atDir + "/" + f.name)}
                   className={"flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left " + (i === atSel ? "bg-surface2" : "hover:bg-surface2")}
                 >
-                  <span className="text-[15px]">{IMAGE_RE.test(f.name) ? "🖼️" : "📄"}</span>
+                  <Icon name={fileIconName(f.name)} size={15} className="shrink-0 text-muted" />
                   <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{f.name}</span>
                   <span className="shrink-0 text-[11px] text-faint">{(f.size / 1024).toFixed(1)}KB</span>
                 </button>
@@ -386,6 +388,7 @@ function ComposerForm({
         )}
 
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          <RunSettingsChips value={runSettings} />
           {skill && (
             <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-accentsoft px-2 py-1 text-[12px] text-accent">
               <Icon name={skill.icon} size={13} /> {skill.label} 模式
@@ -399,7 +402,7 @@ function ComposerForm({
           <div className="mb-2 flex flex-wrap gap-1.5">
             {attachments.map((a) => (
               <span key={a.path} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface2/60 px-2 py-1 text-[12px] text-ink">
-                <span>{a.image ? "🖼️" : "📄"}</span>
+                <Icon name={a.image ? "image" : "file"} size={13} className="shrink-0" />
                 <span className="max-w-[160px] truncate">{a.name}</span>
                 <button onClick={() => setAttachments(xs => xs.filter(item => item !== a))} aria-label={"移除 " + a.name} className="text-faint hover:text-accent"><Icon name="close" size={12} /></button>
               </span>
@@ -462,6 +465,7 @@ function ComposerForm({
           >
             <Icon name="at" size={17} />
           </button>
+          <RunSettingsMenu value={runSettings} />
           </div>
           <textarea
             id="chat-input"

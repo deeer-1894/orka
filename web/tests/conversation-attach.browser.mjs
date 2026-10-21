@@ -30,7 +30,7 @@ async function app(t, { history = async () => [], runs = [] } = {}) {
     requests.push({ path, body });
     const json = data => route.fulfill({ json: { code: 0, data } });
     switch (path) {
-      case '/auth/me': return json({ email: 'attach-test@example.invalid', name: 'Attach test' });
+      case '/auth/me': return json({ email: 'attach-test@example.invalid', name: 'Attach test', onboarding: ['dismissed'] });
       case '/models': return json([{ version: 'auto', label: 'Auto', hint: 'Default' }]);
       case '/conversation/list': return json([{ conversation_id: 'c', title: 'Running snapshot', owner_email: 'attach-test@example.invalid', created_at: 10 }]);
       case '/conversation/shared-with-me': case '/file/list': return json([]);

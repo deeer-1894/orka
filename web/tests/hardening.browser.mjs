@@ -23,7 +23,8 @@ async function app(t, options = {}) {
   const json=data=>route.fulfill({json:{code:0,data}});
   if(options.handle && await options.handle({path,body,route,json,url,requests})) return;
   switch(path){
-   case '/auth/me': return json({email:'test@example.invalid',name:'Test'});
+   case '/auth/me': return json({email:'test@example.invalid',name:'Test',onboarding:options.onboarding||['dismissed']});
+   case '/auth/onboarding': return json({step:body.step});
    case '/conversation/list': return json(['a','b'].map(id=>({conversation_id:id,title:`Conversation ${id}`,owner_email:'test@example.invalid',created_at:1})));
    case '/conversation/shared-with-me': return json([]);
    case '/conversation/get-messages': return json(body.conversation_id==='a' ? options.history||[] : []);
@@ -76,11 +77,11 @@ test('rejected send preserves draft and attachment',async t=>{
  await a.page.locator('textarea').press('Enter'); await a.page.getByText('发送失败',{exact:false}).first().waitFor(); assert.equal(await a.page.locator('textarea').inputValue(),'retain this input'); await a.page.getByRole('button',{name:'移除 input.txt'}).waitFor(); a.check();
 });
 test('configuration read failure cannot save defaults and can retry',async t=>{
- const a=await app(t,{configFails:true}); await a.page.getByRole('button',{name:'模型配置',exact:true}).click(); await a.page.getByRole('alert').filter({hasText:'configuration unavailable'}).waitFor();
+ const a=await app(t,{configFails:true}); await a.page.getByRole('button',{name:'更多',exact:true}).click();await a.page.getByRole('menuitem',{name:'模型配置',exact:true}).click(); await a.page.getByRole('alert').filter({hasText:'configuration unavailable'}).waitFor();
  assert.equal(await a.page.getByRole('button',{name:'保存配置',exact:true}).isEnabled().catch(()=>false),false); await a.page.getByRole('button',{name:'重新读取配置'}).waitFor(); a.check();
 });
 test('empty model catalog after saving keeps a working picker',async t=>{
- const a=await app(t,{emptyModels:true}); await a.page.getByRole('button',{name:'模型配置',exact:true}).click(); await a.page.getByRole('button',{name:'保存配置',exact:true}).click(); await a.page.getByText('配置已保存，对下一次发送生效。').waitFor(); await a.page.getByRole('button',{name:'关闭模型配置'}).click(); await a.page.getByRole('button',{name:'选择模型'}).waitFor(); a.check();
+ const a=await app(t,{emptyModels:true}); await a.page.getByRole('button',{name:'更多',exact:true}).click();await a.page.getByRole('menuitem',{name:'模型配置',exact:true}).click(); await a.page.getByRole('button',{name:'保存配置',exact:true}).click(); await a.page.getByText('配置已保存，对下一次发送生效。').waitFor(); await a.page.getByRole('button',{name:'关闭模型配置'}).click(); await a.page.getByRole('button',{name:'选择模型'}).waitFor(); a.check();
 });
 test('followups generate automatically after completion and cache across conversation switches',async t=>{
  const a=await app(t,{history:[msg('u1','chat','question'),msg('a2','chat','answer',{role:'assistant',meta:{conversation_id:'a',run_id:'run-a',model_version:'model-a',model_profile:'profile-1'}}),msg('d3','task','',{action:'done'})]});
@@ -106,7 +107,7 @@ test('named profiles isolate discovery and explicitly probe saved capabilities',
   if(path==='/model-settings/discover'){assert.equal(body.profile_id,'one');assert.equal(body.protocol,'openai-compatible');await json({models:['model-a','model-b'],source:'remote'});return true;}
   if(path==='/model-profiles/probe'){assert.equal(body.profile_id,'one');assert.deepEqual(body.capabilities,['text']);await json({text:{verified:true,checked_at:'2026-09-15T10:00:00.123Z'}});return true;}
  }});
- await a.page.getByRole('button',{name:'模型配置',exact:true}).click();await a.page.getByRole('button',{name:'命名连接与能力检测'}).click();await a.page.getByLabel('连接名称').fill('Renamed account');await a.page.getByRole('button',{name:'发现此连接模型'}).click();await a.page.getByRole('button',{name:'保存所有连接'}).click();await a.page.getByText('连接配置已保存',{exact:true}).waitFor();
+ await a.page.getByRole('button',{name:'更多',exact:true}).click();await a.page.getByRole('menuitem',{name:'模型配置',exact:true}).click();await a.page.getByRole('button',{name:'命名连接与能力检测'}).click();await a.page.getByLabel('连接名称').fill('Renamed account');await a.page.getByRole('button',{name:'发现此连接模型'}).click();await a.page.getByRole('button',{name:'保存所有连接'}).click();await a.page.getByText('连接配置已保存',{exact:true}).waitFor();
  assert.equal(a.requests.filter(r=>r.path==='/model-profiles/probe').length,0);
  await a.page.getByRole('button',{name:'检测 文本 model-a'}).click();await a.page.getByText('文本：已验证',{exact:false}).first().waitFor();assert.equal(a.requests.filter(r=>r.path==='/model-profiles/probe').length,1);a.check();
 });
@@ -171,7 +172,7 @@ test('produced file event refreshes the already open files panel',async t=>{
  const a=await app(t,{handle:async({path,json,route})=>{
   if(path==='/file/list'){await json(generated?[{name:'fresh.txt',dir:false,size:4}]:[]);return true;}
   if(path==='/chat/run'){generated=true;await route.fulfill({contentType:'text/event-stream',body:[msg('t2','tool','',{payload:{tool:'file_write',args:{path:'fresh.txt'},result:'written'}}),msg('d3','task','',{action:'done'})].map(m=>`data: ${JSON.stringify(m)}\n\n`).join('')});return true;}
- }});await a.select('a');await a.page.getByRole('button',{name:'切换工作台面板'}).click();await a.page.getByRole('tab',{name:'成果'}).click();await a.page.locator('textarea').fill('generate file');await a.page.locator('textarea').press('Enter');await a.page.getByRole('button',{name:'fresh.txt',exact:true}).waitFor();a.check();
+ }});await a.select('a');await a.page.getByRole('button',{name:'切换工作台面板'}).click();await a.page.getByRole('tab',{name:'成果'}).click();await a.page.locator('textarea').fill('generate file');await a.page.locator('textarea').press('Enter');await a.page.getByRole('complementary',{name:'工作台'}).getByRole('button',{name:'fresh.txt',exact:true}).waitFor();a.check();
 });
 test('repeated reconciliation gap exits and offers manual reconnect',async t=>{
  let gaps=0;
@@ -248,7 +249,7 @@ test('complete product path from named connection and capability to metered exec
   if(path==='/run/acceptance'){await json({contract:{run_id:'run-a',requests:['Produce final report'],truncated:false},checks:[{at:'2026-09-15T10:00:00Z',spec_path:'acceptance.json',report:{ok:true,scope:'delivery',results:[{id:'file',description:'File exists',method:'sha256',file:'final.txt',status:'passed',sha256:'frozen-checksum'}]}}]});return true;}
   if(path==='/delivery/download'){await route.fulfill({headers:{'content-disposition':'attachment; filename="final.txt"'},body:'frozen'});return true;}
  }});
- await a.page.getByRole('button',{name:'模型配置',exact:true}).click();await a.page.getByRole('button',{name:'命名连接与能力检测'}).click();await a.page.getByRole('button',{name:'保存所有连接'}).click();await a.page.getByText('连接配置已保存',{exact:true}).waitFor();await a.page.getByRole('button',{name:'检测 工具调用 model-a'}).click();await a.page.getByText('工具调用：已验证',{exact:false}).waitFor();await a.page.getByRole('button',{name:'关闭命名连接'}).click();await a.page.getByRole('button',{name:'关闭模型配置'}).click();
+ await a.page.getByRole('button',{name:'更多',exact:true}).click();await a.page.getByRole('menuitem',{name:'模型配置',exact:true}).click();await a.page.getByRole('button',{name:'命名连接与能力检测'}).click();await a.page.getByRole('button',{name:'保存所有连接'}).click();await a.page.getByText('连接配置已保存',{exact:true}).waitFor();await a.page.getByRole('button',{name:'检测 工具调用 model-a'}).click();await a.page.getByText('工具调用：已验证',{exact:false}).waitFor();await a.page.getByRole('button',{name:'关闭命名连接'}).click();await a.page.getByRole('button',{name:'关闭模型配置'}).click();
  await a.select('a');await openBudget(a);await a.page.locator('textarea').fill('Complete delivery');await a.page.locator('textarea').press('Enter');await a.page.getByRole('button',{name:'停止',exact:true}).waitFor({state:'hidden'});await a.page.getByText('交付快照 · 版本 1',{exact:true}).waitFor();await a.page.getByRole('button',{name:/查看 · 1 步/}).click();await a.page.getByAltText('本次运行截图').waitFor();assert.equal(await a.page.locator('iframe').count(),0);
  await openWorkbench(a,'运行');await a.page.getByRole('button',{name:'验收证据',exact:true}).click();await a.page.getByText('检查通过',{exact:true}).waitFor();await openWorkbench(a,'成果');await a.page.getByRole('button',{name:'交付快照',exact:true}).click();await a.page.getByText('当前工作区',{exact:true}).waitFor();const download=a.page.waitForEvent('download');await a.page.getByRole('link',{name:'下载快照 final.txt'}).click();assert.equal((await download).suggestedFilename(),'final.txt');a.check();
 });
@@ -270,7 +271,7 @@ test('complete retry survives reload and remains separate from the newly edited 
 });
 
 test('logout clears persisted drafts and retries before a different owner signs in',async t=>{
- let owner='test@example.invalid';const a=await app(t,{handle:async({path,json})=>{if(path==='/auth/me'){await json({email:owner,name:'Test'});return true;}if(path==='/conversation/list'){await json(['a','b'].map(id=>({conversation_id:id,title:`Conversation ${id}`,owner_email:owner,created_at:1})));return true;}}});await a.select('a');await a.page.locator('textarea').fill('Owner A private draft');await a.page.locator('textarea').press('Enter');await a.page.getByText('发送失败',{exact:false}).first().waitFor();const count=()=>a.page.evaluate(()=>Object.keys(sessionStorage).filter(k=>k.startsWith('orka.session.')).length);assert.ok(await count()>0);await a.page.getByRole('button',{name:'退出登录',exact:true}).click();assert.equal(await count(),0);owner='other@example.invalid';await a.page.reload();await a.select('a');assert.equal(await a.page.locator('textarea').inputValue(),'');assert.equal(await a.page.getByRole('button',{name:'重新生成',exact:true}).count(),0);a.check();
+ let owner='test@example.invalid';const a=await app(t,{handle:async({path,json})=>{if(path==='/auth/me'){await json({email:owner,name:'Test',onboarding:['dismissed']});return true;}if(path==='/conversation/list'){await json(['a','b'].map(id=>({conversation_id:id,title:`Conversation ${id}`,owner_email:owner,created_at:1})));return true;}}});await a.select('a');await a.page.locator('textarea').fill('Owner A private draft');await a.page.locator('textarea').press('Enter');await a.page.getByText('发送失败',{exact:false}).first().waitFor();const count=()=>a.page.evaluate(()=>Object.keys(sessionStorage).filter(k=>k.startsWith('orka.session.')).length);assert.ok(await count()>0);await a.page.getByRole('button',{name:'退出登录',exact:true}).click();assert.equal(await count(),0);owner='other@example.invalid';await a.page.reload();await a.select('a');assert.equal(await a.page.locator('textarea').inputValue(),'');assert.equal(await a.page.getByRole('button',{name:'重新生成',exact:true}).count(),0);a.check();
 });
 
 test('expired session drafts and retry snapshots are not restored by reload',async t=>{
@@ -283,7 +284,7 @@ test('run tab shows one usage line for the open conversation without quota or re
  const a=await app(t,{runs:[record({status:'done'})],history:[msg('a1','chat','Saved answer',{role:'assistant',meta:{conversation_id:'a',run_id:'run-a',model_version:'model-a'}})],handle:async({path,json})=>{
   if(path==='/run/run-a/budget'){await json({run_id:'run-a',budget_run_id:'run-a',status:'done',limits:{max_tokens:1234,max_steps:1},used_tokens:99,reserved_tokens:0,unknown_calls:0,unknown_tokens:0,estimated_tokens:0,used_steps:2,sources:[]});return true;}
  }});await a.select('a');await openMetrics(a);
- await a.page.getByText('本会话最近运行 · 0 次工具调用 · 99 tokens',{exact:true}).waitFor();
+ await a.page.getByText('本对话最近运行 · 0 次工具调用 · 99 tokens',{exact:true}).waitFor();
  const panel=await a.page.getByRole('complementary',{name:'工作台'}).textContent();
  for(const gone of ['任务预算','上限','保守占用','在途','用量明细','run-a'])assert.ok(!panel.includes(gone),gone);
  a.check();
@@ -298,7 +299,7 @@ async function openWorkbench(a, tab) {
 async function openBudget(a) { await openWorkbench(a,'运行'); }
 async function openMetrics(a) {
  await openWorkbench(a,'运行');
- await a.page.getByLabel('本会话运行').waitFor();
+ await a.page.getByLabel('本对话运行').waitFor();
 }
 
 test('pending conversation creation cannot retarget the captured send or its model and tools',async t=>{
@@ -307,18 +308,18 @@ test('pending conversation creation cannot retarget the captured send or its mod
   if(path==='/conversation/create-conversation'){await created;await json({conversation_id:'new',title:'New',owner_email:'test@example.invalid'});return true;}
   if(path==='/chat/run'){await route.fulfill({status:503,json:{code:503,msg:'fixture rejection'}});return true;}
  }});
- await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'model-a'}).click();await a.page.getByTitle(/^高危操作需确认/).click();await openBudget(a);await a.page.locator('textarea').fill('Send to the new conversation');const pending=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/conversation/create-conversation'));await a.page.locator('textarea').press('Enter');await pending;
+ await a.page.getByRole('button',{name:'选择模型'}).click();await a.page.getByRole('menuitem').filter({hasText:'model-a'}).click();await a.page.getByRole('button',{name:'运行设置'}).click();await a.page.getByRole('menuitemcheckbox',{name:/高危操作需确认/}).click();await a.page.keyboard.press('Escape');await openBudget(a);await a.page.locator('textarea').fill('Send to the new conversation');const pending=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/conversation/create-conversation'));await a.page.locator('textarea').press('Enter');await pending;
  await a.select('b');await a.page.locator('textarea').fill('Keep conversation B draft');const sent=a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/chat/run'));release();const body=(await sent).postDataJSON();assert.equal(body.conversation_id,'new');assert.equal(body.message,'Send to the new conversation');assert.equal(body.selected_version,'model-a');assert.equal(body.enabled_tools,undefined);assert.equal(body.confirm_risky,false);assert.equal(body.budget,undefined);assert.equal(await a.page.locator('textarea').inputValue(),'Keep conversation B draft');a.check();
 });
 
 test('new actions match the compact neutral timeline capsules and keep explanations in tooltips',async t=>{
  const a=await app(t,{history:[msg('u1','chat','检查任务记录并整理交付结果'),...['t2','t3','t4'].map(id=>msg(id,'tool','',{payload:{tool:'web_search',args:{query:'fixture'},result:'资料已核对'}})),msg('a5','chat','任务记录已经整理，相关文件与验收证据可在工作台查看。',{role:'assistant',meta:{conversation_id:'a',run_id:'run-a',model_version:'model-a',model_profile:'profile-one'}}),msg('d6','task','',{action:'done'})]});await a.select('a');await a.page.addStyleTag({content:'*, *::before, *::after { transition: none !important; animation: none !important; }'});const follow=a.page.getByRole('button',{name:'Follow up once',exact:true});await follow.waitFor();assert.equal(await a.page.getByText('点击后使用本次回答的模型生成。',{exact:true}).count(),0);assert.equal(await a.page.getByRole('button',{name:'生成追问建议'}).count(),0);
  const style=await follow.evaluate(el=>{const s=getComputedStyle(el);return {radius:parseFloat(s.borderRadius),height:el.getBoundingClientRect().height,font:parseFloat(s.fontSize),border:s.borderColor,background:s.backgroundColor};});const timeline=await a.page.getByRole('button',{name:/查看 · 3 步/}).evaluate(el=>{const s=getComputedStyle(el);return {border:s.borderColor,background:s.backgroundColor};});assert.ok(style.radius>=14);assert.ok(style.height<=32);assert.ok(style.font<=13);assert.equal(style.border,timeline.border);assert.equal(style.background,timeline.background);assert.equal(await follow.locator('svg').count(),1);
- await a.page.getByTitle(/^高危操作需确认/).click();
+ await a.page.getByRole('button',{name:'运行设置'}).click();await a.page.getByRole('menuitemcheckbox',{name:/高危操作需确认/}).click();await a.page.keyboard.press('Escape');
  const headerStyle = async locator => locator.evaluate(el => { const s=getComputedStyle(el); return {height:el.getBoundingClientRect().height,radius:s.borderRadius,color:s.color,background:s.backgroundColor,font:s.fontSize}; });
  await a.page.mouse.move(0,0);
- const confirmation = await headerStyle(a.page.getByRole('button',{name:'不确认',exact:true}));
- for (const control of [a.page.getByRole('button',{name:'模型配置',exact:true}),a.page.getByRole('button',{name:'切换工作台面板'})]) assert.deepEqual(await headerStyle(control),confirmation);
+ await a.page.getByRole('button',{name:'恢复默认：高危操作需确认'}).waitFor();
+ const confirmation = await headerStyle(a.page.getByRole('button',{name:'切换工作台面板'}));
  await a.page.getByRole('button',{name:'切换工作台面板'}).click(); assert.equal(await a.page.getByRole('button',{name:'切换工作台面板'}).getAttribute('aria-pressed'),'true'); assert.notEqual((await headerStyle(a.page.getByRole('button',{name:'切换工作台面板'}))).background,confirmation.background); await a.page.getByRole('button',{name:'切换工作台面板'}).click();
  if(process.env.ORKA_CAPTURE_SCREENSHOTS==='1'){const {mkdirSync}=await import('node:fs');mkdirSync(root+'tests/screenshots',{recursive:true});await a.page.screenshot({path:root+'tests/screenshots/chat-capsules.png'});await openBudget(a);await a.page.screenshot({path:root+'tests/screenshots/workbench-budget.png'});await openMetrics(a);await a.page.getByText('累计指标',{exact:true}).waitFor();await a.page.getByRole('region',{name:'当前运行统计'}).waitFor();await a.page.screenshot({path:root+'tests/screenshots/workbench-metrics.png'});}a.check();
 });
@@ -371,7 +372,7 @@ test('narrow workbench preserves long metrics, acceptance and file information',
   if(apiPath==='/file/list'){await json([{name:path,dir:false,size:123}]);return true;}
  }});await a.select('a');await openMetrics(a);await a.page.setViewportSize({width:693,height:1000});await a.page.getByRole('separator',{name:'调整工作台宽度'}).press('Home');
  const fits=async locator=>assert.equal(await locator.evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
- await fits(a.page.getByLabel('本会话运行'));
+ await fits(a.page.getByLabel('本对话运行'));
  await openWorkbench(a,'运行');await a.page.getByRole('button',{name:'验收证据',exact:true}).click();await a.page.getByText('实际：'+long,{exact:true}).waitFor();await fits(a.page.getByRole('region',{name:'运行验收记录'}));
  await openWorkbench(a,'成果');await a.page.getByRole('button',{name:path,exact:true}).waitFor();await a.page.getByRole('button',{name:'交付快照',exact:true}).click();const link=a.page.getByRole('link',{name:'下载快照 '+path,exact:true});await link.waitFor();assert.ok((await link.boundingBox()).height<=28);await fits(link);await fits(a.page.getByRole('region',{name:'交付快照列表'}));
  if(process.env.ORKA_CAPTURE_SCREENSHOTS==='1')await a.page.screenshot({path:root+'tests/screenshots/workbench-long-files.png'});a.check();
@@ -447,7 +448,7 @@ test('home scatter cards select without sending and keep mobile composer usable'
  const stage=a.page.getByRole('region',{name:'任务示例'}); await stage.scrollIntoViewIfNeeded();
  assert.ok(await a.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'no horizontal page overflow');
  if(process.env.ORKA_HOME_MOBILE_SCREENSHOT) await a.page.screenshot({path:process.env.ORKA_HOME_MOBILE_SCREENSHOT,animations:"disabled"});
- await a.page.setViewportSize({width:1440,height:1000});await a.page.getByRole('button',{name:'切换到暗色模式'}).click();
+ await a.page.setViewportSize({width:1440,height:1000});await a.page.getByRole('button',{name:'更多',exact:true}).click();await a.page.getByRole('menuitem',{name:'切换到暗色模式'}).click();
  if(process.env.ORKA_HOME_DARK_SCREENSHOT) await a.page.screenshot({path:process.env.ORKA_HOME_DARK_SCREENSHOT,animations:"disabled"});
  a.check();
 });
@@ -568,6 +569,31 @@ test('workspace provenance stays distinct from declared deliverables and refusal
 
 const taskFixture=(extra={})=>({task_id:'t1',conversation_id:'task-conv',owner_email:'test@example.invalid',cron_status:'on',run_status:'done',created_at:1,next_run_at:Date.now()+3600000,variables:{title:'每日资讯简报',prompt_template:'搜索 AI 新闻并整理简报'},trigger:{kind:'schedule',cron:'0 9 * * 1-5',timezone:'Asia/Shanghai'},...extra});
 async function openTasks(a){await a.page.getByRole('button',{name:'定时任务',exact:true}).click();await a.page.getByRole('heading',{name:'定时任务'}).waitFor();}
+
+test('first-run guide tracks real progress, records the tour and can be skipped for good',async t=>{
+ const a=await app(t,{onboarding:[],handle:async({path,json})=>{if(path==='/models'){await json([{version:'auto',label:'自动选择',hint:''}]);return true;}}});
+ const guide=a.page.getByRole('region',{name:'开始使用'});await guide.waitFor();
+ await guide.getByText('1/3',{exact:true}).waitFor();
+ await guide.getByRole('button',{name:'去看看'}).click();
+ await a.page.getByRole('heading',{name:'定时任务'}).first().waitFor();
+ assert.ok(a.requests.some(r=>r.path==='/auth/onboarding'&&r.body.step==='tour'));
+ await a.page.getByRole('button',{name:'新对话'}).click();
+ await guide.getByText('2/3',{exact:true}).waitFor();
+ await guide.getByRole('button',{name:'跳过引导'}).click();await guide.waitFor({state:'detached'});
+ assert.ok(a.requests.some(r=>r.path==='/auth/onboarding'&&r.body.step==='dismissed'));a.check();
+});
+
+test('sidebar keeps task conversations in their own folded section and acts on rows through one menu',async t=>{
+ const a=await app(t,{handle:async({path,json})=>{if(path==='/task/get-tasks'){await json({tasks:[{task_id:'t1',conversation_id:'b',cron_status:'off',variables:{title:'Weekly'}}]});return true;}}});
+ await a.page.getByText('Conversation a',{exact:true}).waitFor();
+ const section=a.page.getByRole('button',{name:/任务对话/});await section.waitFor();
+ assert.equal(await section.getAttribute('aria-expanded'),'false');
+ assert.equal(await a.page.getByText('Conversation b',{exact:true}).count(),0,'task conversation stays folded');
+ await section.click();await a.page.getByText('Conversation b',{exact:true}).waitFor();
+ await a.page.getByText('Conversation a',{exact:true}).hover();await a.page.getByRole('button',{name:'Conversation a 的更多操作'}).click();
+ for(const item of ['重命名','分享','删除'])await a.page.getByRole('menuitem',{name:item,exact:true}).waitFor();
+ await a.page.keyboard.press('Escape');a.check();
+});
 
 test('tasks page creates a weekday task from a template only after its placeholder is filled',async t=>{
  let saved=null;

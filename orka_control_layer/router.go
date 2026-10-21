@@ -28,6 +28,7 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.Use(a.AuthMiddleware())
 
 	g.POST("/auth/me", a.Me)
+	g.POST("/auth/onboarding", a.MarkOnboarding)
 
 	g.POST("/conversation/create-conversation", a.CreateConversation)
 	g.POST("/conversation/get-conversation", a.GetConversation)

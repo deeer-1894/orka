@@ -103,7 +103,7 @@ func TestModelSettingsListOnlyContract(t *testing.T) {
 	if err := json.Unmarshal(c.Response.Body(), &list); err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Data) != 3 || list.Data[0]["version"] != "auto" || list.Data[0]["label"] != "Auto" || list.Data[0]["hint"] != "使用列表中的第一个模型" || list.Data[1]["version"] != "deployment" || list.Data[2]["version"] != "other" {
+	if len(list.Data) != 3 || list.Data[0]["version"] != "auto" || list.Data[0]["label"] != "自动选择" || list.Data[0]["hint"] != "使用列表中的第一个模型" || list.Data[1]["version"] != "deployment" || list.Data[2]["version"] != "other" {
 		t.Fatal(list.Data)
 	}
 	for _, body := range []string{`{"base_url":"http://localhost/v1","models":[],"enabled":true}`, `{"base_url":"http://localhost/v1","models":[" "],"enabled":true}`} {

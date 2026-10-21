@@ -46,7 +46,7 @@ async function mockApp(t, options = {}) {
     requests.push({ path, body });
     const json = data => route.fulfill({ json: { code: 0, data } });
     switch (path) {
-      case '/auth/me': return json({ email: 'model-ui@example.invalid', name: 'Model UI test' });
+      case '/auth/me': return json({ email: 'model-ui@example.invalid', name: 'Model UI test', onboarding: ['dismissed'] });
       case '/conversation/list': return json(conversations);
       case '/conversation/shared-with-me':
       case '/file/list': return json([]);
@@ -101,11 +101,11 @@ async function mockApp(t, options = {}) {
   const catalog = page.waitForResponse(r => new URL(r.url()).pathname === BASE + '/models');
   await page.goto(origin);
   await catalog;
-  await page.getByRole('button', { name: '模型配置', exact: true }).waitFor();
+  await page.getByRole('button',{name:'更多',exact:true}).waitFor();
   return {
     page, requests,
     async openSettings() {
-      await page.getByRole('button', { name: '模型配置', exact: true }).click();
+      await page.getByRole('button',{name:'更多',exact:true}).click();await page.getByRole('menuitem',{name:'模型配置',exact:true}).click();
       const dialog = page.getByRole('dialog', { name: '模型配置', exact: true });
       await dialog.getByLabel(MODEL_LIST_LABEL, { exact: true }).waitFor();
       return dialog;
@@ -126,7 +126,7 @@ async function saveSettings(page, dialog) {
 async function menuLabels(page) {
   await page.getByRole('button', { name: '选择模型', exact: true }).click();
   await page.getByRole('menu').waitFor();
-  return page.getByRole('menuitem').evaluateAll(items => items.map(item => item.querySelector('span').textContent));
+  return page.getByRole('menuitem').evaluateAll(items => items.filter(item => item.querySelector('span')).map(item => item.querySelector('span').textContent));
 }
 
 async function sendMessage(page, message, expectedModelVersion) {
@@ -196,7 +196,7 @@ test('model discovery preserves list order and save persists manual ordering wit
 test('header choices send exact versions and followups preserve the final assistant model', async t => {
   const app = await mockApp(t);
   const { page } = app;
-  assert.match(await page.getByRole('button', { name: '选择模型', exact: true }).innerText(), /^Auto/);
+  assert.match(await page.getByRole('button', { name: '选择模型', exact: true }).innerText(), /^(模型：\s*)?Auto/);
   assert.deepEqual(await menuLabels(page), ['Auto', ...INITIAL_MODELS]);
   await page.keyboard.press('Escape');
   const automatic = await sendMessage(page, 'test Auto model', INITIAL_MODELS[0]);
@@ -204,7 +204,7 @@ test('header choices send exact versions and followups preserve the final assist
   for (const model of [...INITIAL_MODELS].reverse()) {
     await menuLabels(page);
     await page.getByRole('menuitem').filter({ has: page.getByText(model, { exact: true }) }).click();
-    assert.ok((await page.getByRole('button', { name: '选择模型', exact: true }).innerText()).startsWith(model));
+    assert.ok((await page.getByRole('button', { name: '选择模型', exact: true }).innerText()).replace(/^模型：\s*/, '').startsWith(model));
     const manual = await sendMessage(page, `test manual ${model}`, model);
     assert.equal(manual.selected_version, model);
     assert.equal(manual.conversation_id, automatic.conversation_id);

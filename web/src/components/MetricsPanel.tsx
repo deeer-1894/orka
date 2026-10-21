@@ -11,7 +11,7 @@ export function MetricsPanel({ runContext }: { runContext?: MetricsRunContext })
   const usage = useRunUsage(runID, !!runID);
   if (!runID) return null;
   const tokens = usage.data ? `${usage.data.used_tokens} tokens` : usage.error ? '用量暂不可用' : '读取用量…';
-  return <p aria-label="本会话运行" className="mx-3 mt-3 rounded-lg bg-surface2/60 px-3 py-2 text-xs text-muted">
-    本会话最近运行 · {toolCalls} 次工具调用 · {tokens}
+  return <p aria-label="本对话运行" className="mx-3 mt-3 rounded-lg bg-surface2/60 px-3 py-2 text-xs text-muted">
+    本对话最近运行 · {toolCalls} 次工具调用 · {tokens}
   </p>;
 }

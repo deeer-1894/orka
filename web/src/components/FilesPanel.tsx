@@ -2,21 +2,21 @@ import { ActionChip } from './ActionChip';
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { files as fileApi, type FileEntry } from "../api";
 import { invalidateSessionFiles, useFileRevision } from "../hooks/useFileRevision";
-import { Icon } from "./Icon";
+import { Icon, type IconName } from "./Icon";
 import { FilePreview } from "./FilePreview";
 import { PanelEmpty as Blank } from "./PanelEmpty";
 const DeliverySnapshots = lazy(() => import("./DeliverySnapshots"));
 // File "kinds" group the flat workspace into tidy, labelled sections so a busy
 // workspace reads as 文档 / 代码 / 数据 / 图片 / 其他 instead of one long dump.
-const FILE_KINDS: { id: string; icon: string; label: string; color: string; exts?: string[] }[] = [
-  { id: "folder", icon: "📁", label: "文件夹", color: "text-[#c79a5a]" },
-  { id: "doc", icon: "📝", label: "文档 / 报告", color: "text-[#5a86c7]", exts: ["md", "markdown", "txt", "doc", "docx", "rtf"] },
-  { id: "pdf", icon: "📕", label: "PDF", color: "text-[#d06363]", exts: ["pdf"] },
-  { id: "code", icon: "🧑‍💻", label: "代码", color: "text-[#7a9a6a]", exts: ["py", "js", "jsx", "ts", "tsx", "go", "java", "c", "h", "cpp", "rs", "sh", "rb", "php", "html", "css", "yaml", "yml", "sql"] },
-  { id: "data", icon: "📊", label: "数据 / 表格", color: "text-[#5aa48a]", exts: ["json", "csv", "tsv", "xml", "ndjson", "xlsx", "xls"] },
-  { id: "image", icon: "🖼️", label: "图片", color: "text-[#b07ac7]", exts: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"] },
-  { id: "slides", icon: "📑", label: "演示", color: "text-[#c78a5a]", exts: ["pptx", "ppt", "key"] },
-  { id: "other", icon: "🗂️", label: "其他", color: "text-faint" },
+const FILE_KINDS: { id: string; icon: IconName; label: string; color: string; exts?: string[] }[] = [
+  { id: "folder", icon: "folder", label: "文件夹", color: "text-[#c79a5a]" },
+  { id: "doc", icon: "file", label: "文档 / 报告", color: "text-[#5a86c7]", exts: ["md", "markdown", "txt", "doc", "docx", "rtf"] },
+  { id: "pdf", icon: "book", label: "PDF", color: "text-[#d06363]", exts: ["pdf"] },
+  { id: "code", icon: "code", label: "代码", color: "text-[#7a9a6a]", exts: ["py", "js", "jsx", "ts", "tsx", "go", "java", "c", "h", "cpp", "rs", "sh", "rb", "php", "html", "css", "yaml", "yml", "sql"] },
+  { id: "data", icon: "table", label: "数据 / 表格", color: "text-[#5aa48a]", exts: ["json", "csv", "tsv", "xml", "ndjson", "xlsx", "xls"] },
+  { id: "image", icon: "image", label: "图片", color: "text-[#b07ac7]", exts: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"] },
+  { id: "slides", icon: "deck", label: "演示", color: "text-[#c78a5a]", exts: ["pptx", "ppt", "key"] },
+  { id: "other", icon: "layers", label: "其他", color: "text-faint" },
 ];
 function kindOf(name: string, dir: boolean): string {
   if (dir) return "folder";
@@ -106,7 +106,7 @@ export function FilesPanel({ email, conversationID }: { email: string; conversat
     const meta = kindMeta(it.name, it.dir);
     return (
     <div key={it.name} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface2">
-      <span className={meta.color}>{meta.icon}</span>
+      <Icon name={meta.icon} size={15} className={"shrink-0 " + meta.color} />
       {it.dir ? (
         <button onClick={() => navigate(fullPath(it.name))} className="min-w-0 flex-1 whitespace-normal break-all text-left text-[14px] text-ink hover:text-accent">{it.name}</button>
       ) : (
@@ -135,7 +135,7 @@ export function FilesPanel({ email, conversationID }: { email: string; conversat
       <div className="mb-2 flex items-center justify-between gap-2">
         <nav aria-label="文件夹路径" className="flex min-w-0 flex-wrap items-center gap-1 text-[12px] text-faint" title={email}>
           <Icon name="folder" size={13} />
-          <button onClick={() => navigate(".")} className="hover:text-accent">本会话文件</button>
+          <button onClick={() => navigate(".")} className="hover:text-accent">本对话文件</button>
           {dir !== "." && dir.split("/").map((part, i, parts) => <span key={i} className="inline-flex min-w-0 items-center gap-1"> / <button className="truncate hover:text-accent" onClick={() => navigate(parts.slice(0, i + 1).join("/"))}>{part}</button></span>)}
         </nav>
         <button
@@ -185,14 +185,14 @@ export function FilesPanel({ email, conversationID }: { email: string; conversat
         </div>
       )}
       {!loading && !error && filtered.length === 0 && (
-        !conversationID ? <Blank icon="folder" title="请选择会话">选择或创建会话后查看文件。</Blank> : items.length === 0
+        !conversationID ? <Blank icon="folder" title="请选择对话">选择或创建对话后查看文件。</Blank> : items.length === 0
           ? <Blank icon="folder" title="工作区还是空的">Orka 产出的文件(报告、图表、脚本、导出的文档)都会落在这里,你也可以直接上传文件让它读取。</Blank>
           : <Blank icon="search" title="没有匹配的文件">换个关键词试试,或清空搜索框查看全部。</Blank>
       )}
       {grouped.map((g) => (
         <div key={g.id} className="mb-3">
           <div className="mb-1 px-1 text-[11px] font-medium uppercase tracking-wide text-faint">
-            {g.icon} {g.label} · {g.files.length}
+            <Icon name={g.icon} size={12} className="inline-block align-[-2px]" /> {g.label} · {g.files.length}
           </div>
           <div className="space-y-0.5">{g.files.map(Row)}</div>
         </div>

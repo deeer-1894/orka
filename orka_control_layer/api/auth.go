@@ -102,7 +102,23 @@ func (a *API) Me(ctx context.Context, c *app.RequestContext) {
 		ok(c, map[string]any{"email": email})
 		return
 	}
-	ok(c, map[string]any{"email": u.Email, "name": u.Name})
+	ok(c, map[string]any{"email": u.Email, "name": u.Name, "onboarding": u.Onboarding})
+}
+
+// MarkOnboarding records a first-run guide step (see db.Onboarding*).
+func (a *API) MarkOnboarding(ctx context.Context, c *app.RequestContext) {
+	var req struct {
+		Step string `json:"step"`
+	}
+	if err := bind(c, &req); err != nil || (req.Step != db.OnboardingTour && req.Step != db.OnboardingDismissed) {
+		fail(c, consts.StatusBadRequest, "unknown onboarding step")
+		return
+	}
+	if err := a.Store.MarkOnboarding(ctx, authEmail(c), req.Step); err != nil {
+		fail(c, consts.StatusInternalServerError, "保存失败")
+		return
+	}
+	ok(c, map[string]any{"step": req.Step})
 }
 
 // AuthMiddleware verifies the Bearer session token and sets the user email.

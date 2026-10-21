@@ -16,7 +16,7 @@ import { Markdown } from "./Markdown";
 import { FilePreview } from "./FilePreview";
 import { FollowUps } from "./FollowUps";
 import { WeatherCard, parseWeatherCard } from "./WeatherCard";
-import { Icon, type IconName } from "./Icon";
+import { Icon, fileIconName, type IconName } from "./Icon";
 import { confirmDialog } from "../lib/confirm";
 import { toast, toastError } from "../lib/toast";
 
@@ -356,17 +356,9 @@ function SessionFiles({ files, onOpen }: { files: string[]; onOpen: (name: strin
   const scope = useContext(FileScopeCtx);
   const [expanded, setExpanded] = useState(false);
   useEffect(() => setExpanded(false), [scope.conversationID]);
-  const icon = (n: string) =>
-    /\.(png|jpe?g|gif|webp|svg)$/i.test(n) ? "🖼️"
-    : /\.pdf$/i.test(n) ? "📕"
-    : /\.(xlsx?|csv|tsv)$/i.test(n) ? "📊"
-    : /\.(docx?|md|markdown|txt|rtf)$/i.test(n) ? "📄"
-    : /\.pptx$/i.test(n) ? "📑"
-    : /\.py$/i.test(n) ? "🐍"
-    : "📎";
   return (
     <div className="mb-6 ml-[42px] rounded-xl border border-border bg-surface2/40 p-3">
-      <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-faint">📎 本会话文件 · {files.length}</div>
+      <div className="mb-2 flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-faint"><Icon name="paperclip" size={12} />本对话文件 · {files.length}</div>
       <div className="flex max-h-64 flex-wrap gap-1.5 overflow-y-auto">
         {(expanded ? files : files.slice(0, 8)).map((f) => (
           <div key={f} className="flex max-w-full items-center rounded-full border border-border bg-surface">
@@ -375,7 +367,7 @@ function SessionFiles({ files, onOpen }: { files: string[]; onOpen: (name: strin
             className="flex min-w-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[12.5px] text-ink hover:border-accent/40 hover:text-accent transition"
             title={"预览 " + f}
           >
-            <span className="shrink-0">{icon(f)}</span>
+            <Icon name={fileIconName(f)} size={13} className="shrink-0 text-muted" />
             <span className="truncate">{f}</span>
           </button>
           <a className="shrink-0 p-2 text-muted hover:text-accent" href={fileApi.downloadURL(f, scope.conversationID)} aria-label={"下载 " + f}><Icon name="download" size={13}/></a>
@@ -402,7 +394,7 @@ function ThreadOutline({ turns }: { turns: { id: string; text: string }[] }) {
     <div className="sticky top-0 z-10 float-right mr-2 mt-2">
       <button
         onClick={() => setOpen((o) => !o)}
-        title="Outline"
+        title="大纲"
         className={
           "grid h-8 w-8 place-items-center rounded-lg border text-muted transition " +
           (open ? "border-accent/40 bg-accentsoft text-accent" : "border-border bg-surface hover:bg-surface2")
@@ -1092,8 +1084,10 @@ function ConfirmCard({ m, active, onResumed }: { m: Message; active: boolean; on
       setError(e instanceof Error ? e.message : "确认失败，请重试");
     } finally { setSubmitting(false); }
   };
-  const doneLabel =
-    done === "always" ? "✅ 本会话始终允许 · 继续执行" : done === "once" ? "✅ 已允许一次 · 继续执行" : "🚫 已拒绝,跳过该操作";
+  const doneLabel = <span className="inline-flex items-center gap-1">
+    <Icon name={done === "reject" ? "ban" : "check"} size={13} className={done === "reject" ? "text-accent" : "text-ok"} />
+    {done === "always" ? "本对话始终允许 · 继续执行" : done === "once" ? "已允许一次 · 继续执行" : "已拒绝，跳过该操作"}
+  </span>;
   return (
     <div className="mb-6 ml-[42px] rounded-xl border border-accent/40 bg-accentsoft/40 p-3.5">
       <div className="mb-1 flex items-center gap-1.5 text-[13px] font-medium text-ink">
@@ -1107,7 +1101,7 @@ function ConfirmCard({ m, active, onResumed }: { m: Message; active: boolean; on
       ) : (
         <div className="flex flex-wrap gap-2">
           <button disabled={submitting} onClick={() => decide(true, false)} className="rounded-lg bg-accent px-3 py-1.5 text-[12.5px] text-white hover:opacity-90 disabled:opacity-50">{submitting ? "处理中…" : "允许一次"}</button>
-          <button disabled={submitting} onClick={() => decide(true, true)} className="rounded-lg border border-accent/40 bg-surface px-3 py-1.5 text-[12.5px] text-ink hover:bg-accentsoft/60 disabled:opacity-50" title={`本会话内不再询问“${TOOL_LABEL[p.tool] || p.tool}”`}>本会话始终允许</button>
+          <button disabled={submitting} onClick={() => decide(true, true)} className="rounded-lg border border-accent/40 bg-surface px-3 py-1.5 text-[12.5px] text-ink hover:bg-accentsoft/60 disabled:opacity-50" title={`本对话内不再询问“${TOOL_LABEL[p.tool] || p.tool}”`}>本对话始终允许</button>
           <button disabled={submitting} onClick={() => decide(false, false)} className="rounded-lg border border-border bg-surface px-3 py-1.5 text-[12.5px] text-muted hover:border-accent/40 disabled:opacity-50">拒绝</button>
         </div>
       )}
@@ -1148,7 +1142,7 @@ function Clarify({ m, onResume }: { m: Message; onResume: (k: string, a: string)
         disabled={sent}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && send(text)}
-        placeholder="or type a reply…"
+        placeholder="或直接输入回复…"
         className="mt-2.5 w-full rounded-lg border border-border bg-surface px-3 py-2 text-[14px] outline-none focus:border-accent/50 disabled:opacity-40"
       />
     </div>
@@ -1188,7 +1182,7 @@ function Reasoning({ m }: { m: Message }) {
     <div className="mb-4 ml-[42px]">
       <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-[12px] text-faint hover:text-muted">
         <span className="dot h-1.5 w-1.5 rounded-full bg-accent" />
-        <span>💭 思考中{open ? "" : "…"}</span>
+        <span>思考中{open ? "" : "…"}</span>
         <Icon name="chevron" size={11} className={"transition-transform " + (open ? "" : "-rotate-90")} />
       </button>
       {open && text && (

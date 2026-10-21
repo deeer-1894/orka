@@ -2,15 +2,15 @@ import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { artifacts as artApi, subscribeArtifact } from "../api";
 import type { Artifact, ArtifactBlock, ArtifactVersion } from "../types";
 const ArtifactRenderer = lazy(() => import("./ArtifactRenderer").then(m => ({default:m.ArtifactRenderer})));
-import { Icon } from "./Icon";
+import { Icon, type IconName } from "./Icon";
 import { toast, toastError } from "../lib/toast";
 import { useOverlay } from "../lib/useOverlay";
 import { confirmDialog } from "../lib/confirm";
 
-const KIND_ICON: Record<string, string> = {
-  pr_review: "🔀", architecture: "🗺️", incident: "🚨", checklist: "✅", audit: "🔍", custom: "📊",
+const KIND_ICON: Record<string, IconName> = {
+  pr_review: "code", architecture: "layers", incident: "alert", checklist: "check", audit: "search", custom: "chart",
 };
-const kindIcon = (k: string) => KIND_ICON[k] || "📄";
+const kindIcon = (k: string, size = 16) => <Icon name={KIND_ICON[k] || "file"} size={size} className="shrink-0 text-muted" />;
 // Human kind labels + an accent colour, so a card communicates what it is.
 const KIND_META: Record<string, { label: string; color: string }> = {
   pr_review: { label: "代码评审", color: "#7c9fe8" },
@@ -69,7 +69,7 @@ export function ArtifactGallery({ onOpen }: { onOpen: (id: string) => void }) {
       <div className="p-4">
         <div className="rounded-xl border border-dashed border-border p-6 text-center text-[13px] text-muted">
           还没有 Artifact。<br />
-          <span className="text-faint">让 Orka 把工作整理成一个可分享的实时页面 —— 它会随会话进展自动更新。</span>
+          <span className="text-faint">让 Orka 把工作整理成一个可分享的实时页面 —— 它会随对话进展自动更新。</span>
         </div>
       </div>
     );
@@ -100,7 +100,7 @@ export function ArtifactGallery({ onOpen }: { onOpen: (id: string) => void }) {
             >
               <span aria-hidden className="absolute left-0 top-0 h-full w-[3px]" style={{ background: km.color }} />
               <div className="flex w-full items-center gap-2">
-                <span className="text-[16px]">{kindIcon(a.kind)}</span>
+                {kindIcon(a.kind)}
                 <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-ink">{a.title}</span>
                 {a.visibility === "public" ? <Icon name="globe" size={13} className="shrink-0 text-accent" /> : a.visibility === "shared" ? <Icon name="link" size={13} className="shrink-0 text-muted" /> : null}
               </div>
@@ -157,7 +157,7 @@ export function ArtifactBanner({ conversationId, onOpen }: { conversationId: str
       onClick={() => onOpen(art.artifact_id)}
       className="mx-auto mb-3 flex w-full max-w-3xl items-center gap-2.5 rounded-xl border border-accent/30 bg-accentsoft/40 px-3.5 py-2.5 text-left transition hover:border-accent/60"
     >
-      <span className="text-[18px]">{kindIcon(art.kind)}</span>
+      {kindIcon(art.kind, 18)}
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13.5px] font-medium text-ink">{art.title}</span>
         <span className="text-[11px] text-faint">实时页面 · v{art.current_version} · {art.visibility === "public" ? "公开" : art.visibility === "shared" ? "已分享" : "私有"}</span>
@@ -206,9 +206,9 @@ function ArtifactBody({ artifactId, onClose, inline, backLabel }: { artifactId: 
         {inline ? (
           <button onClick={onClose} className="shrink-0 text-[12px] text-muted hover:text-accent" title="返回画廊">← {backLabel || "画廊"}</button>
         ) : (
-          <span className="text-[16px]">{kindIcon(art?.kind || "")}</span>
+          kindIcon(art?.kind || "")
         )}
-        <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink">{art?.title || "Artifact"}</span>
+        <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink">{art?.title || "未命名页面"}</span>
         {live && <span className="rounded-full bg-ok/15 px-2 py-0.5 text-[11px] text-ok">● 已更新</span>}
         {art && art.current_version > 1 && (
           <select
@@ -283,7 +283,7 @@ function ShareBar({ art, onChange }: { art: Artifact; onChange: (a: Artifact) =>
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface2/30 px-4 py-2 text-[12.5px]">
       <button onClick={togglePublic} disabled={busy} className={"rounded-lg px-2.5 py-1 " + (isPublic ? "bg-accentsoft text-accent" : "border border-border text-muted hover:border-accent/40")}>
-        {isPublic ? "🌐 公开链接已开启" : "🌐 生成公开链接"}
+        <span className="inline-flex items-center gap-1"><Icon name="globe" size={13} />{isPublic ? "公开链接已开启" : "生成公开链接"}</span>
       </button>
       {isPublic && art.share_token && (
         <>

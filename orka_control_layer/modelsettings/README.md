@@ -12,7 +12,7 @@ Authenticated endpoints, beneath `/api/v1/controller`, use the existing
 - `POST /model-settings/discover`: accepts `{provider, base_url, api_key?}` and
   returns `{models:string[], source:"remote"|"preset", notice:string}`.
   Discovery never saves or enables settings.
-- `GET /models`: returns Auto first (`version:"auto", label:"Auto",
+- `GET /models`: returns Auto first (`version:"auto", label:"自动选择",
   hint:"使用列表中的第一个模型"`), then each model with `version` equal to its name.
 
 Provider is descriptive; every provider uses the OpenAI-compatible protocol.

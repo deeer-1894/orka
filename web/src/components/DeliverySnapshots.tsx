@@ -24,7 +24,7 @@ export default function DeliverySnapshots({ conversationID }: { conversationID: 
     <ActionChip disabled={loading} onClick={() => setRefresh(n => n + 1)} icon="refresh">刷新交付快照</ActionChip>
     {loading && <p role="status">正在读取交付快照…</p>}
     {error && <p role="alert" className="text-accent">无法读取交付快照：{error}</p>}
-    {!loading && !error && !data.length && <p>本会话尚无交付快照。</p>}
+    {!loading && !error && !data.length && <p>本对话尚无交付快照。</p>}
     {data.map(snapshot => <article key={`${snapshot.run_id}:${snapshot.version}`} className="space-y-2 border-t border-border pt-2">
       <strong>交付版本 {snapshot.version}</strong><p className="break-all text-muted">{new Date(snapshot.created_at).toLocaleString()} · {snapshot.run_id}</p>
       {snapshot.files.map(file => <div key={file.path} className="space-y-1">

@@ -10,7 +10,7 @@ func TestTitleSnippetIsDeterministicAndUnicodeSafe(t *testing.T) {
 	if got := titleSnippet("第一行\n第二行"); got != "第一行 第二行" {
 		t.Fatalf("multiline title = %q", got)
 	}
-	if got := titleSnippet("  "); got != "New chat" {
+	if got := titleSnippet("  "); got != "新对话" {
 		t.Fatalf("blank title = %q", got)
 	}
 	got := titleSnippet(strings.Repeat("测", 30))

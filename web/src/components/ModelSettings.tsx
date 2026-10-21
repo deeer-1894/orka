@@ -92,7 +92,7 @@ export function ModelSettings({ onClose, onSaved }: { onClose: () => void; onSav
             {config.api_key_set && savedBase !== config.base_url && <p className="text-xs text-muted">地址已改变，请输入新服务的密钥。不会向新地址发送旧密钥。</p>}
             <div><Button type="button" variant="outline" disabled={!config.base_url.trim() || !!busy} onClick={() => void discover()}>{busy === "discover" ? "正在获取模型…" : "获取模型列表"}</Button></div>
             <SettingField label="可选模型列表（每行一个，也支持逗号分隔）" id="model-list"><textarea id="model-list" className={inputStyle} required={config.enabled} rows={4} value={modelText} onChange={e => setModelText(e.target.value)} /></SettingField>
-            <p className="text-xs text-muted">Auto 使用列表中的第一个模型；也可以在顶部选择指定模型。调整列表顺序即可更改 Auto 默认模型。</p>
+            <p className="text-xs text-muted">“自动选择”使用列表中的第一个模型；也可以在顶部选择指定模型。调整列表顺序即可更改默认模型。</p>
             <details className="rounded-lg border border-border p-3">
               <summary className="cursor-pointer text-sm text-muted">配置文件 · 导入 / 导出</summary>
               <p className="my-2 text-xs text-faint">JSON 格式。导出不包含 API Key；导入后需要保存才会生效。</p>

@@ -47,7 +47,7 @@ test('session file UI: folder navigation, safe previews, scoped requests and asy
       return route.fulfill({ body: 'plain text' });
     }
     let data = {};
-    if (url.pathname.endsWith('/auth/me')) data = { email: 'me@example.com', name: 'Test' };
+    if (url.pathname.endsWith('/auth/me')) data = { email: 'me@example.com', name: 'Test', onboarding: ['dismissed'] };
     if (url.pathname.endsWith('/conversation/list')) data = conversations;
     if (url.pathname.endsWith('/conversation/shared-with-me') || url.pathname.endsWith('/conversation/get-messages') || url.pathname.endsWith('/models')) data = [];
     if (url.pathname.endsWith('/run/list')) data = { runs: [] };
@@ -65,7 +65,7 @@ test('session file UI: folder navigation, safe previews, scoped requests and asy
     await pause(100);
     assert.equal(requests.filter(r => r.path.includes('/file/')).length, 0, 'overview does not query files without a conversation');
     await set({ tab: 'files' });
-    await page.getByText('请选择会话', { exact: true }).waitFor();
+    await page.getByText('请选择对话', { exact: true }).waitFor();
     assert.equal(requests.filter(r => r.path.includes('/file/')).length, 0);
     await set({ conversationID: 'empty' });
     await page.getByText('工作区还是空的', { exact: true }).waitFor();
@@ -147,13 +147,13 @@ test('session file UI: folder navigation, safe previews, scoped requests and asy
     await pause(220);
     assert.equal(await dialog.locator('code').textContent(), 'plain text');
     await set({ mode: 'thread', conversationID: 'A', shared: false });
-    await page.getByText('📎 本会话文件 · 1', { exact: true }).waitFor();
+    await page.getByText('本对话文件 · 1', { exact: true }).waitFor();
     await page.getByRole('button', { name: /sample.csv/ }).last().click();
     await dialog.waitFor();
     assert.ok(requests.some(r => r.path.endsWith('/file/list') && r.body.path === 'a/b' && r.body.conversation_id === 'A'));
     await set({ conversationID: 'B' }); assert.equal(await dialog.count(), 0);
     await set({ conversationID: 'A', shared: true });
-    await page.getByText('📎 本会话文件 · 1', { exact: true }).waitFor();
+    await page.getByText('本对话文件 · 1', { exact: true }).waitFor();
     await page.getByRole('button', { name: /sample.csv/ }).last().click();
     await dialog.waitFor();
     assert.equal(await dialog.getByTitle('版本历史').count(), 0);
@@ -206,7 +206,7 @@ test('session file UI: folder navigation, safe previews, scoped requests and asy
     await page.waitForResponse(r => r.url().endsWith('/chat/run'));
     await pause(100);
     assert.ok(requests.filter(r => r.path.endsWith('/chat/run')).every(r => r.body.conversation_id === 'created-0'));
-    await page.getByRole('button', { name: '+ New chat', exact: true }).click();
+    await page.getByRole('button', { name: '新对话', exact: true }).click();
     await page.locator('input[type=file]').setInputFiles([
       { name: 'late-one.txt', mimeType: 'text/plain', buffer: Buffer.from('1') },
       { name: 'late-two.txt', mimeType: 'text/plain', buffer: Buffer.from('2') },
@@ -219,7 +219,7 @@ test('session file UI: folder navigation, safe previews, scoped requests and asy
     assert.equal(requests.filter(r => r.path.endsWith('/file/upload-chunk') && r.body.filename.startsWith('late-')).length, 0);
     await textarea.fill('@'); await textarea.press('ArrowRight');
     await page.getByText('B-only.txt', { exact: true }).waitFor();
-    await page.getByRole('button', { name: '+ New chat', exact: true }).click();
+    await page.getByRole('button', { name: '新对话', exact: true }).click();
     await page.locator('input[type=file]').setInputFiles([
       { name: 'new-one.txt', mimeType: 'text/plain', buffer: Buffer.from('1') },
       { name: 'new-two.txt', mimeType: 'text/plain', buffer: Buffer.from('2') },

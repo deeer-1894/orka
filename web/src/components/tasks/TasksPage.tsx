@@ -9,7 +9,8 @@ import { toast } from "../../lib/toast";
 import { Button } from "../ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "../ui/dropdown-menu";
 import { Icon } from "../Icon";
-import { KIND_ICON, Switch, TaskEditor, draftFromTask, type TaskDraft } from "./TaskEditor";
+import { KIND_ICON, TaskEditor, draftFromTask, type TaskDraft } from "./TaskEditor";
+import { Switch } from "../ui/switch";
 
 type Tab = "mine" | "templates";
 type KindFilter = "all" | TriggerKind;

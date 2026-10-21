@@ -27,7 +27,18 @@ type User struct {
 	Name         string `bson:"name" json:"name"`
 	PasswordHash string `bson:"password_hash" json:"-"`
 	CreatedAt    int64  `bson:"created_at" json:"created_at"`
+	// Onboarding lists the first-run steps the user finished or skipped
+	// (OnboardingTour, OnboardingDismissed); kept server-side so a new device
+	// does not show the guide again.
+	Onboarding []string `bson:"onboarding,omitempty" json:"onboarding,omitempty"`
 }
+
+// First-run guide steps a user can mark. Configuring a model and trying a
+// task are read from the user's data, so they need no flag.
+const (
+	OnboardingTour      = "tour"      // saw where tasks and the workbench live
+	OnboardingDismissed = "dismissed" // skipped the guide
+)
 
 // ConversationTable is the conversation shell; one conversation may own many tasks.
 type ConversationTable struct {

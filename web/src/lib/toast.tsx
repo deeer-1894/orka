@@ -1,6 +1,7 @@
 // Tiny toast system: a module-level emitter + a <Toaster/> rendered once at the
 // app root. Anything (including api.ts) can call toast(msg) without prop drilling.
 import { useEffect, useState } from "react";
+import { Icon, type IconName } from "../components/Icon";
 
 export type ToastKind = "error" | "info" | "success";
 export interface Toast {
@@ -28,7 +29,7 @@ const STYLE: Record<ToastKind, string> = {
   info: "border-border bg-surface text-ink",
   success: "border-ok/40 bg-ok/10 text-ok",
 };
-const ICON: Record<ToastKind, string> = { error: "⚠", info: "ℹ", success: "✓" };
+const ICON: Record<ToastKind, IconName> = { error: "alert", info: "info", success: "check" };
 
 export function Toaster() {
   const [items, setItems] = useState<Toast[]>([]);
@@ -49,14 +50,14 @@ export function Toaster() {
           key={t.id}
           className={"rise pointer-events-auto flex max-w-sm items-start gap-2 rounded-xl border px-3.5 py-2.5 text-[13px] shadow-lg " + STYLE[t.kind]}
         >
-          <span className="mt-px shrink-0">{ICON[t.kind]}</span>
+          <Icon name={ICON[t.kind]} size={15} className="mt-0.5 shrink-0" />
           <span className="min-w-0 break-words">{t.msg}</span>
           <button
             onClick={() => setItems((xs) => xs.filter((x) => x.id !== t.id))}
             className="ml-1 shrink-0 text-faint hover:text-ink"
             aria-label="关闭提示"
           >
-            ✕
+            <Icon name="close" size={13} />
           </button>
         </div>
       ))}

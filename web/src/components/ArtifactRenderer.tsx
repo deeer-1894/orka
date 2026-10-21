@@ -1,6 +1,7 @@
 import type { ArtifactBlock } from "../types";
 import { Markdown } from "./Markdown";
 import { MermaidBlock } from "./MermaidBlock";
+import { Icon, type IconName } from "./Icon";
 
 // ArtifactRenderer turns an artifact's typed blocks into a page using trusted
 // components — no arbitrary HTML/JS, so it's safe to render on a public link.
@@ -113,7 +114,10 @@ function BadgeRow({ items }: { items: Record<string, unknown>[] }) {
 }
 
 type ChecklistItem = { label: string; status?: string };
-const STATUS_ICON: Record<string, string> = { done: "✅", doing: "🔵", todo: "⚪️", blocked: "🔴" };
+const STATUS_ICON: Record<string, { name: IconName; color: string }> = {
+  done: { name: "check", color: "text-ok" }, doing: { name: "dot", color: "text-accent" },
+  todo: { name: "dot", color: "text-border" }, blocked: { name: "alert", color: "text-accent" },
+};
 function Checklist({ items }: { items: ChecklistItem[] }) {
   const done = items.filter((it) => s(it.status) === "done").length;
   const pct = items.length ? Math.round((done / items.length) * 100) : 0;
@@ -130,7 +134,7 @@ function Checklist({ items }: { items: ChecklistItem[] }) {
       <div className="flex flex-col gap-1">
         {items.map((it, i) => (
           <div key={i} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface2/50">
-            <span className="text-[13px]">{STATUS_ICON[s(it.status) || "todo"] || "⚪️"}</span>
+            {(() => { const st = STATUS_ICON[s(it.status) || "todo"] || STATUS_ICON.todo; return <Icon name={st.name} size={14} className={"shrink-0 " + st.color} />; })()}
             <span className={"text-[13.5px] " + (s(it.status) === "done" ? "text-muted line-through" : "text-ink")}>{it.label}</span>
           </div>
         ))}

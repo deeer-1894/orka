@@ -950,7 +950,7 @@ func titleSnippet(msg string) string {
 		return string(r[:24]) + "…"
 	}
 	if len(r) == 0 {
-		return "New chat"
+		return "新对话"
 	}
 	return t
 }

@@ -3,6 +3,7 @@ import { api } from "../api";
 import type { Conversation, ConversationShare } from "../types";
 import { toast, toastError } from "../lib/toast";
 import { useOverlay } from "../lib/useOverlay";
+import { Icon } from "./Icon";
 
 // ShareDialog lets a conversation owner grant/revoke access by email. viewer =
 // read-only; editor = may also send (running in the owner's workspace).
@@ -38,11 +39,11 @@ export function ShareDialog({ conv, onClose, onChanged }: { conv: Conversation; 
 
   return (
     <div className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6" onClick={onClose}>
-      <div ref={panelRef} role="dialog" aria-modal="true" aria-label="分享会话" className="pop-in w-full max-w-md rounded-2xl border border-border bg-surface p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label="分享对话" className="pop-in w-full max-w-md rounded-2xl border border-border bg-surface p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-1 flex items-center gap-2">
-          <span className="text-[15px]">🔗</span>
-          <span className="flex-1 truncate text-[15px] font-medium text-ink">分享会话</span>
-          <button onClick={onClose} className="text-faint hover:text-ink">✕</button>
+          <Icon name="link" size={15} className="text-muted" />
+          <span className="flex-1 truncate text-[15px] font-medium text-ink">分享对话</span>
+          <button onClick={onClose} aria-label="关闭" title="关闭" className="grid h-7 w-7 place-items-center rounded-lg text-faint hover:bg-surface2 hover:text-ink"><Icon name="close" size={15} /></button>
         </div>
         <p className="mb-3 truncate text-[12px] text-faint">{conv.title}</p>
 
@@ -83,14 +84,14 @@ export function ShareDialog({ conv, onClose, onChanged }: { conv: Conversation; 
                   <option value="viewer">只读</option>
                   <option value="editor">可编辑</option>
                 </select>
-                <button onClick={() => apply(s.email, "none")} disabled={busy} className="text-[12px] text-faint hover:text-accent" title="移除">
-                  ✕
+                <button onClick={() => apply(s.email, "none")} disabled={busy} className="text-[12px] text-faint hover:text-accent" title="移除" aria-label="移除">
+                  <Icon name="close" size={13} />
                 </button>
               </div>
             ))}
           </div>
         )}
-        <p className="mt-3 text-[11px] text-faint">只读用户可查看会话与产出文件;可编辑用户还能继续发送消息(在你的工作区中运行)。</p>
+        <p className="mt-3 text-[11px] text-faint">只读用户可查看对话与产出文件;可编辑用户还能继续发送消息(在你的工作区中运行)。</p>
       </div>
     </div>
   );

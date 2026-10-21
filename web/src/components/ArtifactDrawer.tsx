@@ -11,13 +11,13 @@ import type { WorkbenchTab as Tab } from "../lib/workbenchTabs";
 const FilesPanel = lazy(() => import("./FilesPanel").then(m => ({ default: m.FilesPanel })));
 
 const TAB_META: Record<Tab, { label: string; tip: string }> = {
-  files: { label: "文件", tip: "本会话的文件" },
+  files: { label: "文件", tip: "本对话的文件" },
   artifacts: { label: "页面", tip: "可分享的可视化页面" },
   runs: { label: "运行记录", tip: "每次任务运行的结果、验收证据与继续执行" },
 };
 type Face = "stage" | "ops";
 const FACES: { id: Face; label: string; tip: string; icon: IconName; subs: Tab[] }[] = [
-  { id: "stage", label: "成果", tip: "会话文件与可分享页面", icon: "folder", subs: ["files", "artifacts"] },
+  { id: "stage", label: "成果", tip: "对话文件与可分享页面", icon: "folder", subs: ["files", "artifacts"] },
   { id: "ops", label: "运行", tip: "运行记录、验收证据与继续执行", icon: "play", subs: ["runs"] },
 ];
 function faceOf(tab: Tab): Face {
@@ -166,8 +166,8 @@ export function ArtifactDrawer({
           <button
             onClick={onClose}
             className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-faint hover:bg-surface2"
-            title="Close"
-            aria-label="关闭工件面板"
+            title="关闭"
+            aria-label="关闭页面面板"
           >
             <Icon name="close" size={16} />
           </button>

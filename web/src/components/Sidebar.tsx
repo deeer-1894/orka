@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Conversation, MessageSearchHit } from "../types";
 import { api } from "../api";
 import { Icon } from "./Icon";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { confirmDialog } from "../lib/confirm";
 
 // Time buckets so a long history reads as 今天/昨天/近7天/更早 instead of one
@@ -39,6 +40,20 @@ function highlight(text: string, q: string): React.ReactNode {
     i = at + q.length;
   }
   return parts;
+}
+
+// SectionHeader titles a part of the conversation list; with onToggle it folds
+// the part away and shows how many it holds.
+function SectionHeader({ label, count, open, onToggle, children }: { label: string; count?: number; open?: boolean; onToggle?: () => void; children?: React.ReactNode }) {
+  const text = <>{label}{count !== undefined && <span className="ml-1 normal-case tracking-normal">· {count}</span>}</>;
+  return <div className="mt-3 flex items-center justify-between px-1 first:mt-0">
+    {onToggle ? (
+      <button onClick={onToggle} aria-expanded={open} className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] uppercase tracking-wider text-faint hover:text-ink">
+        <Icon name="chevron" size={11} className={"transition-transform " + (open ? "" : "-rotate-90")} />{text}
+      </button>
+    ) : <span className="px-2 text-[11px] uppercase tracking-wider text-faint">{text}</span>}
+    {children}
+  </div>;
 }
 
 // relTime is a compact "2小时前 / 3天前 / 6/21" used to disambiguate same-titled
@@ -104,7 +119,14 @@ export function Sidebar({
     () => (q ? conversations.filter((c) => (c.title || "").toLowerCase().includes(q)) : conversations),
     [conversations, q],
   );
-  const groups = useMemo(() => groupByTime(filtered), [filtered]);
+  // Task runs live in conversations of their own; they are kept out of the
+  // everyday list and folded into one section, opened when one is active.
+  const own = useMemo(() => filtered.filter((c) => !scheduledIds.has(c.conversation_id)), [filtered, scheduledIds]);
+  const taskConvs = useMemo(() => filtered.filter((c) => scheduledIds.has(c.conversation_id)), [filtered, scheduledIds]);
+  const groups = useMemo(() => groupByTime(own), [own]);
+  const [tasksOpen, setTasksOpen] = useState(false);
+  const [sharedOpen, setSharedOpen] = useState(true);
+  useEffect(() => { if (scheduledIds.has(activeID)) setTasksOpen(true); }, [activeID, scheduledIds]);
 
   // Cross-conversation full-text search: debounce the query and ask the backend
   // for message-body matches (titles are filtered locally above). Hits in
@@ -140,7 +162,6 @@ export function Sidebar({
   const ConvRow = (c: Conversation) => {
     const active = c.conversation_id === activeID;
     const running = runningIds.includes(c.conversation_id);
-    const scheduled = scheduledIds.has(c.conversation_id);
     const isBranch = !!c.parent_conversation_id;
     if (editing === c.conversation_id) {
       return (
@@ -176,14 +197,24 @@ export function Sidebar({
       >
         {isBranch && <Icon name="share" size={12} className="shrink-0 rotate-90 text-faint" />}
         {running && <span className="inline-flex shrink-0 items-center" role="status"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ok" title="运行中" /><span className="sr-only">运行中</span></span>}
-        {scheduled && <span className="shrink-0 text-faint" title="定时任务的对话"><Icon name="clock" size={12} /></span>}
         <span className="flex-1 truncate text-[14px]">{c.title}</span>
         {/* disambiguate same-titled conversations with a timestamp */}
         {dup && <span className="shrink-0 text-[10px] text-faint group-hover:hidden">{relTime(c.created_at)}</span>}
-        {(c.shares?.length ?? 0) > 0 && <span className="shrink-0 text-[11px] group-hover:hidden" title={`已分享给 ${c.shares!.length} 人`}>🔗</span>}
-        <button onClick={(e) => { e.stopPropagation(); onShare(c.conversation_id); }} className="hidden px-1 text-faint hover:text-accent group-hover:block" title="分享" aria-label="分享会话"><Icon name="share" size={14} /></button>
-        <button onClick={(e) => { e.stopPropagation(); setDraft(c.title); setEditing(c.conversation_id); }} className="hidden px-1 text-faint hover:text-ink group-hover:block" title="重命名" aria-label="重命名会话"><Icon name="rename" size={14} /></button>
-        <button onClick={async (e) => { e.stopPropagation(); if (await confirmDialog({ title: "删除这个会话?", body: "删除后无法恢复。", confirmText: "删除", danger: true })) onDelete(c.conversation_id); }} className="hidden px-1 text-faint hover:text-accent group-hover:block" title="删除" aria-label="删除会话"><Icon name="trash" size={14} /></button>
+        {(c.shares?.length ?? 0) > 0 && <span className="shrink-0 text-faint group-hover:hidden" title={`已分享给 ${c.shares!.length} 人`}><Icon name="link" size={12} /></span>}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button onClick={(e) => e.stopPropagation()} aria-label={`${c.title} 的更多操作`} title="更多操作"
+              className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-faint opacity-0 hover:bg-surface2 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100">
+              <Icon name="more" size={15} />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-40" onClick={(e) => e.stopPropagation()}>
+            <DropdownMenuItem onSelect={() => { setDraft(c.title); setEditing(c.conversation_id); }}><Icon name="rename" size={14} className="text-muted" />重命名</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onShare(c.conversation_id)}><Icon name="share" size={14} className="text-muted" />分享</DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={async () => { if (await confirmDialog({ title: "删除这个对话？", body: "删除后无法恢复。", confirmText: "删除", danger: true })) onDelete(c.conversation_id); }} className="text-accent"><Icon name="trash" size={14} />删除</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     );
   };
@@ -208,7 +239,7 @@ export function Sidebar({
             onClick={onNew}
             className="w-full flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2.5 text-[14px] text-ink hover:bg-surface transition hover:border-accent/40"
           >
-            <span className="text-accent text-[16px] leading-none">+</span> New chat
+            <Icon name="plus" size={16} className="text-accent" /> 新对话
           </button>
           <button
             onClick={() => { onOpenTasks(); onSelectClose?.(); }}
@@ -225,33 +256,40 @@ export function Sidebar({
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索会话…"
+              placeholder="搜索对话…"
               className="w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 pl-7 text-[12.5px] outline-none focus:border-accent/50"
             />
           </div>
         </div>
 
-        <div className="mt-2 flex items-center justify-between px-3">
-          <span className="text-[11px] uppercase tracking-wider text-faint">{q ? `${filtered.length} 个结果` : "会话"}</span>
-          {conversations.length > 1 && (
-            <button onClick={onPrune} className="text-[11px] text-faint hover:text-accent" title="删除所有没有消息的空会话">
-              清理空会话
-            </button>
-          )}
-        </div>
-        <div className="mt-1 flex-1 overflow-y-auto px-2 pb-2">
+        <div className="mt-2 flex-1 overflow-y-auto px-2 pb-2">
+          <SectionHeader label={q ? `${filtered.length} 个结果` : "对话"}>
+            {conversations.length > 1 && <DropdownMenu>
+              <DropdownMenuTrigger aria-label="对话列表的更多操作" title="更多操作" className="grid h-6 w-6 place-items-center rounded-md text-faint hover:bg-surface hover:text-ink">
+                <Icon name="more" size={14} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem onSelect={onPrune}><Icon name="trash" size={14} className="text-muted" />清理空对话</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>}
+          </SectionHeader>
           {conversations.length === 0 && (
             <div className="px-2 py-4 text-[12.5px] leading-relaxed text-muted">
-              还没有会话。点上面的 <span className="text-ink">New chat</span> 描述一个目标,Orka 会自己拆步骤并执行。
+              还没有对话。点上面的<span className="text-ink">新对话</span>，描述一个目标，Orka 会自己拆步骤并执行。
             </div>
           )}
-          {conversations.length > 0 && filtered.length === 0 && <div className="px-2 py-2 text-[13px] text-faint">无匹配会话</div>}
+          {conversations.length > 0 && filtered.length === 0 && <div className="px-2 py-2 text-[13px] text-faint">无匹配对话</div>}
           {groups.map((g) => (
             <div key={g.label}>
               <div className="px-3 pb-0.5 pt-2 text-[10.5px] uppercase tracking-wider text-faint/80">{g.label}</div>
               {g.items.map(ConvRow)}
             </div>
           ))}
+
+          {taskConvs.length > 0 && <>
+            <SectionHeader label="任务对话" count={taskConvs.length} open={tasksOpen || !!q} onToggle={() => setTasksOpen((o) => !o)} />
+            {(tasksOpen || !!q) && taskConvs.map(ConvRow)}
+          </>}
 
           {/* Cross-conversation message matches (body text), below title matches. */}
           {q && (msgHits.length > 0 || searching) && (
@@ -266,7 +304,7 @@ export function Sidebar({
                   className="group cursor-pointer rounded-lg px-3 py-1.5 text-muted transition hover:bg-surface"
                   title={h.title}
                 >
-                  <div className="truncate text-[13px] text-ink">{h.title || "未命名会话"}</div>
+                  <div className="truncate text-[13px] text-ink">{h.title || "未命名对话"}</div>
                   <div className="line-clamp-2 text-[11.5px] text-faint">{highlight(h.snippet, q)}</div>
                 </div>
               ))}
@@ -275,8 +313,8 @@ export function Sidebar({
 
           {!q && shared.length > 0 && (
             <>
-              <div className="mt-4 mb-1 px-3 text-[11px] uppercase tracking-wider text-faint">分享给我的</div>
-              {shared.map((c) => {
+              <SectionHeader label="分享给我的" count={shared.length} open={sharedOpen} onToggle={() => setSharedOpen((o) => !o)} />
+              {sharedOpen && shared.map((c) => {
                 const active = c.conversation_id === activeID;
                 const role = c.shares?.find((s) => s.email === email)?.role;
                 return (
@@ -292,7 +330,7 @@ export function Sidebar({
                     }
                     title={`由 ${c.owner_email} 分享`}
                   >
-                    <span className="shrink-0 text-[11px]">{role === "editor" ? "✏️" : "👁"}</span>
+                    <span className="shrink-0 text-faint" title={role === "editor" ? "可编辑" : "只读"}><Icon name={role === "editor" ? "rename" : "eye"} size={13} /></span>
                     <span className="flex-1 truncate text-[14px]" title={c.title}>{c.title}</span>
                     <span className="shrink-0 truncate text-[10.5px] text-faint">{c.owner_email?.split("@")[0]}</span>
                   </div>
@@ -320,11 +358,11 @@ export function Sidebar({
           </button>
           <button
             onClick={onSignOut}
-            className="rounded-lg px-2 py-1 text-[12px] text-faint hover:bg-surface hover:text-accent"
+            className="grid h-8 w-8 place-items-center rounded-lg text-faint hover:bg-surface hover:text-accent"
             title="退出登录"
             aria-label="退出登录"
           >
-            ⎋
+            <Icon name="logout" size={15} />
           </button>
         </div>
       </div>

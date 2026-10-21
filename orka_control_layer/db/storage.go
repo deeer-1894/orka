@@ -181,6 +181,21 @@ func (s *Storage) GetUser(ctx context.Context, email string) (*User, error) {
 	return &out, nil
 }
 
+// MarkOnboarding records a finished first-run step for the user.
+func (s *Storage) MarkOnboarding(ctx context.Context, email, step string) error {
+	if step != OnboardingTour && step != OnboardingDismissed {
+		return fmt.Errorf("unknown onboarding step %q", step)
+	}
+	res, err := s.Users.UpdateOne(ctx, bson.M{"email": email}, bson.M{"$addToSet": bson.M{"onboarding": step}})
+	if err != nil {
+		return fmt.Errorf("mark onboarding: %w", err)
+	}
+	if res.MatchedCount == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ListConversationsByOwner returns a user's conversations, newest first.
 func (s *Storage) ListConversationsByOwner(ctx context.Context, owner string, page, size int64) ([]ConversationTable, error) {
 	var out []ConversationTable
@@ -273,7 +288,7 @@ func (s *Storage) DeleteConversation(ctx context.Context, id string) error {
 }
 
 // PruneEmptyConversations deletes the owner's conversations that have no chat
-// messages (the unused "New chat" placeholders). Returns the number removed.
+// messages (the unused "新对话" placeholders). Returns the number removed.
 func (s *Storage) PruneEmptyConversations(ctx context.Context, owner string) (int, error) {
 	convs, err := s.ListConversationsByOwner(ctx, owner, 0, 10000)
 	if err != nil {

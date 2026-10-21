@@ -1,8 +1,8 @@
-// One consistent monoline icon set for functional chrome (header, composer,
-// sidebar), so the UI stops mixing emoji (inconsistent across OS/fonts, can't be
-// themed) with the hand-drawn SVGs. Content-semantic glyphs (weather, file-type
-// categories) keep their emoji. All icons stroke currentColor → inherit the
-// terracotta accent / muted tones from their context.
+// One consistent monoline icon set for every UI glyph, so the app never mixes
+// emoji (inconsistent across OS/fonts, can't be themed) with the hand-drawn
+// SVGs. Only weather conditions keep their emoji: they are content, not chrome.
+// All icons stroke currentColor → inherit the terracotta accent / muted tones
+// from their context. tests/copy.test.mjs keeps emoji out of the UI.
 
 export type IconName =
   | "bell" | "sun" | "moon" | "paperclip" | "sparkle" | "at" | "search"
@@ -10,9 +10,25 @@ export type IconName =
   | "file" | "folder" | "link" | "globe" | "calc" | "ruler" | "book" | "chart"
   | "table" | "qr" | "code" | "deck" | "users" | "wrench" | "image"
   | "copy" | "refresh" | "gear" | "chevron" | "trash" | "eye" | "check"
-  | "download" | "play" | "plug" | "keyboard" | "hand" | "sort" | "filter";
+  | "download" | "play" | "plug" | "keyboard" | "hand" | "sort" | "filter"
+  | "logout" | "more" | "chat" | "history" | "alert" | "info" | "ban" | "thought"
+  | "external" | "undo" | "sliders" | "layers" | "dot" | "panel";
 
 const PATHS: Record<IconName, React.ReactNode> = {
+  logout: <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 8l-4 4 4 4M6 12h10" />,
+  more: <path d="M5 12h.01M12 12h.01M19 12h.01" strokeWidth={3} />,
+  chat: <path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.2A8 8 0 1 1 20 12Z" />,
+  history: <><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5" /><path d="M12 8v4l3 2" /></>,
+  alert: <path d="M12 3 2 20h20L12 3ZM12 10v4M12 17h.01" />,
+  info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></>,
+  ban: <><circle cx="12" cy="12" r="9" /><path d="m5.6 5.6 12.8 12.8" /></>,
+  thought: <path d="M7 18a4 4 0 0 1-.6-8 5.5 5.5 0 0 1 10.7-1A4 4 0 0 1 17 18H7ZM6 21h.01M9 21h.01" />,
+  external: <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />,
+  undo: <path d="M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-4" />,
+  sliders: <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0M14 4v4M8 10v4M16 16v4" />,
+  layers: <path d="m12 3 9 5-9 5-9-5 9-5ZM3 13l9 5 9-5" />,
+  dot: <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />,
+  panel: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>,
   sort: <path d="M7 4v16M4 7l3-3 3 3M17 20V4M14 17l3 3 3-3" />,
   filter: <path d="M4 6h16M7 12h10M10 18h4" />,
   bell: <path d="M6 8a6 6 0 0 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9M10 21a2 2 0 0 0 4 0" />,
@@ -76,4 +92,14 @@ export function Icon({ name, size = 18, className = "", strokeWidth = 1.7 }: { n
       {PATHS[name]}
     </svg>
   );
+}
+
+// fileIconName picks the icon for a file by its extension, so every list of
+// files (composer chips, thread, preview, files panel) shows the same glyph.
+export function fileIconName(name: string): IconName {
+  if (/\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(name)) return "image";
+  if (/\.(xlsx?|csv|tsv|json|xml|ndjson)$/i.test(name)) return "table";
+  if (/\.(pptx?|key)$/i.test(name)) return "deck";
+  if (/\.(py|js|jsx|ts|tsx|go|java|c|h|cpp|rs|sh|rb|html?|css)$/i.test(name)) return "code";
+  return "file";
 }

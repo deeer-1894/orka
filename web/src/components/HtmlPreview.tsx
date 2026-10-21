@@ -23,7 +23,7 @@ export function HtmlPreview({ text, name, conv }: { text: string; name: string; 
   if (error) return <p role="alert" className="p-4 text-sm text-accent">无法加载页面：{error}</p>;
   if (!preview) return <p role="status" className="p-4 text-sm text-muted">正在加载页面…</p>;
   return <>
-    {preview.skipped.length > 0 && <p role="status" className="border-b border-border px-4 py-2 text-xs text-muted">部分资源未加载（{preview.skipped.length} 项）。预览支持会话内的图片、样式和脚本；外部网络资源不会加载。</p>}
+    {preview.skipped.length > 0 && <p role="status" className="border-b border-border px-4 py-2 text-xs text-muted">部分资源未加载（{preview.skipped.length} 项）。预览支持对话内的图片、样式和脚本；外部网络资源不会加载。</p>}
     <iframe ref={frame} title={`HTML 页面：${name}`} sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={preview.document} className="h-[70vh] min-h-[280px] w-full border-0 bg-white" />
   </>;
 }
