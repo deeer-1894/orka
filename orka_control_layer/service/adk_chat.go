@@ -44,6 +44,11 @@ type ChatRunRequest struct {
 	ActiveSkill     string            `json:"active_skill"`  // user-locked skill mode (deterministic prompt injection)
 	Trigger         string            `json:"trigger"`       // manual | schedule (audit: how the run was started)
 	ConfirmRisky    bool              `json:"confirm_risky"` // gate side-effecting tools behind user approval
+	// PlanReview pauses the run once it has a plan, for the user to approve.
+	PlanReview bool `json:"plan_review"`
+	// ApprovedPlan carries the step titles the user confirmed when resuming a
+	// plan-review pause.
+	ApprovedPlan []string `json:"approved_plan,omitempty"`
 	// ToolPolicy is the task's declared policy for an unattended run, set by the
 	// trigger that started it; never bound from a client.
 	ToolPolicy *db.TaskToolPolicy `json:"-"`
@@ -278,6 +283,13 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		}
 		deps.SystemPrompt = base + "\n\n[Active skill mode]\n" + sp
 	}
+	if planReviewActive(req) {
+		base := deps.SystemPrompt
+		if base == "" {
+			base = middlewares.DefaultSystemPrompt
+		}
+		deps.SystemPrompt = base + "\n\n" + planReviewNotice
+	}
 
 	rc := &agent.RunContext{Ctx: ctx, Vars: map[string]any{}, Meta: meta, Tools: tools}
 	// Serialize emits PER RUN (not globally): parallel sub-agents stream events
@@ -335,6 +347,9 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	// The user's reasoning intent for this task, resolved per model down in the
 	// provider client.
 	rc.Ctx = llm.WithThinking(rc.Ctx, req.DeepThinking)
+	if planReviewActive(req) {
+		rc.Ctx = withPlanReview(rc.Ctx)
+	}
 	// Record the shape of each model turn, so a run that stopped because it ran
 	// out of output room is distinguishable from one that finished speaking.
 	turns := newTurnTracker()
@@ -738,6 +753,7 @@ func (s *ChatService) resume(ctx context.Context, rc *agent.RunContext, req Chat
 		rc.Vars = c.Vars
 	}
 	s.Msg.Deliver(rc, raw, messages.Task("running", rc.Meta), true)
+	applyApprovedPlan(rc, req, func(m messages.Message) { s.Msg.Deliver(rc, raw, m, true) })
 	// Stateless resume: fold the user's answer into history and re-run the eino
 	// agent over the augmented messages (the clarify question was already recorded
 	// into the checkpoint's history before the pause).

@@ -40,6 +40,7 @@ export interface Message {
 }
 
 export interface ClarifyPayload {
+  kind?: "plan_review"; // a paused plan waiting for approval, not a question
   question: string;
   options?: string[];
   context?: string;

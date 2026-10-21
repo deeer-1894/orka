@@ -27,6 +27,8 @@ export interface RunParams {
   deepThinking?: string;
   fileIDs?: string[]; // uploaded attachment paths (text injected; images → VLM)
   confirmRisky?: boolean; // gate side-effecting tools behind user approval
+  planReview?: boolean; // pause on the plan for the user to approve before acting
+  approvedPlan?: string[]; // step titles the user approved, when resuming a plan review
   // attachOnly listens to an ALREADY-running conversation instead of starting a
   // new turn. Used after approving a paused danger tool: the backend resumes the
   // checkpointed run, so there is a live stream to join but no message to send.
@@ -312,6 +314,8 @@ export function useChatStreams(session?: SessionRecoveryStore) {
             deep_thinking: p.deepThinking ?? "",
             file_ids: p.fileIDs ?? [],
             confirm_risky: p.confirmRisky ?? false,
+            ...(p.planReview ? { plan_review: true } : {}),
+            ...(p.approvedPlan ? { approved_plan: p.approvedPlan } : {}),
           }),
           signal: ctrl.signal,
         });

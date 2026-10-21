@@ -62,6 +62,8 @@ type Message struct {
 
 // ClarifyMessage is the payload of an EventClarify message.
 type ClarifyMessage struct {
+	// Kind distinguishes special pauses ("plan_review"); empty is a question.
+	Kind      string   `json:"kind,omitempty"`
 	Question  string   `json:"question"`
 	Options   []string `json:"options,omitempty"`
 	Context   string   `json:"context,omitempty"`

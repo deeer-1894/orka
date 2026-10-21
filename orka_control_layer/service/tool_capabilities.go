@@ -41,6 +41,9 @@ type executionScopeKey struct{}
 // selected model's capabilities. Tool choice within that set is the model's.
 func filterToolsForRequest(ctx context.Context, tools []agent.BaseTool, req ChatRunRequest) []agent.BaseTool {
 	tools = filterEnabled(tools, req.EnabledTools)
+	if planReviewActive(req) {
+		tools = planReviewTools(tools)
+	}
 	if selected, ok := modelprofile.FromContext(ctx); ok && selected.Capabilities.Vision {
 		return tools
 	}

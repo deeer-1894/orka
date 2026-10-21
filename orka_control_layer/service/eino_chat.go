@@ -160,7 +160,7 @@ func BuildEinoAgent(ctx context.Context, client llm.Client, model, instruction s
 		Model:       newAgentModel(client, model, "orka"),
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(mainAgentTools(tools))},
-			ReturnDirectly:  clarifyReturnDirectly(),
+			ReturnDirectly:  returnDirectly(ctx),
 		},
 		MaxIterations: maxIters,
 		// Survive transient/mid-stream model failures instead of failing the run.
@@ -324,7 +324,7 @@ func BuildEinoDeepOrchestrator(ctx context.Context, client llm.Client, model, in
 		SubAgents:   subs,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: EinoTools(mainAgentTools(atomic))},
-			ReturnDirectly:  clarifyReturnDirectly(),
+			ReturnDirectly:  returnDirectly(ctx),
 			// Stream delegate events up so the UI keeps its per-agent lanes.
 			EmitInternalEvents: true,
 		},
@@ -369,7 +369,7 @@ func BuildEinoOrchestrator(ctx context.Context, client llm.Client, model, instru
 		Model:       newAgentModel(client, model, einoOrchestratorName),
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig:    compose.ToolsNodeConfig{UnknownToolsHandler: unknownToolReceipt, Tools: allTools},
-			ReturnDirectly:     clarifyReturnDirectly(),
+			ReturnDirectly:     returnDirectly(ctx),
 			EmitInternalEvents: true, // stream sub-agent events up for lane rendering
 		},
 		MaxIterations: maxIters,
@@ -651,6 +651,10 @@ func StreamEinoRun(ctx context.Context, rc *agent.RunContext, ag adk.Agent, emit
 				clar := clarifyFromArgs(pc.args)
 				rc.Messages = append(rc.Messages, messages.Chat(messages.RoleAssistant, "❓ "+clar.Question, rc.Meta))
 				rc.Interrupt = &agent.Interrupt{Reason: "clarify", Clarify: &clar}
+				return nil
+			}
+			if name == planToolName && planReviewing(ctx) && len(planTrackerFrom(ctx).snapshot()) > 0 {
+				planReviewPause(rc)
 				return nil
 			}
 			toolCalls++

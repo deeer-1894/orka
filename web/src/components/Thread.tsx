@@ -19,6 +19,9 @@ import { WeatherCard, parseWeatherCard } from "./WeatherCard";
 import { Icon, fileIconName, type IconName } from "./Icon";
 import { confirmDialog } from "../lib/confirm";
 import { toast, toastError } from "../lib/toast";
+import { deliverySummary, runProgress, stepGroups, stepSummary } from "../lib/runProgress";
+import { DeliveryCard, ProgressBar } from "./RunProgress";
+import { PlanReviewCard } from "./PlanReview";
 
 // Opening a workspace file is shared down the step tree (Steps → Step, AgentLane)
 // via context so a filename is clickable wherever it appears without prop drilling.
@@ -136,7 +139,7 @@ export function Thread({
   canRetry: boolean;
   messages: Message[];
   status: RunStatus;
-  onResume: (key: string, answer: string) => void;
+  onResume: (key: string, answer: string, approvedPlan?: string[]) => void;
   // Re-attach to a conversation whose paused run the server just resumed.
   onResumed?: (cid: string) => void;
   // Height of the floating composer, reserved as bottom padding so the last
@@ -211,6 +214,11 @@ export function Thread({
     return () => window.clearInterval(timer);
   }, [waitingAutoResume, recovery.run?.auto_resume_at]);
   const autoResume = failed ? autoResumeNotice(recovery.run, now) : undefined;
+  const live = status === "streaming";
+  const progress = useMemo(() => runProgress(messages), [messages]);
+  const delivery = useMemo(() => (live ? undefined : deliverySummary(messages)), [messages, live]);
+  // The bar earns its place on long work: a plan, or a run already past a few calls.
+  const showProgress = !!progress && ((live && (progress.total > 0 || progress.toolCalls >= 5)) || !!autoResume);
 
   // In-thread find: scan the loaded conversation for a query and jump between
   // hits. Frontend-only — searches the user/assistant/reasoning text already in
@@ -263,6 +271,9 @@ export function Thread({
     <DeliveryManifestCtx.Provider value={deliveryManifest}>
     <OpenFileCtx.Provider value={openFile}>
     <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto">
+      {showProgress && progress && <ProgressBar progress={progress} live={live} autoResume={autoResume}
+        onCancelAutoResume={onCancelAutoResume}
+        onShowPlan={() => { const i = blocks.map(b => b.kind).lastIndexOf("plan"); if (i >= 0) document.getElementById("block-" + i)?.scrollIntoView({ behavior: "smooth", block: "start" }); }} />}
       <ThreadOutline turns={turns} />
       <ThreadFind
         open={findOpen}
@@ -300,15 +311,18 @@ export function Thread({
               />
             )}
             {b.kind === "reasoning" && <Reasoning m={b.m} />}
-            {b.kind === "clarify" && <Clarify m={b.m} onResume={onResume} />}
+            {b.kind === "clarify" && ((b.m.payload as ClarifyPayload)?.kind === "plan_review"
+              ? <PlanReviewCard resumeKey={(b.m.payload as ClarifyPayload).resume_key} proposed={proposedPlan(messages, b.m)} active={i > lastUser && status !== "streaming"} onResume={onResume} />
+              : <Clarify m={b.m} onResume={onResume} />)}
             {b.kind === "confirm" && <ConfirmCard m={b.m} active={b.m.id === pendingConfirm} onResumed={onResumed} />}
             {b.kind === "plan" && <StructuredPlan plan={(b.m.payload as PlanPayload) ?? { steps: [] }} live={status === "streaming" && i >= lastUser} />}
             {b.kind === "weather" && <WeatherCard data={b.data} />}
-            {b.kind === "steps" && <Steps items={b.items} live={status === "streaming" && i === lastSteps && (activeExecution?.run ? b.items.some(m => m.meta?.run_id === activeExecution.run) : i > lastUser)} />}
+            {b.kind === "steps" && <Steps all={messages} items={b.items} live={status === "streaming" && i === lastSteps && (activeExecution?.run ? b.items.some(m => m.meta?.run_id === activeExecution.run) : i > lastUser)} />}
           </div>
           );
         })}
         {thinking && <Thinking />}
+        {delivery && <DeliveryCard summary={delivery} onOpenFile={(f) => openFile(f)} />}
         {!readOnlyFiles && canAct && !failed && lastAssistant > lastUser && lastUserPrompt && blocks[lastAssistant].kind === "assistant" && (
           <FollowUps ownerEmail={ownerEmail}
             conversationID={conversationID}
@@ -347,6 +361,17 @@ export function Thread({
     </DeliveryManifestCtx.Provider>
     </FileScopeCtx.Provider>
   );
+}
+
+// proposedPlan is the plan a review pause waits on: the run's latest plan
+// snapshot before the pause.
+function proposedPlan(messages: Message[], pause: Message): string[] {
+  let steps: string[] = [];
+  for (const m of messages) {
+    if (m.id === pause.id) break;
+    if (m.type === "plan" && m.meta?.run_id === pause.meta?.run_id) steps = ((m.payload as PlanPayload)?.steps || []).map(s => s.title);
+  }
+  return steps;
 }
 
 // SessionFiles pins the workspace files this conversation produced, so they're
@@ -725,7 +750,7 @@ function InlineComputer({ live, frames }: { live: boolean; frames: BrowserPayloa
   );
 }
 
-function Steps({ items, live }: { items: Message[]; live?: boolean }) {
+function Steps({ all, items, live }: { all: Message[]; items: Message[]; live?: boolean }) {
   // Default-expanded while the run is live (the execution timeline IS the
   // product's differentiator); the user can still collapse, and it auto-folds
   // once the run settles — unless they pinned it open.
@@ -768,13 +793,7 @@ function Steps({ items, live }: { items: Message[]; live?: boolean }) {
       )}
       {open && (
         <div className="mt-2 border-l-2 border-border pl-4">
-          {groupRuns(own).map((g) =>
-            g.items.length > 1 ? (
-              <CollapsedRun key={g.items[0].id} items={g.items} />
-            ) : (
-              <TimelineRow key={g.items[0].id} m={g.items[0]} />
-            ),
-          )}
+          <OwnSteps all={all} items={own} live={!!live} />
           {live && (
             <div className="flex items-center gap-2 py-1 text-[12px] text-muted">
               <span className="-ml-[21px] h-2 w-2 animate-pulse rounded-full bg-ok ring-2 ring-surface" />
@@ -788,6 +807,39 @@ function Steps({ items, live }: { items: Message[]; live?: boolean }) {
       )}
     </div>
   );
+}
+
+// OwnSteps lays out the orchestrator's steps. With a plan, each plan item folds
+// its calls into one line ("搜索 3 次 · 读取网页 5 个"); failures stay visible
+// and the item in progress shows its latest call. Without a plan, consecutive
+// same-tool calls fold as before.
+function OwnSteps({ all, items, live }: { all: Message[]; items: Message[]; live: boolean }) {
+  const groups = useMemo(() => stepGroups(all, items), [all, items]);
+  const planned = groups.some(g => g.index >= 0);
+  if (!planned) return <>{groupRuns(items).map((g) =>
+    g.items.length > 1 ? <CollapsedRun key={g.items[0].id} items={g.items} /> : <TimelineRow key={g.items[0].id} m={g.items[0]} />,
+  )}</>;
+  return <>{groups.map((g, i) => <PlanStepGroup key={g.key} title={g.title} index={g.index} items={g.items} current={live && i === groups.length - 1} />)}</>;
+}
+
+function PlanStepGroup({ title, index, items, current }: { title: string; index: number; items: Message[]; current: boolean }) {
+  const [open, setOpen] = useState(false);
+  const failed = items.filter(m => m.type === "tool" && normalizeToolReceipt((m.payload as ToolPayload) || { tool: "" }).error);
+  const summary = stepSummary(items) || `${items.length} 步`;
+  const latest = items[items.length - 1];
+  return <div className="py-0.5">
+    <button onClick={() => setOpen(o => !o)} aria-expanded={open} className="relative flex w-full items-start gap-2 text-left text-[13px]">
+      <span className={"-ml-[21px] mt-1.5 h-2 w-2 shrink-0 rounded-full ring-2 ring-surface " + (failed.length ? "bg-accent" : current ? "animate-pulse bg-accent" : "bg-ok/70")} />
+      <span className="min-w-0 flex-1">
+        <span className="text-ink">{index >= 0 ? `步骤 ${index + 1} · ` : ""}{title}</span>
+        <span className="text-muted"> · {summary}</span>
+        {failed.length > 0 && <span className="text-accent"> · {failed.length} 次失败</span>}
+      </span>
+      <Icon name="chevron" size={12} className={"mt-1 shrink-0 text-faint transition-transform " + (open ? "" : "-rotate-90")} />
+    </button>
+    {open ? <div className="mt-0.5">{items.map(m => <TimelineRow key={m.id} m={m} />)}</div>
+      : <>{failed.map(m => <TimelineRow key={m.id} m={m} />)}{current && latest && !failed.includes(latest) && <TimelineRow m={latest} />}</>}
+  </div>;
 }
 
 // groupRuns collapses CONSECUTIVE successful calls of the same tool into one row.

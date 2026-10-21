@@ -291,6 +291,8 @@ test('run tab shows one usage line for the open conversation without quota or re
 });
 
 
+async function expectEventually(check,ms=5000){const end=Date.now()+ms;while(Date.now()<end){if(check())return;await new Promise(r=>setTimeout(r,50));}assert.fail('condition not met in time');}
+
 async function openWorkbench(a, tab) {
  const toggle=a.page.getByRole('button',{name:'切换工作台面板'});
  if(await toggle.getAttribute('aria-pressed')!=='true')await toggle.click();
@@ -569,6 +571,48 @@ test('workspace provenance stays distinct from declared deliverables and refusal
 
 const taskFixture=(extra={})=>({task_id:'t1',conversation_id:'task-conv',owner_email:'test@example.invalid',cron_status:'on',run_status:'done',created_at:1,next_run_at:Date.now()+3600000,variables:{title:'每日资讯简报',prompt_template:'搜索 AI 新闻并整理简报'},trigger:{kind:'schedule',cron:'0 9 * * 1-5',timezone:'Asia/Shanghai'},...extra});
 async function openTasks(a){await a.page.getByRole('button',{name:'定时任务',exact:true}).click();await a.page.getByRole('heading',{name:'定时任务'}).waitFor();}
+
+test('a long planned run folds its calls per plan step and closes with a delivery summary',async t=>{
+ const plan=(id,...st)=>msg(id,'plan','',{payload:{steps:st.map((status,i)=>({title:['收集资料','整理对比','写报告'][i],status,reason:status==='blocked'?'缺少数据源':undefined})),outputs:['report.md']}});
+ const tools=(from,name,count)=>Array.from({length:count},(_,i)=>msg('t'+(from+i),'tool','',{payload:{tool:name,args:{query:'q'},result:'ok'}}));
+ const history=[msg('u1','chat','调研并写报告'),msg('s2','task','',{action:'start'}),plan('p3','active','pending','pending'),...tools(100,'web_search',20),plan('p200','done','active','pending'),...tools(300,'fetch_url',20),plan('p400','done','done','blocked'),msg('a500','chat','报告已完成一部分。',{role:'assistant'}),msg('d600','task','',{action:'partial'})];
+ const a=await app(t,{history});await a.select('a');
+ await a.page.getByRole('button',{name:/查看 · 40 步/}).click();
+ const first=a.page.getByRole('button',{name:/步骤 1 · 收集资料 · 搜索 20 次/});await first.waitFor();
+ await a.page.getByRole('button',{name:/步骤 2 · 整理对比 · 读取网页 20 个/}).waitFor();
+ assert.equal(await a.page.getByText('搜索 “q”',{exact:false}).count(),0,'individual calls stay folded');
+ const card=a.page.getByRole('region',{name:'交付摘要'});await card.getByText(/部分完成/).waitFor();
+ await card.getByText('写报告',{exact:true}).waitFor();await card.getByText('· 缺少数据源').waitFor();
+ await card.getByRole('button',{name:'report.md'}).waitFor();
+ assert.equal(await a.page.getByRole('status',{name:'任务进度'}).count(),0,'no progress bar once the run ended');
+ await first.click();assert.equal(await first.getAttribute('aria-expanded'),'true');assert.equal(await a.page.getByText('搜索 “q”',{exact:false}).count(),20,'expanding shows the calls');
+ a.check();
+});
+
+test('plan review: the switch asks for it, the paused plan is edited in place and resumes with exactly those steps',async t=>{
+ const plan=msg('p2','plan','',{payload:{steps:[{title:'搜索资料',status:'pending'},{title:'写报告',status:'pending'}]}});
+ const pause=msg('c3','clarify','',{payload:{kind:'plan_review',question:'请确认执行计划',options:['开始执行'],resume_key:'rk-1'}});
+ const bodies=[];
+ const a=await app(t,{history:[msg('u1','chat','写一份报告'),plan,pause,msg('d4','task','',{action:'paused'})],handle:async({path,body,route})=>{if(path==='/chat/run'){bodies.push(body);await route.fulfill({contentType:'text/event-stream',body:`data: ${JSON.stringify(msg('d9','task','',{action:'done'}))}\n\n`});return true;}}});
+ await a.select('a');
+ const card=a.page.getByRole('region',{name:'执行计划审阅'});await card.waitFor();
+ assert.equal(await card.getByLabel('第 1 步',{exact:true}).inputValue(),'搜索资料');
+ await card.getByLabel('第 2 步',{exact:true}).fill('写报告并附来源');
+ await card.getByRole('button',{name:'添加步骤'}).click();await card.getByLabel('第 3 步',{exact:true}).fill('检查格式');
+ await card.getByRole('button',{name:'上移第 3 步'}).click();
+ await card.getByRole('button',{name:'删除第 1 步'}).click();
+ await card.getByRole('button',{name:'开始执行'}).click();
+ await card.getByText(/已确认/).waitFor();
+ const resumed=bodies.find(b=>b.resume_key==='rk-1');assert.ok(resumed,'resume sent');
+ assert.deepEqual(resumed.approved_plan,['检查格式','写报告并附来源']);
+ assert.match(resumed.message,/1\. 检查格式\n2\. 写报告并附来源/);
+ await a.page.getByRole('button',{name:'运行设置'}).click();await a.page.getByRole('menuitemcheckbox',{name:/先确认计划/}).click();await a.page.keyboard.press('Escape');
+ await a.page.getByRole('button',{name:'恢复默认：先确认计划'}).waitFor();
+ await a.page.locator('textarea').fill('下一个任务');await a.page.locator('textarea').press('Enter');
+ await expectEventually(()=>bodies.some(b=>b.message==='下一个任务'));
+ assert.equal(bodies.find(b=>b.message==='下一个任务').plan_review,true);
+ a.check();
+});
 
 test('first-run guide tracks real progress, records the tour and can be skipped for good',async t=>{
  const a=await app(t,{onboarding:[],handle:async({path,json})=>{if(path==='/models'){await json([{version:'auto',label:'自动选择',hint:''}]);return true;}}});

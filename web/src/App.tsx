@@ -197,6 +197,10 @@ function Workbench({
   // Gate side-effecting tools (terminal/browser/network/code) behind approval.
   const confirmRisky = conversationSettings.value.confirmRisky;
   const toggleConfirm = () => conversationSettings.patch({ confirmRisky: !confirmRisky });
+  // Review the plan before anything runs: off by default, like deep thinking a
+  // per-browser preference.
+  const [planReview, setPlanReview] = useState(() => { try { return localStorage.getItem("orka.planReview") === "1"; } catch { return false; } });
+  const togglePlanReview = useCallback(() => setPlanReview((v) => { try { localStorage.setItem("orka.planReview", v ? "0" : "1"); } catch { /* preference only */ } return !v; }), []);
   // Deep thinking, per task. Sent as INTENT ("on"/"off"), never as a provider
   // field: which field a model understands differs per model (glm takes
   // `thinking`, OpenAI `reasoning_effort`, Qwen `enable_thinking`), and the
@@ -436,7 +440,7 @@ function Workbench({
     async (msg: string, fileIDs: string[] = [], conversationID?: string) => {
       // Capture the request before any asynchronous conversation creation. The
       // composer may already have created its target while the user navigated.
-      const request = { message: msg, userEmail: user.email, selectedVersion: version, activeSkill: activeSkill ?? "", fileIDs: [...fileIDs], confirmRisky, deepThinking: deepThinking ? "on" : "off" };
+      const request = { message: msg, userEmail: user.email, selectedVersion: version, activeSkill: activeSkill ?? "", fileIDs: [...fileIDs], confirmRisky, deepThinking: deepThinking ? "on" : "off", planReview };
       const id = conversationID || activeID || await ensureConversation();
       if (statusOf(id) === "streaming" || recovery.isBusy(id) || runActions.actions.isBusy(id)) {
         await steer(id, msg, fileIDs);
@@ -450,7 +454,7 @@ function Workbench({
       });
       refreshTasks();
     },
-    [ensureConversation, run, steer, user.email, refreshTasks, refreshConversations, version, activeSkill, confirmRisky, deepThinking, recovery.isBusy, runActions.actions, activeID, statusOf],
+    [ensureConversation, run, steer, user.email, refreshTasks, refreshConversations, version, activeSkill, confirmRisky, deepThinking, planReview, recovery.isBusy, runActions.actions, activeID, statusOf],
   );
 
   // Re-send the last user message after a failure (network drop, sandbox down…).
@@ -485,8 +489,8 @@ function Workbench({
   );
 
   const onResume = useCallback(
-    async (resumeKey: string, answer: string) => {
-      run({ message: answer, conversationID: activeID, userEmail: user.email, resumeKey, selectedVersion: version });
+    async (resumeKey: string, answer: string, approvedPlan?: string[]) => {
+      run({ message: answer, conversationID: activeID, userEmail: user.email, resumeKey, selectedVersion: version, ...(approvedPlan ? { approvedPlan } : {}) });
       refreshTasks();
     },
     [run, activeID, user.email, refreshTasks, version],
@@ -654,7 +658,7 @@ function Workbench({
                 </div>
               </div>
             ) : (
-              <Composer draftState={conversationDraft} sessionRecovery={sessionRecovery} conversationID={activeID} ensureConversation={ensureConversation} blocked={recovery.busy || runActions.actions.isBusy(activeID) || connectionOf(activeID) === "stopping"} status={status} onSend={onSend} onKill={() => kill(activeID)} activeSkill={activeSkill} onPickSkill={setActiveSkill} runSettings={{ deepThinking, confirmRisky, toggleThinking, toggleConfirm }} />
+              <Composer draftState={conversationDraft} sessionRecovery={sessionRecovery} conversationID={activeID} ensureConversation={ensureConversation} blocked={recovery.busy || runActions.actions.isBusy(activeID) || connectionOf(activeID) === "stopping"} status={status} onSend={onSend} onKill={() => kill(activeID)} activeSkill={activeSkill} onPickSkill={setActiveSkill} runSettings={{ deepThinking, confirmRisky, planReview, toggleThinking, toggleConfirm, togglePlanReview }} />
             )}
           </div>
         </div>

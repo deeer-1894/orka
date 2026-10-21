@@ -18,7 +18,7 @@ function Fixture() {
     <output data-testid="creates">{creates}</output>
     <output data-testid="cancelled">{state.cancelled || 0}</output>
     {state.mode === "drawer" && <ArtifactDrawer open onClose={noop} tab={state.tab} setTab={tab => setState((s: any) => ({ ...s, tab }))} liveTab={null} email="me@example.com" conversationID={state.conversationID} onJumpToConversation={noop} focusArtifact={null} onClearArtifact={noop} />}
-    {state.mode === "composer" && <Composer status="idle" onSend={noop} onKill={noop} activeSkill={null} onPickSkill={noop} runSettings={{ deepThinking: false, confirmRisky: true, toggleThinking: noop, toggleConfirm: noop }} conversationID={state.conversationID} ensureConversation={async () => {
+    {state.mode === "composer" && <Composer status="idle" onSend={noop} onKill={noop} activeSkill={null} onPickSkill={noop} runSettings={{ deepThinking: false, confirmRisky: true, planReview: false, toggleThinking: noop, toggleConfirm: noop, togglePlanReview: noop }} conversationID={state.conversationID} ensureConversation={async () => {
       setCreates(n => n + 1); await new Promise(r => setTimeout(r, 100));
       setState((s: any) => s.conversationID ? s : ({ ...s, conversationID: "new" })); return "new";
     }} />}

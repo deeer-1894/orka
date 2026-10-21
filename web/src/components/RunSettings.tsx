@@ -9,8 +9,10 @@ import { Icon, type IconName } from "./Icon";
 export interface RunSettingsValue {
   deepThinking: boolean;
   confirmRisky: boolean;
+  planReview: boolean;
   toggleThinking: () => void;
   toggleConfirm: () => void;
+  togglePlanReview: () => void;
 }
 
 interface Setting { key: string; icon: IconName; label: string; detail: string; on: boolean; toggle: () => void; defaultOn: boolean; chip: string }
@@ -18,6 +20,7 @@ interface Setting { key: string; icon: IconName; label: string; detail: string; 
 function settingsOf(v: RunSettingsValue): Setting[] {
   return [
     { key: "thinking", icon: "sparkle", label: "深度思考", detail: "先充分推理再动手，适合难题，但更慢、更费用量", on: v.deepThinking, toggle: v.toggleThinking, defaultOn: false, chip: "深度思考" },
+    { key: "plan", icon: "check", label: "先确认计划", detail: "复杂任务先列出计划并暂停，你确认或修改后再开始执行", on: v.planReview, toggle: v.togglePlanReview, defaultOn: false, chip: "先确认计划" },
     { key: "confirm", icon: "shield", label: "高危操作需确认", detail: "执行终端命令、浏览器操作、网络请求、运行代码前先征求你确认", on: v.confirmRisky, toggle: v.toggleConfirm, defaultOn: true, chip: "高危操作不确认" },
   ];
 }
