@@ -91,7 +91,7 @@ test('file reference picker navigates into directories',async t=>{
  const a=await app(t); await a.select('a'); await a.page.locator('textarea').fill('@'); await a.page.locator('textarea').press('ArrowRight'); await a.page.getByRole('button',{name:'打开目录 reports'}).click(); await a.page.getByRole('button',{name:'引用 reports/deep.txt'}).click(); await a.page.getByRole('button',{name:'移除 reports/deep.txt'}).waitFor(); a.check();
 });
 test('history resume rejects unconfirmed response but allows legacy exhausted runs',async t=>{
- const a=await app(t,{runs:[record(),record({run_id:'exhausted',budget_hit:'tokens',conversation_id:'b'})]}); await a.page.getByRole('button',{name:'切换工作台面板'}).click(); await a.page.getByRole('tab',{name:'运营台',exact:false}).first().click();
+ const a=await app(t,{runs:[record(),record({run_id:'exhausted',budget_hit:'tokens',conversation_id:'b'})]}); await a.page.getByRole('button',{name:'切换工作台面板'}).click(); await a.page.getByRole('tab',{name:'运行',exact:false}).first().click();
  await a.page.getByRole('button',{name:'继续任务',exact:true}).first().click(); await a.page.getByText('服务未确认该任务继续运行',{exact:false}).first().waitFor(); assert.equal(a.requests.filter(r=>r.path==='/chat/resume_run').length,1); assert.equal(await a.page.getByRole('button',{name:'继续任务',exact:true}).count(),2); a.check();
 });
 test('stop failure is visible and does not claim idle',async t=>{
@@ -139,7 +139,7 @@ test('new-conversation rejected send retains input under the created conversatio
 test('history pagination advances offset and attention filter requests unfinished states',async t=>{
  const a=await app(t,{handle:async({path,body,json})=>{
   if(path==='/run/list'){await json({runs:[record({run_id:`page-${body.offset||0}`,prompt:`Page offset ${body.offset||0}`})],has_more:!body.offset});return true;}
- }});await a.page.getByRole('button',{name:'切换工作台面板'}).click();await a.page.getByRole('tab',{name:'运营台'}).click();await a.page.getByText('Page offset 0',{exact:true}).waitFor();await a.page.getByRole('button',{name:'下一页'}).click();await a.page.getByText('Page offset 50',{exact:true}).waitFor();await a.page.getByRole('button',{name:'需要处理',exact:true}).click();await a.page.getByText('Page offset 0',{exact:true}).waitFor();assert.ok(a.requests.some(r=>r.path==='/run/list'&&r.body.statuses?.includes('partial')&&r.body.statuses?.includes('interrupted')));a.check();
+ }});await a.page.getByRole('button',{name:'切换工作台面板'}).click();await a.page.getByRole('tab',{name:'运行'}).click();await a.page.getByText('Page offset 0',{exact:true}).waitFor();await a.page.getByRole('button',{name:'下一页'}).click();await a.page.getByText('Page offset 50',{exact:true}).waitFor();await a.page.getByRole('button',{name:'需要处理',exact:true}).click();await a.page.getByText('Page offset 0',{exact:true}).waitFor();assert.ok(a.requests.some(r=>r.path==='/run/list'&&r.body.statuses?.includes('partial')&&r.body.statuses?.includes('interrupted')));a.check();
 });
 
 test('retry pins the answered model profile and shows a stale-profile rejection',async t=>{
@@ -181,10 +181,6 @@ test('repeated reconciliation gap exits and offers manual reconnect',async t=>{
  }});await a.select('a');await a.page.locator('textarea').fill('gap twice');await a.page.locator('textarea').press('Enter');await a.page.getByRole('button',{name:'重新连接',exact:true}).waitFor();assert.equal(gaps,2);a.check();
 });
 
-test('advanced system status shows real readiness without claiming a model probe',async t=>{
- const a=await app(t,{handle:async({path,json,route})=>{if(path==='/system/status'){assert.equal(route.request().method(),'GET');await json({version:'test-revision',build_time:'2026-09-15T10:00:00Z',modified:true,started_at:'2026-09-15T10:01:00Z',ready:false,services:[{name:'tools',status:'unavailable',detail:'fixture unavailable'}],model_probe:'not_run'});return true;}}});
- await a.page.getByRole('button',{name:'切换工作台面板'}).click();await a.page.getByRole('tab',{name:'运营台'}).click();await a.page.getByRole('button',{name:'专业功能 展开'}).click();await a.page.getByRole('button',{name:'服务状态',exact:true}).click();await a.page.getByText('test-revision',{exact:false}).waitFor();await a.page.getByText('fixture unavailable',{exact:false}).waitFor();await a.page.getByText('模型调用检测：未执行',{exact:true}).waitFor();a.check();
-});
 
 test('XLSX preview switches sheets and displays cached formula results without evaluating formulas',async t=>{
  const {utils,write}=await import('xlsx');const workbook=utils.book_new();const first=utils.aoa_to_sheet([['Input','Total'],[3,6]]);first.B2={t:'n',v:6,f:'A2*2'};utils.book_append_sheet(workbook,first,'Summary');utils.book_append_sheet(workbook,utils.aoa_to_sheet([['Name'],['Second sheet data']]),'Details');const bytes=write(workbook,{type:'buffer',bookType:'xlsx'});
@@ -199,7 +195,7 @@ test('acceptance evidence stays in workbench history and distinguishes unchecked
  let checked=false;
  const a=await app(t,{history:[msg('u1','chat','Verify this')],runs:[record()],handle:async({path,body,json})=>{
   if(path==='/run/acceptance'){assert.equal(body.run_id,'run-a');await json({contract:{run_id:'run-a',requests:['Produce checked report'],truncated:false},checks:checked?[{at:'2026-09-15T10:00:00Z',spec_path:'acceptance.json',report:{ok:false,scope:'delivery',results:[{id:'chart',description:'Chart evidence',method:'manual',status:'unverified',detail:'No browser evidence'}]}}]:[]});return true;}
- }});await a.select('a');assert.equal(await a.page.getByRole('region',{name:'当前任务摘要'}).count(),0);assert.equal(await a.page.getByRole('main').getByRole('button',{name:'验收证据'}).count(),0);await openWorkbench(a,'运营台');await a.page.getByRole('article').getByRole('button',{name:'验收证据'}).click();await a.page.getByText('尚未检查，不能判定验收通过。',{exact:true}).waitFor();assert.equal(await a.page.getByText('检查通过',{exact:true}).count(),0);
+ }});await a.select('a');assert.equal(await a.page.getByRole('region',{name:'当前任务摘要'}).count(),0);assert.equal(await a.page.getByRole('main').getByRole('button',{name:'验收证据'}).count(),0);await openWorkbench(a,'运行');await a.page.getByRole('article').getByRole('button',{name:'验收证据'}).click();await a.page.getByText('尚未检查，不能判定验收通过。',{exact:true}).waitFor();assert.equal(await a.page.getByText('检查通过',{exact:true}).count(),0);
  checked=true;await a.page.getByRole('button',{name:'刷新验收记录'}).click();await a.page.getByText('No browser evidence',{exact:true}).waitFor();await a.page.getByText('未验证 · Chart evidence',{exact:true}).waitFor();a.check();
 });
 
@@ -210,9 +206,6 @@ test('delivery snapshots stay separate from current workspace and download with 
  }});await a.select('a');await a.page.getByRole('button',{name:'切换工作台面板'}).click();await a.page.getByRole('tab',{name:'成果'}).click();await a.page.getByText('当前工作区',{exact:true}).waitFor();await a.page.getByRole('button',{name:'交付快照'}).click();await a.page.getByText('fixture-checksum',{exact:false}).waitFor();const download=a.page.waitForEvent('download');await a.page.getByRole('link',{name:'下载快照 reports/final.txt'}).click();assert.equal((await download).suggestedFilename(),'final.txt');a.check();
 });
 
-test('system status HTTP errors are visible and can retry',async t=>{
- const a=await app(t,{handle:async({path,route})=>{if(path==='/system/status'){await route.fulfill({status:403,json:{msg:'status access denied'}});return true;}}});await a.page.getByRole('button',{name:'切换工作台面板'}).click();await a.page.getByRole('tab',{name:'运营台'}).click();await a.page.getByRole('button',{name:'专业功能 展开'}).click();await a.page.getByRole('button',{name:'服务状态',exact:true}).click();await a.page.getByRole('alert').filter({hasText:'status access denied'}).waitFor();assert.equal(await a.page.getByText('服务已就绪',{exact:true}).count(),0);a.check();
-});
 
 test('historical file links bind only the message run and matching manifest path',async t=>{
  const a=await app(t,{history:[
@@ -230,11 +223,11 @@ test('live browser evidence never embeds a shared VNC desktop',async t=>{
  const a=await app(t,{handle:async({path,route})=>{if(path==='/chat/run'){await route.fulfill({contentType:'text/event-stream',body:`data: ${JSON.stringify(msg('s1','browser','',{payload:{data:frame,url:'https://example.invalid',action:'screenshot'}}))}\n\n`});return true;}}});await a.select('a');await a.page.locator('textarea').fill('browser task');await a.page.locator('textarea').press('Enter');await a.page.getByAltText('本次运行截图').waitFor();assert.equal(await a.page.locator('iframe').count(),0);assert.equal(await a.page.locator('a[href*="6080"]').count(),0);assert.equal(await a.page.getByAltText('本次运行截图').getAttribute('src'),'data:image/png;base64,'+frame);a.check();
 });
 
-test('usage evidence exposes unknown usage and retries never send limits',async t=>{
+test('run usage line shows recorded tokens and retries never send limits',async t=>{
  const a=await app(t,{runs:[record()],handle:async({path,body,json,route})=>{
   if(path==='/run/run-a/budget'){assert.equal(route.request().method(),'GET');await json({run_id:'run-a',budget_run_id:'workflow-parent',status:'partial',limits:{max_tokens:2000000,max_wall_seconds:7200,max_steps:300},used_tokens:110,reserved_tokens:20,remaining_tokens:1999870,unknown_calls:1,unknown_tokens:100,estimated_tokens:30,used_steps:2,deadline:'2026-09-15T18:00:00Z',sources:[{source:'gui',used_tokens:110,reserved_tokens:20,unknown_calls:1,unknown_tokens:100,estimated_tokens:30}]});return true;}
   if(path==='/chat/run'){await route.fulfill({contentType:'text/event-stream',body:[msg('a2','chat','Budget output',{role:'assistant'}),msg('d3','task','',{action:'partial'})].map(m=>`data: ${JSON.stringify(m)}\n\n`).join('')});return true;}
- }});await a.select('a');await openBudget(a);await a.page.locator('textarea').fill('budgeted task');await a.page.locator('textarea').press('Enter');await a.page.getByText('Budget output',{exact:true}).waitFor();await openMetrics(a);await a.page.getByText('累计用量 110 tokens（含未知调用的保守占用） · 在途 20',{exact:true}).waitFor();await a.page.getByRole('button',{name:'用量明细'}).click();await a.page.getByText('未知用量：1 次调用，保守占用 100 tokens',{exact:true}).waitFor();await a.page.getByText('共享运行：workflow-parent',{exact:true}).waitFor();await openBudget(a);await a.page.getByRole('button',{name:'重新生成',exact:true}).click();await a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/run/list')).catch(()=>{});const sends=a.requests.filter(r=>r.path==='/chat/run');assert.equal(sends.length,2);assert.equal(sends[0].body.budget,undefined);assert.deepEqual(sends[1].body.budget,sends[0].body.budget);a.check();
+ }});await a.select('a');await openBudget(a);await a.page.locator('textarea').fill('budgeted task');await a.page.locator('textarea').press('Enter');await a.page.getByText('Budget output',{exact:true}).waitFor();await openMetrics(a);await a.page.getByText(/· 110 tokens$/).waitFor();await openBudget(a);await a.page.getByRole('button',{name:'重新生成',exact:true}).click();await a.page.waitForRequest(r=>new URL(r.url()).pathname.endsWith('/run/list')).catch(()=>{});const sends=a.requests.filter(r=>r.path==='/chat/run');assert.equal(sends.length,2);assert.equal(sends[0].body.budget,undefined);assert.deepEqual(sends[1].body.budget,sends[0].body.budget);a.check();
 });
 
 test('complete product path from named connection and capability to metered execution, private GUI, delivery and acceptance',async t=>{
@@ -257,7 +250,7 @@ test('complete product path from named connection and capability to metered exec
  }});
  await a.page.getByRole('button',{name:'模型配置',exact:true}).click();await a.page.getByRole('button',{name:'命名连接与能力检测'}).click();await a.page.getByRole('button',{name:'保存所有连接'}).click();await a.page.getByText('连接配置已保存',{exact:true}).waitFor();await a.page.getByRole('button',{name:'检测 工具调用 model-a'}).click();await a.page.getByText('工具调用：已验证',{exact:false}).waitFor();await a.page.getByRole('button',{name:'关闭命名连接'}).click();await a.page.getByRole('button',{name:'关闭模型配置'}).click();
  await a.select('a');await openBudget(a);await a.page.locator('textarea').fill('Complete delivery');await a.page.locator('textarea').press('Enter');await a.page.getByRole('button',{name:'停止',exact:true}).waitFor({state:'hidden'});await a.page.getByText('交付快照 · 版本 1',{exact:true}).waitFor();await a.page.getByRole('button',{name:/查看 · 1 步/}).click();await a.page.getByAltText('本次运行截图').waitFor();assert.equal(await a.page.locator('iframe').count(),0);
- await openWorkbench(a,'运营台');await a.page.getByRole('button',{name:'验收证据',exact:true}).click();await a.page.getByText('检查通过',{exact:true}).waitFor();await openWorkbench(a,'成果');await a.page.getByRole('button',{name:'交付快照',exact:true}).click();await a.page.getByText('当前工作区',{exact:true}).waitFor();const download=a.page.waitForEvent('download');await a.page.getByRole('link',{name:'下载快照 final.txt'}).click();assert.equal((await download).suggestedFilename(),'final.txt');a.check();
+ await openWorkbench(a,'运行');await a.page.getByRole('button',{name:'验收证据',exact:true}).click();await a.page.getByText('检查通过',{exact:true}).waitFor();await openWorkbench(a,'成果');await a.page.getByRole('button',{name:'交付快照',exact:true}).click();await a.page.getByText('当前工作区',{exact:true}).waitFor();const download=a.page.waitForEvent('download');await a.page.getByRole('link',{name:'下载快照 final.txt'}).click();assert.equal((await download).suggestedFilename(),'final.txt');a.check();
 });
 
 test('session drafts reload with attachments and conversation-specific model',async t=>{
@@ -277,7 +270,7 @@ test('complete retry survives reload and remains separate from the newly edited 
 });
 
 test('logout clears persisted drafts and retries before a different owner signs in',async t=>{
- let owner='test@example.invalid';const a=await app(t,{handle:async({path,json})=>{if(path==='/auth/me'){await json({email:owner,name:'Test'});return true;}if(path==='/conversation/list'){await json(['a','b'].map(id=>({conversation_id:id,title:`Conversation ${id}`,owner_email:owner,created_at:1})));return true;}}});await a.select('a');await a.page.locator('textarea').fill('Owner A private draft');await a.page.locator('textarea').press('Enter');await a.page.getByText('发送失败',{exact:false}).first().waitFor();const count=()=>a.page.evaluate(()=>Object.keys(sessionStorage).filter(k=>k.startsWith('orka.session.')).length);assert.ok(await count()>0);await a.page.getByTitle('Sign out',{exact:true}).click();assert.equal(await count(),0);owner='other@example.invalid';await a.page.reload();await a.select('a');assert.equal(await a.page.locator('textarea').inputValue(),'');assert.equal(await a.page.getByRole('button',{name:'重新生成',exact:true}).count(),0);a.check();
+ let owner='test@example.invalid';const a=await app(t,{handle:async({path,json})=>{if(path==='/auth/me'){await json({email:owner,name:'Test'});return true;}if(path==='/conversation/list'){await json(['a','b'].map(id=>({conversation_id:id,title:`Conversation ${id}`,owner_email:owner,created_at:1})));return true;}}});await a.select('a');await a.page.locator('textarea').fill('Owner A private draft');await a.page.locator('textarea').press('Enter');await a.page.getByText('发送失败',{exact:false}).first().waitFor();const count=()=>a.page.evaluate(()=>Object.keys(sessionStorage).filter(k=>k.startsWith('orka.session.')).length);assert.ok(await count()>0);await a.page.getByRole('button',{name:'退出登录',exact:true}).click();assert.equal(await count(),0);owner='other@example.invalid';await a.page.reload();await a.select('a');assert.equal(await a.page.locator('textarea').inputValue(),'');assert.equal(await a.page.getByRole('button',{name:'重新生成',exact:true}).count(),0);a.check();
 });
 
 test('expired session drafts and retry snapshots are not restored by reload',async t=>{
@@ -286,16 +279,13 @@ test('expired session drafts and retry snapshots are not restored by reload',asy
  await a.page.reload();await a.select('a');assert.equal(await a.page.locator('textarea').inputValue(),'');assert.equal(await a.page.getByRole('button',{name:'重新生成',exact:true}).count(),0);a.check();
 });
 
-test('overview retains usage but removes task limits, including historical snapshots',async t=>{
+test('run tab shows one usage line for the open conversation without quota or reservation jargon',async t=>{
  const a=await app(t,{runs:[record({status:'done'})],history:[msg('a1','chat','Saved answer',{role:'assistant',meta:{conversation_id:'a',run_id:'run-a',model_version:'model-a'}})],handle:async({path,json})=>{
   if(path==='/run/run-a/budget'){await json({run_id:'run-a',budget_run_id:'run-a',status:'done',limits:{max_tokens:1234,max_steps:1},used_tokens:99,reserved_tokens:0,unknown_calls:0,unknown_tokens:0,estimated_tokens:0,used_steps:2,sources:[]});return true;}
  }});await a.select('a');await openMetrics(a);
- assert.equal(await a.page.getByText('任务预算',{exact:true}).count(),0);
- assert.equal(await a.page.getByLabel('Token 上限').count(),0);
- await a.page.getByRole('button',{name:'用量明细',exact:true}).click();
- await a.page.getByText('已用（含保守占用）99 · 预留 0 tokens',{exact:true}).waitFor();
- const details=a.page.getByRole('region',{name:'运行用量',exact:true});
- assert.ok(!(await details.textContent()).includes('上限'));assert.ok(!(await details.textContent()).includes('剩余'));
+ await a.page.getByText('本会话最近运行 · 0 次工具调用 · 99 tokens',{exact:true}).waitFor();
+ const panel=await a.page.getByRole('complementary',{name:'工作台'}).textContent();
+ for(const gone of ['任务预算','上限','保守占用','在途','用量明细','run-a'])assert.ok(!panel.includes(gone),gone);
  a.check();
 });
 
@@ -305,11 +295,10 @@ async function openWorkbench(a, tab) {
  if(await toggle.getAttribute('aria-pressed')!=='true')await toggle.click();
  await a.page.getByRole('complementary',{name:'工作台'}).getByRole('tab',{name:tab,exact:false}).click();
 }
-// Existing workflows still visit the overview; it has no quota editor.
-async function openBudget(a) { await openWorkbench(a,'概览'); }
+async function openBudget(a) { await openWorkbench(a,'运行'); }
 async function openMetrics(a) {
- await openWorkbench(a,'概览');
- await a.page.getByText('累计指标',{exact:true}).waitFor();
+ await openWorkbench(a,'运行');
+ await a.page.getByLabel('本会话运行').waitFor();
 }
 
 test('pending conversation creation cannot retarget the captured send or its model and tools',async t=>{
@@ -335,19 +324,19 @@ test('new actions match the compact neutral timeline capsules and keep explanati
 });
 
 test('workbench left separator resizes by pointer and keyboard, restores preference and clamps on viewport changes', async t => {
- const a=await app(t);await a.select('a');await openWorkbench(a,'概览');
+ const a=await app(t);await a.select('a');await openWorkbench(a,'成果');
  const panel=a.page.getByRole('complementary',{name:'工作台'}),handle=a.page.getByRole('separator',{name:'调整工作台宽度'});
  await handle.waitFor();const edge=await handle.boundingBox(),initial=(await panel.boundingBox()).width;
  await a.page.mouse.move(edge.x+edge.width/2,edge.y+100);await a.page.mouse.down();await a.page.mouse.move(edge.x+edge.width/2-160,edge.y+100,{steps:8});await a.page.mouse.up();assert.ok(Math.abs((await panel.boundingBox()).width-initial-160)<2);
  await handle.focus();await handle.press('End');assert.equal(await handle.getAttribute('aria-valuenow'),'720');await handle.press('Home');assert.equal(await handle.getAttribute('aria-valuenow'),'360');await handle.press('ArrowLeft');assert.equal(await handle.getAttribute('aria-valuenow'),'380');await handle.press('Shift+ArrowLeft');assert.equal(await handle.getAttribute('aria-valuenow'),'440');
- await a.page.reload();await a.select('a');await openWorkbench(a,'概览');assert.equal(await handle.getAttribute('aria-valuenow'),'440');await handle.press('End');
+ await a.page.reload();await a.select('a');await openWorkbench(a,'成果');assert.equal(await handle.getAttribute('aria-valuenow'),'440');await handle.press('End');
  await a.page.setViewportSize({width:693,height:1000});await handle.press('Home');assert.equal(await handle.getAttribute('aria-valuenow'),'360');const narrow=await handle.boundingBox();await a.page.mouse.move(narrow.x+narrow.width/2,narrow.y+100);await a.page.mouse.down();await a.page.mouse.move(narrow.x+narrow.width/2-160,narrow.y+100,{steps:8});await a.page.mouse.up();assert.equal(await handle.getAttribute('aria-valuenow'),'520');assert.ok((await panel.boundingBox()).width<=677);
  if(process.env.ORKA_CAPTURE_SCREENSHOTS==='1'){await a.page.screenshot({path:root+'tests/screenshots/workbench-693-drag.png'});}
  await a.page.setViewportSize({width:1440,height:1000});await a.page.waitForFunction(()=>document.querySelector('[role=separator]')?.getAttribute('aria-valuemax')==='720');await handle.press('End');
  await a.page.setViewportSize({width:800,height:1000});await a.page.waitForFunction(()=>document.querySelector('[role=separator]')?.getAttribute('aria-valuenow')==='480');assert.ok((await panel.boundingBox()).width<=480);
  await a.page.setViewportSize({width:340,height:850});await a.page.waitForFunction(()=>document.querySelector('aside[aria-label="工作台"]').getBoundingClientRect().width<=324);assert.ok((await panel.boundingBox()).width<=324);
  await a.page.setViewportSize({width:1440,height:1000});await a.page.waitForFunction(()=>document.querySelector('[role=separator]')?.getAttribute('aria-valuenow')==='720');
- await openWorkbench(a,'运营台');await a.page.getByRole('button',{name:'专业功能 展开',exact:true}).click();const nav=a.page.getByRole('button',{name:'服务状态',exact:true});await nav.scrollIntoViewIfNeeded();await nav.click();await a.page.getByRole('region',{name:'服务状态'}).waitFor();a.check();
+ await openWorkbench(a,'运行');await a.page.getByRole('button',{name:'刷新运行记录',exact:true}).waitFor();a.check();
 });
 
 test('automatic followups bind delayed responses to conversation and run and deduplicate revisits', async t => {
@@ -380,10 +369,10 @@ test('narrow workbench preserves long metrics, acceptance and file information',
   if(apiPath==='/run/acceptance'){await json({contract:{run_id:'run-a',requests:[long]},checks:[{at:'2026-09-15',spec_path:path,report:{ok:false,scope:long,results:[{id:'long',description:long,method:'manual',status:'unverified',actual:long,expected:long,detail:long}]}}]});return true;}
   if(apiPath==='/delivery/list'){await json({deliveries:[{version:1,conversation_id:'a',run_id:'run-a',created_at:1,files:[{path,size:123,sha256:'a'.repeat(64)}]}]});return true;}
   if(apiPath==='/file/list'){await json([{name:path,dir:false,size:123}]);return true;}
- }});await a.select('a');await openMetrics(a);await a.page.setViewportSize({width:693,height:1000});await a.page.getByRole('separator',{name:'调整工作台宽度'}).press('Home');await a.page.getByRole('button',{name:'用量明细',exact:true}).click();await a.page.getByText('共享运行：'+long,{exact:true}).waitFor();
+ }});await a.select('a');await openMetrics(a);await a.page.setViewportSize({width:693,height:1000});await a.page.getByRole('separator',{name:'调整工作台宽度'}).press('Home');
  const fits=async locator=>assert.equal(await locator.evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
- await fits(a.page.getByRole('region',{name:'当前运行统计'}));await fits(a.page.getByRole('region',{name:'运行用量',exact:true}));
- await openWorkbench(a,'运营台');await a.page.getByRole('button',{name:'验收证据',exact:true}).click();await a.page.getByText('实际：'+long,{exact:true}).waitFor();await fits(a.page.getByRole('region',{name:'运行验收记录'}));
+ await fits(a.page.getByLabel('本会话运行'));
+ await openWorkbench(a,'运行');await a.page.getByRole('button',{name:'验收证据',exact:true}).click();await a.page.getByText('实际：'+long,{exact:true}).waitFor();await fits(a.page.getByRole('region',{name:'运行验收记录'}));
  await openWorkbench(a,'成果');await a.page.getByRole('button',{name:path,exact:true}).waitFor();await a.page.getByRole('button',{name:'交付快照',exact:true}).click();const link=a.page.getByRole('link',{name:'下载快照 '+path,exact:true});await link.waitFor();assert.ok((await link.boundingBox()).height<=28);await fits(link);await fits(a.page.getByRole('region',{name:'交付快照列表'}));
  if(process.env.ORKA_CAPTURE_SCREENSHOTS==='1')await a.page.screenshot({path:root+'tests/screenshots/workbench-long-files.png'});a.check();
 });
@@ -467,7 +456,7 @@ test('resume keeps the recorded tool scope of the run and sends no override',asy
  const a=await app(t,{runs:[record()]});
  await a.select('b');
  await a.page.getByRole('button',{name:'切换工作台面板'}).click();
- await a.page.getByRole('tab',{name:'运营台',exact:false}).first().click();
+ await a.page.getByRole('tab',{name:'运行',exact:false}).first().click();
  await a.page.getByRole('button',{name:'继续任务',exact:true}).click();
  await a.page.getByText('服务未确认该任务继续运行',{exact:false}).first().waitFor();
  const sent=a.requests.find(r=>r.path==='/chat/resume_run');
@@ -502,7 +491,7 @@ test('live overview uses ledger while run counters remain zero; terminal archive
  await a.select('a');
  const download=a.page.getByRole('link',{name:'下载 bundle.zip',exact:true});await download.waitFor();
  const href=new URL(await download.getAttribute('href'),origin);assert.equal(href.searchParams.get('conversation_id'),'a');assert.equal(href.searchParams.get('path'),'bundle.zip');
- await openMetrics(a);await a.page.getByText('累计用量 12345 tokens（含未知调用的保守占用） · 在途 500',{exact:true}).waitFor();
+ await openMetrics(a);await a.page.getByText(/· 12345 tokens$/).waitFor();
  assert.equal(await a.page.getByText('0 tokens · 0 次工具调用',{exact:true}).count(),0);a.check();
 });
 
@@ -542,7 +531,7 @@ test('execution evidence exposes stale file versions without claiming acceptance
  const a=await app(t,{runs:[record()],handle:async({path,json})=>{
   if(path==='/run/acceptance'){await json({contract:{run_id:'run-a',requests:[]},checks:[],executions:[{id:'exec-1',run_id:'run-a',at:1,tool:'shell',command:'run tests',ok:true,exit_code:0,stdout:'OK',stderr:'',files:[{path:'bundle.zip',sha256:'old-sha'}],changed_since:['bundle.zip'],revisions_partial:true}]});return true;}
  }});
- await a.select('a');await openWorkbench(a,'运营台');await a.page.getByRole('button',{name:'验收证据',exact:true}).click();await a.page.getByText('实际执行记录 · 1',{exact:true}).click();
+ await a.select('a');await openWorkbench(a,'运行');await a.page.getByRole('button',{name:'验收证据',exact:true}).click();await a.page.getByText('实际执行记录 · 1',{exact:true}).click();
  await a.page.getByText('旧结果不能作为当前版本的验收结论。',{exact:false}).waitFor();
  await a.page.getByText('文件版本记录不完整，不能据此判定全部文件未变化。',{exact:true}).waitFor();
  assert.equal(await a.page.getByText('检查通过',{exact:true}).count(),0);a.check();
@@ -559,21 +548,103 @@ test('many produced files stay compact but can all be expanded and downloaded',a
  await a.page.getByRole('button',{name:'收起文件',exact:true}).click();assert.equal(await a.page.getByRole('link',{name:/^下载 report-/}).count(),8);a.check();
 });
 
-test('historical run usage loads only when its detail is opened',async t=>{
+test('run history shows recorded usage without per-run usage requests',async t=>{
  let reads=[];
  const a=await app(t,{runs:Array.from({length:20},(_,i)=>record({run_id:`history-${i}`,status:'done'})),handle:async({path,json})=>{
   if(/^\/run\/history-\d+\/budget$/.test(path)){reads.push(path);await json({run_id:path.split('/')[2],used_tokens:1,reserved_tokens:0,status:'done',sources:[]});return true;}
  }});
- await a.select('a');await openWorkbench(a,'运营台');await a.page.getByRole('button',{name:'用量明细',exact:true}).first().waitFor();assert.equal(reads.length,0);
- await a.page.getByRole('button',{name:'用量明细',exact:true}).first().click();await a.page.getByText('已用（含保守占用）1 · 预留 0 tokens',{exact:true}).waitFor();
- assert.equal(reads.length,1);a.check();
+ await a.select('a');await openWorkbench(a,'运行');await a.page.getByText(/12 tokens · 2 次工具调用$/).first().waitFor();
+ assert.equal(await a.page.getByRole('button',{name:'用量明细',exact:true}).count(),0);assert.equal(reads.length,0);a.check();
 });
 
 test('workspace provenance stays distinct from declared deliverables and refusal reason stays visible',async t=>{
  const a=await app(t,{runs:[record()],handle:async({path,json})=>{
   if(path==='/run/acceptance'){await json({contract:{run_id:'run-a',requests:[]},checks:[],executions:[{id:'e1',run_id:'run-a',tool:'shell',at:1,ok:false,exit_code:-1,stdout:'',stderr:'',error:'command refused',command:'verify',revision_scope:'workspace_sample',files:[{path:'report.zip',sha256:'observed-sha'}]}]});return true;}
  }});
- await a.select('a');await openWorkbench(a,'运营台');await a.page.getByRole('button',{name:'验收证据',exact:true}).click();await a.page.getByText('实际执行记录 · 1',{exact:true}).click();
+ await a.select('a');await openWorkbench(a,'运行');await a.page.getByRole('button',{name:'验收证据',exact:true}).click();await a.page.getByText('实际执行记录 · 1',{exact:true}).click();
  await a.page.getByText('工作区文件抽样，未登记交付清单；这些文件不代表正式交付物，也不代表全部被本命令验证。',{exact:true}).waitFor();
  await a.page.getByText('command refused',{exact:true}).waitFor();assert.equal(await a.page.getByText('检查通过',{exact:true}).count(),0);a.check();
+});
+
+const taskFixture=(extra={})=>({task_id:'t1',conversation_id:'task-conv',owner_email:'test@example.invalid',cron_status:'on',run_status:'done',created_at:1,next_run_at:Date.now()+3600000,variables:{title:'每日资讯简报',prompt_template:'搜索 AI 新闻并整理简报'},trigger:{kind:'schedule',cron:'0 9 * * 1-5',timezone:'Asia/Shanghai'},...extra});
+async function openTasks(a){await a.page.getByRole('button',{name:'定时任务',exact:true}).click();await a.page.getByRole('heading',{name:'定时任务'}).waitFor();}
+
+test('tasks page creates a weekday task from a template only after its placeholder is filled',async t=>{
+ let saved=null;
+ const a=await app(t,{handle:async({path,body,json})=>{
+  if(path==='/task/get-tasks'){await json({tasks:saved?[taskFixture({variables:{title:saved.title,prompt_template:saved.prompt},trigger:saved.trigger})]:[]});return true;}
+  if(path==='/task/save'){saved=body;await json(taskFixture());return true;}
+ }});
+ await openTasks(a);await a.page.getByText('暂无定时任务。',{exact:true}).waitFor();
+ await a.page.getByRole('button',{name:'使用模板：每日资讯简报'}).click();
+ await a.page.getByRole('button',{name:'保存',exact:true}).click();await a.page.getByRole('alert').filter({hasText:'【】'}).waitFor();assert.equal(saved,null);
+ await a.page.getByLabel('要做什么').fill('搜索 AI 智能体过去 24 小时的新闻，整理成 5 条要点。');
+ await a.page.getByRole('button',{name:'保存',exact:true}).click();await a.page.getByRole('dialog').waitFor({state:'detached'});await a.page.getByRole('listitem').filter({hasText:'工作日 9:00'}).waitFor();
+ assert.equal(saved.trigger.kind,'schedule');assert.equal(saved.trigger.cron,'0 9 * * 1-5');assert.ok(saved.trigger.timezone);assert.equal(saved.enabled,true);assert.equal(saved.title,'每日资讯简报');
+ a.check();
+});
+
+test('condition and event triggers send their settings and event tasks reveal the webhook address',async t=>{
+ const saves=[];
+ const a=await app(t,{handle:async({path,body,json})=>{
+  if(path==='/task/get-tasks'){await json({tasks:[]});return true;}
+  if(path==='/task/save'){saves.push(body);await json(taskFixture({trigger:body.trigger,webhook_token:body.trigger.kind==='event'?'secret-token':''}));return true;}
+ }});
+ await openTasks(a);
+ await a.page.getByRole('button',{name:'新建任务',exact:true}).first().click();await a.page.getByRole('menuitem',{name:'空白任务'}).click();
+ await a.page.getByLabel('要做什么').fill('商品到货时提醒我');
+ await a.page.getByRole('radio',{name:'条件'}).click();await a.page.getByRole('button',{name:'保存',exact:true}).click();await a.page.getByRole('alert').filter({hasText:'完整网址'}).waitFor();
+ await a.page.getByLabel('监控的网页').fill('https://shop.example.com/item');await a.page.getByRole('radio',{name:'出现指定文字'}).click();await a.page.getByLabel('等待出现的文字').fill('有货');await a.page.getByLabel('检查频率').selectOption('1800');
+ await a.page.getByRole('button',{name:'保存',exact:true}).click();await a.page.getByText('任务已创建',{exact:true}).waitFor();
+ assert.deepEqual(saves[0].trigger,{kind:'condition',watch_url:'https://shop.example.com/item',contains:'有货',check_every_sec:1800});
+ await a.page.getByRole('button',{name:'新建任务',exact:true}).first().click();await a.page.getByRole('menuitem',{name:'空白任务'}).click();
+ await a.page.getByLabel('要做什么').fill('PR 合并后起草发布说明');await a.page.getByRole('radio',{name:'事件'}).click();await a.page.getByRole('button',{name:'pull_request.closed'}).click();
+ await a.page.getByRole('button',{name:'保存',exact:true}).click();
+ const address=a.page.getByRole('dialog').locator('code');await address.waitFor();assert.ok((await address.textContent()).endsWith('/api/v1/controller/hook/secret-token'));
+ assert.deepEqual(saves[1].trigger,{kind:'event',event:'pull_request.closed'});
+ await a.page.getByRole('button',{name:'完成',exact:true}).click();assert.equal(await a.page.getByRole('dialog').count(),0);a.check();
+});
+
+test('task rows toggle, run now and delete only after confirmation',async t=>{
+ let tasks=[taskFixture()];
+ const a=await app(t,{handle:async({path,body,json})=>{
+  if(path==='/task/get-tasks'){await json({tasks});return true;}
+  if(path==='/task/toggle'){tasks=[taskFixture({cron_status:body.enabled?'on':'off'})];await json(tasks[0]);return true;}
+  if(path==='/task/run-now'){await json({status:'started',conversation_id:'task-conv'});return true;}
+  if(path==='/task/delete'){tasks=[];await json({task_id:body.task_id});return true;}
+ }});
+ await openTasks(a);await a.page.getByText('工作日 9:00',{exact:false}).first().waitFor();
+ await a.page.getByRole('switch',{name:'停用 每日资讯简报'}).click();await a.page.getByText('已停用',{exact:true}).first().waitFor();
+ assert.deepEqual(a.requests.find(r=>r.path==='/task/toggle').body,{task_id:'t1',enabled:false});
+ await a.page.getByRole('button',{name:'每日资讯简报 的更多操作'}).click();await a.page.getByRole('menuitem',{name:'立即运行'}).click();await a.page.getByText('已开始运行',{exact:false}).first().waitFor();
+ await a.page.getByRole('button',{name:'每日资讯简报 的更多操作'}).click();await a.page.getByRole('menuitem',{name:'删除'}).click();
+ assert.equal(a.requests.filter(r=>r.path==='/task/delete').length,0);
+ await a.page.getByRole('button',{name:'删除',exact:true}).last().click();await a.page.getByText('暂无定时任务。',{exact:true}).waitFor();
+ assert.deepEqual(a.requests.find(r=>r.path==='/task/delete').body,{task_id:'t1'});a.check();
+});
+
+test('the tasks page is linkable and selecting a conversation returns to chat',async t=>{
+ const a=await app(t,{handle:async({path,json})=>{if(path==='/task/get-tasks'){await json({tasks:[]});return true;}}});
+ await a.page.goto(origin+'/#tasks');await a.page.getByRole('heading',{name:'定时任务'}).waitFor();
+ await a.select('a');assert.equal(await a.page.getByRole('heading',{name:'定时任务'}).count(),0);assert.ok(!(await a.page.evaluate(()=>location.hash)));
+ await a.page.goBack();await a.page.getByRole('heading',{name:'定时任务'}).waitFor();a.check();
+});
+
+test('settings adds a tested connector, removes it after confirmation and shows service status',async t=>{
+ let connectors=[];
+ const a=await app(t,{handle:async({path,body,json})=>{
+  if(path==='/connector/list'){await json({connectors});return true;}
+  if(path==='/connector/test'){await json({ok:true,tools:['create_issue','list_prs']});return true;}
+  if(path==='/connector/create'){connectors=[{connector_id:'c1',name:body.name,transport:body.transport,url:body.url,headers:{},enabled:true,created_at:1}];await json(connectors[0]);return true;}
+  if(path==='/connector/delete'){connectors=[];await json({});return true;}
+  if(path==='/system/status'){await json({version:'v-test',build_time:'',modified:false,started_at:'2026-10-21T00:00:00Z',ready:true,services:[{name:'tools',status:'ready',detail:''}],model_probe:'not_run'});return true;}
+ }});
+ await a.page.getByRole('button',{name:'设置',exact:true}).click();await a.page.getByText('还没有连接器',{exact:true}).waitFor();
+ await a.page.getByRole('button',{name:'添加连接器'}).click();
+ await a.page.getByLabel('名称').fill('GitHub');await a.page.getByLabel('服务地址').fill('https://mcp.example.com/mcp');await a.page.getByLabel(/请求头/).fill('Authorization: Bearer fixture');
+ await a.page.getByRole('button',{name:'测试连接'}).click();await a.page.getByText(/连接成功，发现 2 个工具/).waitFor();
+ assert.deepEqual(a.requests.find(r=>r.path==='/connector/test').body,{name:'GitHub',transport:'streamable_http',url:'https://mcp.example.com/mcp',headers:{Authorization:'Bearer fixture'}});
+ await a.page.getByRole('button',{name:'添加',exact:true}).click();await a.page.getByText('GitHub',{exact:true}).waitFor();
+ await a.page.getByRole('button',{name:'移除 GitHub'}).click();assert.equal(a.requests.filter(r=>r.path==='/connector/delete').length,0);await a.page.getByRole('button',{name:'确认移除'}).click();await a.page.getByText('还没有连接器',{exact:true}).waitFor();
+ await a.page.getByRole('button',{name:'关于'}).click();await a.page.getByText('v-test',{exact:false}).waitFor();await a.page.getByText('所有服务已就绪',{exact:true}).waitFor();a.check();
 });

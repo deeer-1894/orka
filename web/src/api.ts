@@ -1,10 +1,10 @@
 import { clearSessionRecovery } from './lib/sessionRecovery';
+import type { TaskTrigger } from './lib/taskTrigger';
 import type {
+  Connector,
   Artifact,
   ArtifactVersion,
-  Connector,
   Conversation,
-  Factor,
   MessageSearchHit,
   MetricsSnapshot,
   Message,
@@ -12,9 +12,6 @@ import type {
   OwnerInfo,
   RunRecord,
   TaskMeta,
-  WeightedPortfolio,
-  Workflow,
-  WorkflowStep,
 } from "./types";
 import { toastError } from "./lib/toast";
 
@@ -209,6 +206,21 @@ async function rawAuth(path: string, body: unknown): Promise<Session> {
   return j.data as Session;
 }
 
+export type ConnectorInput = Pick<Connector, "name" | "transport" | "url" | "headers">;
+export interface SystemStatus { version: string; build_time: string; modified: boolean; started_at: string; ready: boolean; services: { name: string; status: string; detail: string }[]; model_probe: string }
+
+export interface TaskInput {
+  task_id?: string;
+  title: string;
+  prompt: string;
+  trigger: TaskTrigger;
+  enabled: boolean;
+  retry_count: number;
+}
+
+// webhookURL is the public trigger address external systems call.
+export const webhookURL = (token: string) => `${location.origin}${BASE}/hook/${token}`;
+
 export const api = {
   me: () => post<{ email: string; name: string }>("/auth/me", {}),
   listConversations: () => post<Conversation[]>("/conversation/list", {}),
@@ -230,11 +242,16 @@ export const api = {
     post<Conversation>("/conversation/fork", { conversation_id, message_id }),
   getTasks: (filter: { conversation_id?: string } = {}) =>
     post<{ tasks: TaskMeta[]; owners: Record<string, OwnerInfo> }>("/task/get-tasks", { ...filter, size: 100 }),
-  scheduleTask: (prompt: string, interval_sec: number, title: string, conversation_id = "", retry_count = 0) =>
-    post<TaskMeta>("/task/schedule", { prompt, interval_sec, title, conversation_id, retry_count }),
-  unscheduleTask: (task_id: string) => post("/task/unschedule", { task_id }),
-  enableWebhook: (task_id: string) => post<{ token: string; path: string }>("/task/webhook/enable", { task_id }),
-  disableWebhook: (task_id: string) => post("/task/webhook/disable", { task_id }),
+  // silent: the task editor shows validation errors inline instead of a toast.
+  listConnectors: () => post<{ connectors: Connector[] }>("/connector/list", {}),
+  testConnector: (c: ConnectorInput) => post<{ ok: boolean; tools?: string[]; error?: string }>("/connector/test", c, true),
+  createConnector: (c: ConnectorInput) => post<Connector>("/connector/create", c, true),
+  deleteConnector: (connector_id: string) => post("/connector/delete", { connector_id }),
+  systemStatus: () => get<SystemStatus>("/system/status"),
+  saveTask: (task: TaskInput) => post<TaskMeta>("/task/save", task, true),
+  toggleTask: (task_id: string, enabled: boolean) => post<TaskMeta>("/task/toggle", { task_id, enabled }),
+  runTaskNow: (task_id: string) => post<{ status: string; conversation_id: string }>("/task/run-now", { task_id }),
+  deleteTask: (task_id: string) => post("/task/delete", { task_id }),
   listRuns: (filter: { conversation_id?: string; status?: string; statuses?: string[]; offset?: number; size?: number } = {}) =>
     post<{ runs: RunRecord[]; has_more?: boolean }>("/run/list", { size: 50, ...filter }),
   getRun: (run_id: string) => post<RunRecord>("/run/get", { run_id }),
@@ -243,20 +260,8 @@ export const api = {
   // than paying for the completed work a second time.
   resumeRun: (run_id: string) =>
     post<{ resumed: boolean; conversation_id: string; steps: number }>("/chat/resume_run", { run_id }),
-  listFactors: (status = "") => post<{ factors: Factor[] }>("/quant/factors", { status }),
-  setFactorStatus: (factor_id: string, status: string) => post<{ status: string }>("/quant/factor/status", { factor_id, status }),
-  listPortfolios: () => post<{ portfolios: WeightedPortfolio[] }>("/quant/portfolios", {}),
-  runFactorPipeline: () => post<{ started: number; reports: string[] }>("/quant/pipeline/run", {}),
-  listConnectors: () => post<{ connectors: Connector[] }>("/connector/list", {}),
-  testConnector: (c: Partial<Connector>) => post<{ ok: boolean; tools?: string[]; error?: string }>("/connector/test", c),
-  createConnector: (c: Partial<Connector>) => post<Connector>("/connector/create", c),
-  deleteConnector: (connector_id: string) => post("/connector/delete", { connector_id }),
   listNotifications: () => post<{ notifications: Notification[]; unread: number }>("/notification/list", {}),
   readNotifications: (notification_id = "") => post("/notification/read", { notification_id }),
-  listWorkflows: () => post<{ workflows: Workflow[] }>("/workflow/list", {}),
-  createWorkflow: (name: string, steps: WorkflowStep[]) => post<Workflow>("/workflow/create", { name, steps }),
-  deleteWorkflow: (workflow_id: string) => post("/workflow/delete", { workflow_id }),
-  runWorkflow: (workflow_id: string) => post<{ conversation_id: string }>("/workflow/run", { workflow_id }),
   followups: (prompt: string, answer: string, selectedVersion = "auto", modelProfile = "", conversationID = "", runID = "") => post<{ suggestions: string[] }>("/chat/followups", { prompt, answer, selected_version: selectedVersion, model_profile: modelProfile, conversation_id: conversationID, run_id: runID }, true),
   listSkills: () => post<{ skills: { name: string; description: string }[] }>("/skill/list", {}),
   getSkill: (name: string) => post<{ name: string; description: string; prompt: string }>("/skill/get", { name }),
@@ -266,7 +271,6 @@ export const api = {
   runAcceptance: (run_id: string) => post<import('./lib/runEvidence').RunAcceptance>("/run/acceptance", { run_id }),
   listDeliveries: (conversation_id: string) => post<{ deliveries: import('./lib/runEvidence').DeliverySnapshot[] }>("/delivery/list", { conversation_id }),
   deliveryDownloadURL: (conversation_id: string, run_id: string, path: string) => `${BASE}/delivery/download?${new URLSearchParams({ conversation_id, run_id, path, token: auth.token() })}`,
-  systemStatus: () => get<SystemStatus>("/system/status"),
   metrics: async (): Promise<MetricsSnapshot> => {
     const res = await fetch(BASE + "/metrics", { headers: headers(false) });
     const j = await res.json();
@@ -285,30 +289,11 @@ export const api = {
     get<{ active: boolean; seq: number }>(`/chat/active?conversation_id=${encodeURIComponent(id)}`).catch(() => ({ active: false, seq: 0 })),
 };
 
-export type LLMSettings = {
-  base_url?: string;
-  models?: string[];
-  max_tokens?: number;
-  reasoning?: Record<string, unknown>;
-  reasoning_by_model?: Record<string, Record<string, unknown>>;
-};
 
-export type SettingsView = {
-  saved: LLMSettings;
-  has_key: boolean;
-  effective: { base_url: string; models: string[]; max_tokens: number; has_key: boolean };
-  path: string;
-};
 
 // The endpoint, key and model list, editable without touching a file. The key
 // is write-only: it is never returned, and omitting it on save keeps the stored
 // one — so changing a URL never requires re-typing it.
-export const settings = {
-  get: () => get<SettingsView>("/settings"),
-  save: (patch: LLMSettings & { api_key?: string }) => post<SettingsView>("/settings", patch),
-  test: (patch: LLMSettings & { api_key?: string }) =>
-    post<{ ok: boolean; model: string; reply?: string; tokens?: number; error?: string }>("/settings/test", patch),
-};
 
 export type FileVersion = { ts: string; when: number; size: number; path: string };
 
@@ -383,4 +368,3 @@ export const modelProfiles = {
  probe: (data: {profile_id:string;model:string;capabilities:import('./lib/modelProfiles').Capability[]}) => post<import('./lib/modelProfiles').ModelVerification>('/model-profiles/probe', data, true),
 };
 
-export interface SystemStatus {version:string;build_time:string;modified:boolean;started_at:string;ready:boolean;services:{name:string;status:string;detail:string}[];model_probe:string}

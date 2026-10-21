@@ -71,6 +71,9 @@ export function Sidebar({
   name,
   email,
   onSignOut,
+  tasksActive,
+  onOpenTasks,
+  onOpenSettings,
 }: {
   open: boolean;
   conversations: Conversation[];
@@ -88,6 +91,9 @@ export function Sidebar({
   name: string;
   email: string;
   onSignOut: () => void;
+  tasksActive: boolean;
+  onOpenTasks: () => void;
+  onOpenSettings: () => void;
 }) {
   const [editing, setEditing] = useState("");
   const [draft, setDraft] = useState("");
@@ -170,7 +176,7 @@ export function Sidebar({
       >
         {isBranch && <Icon name="share" size={12} className="shrink-0 rotate-90 text-faint" />}
         {running && <span className="inline-flex shrink-0 items-center" role="status"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ok" title="运行中" /><span className="sr-only">运行中</span></span>}
-        {scheduled && <span className="shrink-0 text-[12px]" title="由定时任务驱动">🔁</span>}
+        {scheduled && <span className="shrink-0 text-faint" title="定时任务的对话"><Icon name="clock" size={12} /></span>}
         <span className="flex-1 truncate text-[14px]">{c.title}</span>
         {/* disambiguate same-titled conversations with a timestamp */}
         {dup && <span className="shrink-0 text-[10px] text-faint group-hover:hidden">{relTime(c.created_at)}</span>}
@@ -203,6 +209,13 @@ export function Sidebar({
             className="w-full flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2.5 text-[14px] text-ink hover:bg-surface transition hover:border-accent/40"
           >
             <span className="text-accent text-[16px] leading-none">+</span> New chat
+          </button>
+          <button
+            onClick={() => { onOpenTasks(); onSelectClose?.(); }}
+            aria-current={tasksActive ? "page" : undefined}
+            className={"mt-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[14px] transition " + (tasksActive ? "bg-accentsoft text-ink" : "text-muted hover:bg-surface")}
+          >
+            <Icon name="clock" size={15} /> 定时任务
           </button>
         </div>
 
@@ -298,9 +311,18 @@ export function Sidebar({
             <div className="truncate text-[11px] text-faint">{email}</div>
           </div>
           <button
+            onClick={onOpenSettings}
+            className="grid h-8 w-8 place-items-center rounded-lg text-faint hover:bg-surface hover:text-ink"
+            title="设置"
+            aria-label="设置"
+          >
+            <Icon name="gear" size={15} />
+          </button>
+          <button
             onClick={onSignOut}
             className="rounded-lg px-2 py-1 text-[12px] text-faint hover:bg-surface hover:text-accent"
-            title="Sign out"
+            title="退出登录"
+            aria-label="退出登录"
           >
             ⎋
           </button>

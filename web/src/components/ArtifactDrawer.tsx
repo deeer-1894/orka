@@ -1,51 +1,25 @@
 import { useWorkbenchWidth } from '../hooks/useWorkbenchWidth';
-import { ActionChip } from './ActionChip';
-import type { MetricsRunContext } from './MetricsPanel';
+import { MetricsPanel, type MetricsRunContext } from './MetricsPanel';
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { artifacts as artifactApi, files as fileApi } from "../api";
 import { Icon, type IconName } from "./Icon";
 import { ArtifactGallery, ArtifactPane } from "./Artifacts";
 
 import type { RunsPanelProps } from './RunsPanel';
-const SystemStatusPanel = lazy(() => import("./SystemStatusPanel").then(m => ({default:m.SystemStatusPanel})));
 const RunsPanel = lazy(() => import('./RunsPanel'));
-const WorkflowsPanel = lazy(() => import('./WorkflowsPanel').then(m => ({default:m.WorkflowsPanel})));
-const ConnectorsPanel = lazy(() => import('./ConnectorsPanel').then(m => ({default:m.ConnectorsPanel})));
-const FactorsPanel = lazy(() => import('./FactorsPanel').then(m => ({default:m.FactorsPanel})));
-const TasksPanel = lazy(() => import('./TasksPanel').then(m => ({default:m.TasksPanel})));
 import type { WorkbenchTab as Tab } from "../lib/workbenchTabs";
-const DashboardPanel = lazy(() => import("./DashboardPanel").then(m => ({ default: m.DashboardPanel })));
-const ModelSettingsPanel = lazy(() => import("./ModelSettings").then(m => ({ default: m.ModelSettingsPanel })));
 const FilesPanel = lazy(() => import("./FilesPanel").then(m => ({ default: m.FilesPanel })));
 
-// Each tab carries a one-line tip — the words 运行/流程/任务 are ambiguous on
-// their own (execution log? workflow definition? schedule?), so the tooltip
-// disambiguates them.
 const TAB_META: Record<Tab, { label: string; tip: string }> = {
-  overview: { label: "概览", tip: "工作区、运行统计与近期活动" },
-  artifacts: { label: "页面", tip: "实时、可分享的可视化页面(Artifacts)" },
   files: { label: "文件", tip: "本会话的文件" },
-  runs: { label: "运行", tip: "执行历史:每次任务运行的记录" },
-  flows: { label: "流程", tip: "工作流定义:可复用的多步 DAG 管线" },
-  tasks: { label: "任务", tip: "定时 / 触发的任务(调度与待办)" },
-  factors: { label: "因子", tip: "量化因子库:研报 → 因子流水线的产出" },
-  integrations: { label: "集成", tip: "外部工具 / MCP 连接器" },
-  system: { label: "服务状态", tip: "运行版本与服务就绪状态" },
-  settings: { label: "模型", tip: "接口地址、密钥与模型列表(写入 ~/.orka/orka.json,即时生效)" },
+  artifacts: { label: "页面", tip: "可分享的可视化页面" },
+  runs: { label: "运行记录", tip: "每次任务运行的结果、验收证据与继续执行" },
 };
-// Nine tabs is a back-office crammed into a chat sidebar. Collapse them into 4
-// semantic FACES; multi-tab faces (舞台/运营台) get an inline sub-nav. runs/flows/
-// tasks/integrations are all "execution & observability" → one 运营台.
-type Face = "overview" | "stage" | "files" | "ops";
+type Face = "stage" | "ops";
 const FACES: { id: Face; label: string; tip: string; icon: IconName; subs: Tab[] }[] = [
-  { id: "overview", label: "概览", tip: "工作区、运行统计与近期活动", icon: "chart", subs: ["overview"] },
   { id: "stage", label: "成果", tip: "会话文件与可分享页面", icon: "folder", subs: ["files", "artifacts"] },
-  { id: "ops", label: "运营台", tip: "执行与可观测:运行 / 流程 / 任务 / 因子 / 集成 / 服务状态", icon: "gear", subs: ["runs", "flows", "tasks", "factors", "integrations", "system", "settings"] },
+  { id: "ops", label: "运行", tip: "运行记录、验收证据与继续执行", icon: "play", subs: ["runs"] },
 ];
-// Icons for the 运营台 sub-tabs, so the dense sub-nav scans at a glance.
-const SUB_ICON: Partial<Record<Tab, IconName>> = {
-  runs: "play", flows: "share", tasks: "clock", factors: "table", integrations: "plug", settings: "gear",
-};
 function faceOf(tab: Tab): Face {
   return (FACES.find((f) => f.subs.includes(tab)) || FACES[0]).id;
 }
@@ -80,7 +54,6 @@ export function ArtifactDrawer({
 }) {
   const { width, separator } = useWorkbenchWidth(email);
 
-  const [advanced, setAdvanced] = useState(false);
   const activeFace = faceOf(tab);
   const liveFace = liveTab ? faceOf(liveTab) : null;
 
@@ -172,7 +145,6 @@ export function ArtifactDrawer({
         (tab === t ? "bg-surface2 text-ink" : "text-faint hover:text-muted")
       }
     >
-      {SUB_ICON[t] && <Icon name={SUB_ICON[t]!} size={12} />}
       {TAB_META[t].label}
       {newTabs.has(t) && tab !== t && <span className="absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-accent" />}
     </button>
@@ -200,29 +172,16 @@ export function ArtifactDrawer({
             <Icon name="close" size={16} />
           </button>
         </div>
-        {/* Sub-nav for multi-tab faces (舞台 / 运营台). */}
-        {(FACES.find((f) => f.id === activeFace)?.subs.length ?? 0) > 1 && (
-          <div className="flex min-w-0 flex-wrap items-center gap-1 border-b border-border bg-surface2/30 px-3 py-1.5">
-            {FACES.find((f) => f.id === activeFace)!.subs.filter(t => activeFace !== "ops" || advanced || t === "runs").map(SubBtn)}
-            {activeFace === "ops" && <ActionChip aria-expanded={advanced} onClick={() => setAdvanced(v => !v)}>专业功能 {advanced ? "收起" : "展开"}</ActionChip>}
-          </div>
-        )}
+        {FACES.find((f) => f.id === activeFace)!.subs.length > 1 && <div className="flex min-w-0 flex-wrap items-center gap-1 border-b border-border bg-surface2/30 px-3 py-1.5">
+          {FACES.find((f) => f.id === activeFace)!.subs.map(SubBtn)}
+        </div>}
         <div id="workbench-content" className="min-h-0 min-w-0 flex-1 overflow-auto [overflow-wrap:anywhere]"><Suspense fallback={<p role="status" className="p-3 text-sm">正在加载面板…</p>}>
-          {tab === "overview" && <DashboardPanel runContext={runContext} key={conversationID} conversationID={conversationID} onJumpToConversation={onJumpToConversation} goTab={setTab} onOpenArtifact={(id) => { setFocusArt(id); setTab("artifacts"); }} />}
           {tab === "artifacts" && (focusArt ? <ArtifactPane artifactId={focusArt} onBack={() => setFocusArt(null)} /> : <ArtifactGallery onOpen={setFocusArt} />)}
           {tab === "files" && <FilesPanel key={email + ":" + conversationID} email={email} conversationID={conversationID} />}
-          {tab === "runs" && <RunsPanel onJumpToConversation={onJumpToConversation} onResumeRun={onResumeRun} isRunBusy={isRunBusy} runRevision={runRevision} canResumeRun={canResumeRun} />}
-          {tab === "flows" && <WorkflowsPanel onJumpToConversation={onJumpToConversation} />}
-          {tab === "integrations" && <ConnectorsPanel />}
-          {tab === "system" && <SystemStatusPanel />}
-          {tab === "settings" && <ModelSettingsPanel />}
-          {tab === "tasks" && <TasksPanel onJumpToConversation={onJumpToConversation} />}
-          {tab === "factors" && <FactorsPanel />}
+          {tab === "runs" && <><MetricsPanel runContext={runContext} /><RunsPanel onJumpToConversation={onJumpToConversation} onResumeRun={onResumeRun} isRunBusy={isRunBusy} runRevision={runRevision} canResumeRun={canResumeRun} /></>}
         </Suspense></div>
       </div>
     </aside>
   );
 }
 
-// DashboardPanel summarizes workspace content and recent run outcomes.
-// Overview owns usage and live counters; operations focuses on managing runs.

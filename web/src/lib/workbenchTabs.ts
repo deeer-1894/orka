@@ -1,1 +1,1 @@
-export type WorkbenchTab = "overview" | "artifacts" | "files" | "runs" | "tasks" | "flows" | "factors" | "integrations" | "system" | "settings";
+export type WorkbenchTab = "files" | "artifacts" | "runs";

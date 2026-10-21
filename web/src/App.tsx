@@ -29,6 +29,9 @@ import { useResource, refreshResource } from "./lib/useResource";
 import type { Conversation, Message, Notification } from "./types";
 
 import type { WorkbenchTab as Tab } from "./lib/workbenchTabs";
+import type { TaskDraft } from "./components/tasks/TaskEditor";
+const TasksPage = lazy(() => import("./components/tasks/TasksPage").then(m => ({ default: m.TasksPage })));
+const SettingsDialog = lazy(() => import("./components/settings/SettingsDialog").then(m => ({ default: m.SettingsDialog })));
 
 // Tools whose output the user watches in the 文件 face.
 const FILE_TOOLS = new Set([
@@ -139,13 +142,32 @@ function Workbench({
     typeof window === "undefined" ? true : window.innerWidth >= 768,
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<Tab>("overview");
+  const [drawerTab, setDrawerTab] = useState<Tab>("files");
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
   const version = conversationSettings.value.selectedVersion;
   const setVersion = (selectedVersion: string) => conversationSettings.patch({ selectedVersion });
   const [theme, toggleTheme] = useTheme();
   const [models, setModels] = useState<ModelOption[]>(MODELS_FALLBACK);
-  const [scheduleFor, setScheduleFor] = useState<string | null>(null); // prompt to schedule
+  // The main area shows a conversation or the tasks page; a prompt sent to
+  // "设为定时任务" opens the task editor prefilled with it.
+  // The tasks page is addressable (#tasks) so it survives reloads and links.
+  const [view, setViewState] = useState<"chat" | "tasks">(() => location.hash === "#tasks" ? "tasks" : "chat");
+  const setView = useCallback((next: "chat" | "tasks") => {
+    setViewState(next);
+    const hash = next === "tasks" ? "#tasks" : "";
+    if (location.hash !== hash) history.pushState(null, "", location.pathname + location.search + hash);
+  }, []);
+  useEffect(() => {
+    const sync = () => setViewState(location.hash === "#tasks" ? "tasks" : "chat");
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [taskDraft, setTaskDraft] = useState<TaskDraft | null>(null);
+  const openSchedule = useCallback((prompt: string) => {
+    setTaskDraft({ title: "", prompt, trigger: { kind: "schedule", cron: "0 9 * * 1-5" }, enabled: true, retry_count: 0 });
+    setView("tasks");
+  }, []);
   const activeSkill = conversationSettings.value.activeSkill;
   const setActiveSkill = (activeSkill: string | null) => conversationSettings.patch({ activeSkill });
   // Gate side-effecting tools (terminal/browser/network/code) behind approval.
@@ -283,7 +305,7 @@ function Workbench({
   // "New chat" just resets to the empty state — the server conversation is
   // created lazily on the first send (ensureConversation), so clicking around
   // never accumulates empty "New chat" placeholders.
-  const newConversation = useCallback(() => setActiveID(""), []);
+  const newConversation = useCallback(() => { setActiveID(""); setView("chat"); }, []);
 
   const onPrune = useCallback(async () => {
     await api.pruneConversations().catch(() => {});
@@ -309,6 +331,7 @@ function Workbench({
   const selectConversation = useCallback(
     async (id: string) => {
       setActiveID(id);
+      setView("chat");
       if (seen.current.has(id)) {
         void rejoinIfLive(id); // loaded before, but a run may have started since
         return;
@@ -476,14 +499,15 @@ function Workbench({
   const commands: Command[] = [
     { id: "new", group: "操作", icon: "✚", label: "新建会话", hint: "New chat", run: newConversation },
     { id: "share", group: "操作", icon: "⤴", label: "分享当前会话", run: () => activeConv && setShareFor(conversations.find((c) => c.conversation_id === activeID) || null) },
-    { id: "schedule", group: "操作", icon: "⏰", label: "把上一条设为定时任务", run: () => lastMsgRef.current && setScheduleFor(lastMsgRef.current) },
+    { id: "schedule", group: "操作", icon: "⏰", label: "把上一条设为定时任务", run: () => lastMsgRef.current && openSchedule(lastMsgRef.current) },
+    { id: "tasks", group: "操作", icon: "🗓", label: "打开定时任务", keywords: "schedule trigger task 触发", run: () => setView("tasks") },
+    { id: "settings", group: "设置", icon: "⚙", label: "设置 · 连接器", keywords: "settings connector mcp 集成", run: () => setSettingsOpen(true) },
     { id: "theme", group: "设置", icon: theme === "dark" ? "☀" : "☾", label: theme === "dark" ? "切换到亮色" : "切换到暗色", run: toggleTheme },
     { id: "confirm", group: "设置", icon: "🛡", label: confirmRisky ? "关闭高危操作确认" : "开启高危操作确认", run: toggleConfirm },
     { id: "keys", group: "帮助", icon: "⌨", label: "键盘快捷键", hint: "?", keywords: "shortcut keyboard 快捷键", run: () => setKeysOpen(true) },
     ...models.map((m): Command => ({ id: "model:" + m.version, group: "切换模型", icon: "◆", label: m.label, hint: m.hint, keywords: m.version, run: () => setVersion(m.version) })),
     ...([
-      ["overview", "概览"], ["artifacts", "页面 Artifacts"], ["files", "文件"],
-      ["runs", "运行历史"], ["flows", "流程 / 工作流"], ["tasks", "定时任务"], ["factors", "因子库"], ["integrations", "集成"], ["system", "服务状态"],
+      ["files", "文件"], ["artifacts", "页面"], ["runs", "运行记录"],
     ] as [Tab, string][]).map(([t, label]): Command => ({ id: "panel:" + t, group: "打开面板", icon: "▸", label, run: () => openPanel(t) })),
     ...conversations.slice(0, 60).map((c): Command => ({ id: "conv:" + c.conversation_id, group: "跳转会话", icon: "💬", label: c.title || "未命名会话", keywords: c.title, run: () => selectConversation(c.conversation_id) })),
   ];
@@ -520,9 +544,16 @@ function Workbench({
         name={user.name}
         email={user.email}
         onSignOut={onSignOut}
+        tasksActive={view === "tasks"}
+        onOpenTasks={() => setView("tasks")}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
 
-      <main className="relative flex min-w-0 flex-1 flex-col">
+      {view === "tasks" ? <main className="relative flex min-w-0 flex-1 flex-col">
+        <Suspense fallback={<p role="status" className="p-6 text-sm text-muted">正在加载定时任务…</p>}>
+          <TasksPage onOpenConversation={id => { void selectConversation(id); }} onToggleSidebar={() => setSidebarOpen(o => !o)} initialDraft={taskDraft} onDraftOpened={() => setTaskDraft(null)} />
+        </Suspense>
+      </main> : <main className="relative flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center gap-1 px-2 sm:gap-3 sm:px-4">
           <button
             onClick={() => setSidebarOpen((o) => !o)}
@@ -597,7 +628,7 @@ function Workbench({
             onClick={() => setDrawerOpen((o) => !o)}
             aria-label="切换工作台面板"
             aria-pressed={drawerOpen}
-            title="工作台:概览 · 页面 · 文件 · 运营台"
+            title="工作台：文件 · 页面 · 运行记录"
             className="shrink-0"
           ><span className="hidden sm:inline">工作台</span></ActionChip>
         </header>
@@ -614,7 +645,7 @@ function Workbench({
             </>}
           </div>
         )}
-        <Thread onExample={text => { conversationDraft.setText(text); document.getElementById("chat-input")?.focus(); }} conversationID={activeID} ownerEmail={activeConv?.owner_email || user.email} recovery={recovery} onContinue={() => void recovery.resume()} canRetry={!readOnly && !!inputOf(activeID) && recovery.run?.status !== "running"} messages={messages} status={status} onResume={onResume} onResumed={onResumed} onPick={msg => { void onSend(msg).catch(e => toast(e.message || "发送失败", "error")); }} onRetry={onRetry} onSchedule={setScheduleFor} onFork={onFork} fileConv={isShared ? activeID : undefined} bottomInset={composerH} />
+        <Thread onExample={text => { conversationDraft.setText(text); document.getElementById("chat-input")?.focus(); }} conversationID={activeID} ownerEmail={activeConv?.owner_email || user.email} recovery={recovery} onContinue={() => void recovery.resume()} canRetry={!readOnly && !!inputOf(activeID) && recovery.run?.status !== "running"} messages={messages} status={status} onResume={onResume} onResumed={onResumed} onPick={msg => { void onSend(msg).catch(e => toast(e.message || "发送失败", "error")); }} onRetry={onRetry} onSchedule={openSchedule} onFork={onFork} fileConv={isShared ? activeID : undefined} bottomInset={composerH} />
         {/* The composer floats OVER the thread (its height is fed back as the
             thread's bottom padding), so the conversation scrolls clear of it
             instead of the last lines being clipped behind the tool row. */}
@@ -633,8 +664,9 @@ function Workbench({
             )}
           </div>
         </div>
-      </main>
+      </main>}
 
+      {settingsOpen && <Suspense fallback={null}><SettingsDialog onClose={() => setSettingsOpen(false)} /></Suspense>}
       {drawerOpen && <Suspense fallback={<div role="status" className="p-4">正在加载工作台…</div>}><ArtifactDrawer
         onResumeRun={runActions.resume}
         canResumeRun={record => runActions.actions.canResume(record)}
@@ -653,23 +685,6 @@ function Workbench({
         onClearArtifact={() => setDrawerArtifact(null)}
       /></Suspense>}
 
-      {scheduleFor !== null && (
-        <ScheduleDialog
-          prompt={scheduleFor}
-          onClose={() => setScheduleFor(null)}
-          onConfirm={async (sec, retry) => {
-            try {
-              await api.scheduleTask(scheduleFor, sec, scheduleFor.slice(0, 24), activeID, retry);
-            } catch {
-              toast("定时任务创建失败,请重试", "error");
-              return; // keep the dialog open so the user can retry
-            }
-            setScheduleFor(null);
-            refreshTasks();
-            toast("已设为定时任务", "success");
-          }}
-        />
-      )}
 
       {modelSettingsOpen && <ModelSettings onClose={() => setModelSettingsOpen(false)} onSaved={() => { setVersion("auto"); api.models().then(m => setModels(m.length ? m : MODELS_FALLBACK)).catch(() => {}); }} />}
       {shareFor && (
@@ -683,77 +698,6 @@ function Workbench({
         />
       )}
 
-    </div>
-  );
-}
-
-const INTERVALS = [
-  { label: "每 10 分钟", sec: 600 },
-  { label: "每小时", sec: 3600 },
-  { label: "每天", sec: 86400 },
-];
-
-// ScheduleDialog turns a conversation turn into a recurring task (with the prompt
-// prefilled). Supports the presets plus a custom minutes value (backend min 30s).
-function ScheduleDialog({ prompt, onClose, onConfirm }: { prompt: string; onClose: () => void; onConfirm: (sec: number, retry: number) => void }) {
-  const [sec, setSec] = useState(3600);
-  const [customMin, setCustomMin] = useState("");
-  const [retry, setRetry] = useState(0);
-  const effective = customMin ? Math.max(1, Math.round(Number(customMin))) * 60 : sec;
-  const valid = effective >= 30;
-  useOverlay(onClose);
-  return (
-    <div className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6" onClick={onClose}>
-      <div className="pop-in w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h2 className="font-serif text-[18px] text-ink">设为定时任务</h2>
-        <p className="mt-1 line-clamp-2 text-[13px] text-muted">“{prompt}”</p>
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {INTERVALS.map((i) => (
-            <button
-              key={i.sec}
-              onClick={() => { setSec(i.sec); setCustomMin(""); }}
-              className={
-                "rounded-lg border px-3 py-1.5 text-[13px] transition " +
-                (!customMin && sec === i.sec ? "border-accent/40 bg-accentsoft text-accent" : "border-border text-muted hover:bg-surface2")
-              }
-            >
-              {i.label}
-            </button>
-          ))}
-          <div className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[13px]">
-            <span className="text-faint">每</span>
-            <input
-              value={customMin}
-              onChange={(e) => setCustomMin(e.target.value.replace(/[^\d]/g, ""))}
-              placeholder="—"
-              aria-label="自定义间隔（分钟）"
-              className="w-12 bg-transparent text-center outline-none"
-            />
-            <span className="text-faint">分钟</span>
-          </div>
-        </div>
-        <div className="mt-3 flex items-center gap-2 text-[13px] text-muted">
-          <span>失败自动重试</span>
-          <input
-            value={retry}
-            onChange={(e) => setRetry(Math.max(0, Math.min(5, Number(e.target.value.replace(/[^\d]/g, "")) || 0)))}
-            aria-label="失败重试次数"
-            className="w-12 rounded-lg border border-border bg-surface px-2 py-1 text-center outline-none focus:border-accent/50"
-          />
-          <span>次</span>
-        </div>
-        <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-[13px] text-muted hover:bg-surface2">取消</button>
-          <button
-            onClick={() => valid && onConfirm(effective, retry)}
-            disabled={!valid}
-            className="rounded-lg bg-accent px-3.5 py-1.5 text-[13px] text-white disabled:opacity-40"
-          >
-            创建
-          </button>
-        </div>
-        {!valid && <div className="mt-2 text-right text-[11px] text-accent">间隔需 ≥ 30 秒</div>}
-      </div>
     </div>
   );
 }

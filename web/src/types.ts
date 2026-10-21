@@ -1,3 +1,4 @@
+import type { TaskTrigger } from './lib/taskTrigger';
 // Mirrors the Go event protocol in orka_core/messages.
 
 export type EventType =
@@ -130,39 +131,10 @@ export interface TaskMeta {
   last_result?: string;
   webhook_token?: string;
   retry_count?: number;
-}
-
-export interface FactorMetrics {
-  ic: number;
-  ir: number;
-  sharpe: number;
-  turnover: number;
-  max_dd: number;
-  periods: number;
-}
-
-export interface Factor {
-  factor_id: string;
-  name: string;
-  source_report_id?: string;
-  rationale: string;
-  expression: string;
-  direction: string; // long | short | long_short
-  universe?: string;
-  horizon?: string;
-  status: string; // proposed | backtested | approved | rejected | live
-  agreement_score?: number;
-  metrics: FactorMetrics;
-  created_at: number;
-}
-
-export interface WeightedPortfolio {
-  portfolio_id: string;
-  method: string;
-  factor_ids: string[];
-  weights: number[];
-  metrics: FactorMetrics;
-  created_at: number;
+  trigger?: TaskTrigger;
+  last_finished_at?: number;
+  last_status?: string;
+  disabled_reason?: string;
 }
 
 export interface RunRecord {
@@ -212,20 +184,6 @@ export interface Artifact {
   updated_at: number;
 }
 
-export interface WorkflowStep {
-  name: string;
-  prompt: string;
-  depends_on?: string[];
-  run_if?: string;
-  on_error?: string; // stop | continue | retry:N
-}
-export interface Workflow {
-  workflow_id: string;
-  name: string;
-  steps: WorkflowStep[];
-  created_at: number;
-}
-
 export interface MessageSearchHit {
   conversation_id: string;
   title: string;
@@ -245,18 +203,6 @@ export interface Notification {
   created_at: number;
 }
 
-export interface Connector {
-  connector_id: string;
-  name: string;
-  transport: string; // http | streamable_http | stdio
-  url: string;
-  command: string;
-  args: string[];
-  headers: Record<string, string>;
-  enabled: boolean;
-  created_at: number;
-}
-
 export interface OwnerInfo {
   email: string;
   name: string;
@@ -272,4 +218,14 @@ export interface MetricsSnapshot {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+}
+
+export interface Connector {
+  connector_id: string;
+  name: string;
+  transport: string; // streamable_http | http
+  url: string;
+  headers: Record<string, string>;
+  enabled: boolean;
+  created_at: number;
 }

@@ -10,9 +10,11 @@ export type IconName =
   | "file" | "folder" | "link" | "globe" | "calc" | "ruler" | "book" | "chart"
   | "table" | "qr" | "code" | "deck" | "users" | "wrench" | "image"
   | "copy" | "refresh" | "gear" | "chevron" | "trash" | "eye" | "check"
-  | "download" | "play" | "plug" | "keyboard" | "hand";
+  | "download" | "play" | "plug" | "keyboard" | "hand" | "sort" | "filter";
 
 const PATHS: Record<IconName, React.ReactNode> = {
+  sort: <path d="M7 4v16M4 7l3-3 3 3M17 20V4M14 17l3 3 3-3" />,
+  filter: <path d="M4 6h16M7 12h10M10 18h4" />,
   bell: <path d="M6 8a6 6 0 0 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9M10 21a2 2 0 0 0 4 0" />,
   sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19" /></>,
   moon: <path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.5 6.5 0 0 0 9.8 9.8Z" />,
