@@ -101,9 +101,6 @@ type ChatService struct {
 	// atomic pointer rather than a mutable field because model names are read on
 	// every turn of every in-flight run, and a settings save must not race them.
 	llmLive atomic.Pointer[config.LLMConfig]
-	// provider is the swappable bottom of the client stack, so changing the
-	// endpoint does not need a restart. Nil when main wired a plain client.
-	provider *llm.Swappable
 
 	executions executionRegistry
 }
@@ -139,31 +136,6 @@ func (s *ChatService) llmConf() config.LLMConfig {
 
 // EffectiveLLM is the llm config now in force, for the settings API to report.
 func (s *ChatService) EffectiveLLM() config.LLMConfig { return s.llmConf() }
-
-// UseProvider registers the swappable client so settings changes can replace
-// the endpoint in place.
-func (s *ChatService) UseProvider(p *llm.Swappable) { s.provider = p }
-
-// ApplySettings makes the user's saved settings effective immediately: model
-// names and the reasoning passthrough swap atomically, and the endpoint is
-// rebuilt when its address or credentials changed.
-//
-// Returns the config now in force, so the caller can report what took effect
-// rather than echoing back what was asked for.
-func (s *ChatService) ApplySettings(set config.SettingsLLM) config.LLMConfig {
-	base := config.LLMConfig{}
-	if s.Cfg != nil {
-		base = s.Cfg.LLM
-	}
-	next := set.Apply(base)
-	s.llmLive.Store(&next)
-	if s.provider != nil {
-		c := llm.NewOpenAIClientCapped(next.OpenAIBaseURL, next.OpenAIAPIKey, next.MaxTokens)
-		c.Reasoning, c.ReasoningByModel = next.Reasoning, next.ReasoningByModel
-		s.provider.Set(c)
-	}
-	return next
-}
 
 // modelFor resolves Auto/empty to the first deployment model and explicit
 // allowed names to themselves. Unknown legacy selections use the default.
@@ -391,8 +363,9 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		// (raw=nil: persist only; the SSE echo is rendered optimistically).
 		history := s.loadChatHistory(ctx, req.ConversationID, meta)
 		// First turn: derive the title deterministically. A separate title model
-		// used to compete with the task model and delayed short requests.
-		if len(history) == 0 && req.ConversationID != "" && s.Msg != nil && s.Msg.Store != nil {
+		// used to compete with the task model and delayed short requests. A
+		// task's conversation keeps the task's name.
+		if len(history) == 0 && req.TaskID == "" && req.ConversationID != "" && s.Msg != nil && s.Msg.Store != nil {
 			_ = s.Msg.Store.UpdateConversationTitle(ctx, req.ConversationID, titleSnippet(req.Message))
 		}
 		userMsg := humanChat(req.Message, meta)

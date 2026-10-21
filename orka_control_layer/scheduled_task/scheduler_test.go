@@ -263,3 +263,42 @@ func TestSchedulerKeepsRenewingWhileCancelledTriggerCleansUp(t *testing.T) {
 		}
 	}
 }
+
+type fingerprintLog struct {
+	mu  sync.Mutex
+	got []string
+}
+
+func (f *fingerprintLog) SetTaskFingerprint(_ context.Context, _, fp string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.got = append(f.got, fp)
+	return nil
+}
+
+func TestConditionTaskRunsOnlyWhenTheWatchFires(t *testing.T) {
+	for _, fire := range []bool{false, true} {
+		claims := newClaims()
+		claims.task.Trigger = &db.TaskTrigger{Kind: db.TriggerCondition, WatchURL: "https://example.com", CheckEverySec: 300}
+		prints := &fingerprintLog{}
+		var ran string
+		s := Scheduler{Claims: claims, Source: claims.source, Fingerprints: prints, Now: func() time.Time { return time.UnixMilli(10000) },
+			Watch: func(context.Context, db.TaskTrigger) (Observation, error) {
+				return Observation{Fingerprint: "fp", Fire: fire, Reason: "页面变了。"}, nil
+			},
+			Trigger: func(_ context.Context, _ db.TaskMeta, content string) error { ran = content; return nil },
+		}
+		if _, err := s.RunDue(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if len(prints.got) != 1 || prints.got[0] != "fp" {
+			t.Fatalf("fingerprint not recorded: %v", prints.got)
+		}
+		if !fire && (ran != "" || claims.status != StatusWatching) {
+			t.Fatalf("unfired check ran=%q status=%s", ran, claims.status)
+		}
+		if fire && (ran != "hi Sam\n\n[触发原因] 页面变了。" || claims.status != db.RunDone) {
+			t.Fatalf("fired check ran=%q status=%s", ran, claims.status)
+		}
+	}
+}

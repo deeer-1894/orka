@@ -51,12 +51,11 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/artifact/delete", a.DeleteArtifact)
 	g.GET("/artifact/stream", a.ArtifactStream)
 
-	g.POST("/task/create", a.CreateTask)
 	g.POST("/task/get-tasks", a.GetTasks)
-	g.POST("/task/schedule", a.ScheduleTask)
-	g.POST("/task/unschedule", a.UnscheduleTask)
-	g.POST("/task/webhook/enable", a.EnableWebhook)
-	g.POST("/task/webhook/disable", a.DisableWebhook)
+	g.POST("/task/save", a.SaveTask)     // create or edit; trigger: schedule | condition | event
+	g.POST("/task/toggle", a.ToggleTask) // enable / disable the trigger
+	g.POST("/task/run-now", a.RunTaskNow)
+	g.POST("/task/delete", a.DeleteTask)
 
 	g.POST("/chat/run", a.ChatRun)
 	g.POST("/chat/steer", a.ChatSteer)
@@ -88,9 +87,6 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.GET("/tools/catalog", a.ToolsCatalog)  // available tools + descriptions for the picker
 	g.POST("/chat/confirm", a.ConfirmAction) // approve/reject a paused risky tool call
 	g.POST("/chat/resume_run", a.ResumeRun)  // continue a run that died mid-flight
-	g.GET("/settings", a.GetSettings)        // deployment endpoint + models, editable from the UI
-	g.POST("/settings", a.SaveSettings)      // persisted to the user's orka.json, applied live
-	g.POST("/settings/test", a.TestSettings) // probe an endpoint before saving it
 	g.POST("/chat/followups", a.Followups)   // suggested next questions for a Q&A turn
 
 	g.POST("/run/list", a.ListRuns) // execution history (run records)

@@ -40,7 +40,18 @@ type Scheduler struct {
 	RenewInterval time.Duration
 	Log           *slog.Logger
 	Now           func() time.Time
+	// Watch and Fingerprints serve condition triggers; both are required for
+	// them, and a condition task without them fails instead of running blind.
+	Watch        func(context.Context, db.TaskTrigger) (Observation, error)
+	Fingerprints interface {
+		SetTaskFingerprint(ctx context.Context, taskID, fingerprint string) error
+	}
 }
+
+// StatusWatching records a condition check that did not fire.
+const StatusWatching = "watching"
+
+var errNotFired = errors.New("condition not met")
 
 type outcomeError struct{ status string }
 
@@ -56,6 +67,9 @@ func OutcomeError(status string) error {
 func resultStatus(err error) string {
 	if err == nil {
 		return db.RunDone
+	}
+	if errors.Is(err, errNotFired) {
+		return StatusWatching
 	}
 	var outcome outcomeError
 	if errors.As(err, &outcome) {
@@ -109,7 +123,9 @@ func (s *Scheduler) RunDue(ctx context.Context) (int, error) {
 		go func(task db.TaskMeta, claimID string) { results <- result{s.execute(ctx, task, claimID)} }(task, claimID)
 	}
 	for i := 0; i < n; i++ {
-		errs = errors.Join(errs, (<-results).err)
+		if err := (<-results).err; !errors.Is(err, errNotFired) {
+			errs = errors.Join(errs, err)
+		}
 	}
 	return n, errs
 }
@@ -143,7 +159,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 
 func CronSource(store *db.Storage) Source {
 	return func(ctx context.Context) ([]db.TaskMeta, error) {
-		return store.ListTasks(ctx, map[string]any{"cron_status": "on", "next_run_at": map[string]any{"$lte": time.Now().UnixMilli()}}, 0, 1000)
+		return store.ListTasks(ctx, map[string]any{"cron_status": "on", "next_run_at": map[string]any{"$gt": 0, "$lte": time.Now().UnixMilli()}}, 0, 1000)
 	}
 }
 
@@ -196,5 +212,32 @@ func (s *Scheduler) execute(parent context.Context, task db.TaskMeta, claimID st
 		runErr = errors.Join(runErr, s.Claims.CompleteScheduledTask(finishCtx, task, claimID, resultStatus(runErr), s.now().UnixMilli()))
 	}()
 	tmpl, _ := task.Variables["prompt_template"].(string)
-	return s.Trigger(ctx, task, Render(tmpl, task.Variables))
+	content := Render(tmpl, task.Variables)
+	if task.Trigger != nil && task.Trigger.Kind == db.TriggerCondition {
+		reason, err := s.checkCondition(ctx, task)
+		if err != nil {
+			return err
+		}
+		content += "\n\n[触发原因] " + reason
+	}
+	return s.Trigger(ctx, task, content)
+}
+
+// checkCondition looks at the watched page and records what it saw; the run
+// only starts when the condition fires.
+func (s *Scheduler) checkCondition(ctx context.Context, task db.TaskMeta) (string, error) {
+	if s.Watch == nil || s.Fingerprints == nil {
+		return "", errors.New("condition triggers are not configured")
+	}
+	obs, err := s.Watch(ctx, *task.Trigger)
+	if err != nil {
+		return "", err
+	}
+	if err := s.Fingerprints.SetTaskFingerprint(ctx, task.TaskID, obs.Fingerprint); err != nil {
+		return "", err
+	}
+	if !obs.Fire {
+		return "", errNotFired
+	}
+	return obs.Reason, nil
 }

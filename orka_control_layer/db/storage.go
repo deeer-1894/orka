@@ -614,28 +614,37 @@ func (s *Storage) GetTaskByWebhook(ctx context.Context, token string) (*TaskMeta
 	return &out, nil
 }
 
-// SetTaskCron turns recurring scheduling on/off for a task and sets its period
-// and next-due time.
-func (s *Storage) SetTaskCron(ctx context.Context, id, cronStatus string, intervalSec, nextRunAt int64) error {
-	_, err := s.Tasks.UpdateOne(ctx,
-		bson.M{"task_id": id},
-		bson.M{"$set": bson.M{"cron_status": cronStatus, "interval_sec": intervalSec, "next_run_at": nextRunAt}},
-	)
+// SaveTaskDefinition replaces the user-editable part of a task. Claim state,
+// history and the circuit breaker are left alone.
+func (s *Storage) SaveTaskDefinition(ctx context.Context, t *TaskMeta) error {
+	_, err := s.Tasks.UpdateOne(ctx, bson.M{"task_id": t.TaskID, "owner_email": t.OwnerEmail}, bson.M{"$set": bson.M{
+		"variables": t.Variables, "trigger": t.Trigger, "cron_status": t.CronStatus, "interval_sec": t.IntervalSec,
+		"next_run_at": t.NextRunAt, "retry_count": t.RetryCount, "webhook_token": t.WebhookToken, "disabled_reason": t.DisabledReason,
+		"consecutive_fails": t.ConsecutiveFails,
+	}})
 	if err != nil {
-		return fmt.Errorf("set task cron: %w", err)
+		return fmt.Errorf("save task: %w", err)
 	}
 	return nil
 }
 
-// AdvanceTaskRun records a cron run: pushes next_run_at forward and stores a
-// short result summary.
-func (s *Storage) AdvanceTaskRun(ctx context.Context, id string, nextRunAt int64, lastResult string) error {
-	_, err := s.Tasks.UpdateOne(ctx,
-		bson.M{"task_id": id},
-		bson.M{"$set": bson.M{"next_run_at": nextRunAt, "last_result": lastResult, "run_status": RunRunning}},
-	)
+// DeleteTask removes an owner's task.
+func (s *Storage) DeleteTask(ctx context.Context, owner, id string) error {
+	res, err := s.Tasks.DeleteOne(ctx, bson.M{"task_id": id, "owner_email": owner})
 	if err != nil {
-		return fmt.Errorf("advance task run: %w", err)
+		return fmt.Errorf("delete task: %w", err)
+	}
+	if res.DeletedCount == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetTaskFingerprint records what a condition trigger last observed.
+func (s *Storage) SetTaskFingerprint(ctx context.Context, id, fingerprint string) error {
+	_, err := s.Tasks.UpdateOne(ctx, bson.M{"task_id": id, "trigger.kind": TriggerCondition}, bson.M{"$set": bson.M{"trigger.fingerprint": fingerprint}})
+	if err != nil {
+		return fmt.Errorf("set task fingerprint: %w", err)
 	}
 	return nil
 }

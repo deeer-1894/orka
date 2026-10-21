@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -23,13 +22,10 @@ func (s *Storage) ClaimScheduledTask(ctx context.Context, task TaskMeta, claimID
 	if claimID == "" || task.TaskID == "" {
 		return false, errors.New("task and claim ID required")
 	}
-	if task.CronStatus != "on" || task.IntervalSec <= 0 || task.NextRunAt > now {
+	if task.CronStatus != "on" || task.NextRunAt <= 0 || task.NextRunAt > now {
 		return false, nil
 	}
-	if now < 0 || task.IntervalSec > (math.MaxInt64-now)/1000 {
-		return false, errors.New("schedule interval overflow")
-	}
-	next := now + task.IntervalSec*1000
+	next := NextDue(task, now)
 	filter := bson.M{"task_id": task.TaskID, "cron_status": "on", "interval_sec": task.IntervalSec, "next_run_at": task.NextRunAt,
 		"$or": bson.A{bson.M{"schedule_claim": bson.M{"$exists": false}}, bson.M{"schedule_claim": ""}, bson.M{"schedule_lease_until": bson.M{"$lte": now}}},
 	}
@@ -61,14 +57,15 @@ func (s *Storage) CompleteScheduledTask(ctx context.Context, task TaskMeta, clai
 	if claimID == "" {
 		return ErrScheduleClaimLost
 	}
-	next := now
-	if now >= 0 && task.IntervalSec > 0 && task.IntervalSec <= (math.MaxInt64-now)/1000 {
-		next += task.IntervalSec * 1000
+	set := bson.M{"schedule_claim": "", "schedule_lease_until": 0, "schedule_finished_at": now, "schedule_last_status": status, "run_status": status}
+	update := bson.M{"$set": set}
+	if next := NextDue(task, now); next > 0 {
+		update["$max"] = bson.M{"next_run_at": next}
+	} else {
+		// A single run that has happened leaves nothing scheduled.
+		set["cron_status"], set["next_run_at"] = "off", 0
 	}
-	res, err := s.Tasks.UpdateOne(ctx, bson.M{"task_id": task.TaskID, "schedule_claim": claimID, "schedule_lease_until": bson.M{"$gt": now}}, bson.M{
-		"$set": bson.M{"schedule_claim": "", "schedule_lease_until": 0, "schedule_finished_at": now, "schedule_last_status": status, "run_status": status},
-		"$max": bson.M{"next_run_at": next},
-	})
+	res, err := s.Tasks.UpdateOne(ctx, bson.M{"task_id": task.TaskID, "schedule_claim": claimID, "schedule_lease_until": bson.M{"$gt": now}}, update)
 	if err != nil {
 		return fmt.Errorf("complete scheduled task: %w", err)
 	}

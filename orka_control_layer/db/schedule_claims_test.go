@@ -182,3 +182,25 @@ func TestScheduleMongoRenewalPreventsCrossPeriodOverlap(t *testing.T) {
 		t.Fatalf("old owner renewed successor: %v %v", ok, err)
 	}
 }
+
+func TestScheduleMongoOneOffRunsOnceThenTurnsOff(t *testing.T) {
+	store := isolatedWorkflowDB(t)
+	ctx := context.Background()
+	task := TaskMeta{TaskID: "once", CronStatus: "on", NextRunAt: 5000, Trigger: &TaskTrigger{Kind: TriggerSchedule, At: 5000}}
+	if _, err := store.Tasks.InsertOne(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := store.ClaimScheduledTask(ctx, task, "run", 5000); !ok || err != nil {
+		t.Fatalf("claim due one-off: %v %v", ok, err)
+	}
+	if err := store.CompleteScheduledTask(ctx, task, "run", RunDone, 6000); err != nil {
+		t.Fatal(err)
+	}
+	var got TaskMeta
+	if err := store.Tasks.FindOne(ctx, bson.M{"task_id": "once"}).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.CronStatus != "off" || got.NextRunAt != 0 || got.LastStatus != RunDone {
+		t.Fatalf("one-off after run = cron %s next %d status %s", got.CronStatus, got.NextRunAt, got.LastStatus)
+	}
+}

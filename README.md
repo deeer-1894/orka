@@ -122,7 +122,7 @@ curl -s $B/metrics
 |-----|--------|
 | `TOOLS_MCP_URL=` | source tools from a remote tools_server over MCP (else local fs tools) |
 | `GUI_AGENT_WS_URL=` | wire the real `run_agent` GUI tool (else a mock) |
-| `SCHEDULER_ENABLE=1` | run the cron scheduler (renders task templates → triggers chat) |
+| `SCHEDULER_ENABLE=0` | disable the task scheduler (time and condition triggers); it runs by default |
 | `OTEL_TRACES_STDOUT=1` | export OpenTelemetry spans (chat.run / tool.invoke) to stdout |
 | `OTEL_EXPORTER_OTLP_ENDPOINT=` | export spans to an OTLP/HTTP collector (Jaeger/Tempo) |
 | `CDP_URL=` | (gui_agent) attach to a remote Chromium over CDP instead of launching one |

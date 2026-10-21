@@ -2,13 +2,13 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
+	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 
+	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_control_layer/service"
 )
 
@@ -28,10 +28,19 @@ func (a *API) Webhook(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	var body map[string]any
-	_ = json.Unmarshal(c.Request.Body(), &body)
+	raw := c.Request.Body()
+	_ = json.Unmarshal(raw, &body)
 	msg := taskPromptFor(t.Variables)
 	if m, ok := body["message"].(string); ok && m != "" {
 		msg = m
+	}
+	if t.Trigger != nil && t.Trigger.Kind == db.TriggerEvent {
+		event := webhookEvent(string(c.GetHeader("X-GitHub-Event")), body)
+		if t.CronStatus != "on" || (t.Trigger.Event != "" && !strings.EqualFold(event, t.Trigger.Event)) {
+			c.JSON(consts.StatusAccepted, map[string]any{"code": 0, "data": map[string]string{"status": "ignored", "event": event}})
+			return
+		}
+		msg += "\n\n[触发事件] " + firstNonEmptyStr(event, "webhook") + "\n" + truncRunes(string(raw), 4000)
 	}
 	go a.Chat.RunHeadless(context.Background(), service.ChatRunRequest{
 		Message:        msg,
@@ -52,44 +61,16 @@ func taskPromptFor(vars map[string]any) string {
 	return ""
 }
 
-// EnableWebhook generates a webhook token for a task and returns its trigger URL.
-func (a *API) EnableWebhook(ctx context.Context, c *app.RequestContext) {
-	var req struct {
-		TaskID string `json:"task_id"`
+// webhookEvent names a call: GitHub's event header plus the payload's action
+// ("pull_request.closed"), or a generic "event" field.
+func webhookEvent(githubEvent string, body map[string]any) string {
+	action, _ := body["action"].(string)
+	if githubEvent != "" {
+		if action != "" {
+			return githubEvent + "." + action
+		}
+		return githubEvent
 	}
-	if err := bind(c, &req); err != nil || req.TaskID == "" {
-		fail(c, consts.StatusBadRequest, "task_id required")
-		return
-	}
-	t, err := a.Store.GetTask(ctx, req.TaskID)
-	if err != nil || t.OwnerEmail != authEmail(c) {
-		fail(c, consts.StatusNotFound, "task not found")
-		return
-	}
-	var b [18]byte
-	_, _ = rand.Read(b[:])
-	token := hex.EncodeToString(b[:])
-	if err := a.Store.SetTaskWebhook(ctx, req.TaskID, token); err != nil {
-		fail(c, consts.StatusInternalServerError, "enable failed")
-		return
-	}
-	ok(c, map[string]string{"token": token, "path": "/api/v1/controller/hook/" + token})
-}
-
-// DisableWebhook clears a task's webhook token.
-func (a *API) DisableWebhook(ctx context.Context, c *app.RequestContext) {
-	var req struct {
-		TaskID string `json:"task_id"`
-	}
-	if err := bind(c, &req); err != nil || req.TaskID == "" {
-		fail(c, consts.StatusBadRequest, "task_id required")
-		return
-	}
-	t, err := a.Store.GetTask(ctx, req.TaskID)
-	if err != nil || t.OwnerEmail != authEmail(c) {
-		fail(c, consts.StatusNotFound, "task not found")
-		return
-	}
-	_ = a.Store.SetTaskWebhook(ctx, req.TaskID, "")
-	ok(c, map[string]string{"status": "disabled"})
+	event, _ := body["event"].(string)
+	return event
 }

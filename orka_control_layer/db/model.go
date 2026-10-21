@@ -158,8 +158,8 @@ type Artifact struct {
 	OwnerEmail     string              `bson:"owner_email" json:"owner_email"`
 	ConversationID string              `bson:"conversation_id" json:"conversation_id"` // source of context
 	Title          string              `bson:"title" json:"title"`
-	Kind           string              `bson:"kind" json:"kind"` // pr_review|architecture|incident|checklist|audit|custom
-	Slug           string              `bson:"slug" json:"slug"` // stable public URL segment
+	Kind           string              `bson:"kind" json:"kind"`             // pr_review|architecture|incident|checklist|audit|custom
+	Slug           string              `bson:"slug" json:"slug"`             // stable public URL segment
 	Visibility     string              `bson:"visibility" json:"visibility"` // private | shared | public
 	Shares         []ConversationShare `bson:"shares,omitempty" json:"shares,omitempty"`
 	ShareToken     string              `bson:"share_token,omitempty" json:"share_token,omitempty"` // public-link auth
@@ -217,6 +217,7 @@ func (a *Artifact) CanRead(email string) bool {
 //   - RunIf: a guard like `research contains FOUND` evaluated against prior step
 //     outputs; if false the step is skipped (its dependents still run).
 //   - OnError: stop | continue | retry:N — what to do when this step fails.
+//
 // Prompts and RunIf may reference a prior step's output with {{step_name}}.
 type WorkflowStep struct {
 	Name      string   `bson:"name" json:"name"`
@@ -272,7 +273,7 @@ type RunRecord struct {
 	Trigger        string `bson:"trigger" json:"trigger"` // manual | schedule | resume
 	Status         string `bson:"status" json:"status"`   // running | done | partial | failed | paused | interrupted
 	Prompt         string `bson:"prompt" json:"prompt"`
-	Output         string `bson:"output" json:"output"` // final answer summary (capped)
+	Output         string `bson:"output" json:"output"`                     // final answer summary (capped)
 	Result         string `bson:"result,omitempty" json:"result,omitempty"` // structured JSON extracted from the answer (chaining / external consumption)
 	Error          string `bson:"error" json:"error"`
 	ToolCalls      int    `bson:"tool_calls" json:"tool_calls"`
@@ -316,9 +317,9 @@ type TaskMeta struct {
 	OwnerEmail        string         `bson:"owner_email" json:"owner_email"`
 	Variables         map[string]any `bson:"variables" json:"variables"`
 	CreatedAt         int64          `bson:"created_at" json:"created_at"`
-	IntervalSec       int64          `bson:"interval_sec" json:"interval_sec"` // recurring period (0 = not scheduled)
-	NextRunAt         int64          `bson:"next_run_at" json:"next_run_at"`   // unix millis the cron is next due
-	LastResult        string         `bson:"last_result" json:"last_result"`   // short summary of the latest run
+	IntervalSec       int64          `bson:"interval_sec" json:"interval_sec"`                       // recurring period (0 = not scheduled)
+	NextRunAt         int64          `bson:"next_run_at" json:"next_run_at"`                         // unix millis the cron is next due
+	LastResult        string         `bson:"last_result" json:"last_result"`                         // short summary of the latest run
 	WebhookToken      string         `bson:"webhook_token,omitempty" json:"webhook_token,omitempty"` // set → POST /hook/{token} triggers this task
 	RetryCount        int            `bson:"retry_count,omitempty" json:"retry_count,omitempty"`     // task-level auto-retry on failure (0 = none)
 	// ConsecutiveFails drives the circuit breaker: an unattended task that keeps
@@ -329,4 +330,9 @@ type TaskMeta struct {
 	// DisabledReason explains an automatic shutdown ("" = not auto-disabled), so
 	// a stopped task doesn't look like the user stopped it.
 	DisabledReason string `bson:"disabled_reason,omitempty" json:"disabled_reason,omitempty"`
+	// Trigger says when the task runs; nil keeps the legacy IntervalSec cadence.
+	Trigger *TaskTrigger `bson:"trigger,omitempty" json:"trigger,omitempty"`
+	// LastFinishedAt is when the latest scheduled run or condition check ended.
+	LastFinishedAt int64  `bson:"schedule_finished_at,omitempty" json:"last_finished_at,omitempty"`
+	LastStatus     string `bson:"schedule_last_status,omitempty" json:"last_status,omitempty"`
 }

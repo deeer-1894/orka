@@ -121,10 +121,7 @@ func main() {
 	// Timed sits INSIDE the limiter on purpose: it then measures the provider
 	// exchange alone, so queue time is the difference between a call's observed
 	// spacing and its logged duration rather than being folded into it.
-	// The provider sits behind a swappable pointer at the BOTTOM of the stack, so
-	// the settings panel can change the endpoint without a restart and without
-	// resetting the limiter's accounting or the run-cost totals above it.
-	provider := llm.NewSwappable(newLLMClient(cfg))
+	provider := newLLMClient(cfg)
 	modelClient = llm.NewLimiterFromEnv(llm.NewRetry(llm.NewMetered(
 		llm.NewAccounted(provider),
 		func(ctx context.Context) string { return agent.MetaFrom(ctx).AgentID },
@@ -137,7 +134,6 @@ func main() {
 
 	msg := message_utils.New(store, cfg.Obs.PersistSampling, logger)
 	chat := service.NewChatService(cfg, modelClient, cpStore, msg, metrics, logger)
-	chat.UseProvider(provider)
 	// Close out runs orphaned by the previous process before serving, then keep
 	// sweeping. A run's registry lives in memory and dies with the process, so
 	// without this the run log fills with executions that are "running" forever.
@@ -219,17 +215,27 @@ func main() {
 		time.Hour,
 	)
 
-	// Optional cron scheduler: render task templates and trigger chat runs.
-	if os.Getenv("SCHEDULER_ENABLE") == "1" {
+	// Task triggers run by default; claims are atomic in the store, so several
+	// instances can all run the scheduler. SCHEDULER_ENABLE=0 opts out.
+	if os.Getenv("SCHEDULER_ENABLE") != "0" {
+		watchClient := scheduled_task.WatchClient()
 		sched := &scheduled_task.Scheduler{
 			Source: scheduled_task.CronSource(store), Claims: store,
 			Trigger: func(ctx context.Context, task db.TaskMeta, content string) error {
+				trigger := "schedule"
+				if task.Trigger != nil && task.Trigger.Kind == db.TriggerCondition {
+					trigger = "condition"
+				}
 				status := chat.Run(ctx, service.ChatRunRequest{
-					Message: content, ConversationID: task.ConversationID, TaskID: task.TaskID, UserEmail: task.OwnerEmail, Trigger: "schedule",
+					Message: content, ConversationID: task.ConversationID, TaskID: task.TaskID, UserEmail: task.OwnerEmail, Trigger: trigger,
 				}, func(messages.Message) {})
 				return scheduled_task.OutcomeError(status)
 			},
 			Interval: 20 * time.Second, Log: logger,
+			Watch: func(ctx context.Context, t db.TaskTrigger) (scheduled_task.Observation, error) {
+				return scheduled_task.Observe(ctx, watchClient, t)
+			},
+			Fingerprints: store,
 		}
 		go sched.Start(context.Background())
 		logger.Info("scheduler enabled")
