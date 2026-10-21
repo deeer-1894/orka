@@ -260,6 +260,10 @@ export const api = {
   // than paying for the completed work a second time.
   resumeRun: (run_id: string) =>
     post<{ resumed: boolean; conversation_id: string; steps: number }>("/chat/resume_run", { run_id }),
+  // Stop a continuation the control plane scheduled after a provider outage.
+  // The run stays resumable by hand.
+  cancelAutoResume: (run_id: string) =>
+    post<{ cancelled: boolean; run_id: string }>("/chat/cancel_auto_resume", { run_id }),
   listNotifications: () => post<{ notifications: Notification[]; unread: number }>("/notification/list", {}),
   readNotifications: (notification_id = "") => post("/notification/read", { notification_id }),
   followups: (prompt: string, answer: string, selectedVersion = "auto", modelProfile = "", conversationID = "", runID = "") => post<{ suggestions: string[] }>("/chat/followups", { prompt, answer, selected_version: selectedVersion, model_profile: modelProfile, conversation_id: conversationID, run_id: runID }, true),

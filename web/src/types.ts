@@ -159,6 +159,9 @@ export interface RunRecord {
   unfinished?: string[]; // plan steps the agent declared but never completed
   resumable?: boolean; // a transcript survived, so this run can be continued
   resume_steps?: number; // how much of the run that transcript preserves
+  resumed_from?: string; // the run this execution continues
+  auto_resume_at?: number; // unix ms the control plane will continue this run on its own
+  auto_resume_attempt?: number; // 1-based position in the chain of automatic resumes
 }
 
 export type ArtifactBlock = { type: string; data: Record<string, unknown> };

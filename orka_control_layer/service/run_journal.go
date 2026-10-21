@@ -389,7 +389,12 @@ func (s *ChatService) ResumeRun(ctx context.Context, runID, email string, raw fu
 // ResumeOptions distinguishes omitted selection (preserve recorded tools) from
 // an explicit empty selection (automatic access to all available tools).
 // It applies only to a new continuation, never to a parked approval checkpoint.
-type ResumeOptions struct{ EnabledTools *[]string }
+type ResumeOptions struct {
+	EnabledTools *[]string
+	// autoResumes numbers an automatic continuation within its chain, so the
+	// successor knows how many retries remain if it fails the same way.
+	autoResumes int
+}
 
 func (s *ChatService) PrepareResumeRun(ctx context.Context, runID, email string, options ...ResumeOptions) (PreparedResume, error) {
 	if s.Msg == nil || s.Msg.Store == nil {
@@ -417,6 +422,10 @@ func (s *ChatService) PrepareResumeRun(ctx context.Context, runID, email string,
 	// record conservatively rather than treating its already billed work as free.
 	if f.Checkpoint == nil {
 		f.Checkpoint = &runCheckpoint{SpentTokens: rec.Tokens}
+	}
+	autoResumes := 0
+	if len(options) > 0 {
+		autoResumes = options[0].autoResumes
 	}
 	if len(options) > 0 && options[0].EnabledTools != nil {
 		// The authenticated continuation explicitly selects a new capability set.
@@ -475,6 +484,8 @@ func (s *ChatService) PrepareResumeRun(ctx context.Context, runID, email string,
 			UserEmail:       email,
 			Trigger:         "resume",
 			resumeFrom:      rr,
+			resumedFrom:     runID,
+			autoResumes:     autoResumes,
 		}, raw)
 		if status == db.RunDone || rr.SuccessorDurable {
 			dropJournal(s.Cfg.Storage.BaseStoragePath, runID)

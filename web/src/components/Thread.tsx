@@ -11,7 +11,7 @@ import { api, chat as chatApi, files as fileApi } from "../api";
 import type { ConfirmPayload, PlanPayload } from "../types";
 import { normalizeWorkspacePath, workspaceLinkPath } from "../lib/sessionFiles";
 import { useSessionFiles } from "../hooks/useSessionFiles";
-import { executionIdentity, isIncompleteRun, pendingConfirmationID, type RecoverySnapshot } from "../lib/runRecovery";
+import { autoResumeNotice, executionIdentity, isIncompleteRun, pendingAutoResume, pendingConfirmationID, type RecoverySnapshot } from "../lib/runRecovery";
 import { Markdown } from "./Markdown";
 import { FilePreview } from "./FilePreview";
 import { FollowUps } from "./FollowUps";
@@ -124,12 +124,15 @@ export function Thread({
   ownerEmail,
   recovery,
   onContinue,
+  onCancelAutoResume,
   canRetry,
 }: {
   conversationID: string;
   ownerEmail: string;
   recovery: RecoverySnapshot;
   onContinue: () => void;
+  // Drop a continuation the control plane scheduled after a provider outage.
+  onCancelAutoResume?: () => void;
   canRetry: boolean;
   messages: Message[];
   status: RunStatus;
@@ -197,6 +200,17 @@ export function Thread({
   const activeExecution = executionIdentity({ conversationID, messages, status });
   const canAct = status !== "streaming" && !recovery.busy;
   const failed = isIncompleteRun({ conversationID, messages, status }, recovery.run);
+  // While a run waits out a provider outage, its countdown has to move on its
+  // own; the recovery poll alone would leave "2 分钟后" standing for minutes.
+  const waitingAutoResume = failed && pendingAutoResume(recovery.run);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!waitingAutoResume) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, [waitingAutoResume, recovery.run?.auto_resume_at]);
+  const autoResume = failed ? autoResumeNotice(recovery.run, now) : undefined;
 
   // In-thread find: scan the loaded conversation for a query and jump between
   // hits. Frontend-only — searches the user/assistant/reasoning text already in
@@ -308,15 +322,19 @@ export function Thread({
         )}
         {failed && (
           <div className="mb-6 ml-[42px] space-y-2" role="status">
+            {autoResume && <p className="text-[13px] text-ink" data-testid="auto-resume">{autoResume}</p>}
             <div className="flex flex-wrap items-center gap-3">
               {(recovery.recoverable || recovery.busy) && (
                 <ActionChip onClick={onContinue} disabled={recovery.busy} icon="refresh">
-                  {recovery.busy ? "正在继续任务…" : "继续未完成任务"}
+                  {recovery.busy ? "正在继续任务…" : autoResume ? "立即继续" : "继续未完成任务"}
                 </ActionChip>
+              )}
+              {autoResume && onCancelAutoResume && !recovery.busy && (
+                <ActionChip onClick={onCancelAutoResume}>取消自动继续</ActionChip>
               )}
             </div>
             <p className="text-[12px] text-faint">
-              {recovery.error || (recovery.busy ? "正在连接续跑，请稍候。" : recovery.recoverable ? "继续任务会保留已完成的进度。" : recovery.checking ? "正在检查是否可以继续任务…" : "本次执行未完成。")}
+              {recovery.error || (recovery.busy ? "正在连接续跑，请稍候。" : autoResume ? "已完成的进度会保留，自动继续不会重做已完成的步骤。" : recovery.recoverable ? "继续任务会保留已完成的进度。" : recovery.checking ? "正在检查是否可以继续任务…" : "本次执行未完成。")}
             </p>
           </div>
         )}

@@ -11,6 +11,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 
 	"github.com/orka-oss/orka_control_layer/service"
+	"github.com/orka-oss/orka_core/messages"
 	"github.com/orka-oss/orka_core/pathsafe"
 )
 
@@ -364,6 +365,42 @@ func (a *API) ResumeRun(ctx context.Context, c *app.RequestContext) {
 		a.hub.finishStream(conv, rs)
 	}()
 	ok(c, map[string]any{"resumed": true, "conversation_id": conv, "steps": rec.ResumeSteps})
+}
+
+// CancelAutoResume drops a run's pending automatic continuation. The run stays
+// resumable by hand; this only stops the control plane doing it unasked.
+func (a *API) CancelAutoResume(ctx context.Context, c *app.RequestContext) {
+	var req struct {
+		RunID string `json:"run_id"`
+	}
+	if err := bind(c, &req); err != nil || req.RunID == "" {
+		fail(c, consts.StatusBadRequest, "run_id required")
+		return
+	}
+	email := authEmail(c)
+	rec, err := a.Store.GetRun(ctx, req.RunID)
+	if err != nil || rec.OwnerEmail != email {
+		fail(c, consts.StatusNotFound, "not found")
+		return
+	}
+	if _, err := a.authorizedConversation(ctx, c, rec.ConversationID, true); err != nil {
+		workspaceFail(c, err)
+		return
+	}
+	cancelled, err := a.Store.CancelRunAutoResume(ctx, req.RunID, email)
+	if err != nil {
+		fail(c, consts.StatusInternalServerError, "无法取消自动继续")
+		return
+	}
+	ok(c, map[string]any{"cancelled": cancelled, "run_id": req.RunID})
+}
+
+// OpenRunStream opens a conversation's live stream for an execution the
+// control plane started itself (an automatic resume), so open clients attach
+// to it through /chat/active and /chat/attach like any other run.
+func (a *API) OpenRunStream(conversationID, executionID string) (func(messages.Message), func()) {
+	rs := a.hub.start(conversationID, executionID)
+	return rs.publish, func() { a.hub.finishStream(conversationID, rs) }
 }
 
 // ConfirmAction approves or rejects a paused side-effecting tool call.

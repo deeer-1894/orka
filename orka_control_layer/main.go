@@ -205,6 +205,9 @@ func main() {
 	// Push per-user UI-invalidation events (run finished / unattended failure) to
 	// open tabs via the API event bus, so the bell/runs refresh without polling.
 	chat.OnEvent = a.PublishEvent
+	// Automatic resumes publish into the conversation's stream like a run the
+	// user started, so a thread left open joins the continuation.
+	chat.OpenStream = a.OpenRunStream
 	a.BaseStorage = cfg.Storage.BaseStoragePath
 	// User session tokens are signed with a key DISTINCT from the control<->tools
 	// context-token key, so the two token types are not interchangeable.

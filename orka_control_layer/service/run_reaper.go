@@ -97,12 +97,19 @@ func (s *ChatService) StartRunReaper(ctx context.Context) {
 	go func() {
 		t := time.NewTicker(reaperInterval)
 		defer t.Stop()
+		// Automatic resumes are scheduled on the run record, so they ride the
+		// same loop: a pending one survives a restart and is picked up here.
+		resumes := time.NewTicker(autoResumeSweepInterval)
+		defer resumes.Stop()
+		s.sweepAutoResumes(ctx)
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
 				sweep()
+			case <-resumes.C:
+				s.sweepAutoResumes(ctx)
 			}
 		}
 	}()

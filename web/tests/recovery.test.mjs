@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
-const { currentRun, canResumeRun, restoredStatus, lastUserPrompt, pendingConfirmationID, RecoveryController } = createRequire(import.meta.url)(join(process.env.ORKA_TEST_BUILD, 'lib/runRecovery.js'));
+const { currentRun, canResumeRun, restoredStatus, lastUserPrompt, pendingConfirmationID, RecoveryController, autoResumeNotice, autoResumedRun } = createRequire(import.meta.url)(join(process.env.ORKA_TEST_BUILD, 'lib/runRecovery.js'));
 const event = (run = 'new', action = 'failed', extra = {}) => ({ id: `event-${run}-${action}`, type: 'task', action, role: 'system', ts: 20, meta: { conversation_id: 'c', run_id: run, trace_id: `trace-${run}` }, ...extra });
 const record = (id = 'new', extra = {}) => ({ run_id: id, conversation_id: 'c', created_at: id === 'new' ? 20 : 10, status: 'failed', resumable: true, unfinished: ['remaining work'], trace_id: `trace-${id}`, ...extra });
 const context = (extra = {}) => ({ conversationID: 'c', messages: [event()], status: 'error', enabled: true, ...extra });
@@ -249,4 +249,46 @@ test('late empty hydration cannot clear attached messages or terminal state', ()
   const { hydrateConversation } = createRequire(import.meta.url)(join(process.env.ORKA_TEST_BUILD, 'lib/runRecovery.js'));
   const messages = [userMessage('server-user', 1), event('new', 'done')];
   assert.deepEqual(hydrateConversation({ messages, status: 'done' }, [], 'c', true), { messages, status: 'done' });
+});
+
+test('a run waiting out a provider outage counts down in whole minutes', () => {
+  const now = 1_000_000;
+  const waiting = record('new', { auto_resume_at: now + 4 * 60_000 + 1 });
+  assert.equal(autoResumeNotice(waiting, now), '服务繁忙，将在 5 分钟后自动继续');
+  assert.equal(autoResumeNotice({ ...waiting, auto_resume_at: now + 10_000 }, now), '服务繁忙，将在 1 分钟后自动继续');
+  assert.equal(autoResumeNotice({ ...waiting, auto_resume_at: now - 1 }, now), '服务繁忙，正在自动继续…');
+  // Claimed (no longer resumable), cancelled, or never scheduled: no promise to show.
+  assert.equal(autoResumeNotice({ ...waiting, resumable: false }, now), undefined);
+  assert.equal(autoResumeNotice(record(), now), undefined);
+  assert.equal(autoResumeNotice({ ...waiting, status: 'done' }, now), undefined);
+  assert.equal(autoResumeNotice(undefined, now), undefined);
+});
+
+test('the thread joins the automatic continuation of its failed run, and only that', async () => {
+  const successor = record('auto', { status: 'running', created_at: 30, resumed_from: 'new', resumable: false });
+  assert.equal(autoResumedRun(context(), [record('new', { resumable: false }), successor])?.run_id, 'auto');
+  assert.equal(autoResumedRun(context(), [record('new'), { ...successor, resumed_from: 'old' }]), undefined);
+  assert.equal(autoResumedRun(context(), [record('new'), { ...successor, status: 'done' }]), undefined);
+  const attached = [];
+  const c = new RecoveryController({ list: async () => [record('new', { resumable: false }), successor], attach: cid => { attached.push(cid); return new Promise(() => {}); } });
+  c.setContext(context());
+  await c.refresh();
+  assert.equal(c.snapshot().run?.run_id, 'auto');
+  assert.deepEqual(attached, ['c']);
+});
+
+test('cancelling an automatic resume keeps the manual offer and is not undone by a stale poll', async () => {
+  const pending = deferred(); const cancelled = [];
+  const waiting = record('new', { auto_resume_at: Date.now() + 120_000 });
+  let calls = 0;
+  const c = new RecoveryController({ list: () => ++calls === 1 ? Promise.resolve([waiting]) : pending.promise, cancelAutoResume: async id => { cancelled.push(id); return { cancelled: true }; } });
+  c.setContext(context());
+  await c.refresh();
+  assert.equal(c.snapshot().run?.auto_resume_at, waiting.auto_resume_at);
+  const stale = c.refresh();
+  await c.cancelAutoResume();
+  pending.resolve([waiting]); await stale;
+  assert.deepEqual(cancelled, ['new']);
+  assert.equal(c.snapshot().run?.auto_resume_at, undefined);
+  assert.equal(c.snapshot().recoverable, true);
 });

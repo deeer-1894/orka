@@ -108,6 +108,12 @@ func (s *Storage) EnsureIndexes(ctx context.Context) error {
 			Keys:    bson.D{{Key: "run_id", Value: 1}},
 			Options: options.Index().SetName("run_id"),
 		}},
+		// runs: the auto-resume sweep's due-date scan. Sparse: only the handful
+		// of runs waiting out a provider outage carry the field.
+		{s.Runs, mongo.IndexModel{
+			Keys:    bson.D{{Key: "auto_resume_at", Value: 1}},
+			Options: options.Index().SetName("auto_resume_at").SetSparse(true),
+		}},
 		{s.Connectors, mongo.IndexModel{
 			Keys:    bson.D{{Key: "owner_email", Value: 1}, {Key: "created_at", Value: -1}},
 			Options: options.Index().SetName("owner_created"),
@@ -743,7 +749,8 @@ func (s *Storage) SetRunResumable(ctx context.Context, runID string, steps int) 
 // ClaimRunResume atomically consumes a recovery offer, preventing two callers
 // from starting attempts against the same checkpoint.
 func (s *Storage) ClaimRunResume(ctx context.Context, runID string) (bool, error) {
-	result, err := s.Runs.UpdateOne(ctx, bson.M{"run_id": runID, "resumable": true}, bson.M{"$set": bson.M{"resumable": false}})
+	// A manual continuation supersedes a scheduled automatic one.
+	result, err := s.Runs.UpdateOne(ctx, bson.M{"run_id": runID, "resumable": true}, bson.M{"$set": bson.M{"resumable": false}, "$unset": bson.M{"auto_resume_at": ""}})
 	if err != nil {
 		return false, fmt.Errorf("claim run resume: %w", err)
 	}
@@ -754,7 +761,7 @@ func (s *Storage) ClaimRunResume(ctx context.Context, runID string) (bool, error
 // so a run cannot be resumed twice from the same point.
 func (s *Storage) ClearRunResumable(ctx context.Context, runID string) error {
 	_, err := s.Runs.UpdateOne(ctx, bson.M{"run_id": runID},
-		bson.M{"$set": bson.M{"resumable": false}})
+		bson.M{"$set": bson.M{"resumable": false}, "$unset": bson.M{"auto_resume_at": ""}})
 	if err != nil {
 		return fmt.Errorf("clear run resumable: %w", err)
 	}
