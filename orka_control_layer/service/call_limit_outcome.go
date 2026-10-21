@@ -115,6 +115,11 @@ func assessRunOutcome(rc *agent.RunContext, runErr, ctxErr error) runOutcome {
 				out.interruptionNotice = "模型用量记账未完成，已停止后续请求；请检查记账服务后再继续。"
 			}
 		}
+		if transientProviderFailure(runErr) {
+			// Name what is left, so the run is offered for continuation (by hand,
+			// or automatically) rather than reading as a finished failure.
+			out.unfinished = append(out.unfinished, "模型服务繁忙或暂时不可用，任务尚未完成")
+		}
 		if llm.IsCallLimit(runErr) && rc.Ctx != nil {
 			b := budgetFrom(rc.Ctx)
 			if b != nil {

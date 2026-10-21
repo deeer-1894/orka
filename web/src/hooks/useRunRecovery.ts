@@ -12,6 +12,7 @@ export function useRunRecovery(context: RecoveryContext, attach: (cid: string) =
     list: async cid => (await api.listRuns({ conversation_id: cid })).runs || [],
     get: id => api.getRun(id),
     resume: id => api.resumeRun(id),
+    cancelAutoResume: id => api.cancelAutoResume(id),
     attach: cid => attachRef.current(cid),
   }, () => update(n => n + 1)));
   // Synchronous identity invalidation also covers the interval between a new
@@ -26,5 +27,5 @@ export function useRunRecovery(context: RecoveryContext, attach: (cid: string) =
     window.addEventListener('focus', refresh);
     return () => { window.clearInterval(timer); window.removeEventListener('focus', refresh); };
   }, [controller, key, runRevision]);
-  return { ...controller.snapshot(), resume: () => controller.resume(), isBusy: (cid: string) => controller.isBusy(cid) };
+  return { ...controller.snapshot(), resume: () => controller.resume(), cancelAutoResume: () => controller.cancelAutoResume(), isBusy: (cid: string) => controller.isBusy(cid) };
 }

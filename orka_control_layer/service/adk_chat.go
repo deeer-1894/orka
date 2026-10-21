@@ -59,6 +59,19 @@ type ChatRunRequest struct {
 	resumeData       any        // the user's decision, handed to that tool
 	resumeFrom       *runResume // recovered transcript of a run that died mid-flight
 	retriesLeft      int        // RunHeadless will try again if this attempt fails
+	resumedFrom      string     // run id resumeFrom was recovered from
+	autoResumes      int        // automatic continuations already spent in this chain
+	// deferFailureNotice holds back the unattended-failure notification while
+	// an automatic resume may still rescue the run.
+	deferFailureNotice bool
+	report             *runReport // filled for a caller that needs more than the status
+}
+
+// runReport carries what a caller of Run may need beyond the terminal status.
+type runReport struct {
+	// AutoResumeScheduled: the run failed transiently and will be continued
+	// from its journal, so restarting it from scratch would only redo work.
+	AutoResumeScheduled bool
 }
 
 // ToolsProvider supplies the tool set for a request and an optional cleanup
@@ -88,6 +101,11 @@ type ChatService struct {
 	// TaskNotify reports finished task runs to their owner (in-app bell and
 	// the task's outbound webhook). nil falls back to failure-only alerts.
 	TaskNotify *TaskNotifier
+	// OpenStream, when set, opens the conversation's live event stream for an
+	// execution the control plane starts on its own (an automatic resume), so
+	// an open thread joins it as it would a run the user started. Returns the
+	// publish sink and a function that closes the stream. Wired by main.
+	OpenStream func(conversationID, executionID string) (func(messages.Message), func())
 	// DisableSummary turns off the eino summarization middleware. Production keeps
 	// it on (folds long context into a running summary); deterministic tests set
 	// it so a scripted mock isn't consumed by the summarizer's extra model call.
@@ -424,6 +442,10 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 		s.digestAsync(rc.Ctx, req.ConversationID, buildDigest(runRecID, req.Message, t))
 	}
 	s.finish(ctx, rc, meta, req, raw, err)
+	// Decided before finalizing: a failure that will be continued on its own
+	// is not yet worth a "task failed" notification.
+	autoResume := runRecID != "" && s.autoResumeEligible(ctx, req, err)
+	req.deferFailureNotice = autoResume
 	status := s.finalizeRun(runRecID, rc, startedAt, req, err, ctx.Err())
 
 	// The journal exists to rescue a run that died with work behind it. Keep it
@@ -434,6 +456,18 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	durable := s.settleJournal(runRecID, journal, status)
 	if req.resumeFrom != nil {
 		req.resumeFrom.SuccessorDurable = durable
+	}
+	if autoResume && status == db.RunFailed {
+		scheduled := false
+		if durable {
+			_, scheduled = s.scheduleAutoResume(runRecID, req)
+		}
+		if req.report != nil {
+			req.report.AutoResumeScheduled = scheduled
+		}
+		if !scheduled {
+			s.notifyRunFailed(runRecID, req, rc)
+		}
 	}
 	return status
 }
@@ -450,8 +484,12 @@ func (s *ChatService) RunHeadless(ctx context.Context, req ChatRunRequest) {
 	}
 	for attempt := 0; ; attempt++ {
 		req.retriesLeft = retries - attempt
+		report := &runReport{}
+		req.report = report
 		status := s.Run(ctx, req, func(messages.Message) {})
-		if status != db.RunFailed || attempt >= retries || ctx.Err() != nil {
+		// A transient failure is continued from its journal later; a fresh
+		// attempt now would redo the work and supersede that continuation.
+		if status != db.RunFailed || attempt >= retries || ctx.Err() != nil || report.AutoResumeScheduled {
 			return
 		}
 		select {
@@ -484,10 +522,14 @@ func (s *ChatService) createRun(ctx context.Context, req ChatRunRequest, meta me
 		Prompt:         req.Message,
 		TraceID:        meta.TraceID,
 		CreatedAt:      time.Now().UnixMilli(),
+		ResumedFrom:    req.resumedFrom,
 	}
 	if s.Msg.Store.CreateRun(ctx, r) != nil {
 		return ""
 	}
+	// Any new execution in the conversation supersedes a continuation still
+	// waiting out a provider outage there.
+	_ = s.Msg.Store.CancelConversationAutoResumes(context.WithoutCancel(ctx), req.ConversationID)
 	return id
 }
 
@@ -532,31 +574,10 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 	// success for this purpose: it did work and stopped honestly, which is not
 	// the repeated hard failure the breaker exists to catch.
 	s.recordTaskOutcome(bg, req.TaskID, req.UserEmail, status == db.RunDone)
-	// A task's runs happen in a conversation nobody is watching, so every one
-	// is reported — except a failed attempt that is about to be retried; the
-	// retry reports. Other runs alert only on UNATTENDED failures
-	// (scheduled/webhook/rerun) — a manual failure the user is watching.
-	if req.TaskID != "" && s.TaskNotify != nil {
-		if status != db.RunFailed || req.retriesLeft <= 0 || ctxErr != nil {
-			go s.TaskNotify.RunFinished(bg, TaskRunResult{
-				TaskID: req.TaskID, RunID: runID, ConversationID: req.ConversationID, OwnerEmail: req.UserEmail,
-				Status: status, Answer: out, Error: errStr,
-			})
-		}
-	} else if status == db.RunFailed && req.Trigger != "" && req.Trigger != "manual" && req.UserEmail != "" {
-		_ = s.Msg.Store.CreateNotification(bg, &db.Notification{
-			NotificationID: "ntf_" + messages.NewID(),
-			OwnerEmail:     req.UserEmail,
-			Kind:           "run_failed",
-			Title:          "自动任务运行失败",
-			Body:           trunc(req.Message, 80) + " — " + trunc(errStr, 120),
-			RunID:          runID,
-			ConversationID: req.ConversationID,
-			CreatedAt:      now,
-		})
-		if s.OnEvent != nil {
-			s.OnEvent(req.UserEmail, "notification")
-		}
+	// A failure an automatic resume may still rescue is reported later, by Run,
+	// only if no resume could be scheduled.
+	if status != db.RunFailed || !req.deferFailureNotice {
+		s.reportRunOutcome(runID, req, status, out, errStr, ctxErr != nil)
 	}
 	// Signal the run finished so open tabs refresh runs/metrics without waiting
 	// for the next poll tick.
@@ -564,6 +585,56 @@ func (s *ChatService) finalizeRun(runID string, rc *agent.RunContext, startedAt 
 		s.OnEvent(req.UserEmail, "run")
 	}
 	return status
+}
+
+// reportRunOutcome tells the owner how a run ended. A task's runs happen in a
+// conversation nobody is watching, so every one is reported — except a failed
+// attempt RunHeadless is about to retry; the retry reports. Other runs alert
+// only on unattended failures.
+func (s *ChatService) reportRunOutcome(runID string, req ChatRunRequest, status, answer, errStr string, cancelled bool) {
+	if req.TaskID != "" && s.TaskNotify != nil {
+		if status != db.RunFailed || req.retriesLeft <= 0 || cancelled {
+			go s.TaskNotify.RunFinished(context.Background(), TaskRunResult{
+				TaskID: req.TaskID, RunID: runID, ConversationID: req.ConversationID, OwnerEmail: req.UserEmail,
+				Status: status, Answer: answer, Error: errStr,
+			})
+		}
+		return
+	}
+	if status == db.RunFailed {
+		s.notifyFailure(runID, req, errStr)
+	}
+}
+
+// notifyFailure alerts on UNATTENDED failures (scheduled/webhook/rerun) — a
+// manual failure the user is already watching on screen.
+func (s *ChatService) notifyFailure(runID string, req ChatRunRequest, errStr string) {
+	if req.Trigger == "" || req.Trigger == "manual" || req.UserEmail == "" || s.Msg == nil || s.Msg.Store == nil {
+		return
+	}
+	_ = s.Msg.Store.CreateNotification(context.Background(), &db.Notification{
+		NotificationID: "ntf_" + messages.NewID(),
+		OwnerEmail:     req.UserEmail,
+		Kind:           "run_failed",
+		Title:          "自动任务运行失败",
+		Body:           trunc(req.Message, 80) + " — " + trunc(errStr, 120),
+		RunID:          runID,
+		ConversationID: req.ConversationID,
+		CreatedAt:      time.Now().UnixMilli(),
+	})
+	if s.OnEvent != nil {
+		s.OnEvent(req.UserEmail, "notification")
+	}
+}
+
+// notifyRunFailed sends the notification finalizeRun held back for a failure
+// that, in the end, could not be scheduled for an automatic resume.
+func (s *ChatService) notifyRunFailed(runID string, req ChatRunRequest, rc *agent.RunContext) {
+	outcome, ok := rc.Vars[varPublishedRunOutcome].(runOutcome)
+	if !ok {
+		return
+	}
+	s.reportRunOutcome(runID, req, db.RunFailed, "", outcome.errorDetail, false)
 }
 
 // extractJSON pulls a structured result out of an answer so runs are

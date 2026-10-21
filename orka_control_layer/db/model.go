@@ -305,6 +305,17 @@ type RunRecord struct {
 	// ResumeSteps is how much of the run the transcript preserves — the number
 	// the user is really deciding about when they choose to continue.
 	ResumeSteps int `bson:"resume_steps,omitempty" json:"resume_steps,omitempty"`
+	// ResumedFrom is the run this execution continues, so a client watching
+	// the failed run can recognise and join its continuation.
+	ResumedFrom string `bson:"resumed_from,omitempty" json:"resumed_from,omitempty"`
+	// AutoResumeAt is when the control plane will continue this run on its own
+	// (unix millis; absent = nothing scheduled). Set only for a resumable run
+	// that died on a transient provider error. It lives on the record, not in a
+	// timer, so a restart between the failure and the retry loses nothing.
+	AutoResumeAt int64 `bson:"auto_resume_at,omitempty" json:"auto_resume_at,omitempty"`
+	// AutoResumeAttempt numbers that scheduled continuation within its chain of
+	// automatic retries (1-based), which is what caps them.
+	AutoResumeAttempt int `bson:"auto_resume_attempt,omitempty" json:"auto_resume_attempt,omitempty"`
 }
 
 // TaskMeta supports template-driven, cron-scheduled, variable-rendered tasks.

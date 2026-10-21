@@ -209,6 +209,9 @@ func main() {
 		Store: store, Client: scheduled_task.WatchClient(), PublicURL: os.Getenv("ORKA_PUBLIC_URL"),
 		OnEvent: a.PublishEvent, Log: logger,
 	}
+	// Automatic resumes publish into the conversation's stream like a run the
+	// user started, so a thread left open joins the continuation.
+	chat.OpenStream = a.OpenRunStream
 	a.BaseStorage = cfg.Storage.BaseStoragePath
 	// User session tokens are signed with a key DISTINCT from the control<->tools
 	// context-token key, so the two token types are not interchangeable.

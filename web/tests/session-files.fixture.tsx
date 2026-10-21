@@ -16,12 +16,13 @@ function Fixture() {
   if (state.markdown) messages.push({ id: "answer", ts: 2, role: "assistant", type: "chat", meta: { conversation_id: state.conversationID }, content: state.markdown });
   return <div className="h-screen bg-bg text-ink">
     <output data-testid="creates">{creates}</output>
+    <output data-testid="cancelled">{state.cancelled || 0}</output>
     {state.mode === "drawer" && <ArtifactDrawer open onClose={noop} tab={state.tab} setTab={tab => setState((s: any) => ({ ...s, tab }))} liveTab={null} email="me@example.com" conversationID={state.conversationID} onJumpToConversation={noop} focusArtifact={null} onClearArtifact={noop} />}
     {state.mode === "composer" && <Composer status="idle" onSend={noop} onKill={noop} activeSkill={null} onPickSkill={noop} conversationID={state.conversationID} ensureConversation={async () => {
       setCreates(n => n + 1); await new Promise(r => setTimeout(r, 100));
       setState((s: any) => s.conversationID ? s : ({ ...s, conversationID: "new" })); return "new";
     }} />}
-    {state.mode === "thread" && <Thread messages={messages as any} status={state.status || "idle"} conversationID={state.conversationID} ownerEmail="me@example.com" fileConv={state.shared ? state.conversationID : undefined} recovery={{ run: null, busy: false } as any} onContinue={noop} canRetry={false} onResume={noop} onPick={noop} onRetry={noop} onSchedule={noop} />}
+    {state.mode === "thread" && <Thread messages={messages as any} status={state.status || "idle"} conversationID={state.conversationID} ownerEmail="me@example.com" fileConv={state.shared ? state.conversationID : undefined} recovery={(state.recovery || { run: null, busy: false }) as any} onContinue={noop} onCancelAutoResume={() => setState((s: any) => ({ ...s, cancelled: (s.cancelled || 0) + 1, recovery: { ...s.recovery, run: { ...s.recovery.run, auto_resume_at: undefined } } }))} canRetry={false} onResume={noop} onPick={noop} onRetry={noop} onSchedule={noop} />}
     {state.mode === "preview" && <FilePreview conv={state.conversationID} name={state.name} onClose={() => setState((s: any) => ({ ...s, mode: "none" }))} />}
     {state.mode === "app" && <App />}
   </div>;

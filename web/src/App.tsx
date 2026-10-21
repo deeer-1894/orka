@@ -654,7 +654,7 @@ function Workbench({
             </>}
           </div>
         )}
-        <Thread onExample={text => { conversationDraft.setText(text); document.getElementById("chat-input")?.focus(); }} conversationID={activeID} ownerEmail={activeConv?.owner_email || user.email} recovery={recovery} onContinue={() => void recovery.resume()} canRetry={!readOnly && !!inputOf(activeID) && recovery.run?.status !== "running"} messages={messages} status={status} onResume={onResume} onResumed={onResumed} onPick={msg => { void onSend(msg).catch(e => toast(e.message || "发送失败", "error")); }} onRetry={onRetry} onSchedule={openSchedule} onFork={onFork} fileConv={isShared ? activeID : undefined} bottomInset={composerH} />
+        <Thread onExample={text => { conversationDraft.setText(text); document.getElementById("chat-input")?.focus(); }} conversationID={activeID} ownerEmail={activeConv?.owner_email || user.email} recovery={recovery} onContinue={() => void recovery.resume()} onCancelAutoResume={() => void recovery.cancelAutoResume()} canRetry={!readOnly && !!inputOf(activeID) && recovery.run?.status !== "running"} messages={messages} status={status} onResume={onResume} onResumed={onResumed} onPick={msg => { void onSend(msg).catch(e => toast(e.message || "发送失败", "error")); }} onRetry={onRetry} onSchedule={openSchedule} onFork={onFork} fileConv={isShared ? activeID : undefined} bottomInset={composerH} />
         {/* The composer floats OVER the thread (its height is fed back as the
             thread's bottom padding), so the conversation scrolls clear of it
             instead of the last lines being clipped behind the tool row. */}

@@ -9,6 +9,7 @@ export interface RecoveryDependencies {
   get?: (runID: string) => Promise<RunRecord>;
   resume?: (runID: string) => Promise<{ resumed: boolean; conversation_id: string }>;
   attach?: (cid: string) => void | Promise<ChatStatus | void>;
+  cancelAutoResume?: (runID: string) => Promise<{ cancelled: boolean }>;
   now?: () => number;
   actions?: RunActions;
 }
@@ -46,6 +47,29 @@ export function currentRun(c: RecoveryContext, runs: RunRecord[]): RunRecord | u
       (c.status === 'idle' || c.status === 'error') && r.status === 'running' ? r : undefined;
   }
   return (id.run ? r.run_id === id.run : r.trace_id === id.trace) ? r : undefined;
+}
+
+// The continuation the control plane started on its own for the run this
+// thread last showed. Exact by lineage, so an unrelated newer run never
+// borrows the failed turn's place.
+export function autoResumedRun(c: RecoveryContext, runs: RunRecord[]): RunRecord | undefined {
+  const id = executionIdentity(c);
+  if (!id?.run || c.enabled === false) return undefined;
+  return runs.find(r => r.conversation_id === c.conversationID && r.resumed_from === id.run && r.status === 'running');
+}
+
+// A run waiting out a provider outage before the control plane continues it.
+export function pendingAutoResume(run?: RunRecord): boolean {
+  return !!run && run.status === 'failed' && run.resumable === true && (run.auto_resume_at || 0) > 0;
+}
+
+// The status line for that wait. Rounded up to whole minutes: "0 分钟后" reads
+// as a broken promise, and the sweep may start it a few seconds late anyway.
+export function autoResumeNotice(run: RunRecord | undefined, now: number): string | undefined {
+  if (!pendingAutoResume(run)) return undefined;
+  const remaining = run!.auto_resume_at! - now;
+  if (remaining <= 0) return '服务繁忙，正在自动继续…';
+  return `服务繁忙，将在 ${Math.max(1, Math.ceil(remaining / 60000))} 分钟后自动继续`;
 }
 
 export function isIncompleteRun(c: RecoveryContext, run?: RunRecord): boolean {
@@ -167,7 +191,8 @@ export class RecoveryController {
     try {
       const runs = await this.deps.list(c.conversationID);
       if (revision !== this.revision || query !== this.query) return;
-      const run = currentRun(c, runs);
+      const continuation = currentRun(c, runs) ? undefined : autoResumedRun(c, runs);
+      const run = continuation || currentRun(c, runs);
       this.publish({ run });
       if (run?.status === 'running' && (c.status === 'idle' || c.status === 'error') ) {
         this.attachRunning(run);
@@ -176,6 +201,19 @@ export class RecoveryController {
       if (revision === this.revision && query === this.query) this.publish({ run: undefined });
     } finally {
       if (revision === this.revision && query === this.query) this.publish({ checking: false });
+    }
+  }
+  async cancelAutoResume() {
+    const c = this.context, revision = this.revision, offered = this.state.run;
+    if (!offered || !pendingAutoResume(offered) || !this.deps.cancelAutoResume) return;
+    this.query++; // a poll that read the schedule must not bring it back
+    try {
+      await this.deps.cancelAutoResume(offered.run_id);
+      if (revision === this.revision && this.context.conversationID === c.conversationID && this.state.run?.run_id === offered.run_id) {
+        this.publish({ run: { ...offered, auto_resume_at: undefined }, error: '' });
+      }
+    } catch (error) {
+      if (revision === this.revision) this.publish({ error: error instanceof Error ? error.message : '无法取消自动继续' });
     }
   }
   async resume() {

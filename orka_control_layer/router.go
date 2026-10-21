@@ -88,6 +88,8 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/chat/confirm", a.ConfirmAction) // approve/reject a paused risky tool call
 	g.POST("/chat/resume_run", a.ResumeRun)  // continue a run that died mid-flight
 	g.POST("/chat/followups", a.Followups)   // suggested next questions for a Q&A turn
+	// stop a continuation the control plane scheduled after a provider outage
+	g.POST("/chat/cancel_auto_resume", a.CancelAutoResume)
 
 	g.POST("/run/list", a.ListRuns) // execution history (run records)
 	g.POST("/run/get", a.GetRun)
