@@ -1,0 +1,192 @@
+{
+  "at": "2026-10-21T00:25:35+08:00",
+  "model": "",
+  "passed": 11,
+  "total": 12,
+  "results": [
+    {
+      "id": "plain_answer",
+      "pass": true,
+      "status": "done",
+      "tools": 0,
+      "tokens": 1478,
+      "seconds": 8.435228833,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        1235,
+        1478
+      ]
+    },
+    {
+      "id": "arithmetic",
+      "pass": true,
+      "status": "done",
+      "tools": 0,
+      "tokens": 2282,
+      "seconds": 17.883378916,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        2127,
+        2282
+      ]
+    },
+    {
+      "id": "file_write_read",
+      "pass": true,
+      "status": "done",
+      "tools": 2,
+      "tokens": 35719,
+      "seconds": 22.323075708,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        35675,
+        35719
+      ]
+    },
+    {
+      "id": "file_multi_step",
+      "pass": true,
+      "status": "done",
+      "tools": 6,
+      "tokens": 36060,
+      "seconds": 12.472706708,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        23881,
+        36060
+      ]
+    },
+    {
+      "id": "plan_completion",
+      "pass": true,
+      "status": "done",
+      "tools": 6,
+      "tokens": 146593,
+      "seconds": 207.618035666,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        49614,
+        146593
+      ]
+    },
+    {
+      "id": "web_search_basic",
+      "pass": true,
+      "status": "done",
+      "tools": 3,
+      "tokens": 55522,
+      "seconds": 21.339755667,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        55490,
+        55522
+      ]
+    },
+    {
+      "id": "refuses_to_invent",
+      "pass": true,
+      "status": "done",
+      "tools": 3,
+      "tokens": 47690,
+      "seconds": 19.892205834,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        23690,
+        47690
+      ]
+    },
+    {
+      "id": "research_cites_sources",
+      "pass": true,
+      "status": "done",
+      "tools": 24,
+      "tokens": 382564,
+      "seconds": 239.091821042,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        261295,
+        382564
+      ]
+    },
+    {
+      "id": "parallel_writes",
+      "pass": true,
+      "status": "done",
+      "tools": 3,
+      "tokens": 23940,
+      "seconds": 11.463873125,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        23866,
+        23940
+      ]
+    },
+    {
+      "id": "memory_recall",
+      "pass": true,
+      "status": "done",
+      "tools": 1,
+      "tokens": 35544,
+      "seconds": 10.157871209,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        35522,
+        35544
+      ]
+    },
+    {
+      "id": "long_sales_report",
+      "pass": true,
+      "status": "done",
+      "tools": 52,
+      "tokens": 777568,
+      "seconds": 638.251803667,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        638173,
+        777568
+      ]
+    },
+    {
+      "id": "long_ratelimit_delivery",
+      "pass": false,
+      "reasons": [
+        "run 2: status=failed want done",
+        "run 2: missing file \"comparison.xlsx\"",
+        "run 2: missing file \"report.md\"",
+        "run 2: missing file \"report.docx\"",
+        "run 2: verify: cannot download \"comparison.xlsx\": HTTP 404",
+        "run 2: verify: cannot download \"report.md\": HTTP 404",
+        "run 2: verify: cannot download \"report.docx\": HTTP 404",
+        "run 2: verify: comparison.xlsx is not a valid xlsx: [Errno 2] No such file or directory: '/var/folders/x3/gdnr68zs38s3p28jm5lfmzqr0000gn/T/orka-eval-verify-3861927817/comparison.xlsx'",
+        "run 2: verify: comparison.xlsx has no FastAPI row with a version",
+        "run 2: verify: comparison.xlsx has no Flask row with a version",
+        "run 2: verify: comparison.xlsx has no Django row with a version",
+        "run 2: verify: report.md missing"
+      ],
+      "status": "failed",
+      "tools": 61,
+      "tokens": 1876112,
+      "seconds": 548.33474575,
+      "runs": 2,
+      "passes": 1,
+      "token_range": [
+        652323,
+        1876112
+      ]
+    }
+  ],
+  "total_tools": 161,
+  "total_tokens": 3421072
+}

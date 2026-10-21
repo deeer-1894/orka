@@ -72,7 +72,7 @@ func TestOfflineEvalSessionScopedFileContract(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	sc, err := run(server.URL, "", "", "fixture-token", "testdata/offline.yaml", "", "")
+	sc, err := run(server.URL, "", "", "fixture-token", "testdata/offline.yaml", "", "", 1)
 	if err != nil || sc.Passed != 1 {
 		t.Fatalf("scorecard=%+v error=%v", sc, err)
 	}
@@ -140,5 +140,19 @@ func TestVerifierGradesDownloadedDeliverables(t *testing.T) {
 	}
 	if why := runVerifier(c, "c1", &verifier{Script: script, Files: []string{"../escape.txt"}}); len(why) == 0 || !strings.Contains(strings.Join(why, ";"), "unsafe path") {
 		t.Fatalf("path escape not rejected: %q", why)
+	}
+}
+
+func TestAggregatePassesOnlyWhenEveryRunPassesAndReportsMedianCost(t *testing.T) {
+	r := aggregate("long", []result{
+		{Pass: true, Tools: 30, Tokens: 300, Seconds: 300, Status: "done"},
+		{Pass: false, Tools: 90, Tokens: 1700, Seconds: 800, Status: "partial", Reasons: []string{"missing report.md"}},
+		{Pass: true, Tools: 50, Tokens: 650, Seconds: 500, Status: "done"},
+	})
+	if r.Pass || r.Passes != 2 || r.Runs != 3 || r.Tools != 50 || r.Tokens != 650 || r.Seconds != 500 || *r.TokenRange != [2]int{300, 1700} {
+		t.Fatalf("aggregate = %+v", r)
+	}
+	if len(r.Reasons) != 1 || r.Reasons[0] != "run 2: missing report.md" {
+		t.Fatalf("reasons = %v", r.Reasons)
 	}
 }

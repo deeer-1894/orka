@@ -97,6 +97,10 @@ type result struct {
 	Tools   int      `json:"tools"`
 	Tokens  int      `json:"tokens"`
 	Seconds float64  `json:"seconds"`
+	// Set with --repeat: cost fields are medians across Runs.
+	Runs       int     `json:"runs,omitempty"`
+	Passes     int     `json:"passes,omitempty"`
+	TokenRange *[2]int `json:"token_range,omitempty"`
 }
 
 type scorecard struct {
@@ -121,6 +125,7 @@ func main() {
 		only     = flag.String("only", "", "run just this task id")
 		model    = flag.String("model", "", "selected_version: empty/auto uses the first configured model, or specify an allowed model name")
 		live     = flag.Bool("live", false, "explicitly enable live tasks that may incur model charges")
+		repeat   = flag.Int("repeat", 1, "run each task N times; pass needs every run, cost is the median")
 	)
 	flag.Parse()
 	if !*live {
@@ -143,7 +148,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "eval: note — no --out given, so this scorecard will not be saved.")
 	}
 
-	sc, err := run(*url, *email, *password, *token, *tasksF, *only, *model)
+	sc, err := run(*url, *email, *password, *token, *tasksF, *only, *model, *repeat)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "eval:", err)
 		os.Exit(2)
@@ -165,7 +170,7 @@ func main() {
 	}
 }
 
-func run(base, email, password, token, tasksFile, only, model string) (scorecard, error) { //nolint:revive // argument-limit
+func run(base, email, password, token, tasksFile, only, model string, repeat int) (scorecard, error) { //nolint:revive // argument-limit
 	var s suite
 	raw, err := os.ReadFile(tasksFile)
 	if err != nil {
@@ -191,16 +196,16 @@ func run(base, email, password, token, tasksFile, only, model string) (scorecard
 			continue
 		}
 		fmt.Printf("▸ %-22s ", t.ID)
-		r := c.runTask(t)
+		r := c.runRepeated(t, repeat)
 		sc.Results = append(sc.Results, r)
 		sc.Total++
 		sc.TotTools += r.Tools
 		sc.TotToks += r.Tokens
 		if r.Pass {
 			sc.Passed++
-			fmt.Printf("PASS  %.0fs  %d tools  %d tok\n", r.Seconds, r.Tools, r.Tokens)
+			fmt.Printf("PASS  %.0fs  %d tools  %d tok%s\n", r.Seconds, r.Tools, r.Tokens, repeatSummary(r))
 		} else {
-			fmt.Printf("FAIL  %.0fs  %s\n", r.Seconds, strings.Join(r.Reasons, "; "))
+			fmt.Printf("FAIL%s  %.0fs  %s\n", repeatSummary(r), r.Seconds, strings.Join(r.Reasons, "; "))
 		}
 	}
 	return sc, nil
