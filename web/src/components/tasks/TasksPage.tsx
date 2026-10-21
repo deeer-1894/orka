@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
-import type { TaskMeta } from "../../types";
+import type { RunRecord, TaskMeta } from "../../types";
 import { describeTrigger, formatDateTime, type TriggerKind } from "../../lib/taskTrigger";
 import { TASK_TEMPLATES, type TaskTemplate } from "../../lib/taskTemplates";
 import { refreshResource, useResource } from "../../lib/useResource";
@@ -65,7 +65,7 @@ export function TasksPage({ onOpenConversation, onToggleSidebar, initialDraft, o
     catch { /* api already reported */ } finally { busy(t.task_id, false); }
   };
   const runNow = async (t: TaskMeta) => {
-    try { await api.runTaskNow(t.task_id); toast("已开始运行，可在对话中查看进度", "success"); refreshResource("tasks"); } catch { /* reported */ }
+    try { await api.runTaskNow(t.task_id); toast("已开始运行，结束后会通知你", "success"); refreshResource("tasks"); refreshResource(`runs:task:${t.task_id}`); } catch { /* reported */ }
   };
   const remove = async (t: TaskMeta) => {
     if (!await confirmDialog({ title: `删除“${titleOf(t)}”？`, body: "任务的对话和已产出的文件会保留。", confirmText: "删除", danger: true })) return;
@@ -164,7 +164,8 @@ function TaskRow({ task, pending, onToggle, onEdit, onRun, onOpen, onDelete }: {
   const status = statusLine(task);
   return <li className={"group flex items-start gap-4 rounded-2xl border border-border bg-surface px-4 py-3.5 transition hover:border-accent/30 " + (on ? "" : "opacity-75")}>
     <span className="mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-surface2 text-muted"><Icon name={KIND_ICON[kindOf(task)]} size={18} /></span>
-    <button onClick={onEdit} className="min-w-0 flex-1 text-left" aria-label={`编辑 ${titleOf(task)}`}>
+    <div className="min-w-0 flex-1">
+    <button onClick={onEdit} className="w-full min-w-0 text-left" aria-label={`编辑 ${titleOf(task)}`}>
       <h3 className="truncate text-[15px] font-medium text-ink">{titleOf(task)}</h3>
       <p className="mt-0.5 line-clamp-1 text-[13px] text-muted">{promptOf(task)}</p>
       <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-faint">
@@ -172,6 +173,8 @@ function TaskRow({ task, pending, onToggle, onEdit, onRun, onOpen, onDelete }: {
         {status.text && <span className={status.tone === "warn" ? "text-accent" : status.tone === "ok" ? "text-ok" : ""}>{status.text}</span>}
       </p>
     </button>
+    <TaskRuns task={task} />
+    </div>
     <div className="flex shrink-0 items-center gap-1 pt-1">
       <Switch checked={on} disabled={pending} onChange={onToggle} label={`${on ? "停用" : "启用"} ${titleOf(task)}`} />
       <DropdownMenu>
@@ -186,6 +189,32 @@ function TaskRow({ task, pending, onToggle, onEdit, onRun, onOpen, onDelete }: {
       </DropdownMenu>
     </div>
   </li>;
+}
+
+const RECENT_RUNS = 5;
+const RUN_LABEL: Record<string, string> = { done: "已完成", partial: "部分完成", failed: "失败", running: "运行中", paused: "等待确认", interrupted: "已中断" };
+const RUN_DOT: Record<string, string> = {
+  done: "bg-ok", partial: "border-2 border-ok", failed: "bg-accent", running: "animate-pulse bg-ok/50",
+};
+
+// TaskRuns shows a task's last few runs, oldest to newest, so whether a
+// triggered task has been working is visible without opening its conversation.
+function TaskRuns({ task }: { task: TaskMeta }) {
+  const runs = useResource<RunRecord[]>(`runs:task:${task.task_id}`, () => api.listRuns({ task_id: task.task_id, size: RECENT_RUNS })
+    .then(r => (r.runs || []).filter(run => run.task_id === task.task_id).slice(0, RECENT_RUNS)), { interval: 30000 });
+  if (!runs?.length) return null;
+  const finished = runs.filter(r => r.status !== "running");
+  const succeeded = finished.filter(r => r.status === "done").length;
+  const last = runs[0];
+  const when = (r: RunRecord) => formatDateTime(r.finished_at || r.created_at);
+  return <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12px] text-faint">
+    <ol aria-label="最近运行" className="flex items-center gap-1">
+      {[...runs].reverse().map(r => <li key={r.run_id} title={`${RUN_LABEL[r.status] || r.status} · ${when(r)}`} aria-label={`${RUN_LABEL[r.status] || r.status} · ${when(r)}`}
+        className={"h-2.5 w-2.5 rounded-full " + (RUN_DOT[r.status] || "bg-border")} />)}
+    </ol>
+    <span>上次{RUN_LABEL[last.status] || "已结束"} · {when(last)}</span>
+    {finished.length > 1 && <span className={succeeded === finished.length ? "text-ok" : succeeded === 0 ? "text-accent" : ""}>近 {finished.length} 次成功 {succeeded} 次</span>}
+  </div>;
 }
 
 function TemplateGrid({ onPick }: { onPick: (t: TaskTemplate) => void }) {

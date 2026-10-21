@@ -335,4 +335,7 @@ type TaskMeta struct {
 	// LastFinishedAt is when the latest scheduled run or condition check ended.
 	LastFinishedAt int64  `bson:"schedule_finished_at,omitempty" json:"last_finished_at,omitempty"`
 	LastStatus     string `bson:"schedule_last_status,omitempty" json:"last_status,omitempty"`
+	// NotifyWebhook, when set, receives a short summary of every finished run
+	// (Feishu / WeCom / DingTalk / Slack incoming-webhook JSON).
+	NotifyWebhook string `bson:"notify_webhook,omitempty" json:"notify_webhook,omitempty"`
 }

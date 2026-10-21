@@ -77,6 +77,12 @@ export function refreshResource(key: string) {
   if (ch) runFetch(ch);
 }
 
+// refreshResourcePrefix refetches every live resource whose key starts with
+// prefix (e.g. each task row's run history after a run finishes).
+export function refreshResourcePrefix(prefix: string) {
+  channels.forEach((ch, key) => { if (key.startsWith(prefix) && ch.subs.size > 0) runFetch(ch); });
+}
+
 interface Options {
   interval?: number; // ms; 0 = fetch once, no polling
   enabled?: boolean;

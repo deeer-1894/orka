@@ -25,7 +25,7 @@ import { useOverlay } from "./lib/useOverlay";
 import { Toaster, toast } from "./lib/toast";
 import { ConfirmHost } from "./lib/confirm";
 import { useTheme } from "./lib/theme";
-import { useResource, refreshResource } from "./lib/useResource";
+import { useResource, refreshResource, refreshResourcePrefix } from "./lib/useResource";
 import type { Conversation, Message, Notification } from "./types";
 
 import type { WorkbenchTab as Tab } from "./lib/workbenchTabs";
@@ -126,7 +126,15 @@ function Workbench({
   const [drawerArtifact, setDrawerArtifact] = useState<string | null>(null); // artifact to open inline in the drawer
   const openArtifactInDrawer = useCallback((id: string) => { setDrawerArtifact(id); setDrawerOpen(true); setDrawerTab("artifacts"); }, []);
   const activeStorageKey = `orka.activeConversation.${user.email}`;
-  const [activeID, setActiveID] = useState(() => localStorage.getItem(activeStorageKey) || "");
+  // ?c=<id> opens that conversation (the link in outbound task notifications).
+  const [activeID, setActiveID] = useState(() => new URLSearchParams(location.search).get("c") || localStorage.getItem(activeStorageKey) || "");
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (!params.has("c")) return;
+    params.delete("c");
+    const query = params.toString();
+    history.replaceState(null, "", location.pathname + (query ? "?" + query : "") + location.hash);
+  }, []);
   const restoreSelection = useRef<string | null>(activeID);
   useEffect(() => {
     if (activeID) localStorage.setItem(activeStorageKey, activeID);
@@ -291,6 +299,7 @@ function Workbench({
         refreshResource("runs:failed");
         refreshResource("metrics");
         refreshResource("notifications");
+        refreshResourcePrefix("runs:task:");
         refreshTasks();
       }
     }, [refreshTasks]),
