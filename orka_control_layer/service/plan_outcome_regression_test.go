@@ -244,3 +244,33 @@ func TestNormalPartialCancellationBeforePublicationWins(t *testing.T) {
 		t.Fatalf("late pre-publication cancellation lost: status=%s events=%+v", status, events)
 	}
 }
+
+// A step the model reported blocked with a reason ends the run as partial
+// without another nudge; asking again made it repeat the same report three
+// times. A "done" the evidence check downgraded still gets one.
+func TestDeclaredBlockedStepsAreNotPushedBackButDowngradedOnesAre(t *testing.T) {
+	tracker := &planTracker{}
+	ctx := withPlanTracker(context.Background(), tracker)
+	steps := func(list ...map[string]any) {
+		items := make([]any, len(list))
+		for i, step := range list {
+			items[i] = step
+		}
+		if _, err := (planTool{}).Invoke(ctx, map[string]any{"steps": items}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	steps(map[string]any{"id": "open", "title": "Open the form", "status": "pending"},
+		map[string]any{"id": "fill", "title": "Fill the form", "status": "pending"},
+		map[string]any{"id": "note", "title": "Write notes", "status": "pending"})
+	callBrowserReceipt(t, tracker, "open", map[string]any{"action": "open", "url": "https://example.com"}, `{"ok":false,"error":{"code":"navigation_network"}}`)
+	steps(map[string]any{"id": "open", "title": "Open the form", "status": "done"},
+		map[string]any{"id": "fill", "title": "Fill the form", "status": "blocked", "reason": "the page cannot be reached"},
+		map[string]any{"id": "note", "title": "Write notes", "status": "blocked"})
+	if got := tracker.needsWork(); !reflect.DeepEqual(got, []string{"Open the form", "Write notes"}) {
+		t.Fatalf("needsWork = %v", got)
+	}
+	if got := tracker.unfinished(); len(got) != 3 {
+		t.Fatalf("declared block must still count as unfinished: %v", got)
+	}
+}

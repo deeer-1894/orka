@@ -148,7 +148,7 @@ func continuationNudge(ctx context.Context) string {
 	if last.Truncated() && last.ToolCalls == 0 {
 		return truncatedNudge
 	}
-	if left := planTrackerFrom(ctx).unfinished(); len(left) > 0 {
+	if left := planTrackerFrom(ctx).needsWork(); len(left) > 0 {
 		var sb strings.Builder
 		sb.WriteString(unfinishedNudgePrefix)
 		for _, step := range left {

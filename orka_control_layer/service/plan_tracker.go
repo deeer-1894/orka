@@ -2,6 +2,7 @@ package service
 
 import (
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/orka-oss/orka_core/messages"
@@ -16,6 +17,9 @@ type planTracker struct {
 	mu      sync.Mutex
 	steps   []messages.PlanStep
 	browser map[string]planBrowserEvidence
+	// declared holds steps the model itself reported blocked with a reason, as
+	// opposed to a claimed completion the evidence check downgraded.
+	declared map[string]bool
 }
 
 func (p *planTracker) record(steps []messages.PlanStep) {
@@ -31,16 +35,39 @@ func (p *planTracker) record(steps []messages.PlanStep) {
 		index[planStepKey(step)] = i
 	}
 	for _, step := range clonePlanSteps(steps) {
-		if i, ok := index[planStepKey(step)]; ok {
-			step = p.validateStepLocked(step)
+		submitted := step.Status
+		step = p.validateStepLocked(step)
+		key := planStepKey(step)
+		if i, ok := index[key]; ok {
 			p.steps[i] = step
 		} else {
-			step = p.validateStepLocked(step)
-			index[planStepKey(step)] = len(p.steps)
+			index[key] = len(p.steps)
 			p.steps = append(p.steps, step)
 		}
+		if p.declared == nil {
+			p.declared = map[string]bool{}
+		}
+		p.declared[key] = submitted == "blocked" && step.Status == "blocked" && strings.TrimSpace(step.Reason) != ""
 	}
 	p.mu.Unlock()
+}
+
+// needsWork lists unfinished steps worth sending the model back for. A step
+// the model already reported blocked with a reason is excluded: asking again
+// only made it repeat the same explanation. It still counts as unfinished.
+func (p *planTracker) needsWork() []string {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []string
+	for _, s := range p.steps {
+		if s.Status != "done" && !(s.Status == "blocked" && p.declared[planStepKey(s)]) {
+			out = append(out, s.Title)
+		}
+	}
+	return out
 }
 
 func planStepKey(step messages.PlanStep) string {
