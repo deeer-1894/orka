@@ -713,3 +713,15 @@ func TestResumeRunAppliesExplicitToolsBeforeRestoringCheckpoint(t *testing.T) {
 }
 
 func ptrTools(v []string) *[]string { return &v }
+
+// Volcengine caps the answer at 4096 tokens by default, so a report written
+// in one file_write call was truncated twice and the run failed.
+func TestProfileClientCarriesEndpointOutputAllowance(t *testing.T) {
+	ark := newProfileOpenAIClient(modelsettings.Config{BaseURL: "https://ark.cn-beijing.volces.com/api/plan/v3", APIKey: "k"})
+	if ark.DefaultMaxTokens != 16384 || ark.Reasoning != nil {
+		t.Fatalf("ark client max=%d passthrough=%v", ark.DefaultMaxTokens, ark.Reasoning)
+	}
+	if other := newProfileOpenAIClient(modelsettings.Config{BaseURL: "https://api.openai.com/v1", APIKey: "k"}); other.DefaultMaxTokens != 0 {
+		t.Fatalf("unknown endpoint received a guessed allowance: %d", other.DefaultMaxTokens)
+	}
+}

@@ -82,14 +82,22 @@ func (s *ChatService) resolveModels(owner string) (modelSnapshot, error) {
 	identity := modelProfile(owner, modelsettings.Config{Protocol: saved.Protocol, BaseURL: saved.BaseURL, APIKey: saved.APIKey})
 	retries := m.cfg.MaxRetries
 	m.client = &pooledModelClient{pool: &s.modelClients, identity: identity, create: func() llm.Client {
-		raw := llm.NewOpenAIClient(saved.BaseURL, saved.APIKey)
-		raw.HTTP.Transport = userModelTransport
-		raw.HTTP.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		raw := newProfileOpenAIClient(saved)
 		safe := &privateModelClient{client: raw, key: saved.APIKey}
 		metered := llm.NewMetered(llm.NewAccounted(safe), func(ctx context.Context) string { return agent.MetaFrom(ctx).AgentID })
 		return llm.NewLimiterFromEnv(llm.NewRetry(metered, llm.RetryConfig{MaxAttempts: retries}))
 	}}
 	return m, nil
+}
+
+// newProfileOpenAIClient applies what the endpoint is known to need, such as
+// an output allowance large enough to write a report in one tool call.
+func newProfileOpenAIClient(saved modelsettings.Config) *llm.OpenAIClient {
+	endpoint := modelsettings.EndpointFor(saved.BaseURL)
+	raw := llm.NewOpenAIClientCapped(saved.BaseURL, saved.APIKey, endpoint.MaxOutputTokens)
+	raw.HTTP.Transport = userModelTransport
+	raw.HTTP.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return raw
 }
 
 // Hash private connection material without returning or persisting its key.
