@@ -729,7 +729,7 @@ test('projects lifecycle: create through a named dialog, rename and delete from 
  const rename=a.page.getByRole('dialog',{name:'重命名项目'});await rename.getByLabel(/名称/).fill('竞品研究 2026');await rename.getByRole('button',{name:'保存'}).click();
  await a.page.getByRole('main',{name:'项目 竞品研究 2026'}).waitFor();
  await a.page.getByRole('button',{name:'竞品研究 2026',exact:true}).hover();await a.page.getByRole('button',{name:'竞品研究 2026 的项目操作'}).click();
- await a.page.getByRole('menuitem',{name:'删除项目'}).click();await a.page.getByRole('button',{name:'删除项目'}).last().click();
+ await a.page.getByRole('menuitem',{name:'删除',exact:true}).click();await a.page.getByRole('button',{name:'删除项目'}).last().click();
  await expectEventually(()=>a.requests.some(r=>r.path==='/project/delete'&&r.body.project_id==='prj_new'));
  await a.page.getByText('把同一课题的对话、文件和要求放在一起。').waitFor();
  a.check();

@@ -3,6 +3,7 @@ import { artifacts as artApi, subscribeArtifact } from "../api";
 import type { Artifact, ArtifactBlock, ArtifactVersion } from "../types";
 const ArtifactRenderer = lazy(() => import("./ArtifactRenderer").then(m => ({default:m.ArtifactRenderer})));
 import { Icon, type IconName } from "./Icon";
+import { Logo } from "./Logo";
 import { toast, toastError } from "../lib/toast";
 import { useOverlay } from "../lib/useOverlay";
 import { confirmDialog } from "../lib/confirm";
@@ -394,7 +395,7 @@ export function PublicArtifactPage({ slug, token }: { slug: string; token: strin
   return (
     <div className="min-h-screen bg-bg">
       <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-surface/90 px-5 py-3 backdrop-blur">
-        <span className="grid h-6 w-6 place-items-center rounded-md bg-accent text-xs text-white">O</span>
+        <Logo size={24} />
         <span className="text-md font-medium text-ink">{data.artifact.title}</span>
         <span className="text-2xs text-faint">v{data.version.version}</span>
         {live && <span className="rounded-full bg-ok/15 px-2 py-0.5 text-2xs text-ok">● 实时更新</span>}

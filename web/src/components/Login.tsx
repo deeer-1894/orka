@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { accounts, auth, type Session } from "../api";
+import { Logo } from "./Logo";
 
 export function Login({ onAuthed }: { onAuthed: (s: Session) => void }) {
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -34,9 +35,7 @@ export function Login({ onAuthed }: { onAuthed: (s: Session) => void }) {
     <div className="grid h-screen place-items-center px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-accent text-white font-serif text-2xl">
-            O
-          </div>
+          <Logo size={48} className="mx-auto mb-3" />
           <h1 className="font-serif text-3xl text-ink">欢迎使用 Orka</h1>
           <p className="mt-1 text-base text-muted">
             {mode === "login" ? "登录你的工作区" : "创建一个新账号"}

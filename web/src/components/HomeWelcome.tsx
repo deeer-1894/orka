@@ -1,6 +1,7 @@
 import { useRef, useState, type CSSProperties } from 'react';
 import { ActionChip } from './ActionChip';
 import { Icon, type IconName } from './Icon';
+import { Logo } from './Logo';
 
 // Content stays separate from the carousel's interaction and layout.
 const EXAMPLES: { category: string; title: string; description: string; icon: IconName; tone: string; steps: string[]; prompt: string }[] = [
@@ -21,7 +22,7 @@ export function HomeWelcome({ onPick, bottomInset = 0 }: { onPick: (prompt: stri
   return <section className="home-welcome" aria-label="Orka 首页" style={{ paddingBottom: Math.max(bottomInset + 24, 120) }}>
     <div className="home-intro">
       <div className="home-badge"><Icon name="sparkle" size={14} /> AI 自动化执行平台</div>
-      <div className="home-logo" aria-hidden="true">O</div>
+      <div className="home-logo" aria-hidden="true"><Logo size={60} /></div>
       <h1>交给 Orka 去执行</h1>
       <p>描述一个目标，它会拆解步骤、联网调研、调用工具，<br className="hidden sm:block" />把完整的成果交给你。</p>
     </div>

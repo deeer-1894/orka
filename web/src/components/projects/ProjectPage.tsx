@@ -46,7 +46,7 @@ export function ProjectPage({ project, conversations, email, onSaved, onRename, 
         <DropdownMenuContent align="end" className="w-40">
           <DropdownMenuItem onSelect={onRename}><Icon name="rename" size={14} className="text-muted" />重命名</DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={onDelete} className="text-accent"><Icon name="trash" size={14} />删除项目</DropdownMenuItem>
+          <DropdownMenuItem onSelect={onDelete} className="text-accent"><Icon name="trash" size={14} />删除</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </header>

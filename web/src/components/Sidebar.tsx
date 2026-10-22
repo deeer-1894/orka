@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Conversation, MessageSearchHit, Project } from "../types";
 import { api } from "../api";
 import { Icon } from "./Icon";
+import { Logo } from "./Logo";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { confirmDialog } from "../lib/confirm";
 import { COPY } from "../lib/copy";
@@ -219,7 +220,7 @@ export function Sidebar({
         {running && <span className="inline-flex shrink-0 items-center" role="status"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ok" title="运行中" /><span className="sr-only">运行中</span></span>}
         <span className="flex-1 truncate text-base">{c.title}</span>
         {/* disambiguate same-titled conversations with a timestamp */}
-        {dup && <span className="shrink-0 text-2xs text-faint group-hover:hidden">{relTime(c.created_at)}</span>}
+        {dup && <span className="shrink-0 text-xs text-faint group-hover:hidden">{relTime(c.created_at)}</span>}
         {(c.shares?.length ?? 0) > 0 && <span className="shrink-0 text-faint group-hover:hidden" title={`已分享给 ${c.shares!.length} 人`}><Icon name="link" size={12} /></span>}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -249,9 +250,7 @@ export function Sidebar({
     >
       <div className="w-[264px] flex flex-col h-full">
         <div className="flex items-center gap-2 px-4 h-14">
-          <span className="grid h-7 w-7 place-items-center rounded-lg bg-accent text-white font-serif text-md leading-none">
-            O
-          </span>
+          <Logo size={32} />
           <span className="font-serif text-xl text-ink">Orka</span>
         </div>
 
@@ -301,7 +300,7 @@ export function Sidebar({
                   <button onClick={() => { onOpenProject(p.project_id); onSelectClose?.(); }} aria-current={activeProjectID === p.project_id ? "page" : undefined} className="flex min-w-0 flex-1 items-center gap-1.5 py-2 text-left text-base">
                     <Icon name="folder" size={14} className="shrink-0" /><span className="truncate">{p.name}</span>
                   </button>
-                  {convs.length > 0 && <span className="shrink-0 text-2xs text-faint group-hover:hidden">{convs.length}</span>}
+                  {convs.length > 0 && <span className="shrink-0 text-xs text-faint group-hover:hidden">{convs.length}</span>}
                   <DropdownMenu>
                     <DropdownMenuTrigger aria-label={`${p.name} 的项目操作`} title="项目操作"
                       className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-faint opacity-0 outline-none hover:bg-surface2 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100">
@@ -310,7 +309,7 @@ export function Sidebar({
                     <DropdownMenuContent align="end" className="w-40">
                       <DropdownMenuItem onSelect={() => onRenameProject(p.project_id)}><Icon name="rename" size={14} className="text-muted" />重命名</DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem onSelect={() => onDeleteProject(p.project_id)} className="text-accent"><Icon name="trash" size={14} />删除项目</DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => onDeleteProject(p.project_id)} className="text-accent"><Icon name="trash" size={14} />删除</DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
@@ -403,7 +402,7 @@ export function Sidebar({
           </div>
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm text-ink">{name || email}</div>
-            <div className="truncate text-2xs text-faint">{email}</div>
+            <div className="truncate text-xs text-faint">{email}</div>
           </div>
           <button
             onClick={onOpenSettings}
