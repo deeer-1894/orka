@@ -83,11 +83,11 @@ export function TasksPage({ onOpenConversation, onToggleSidebar, initialDraft, o
     </header>
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-5xl px-5 pb-16 sm:px-10">
-        <h1 className="font-serif text-[28px] text-ink">定时任务</h1>
+        <h1 className="font-serif text-3xl text-ink">定时任务</h1>
         <div className="mt-6 flex flex-wrap items-center gap-2">
           <div role="tablist" aria-label="定时任务视图" className="flex items-center gap-1">
             {(["mine", "templates"] as Tab[]).map(id => <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
-              className={"rounded-lg px-3 py-1.5 text-[14px] transition " + (tab === id ? "bg-surface2 text-ink" : "text-faint hover:text-muted")}>
+              className={"rounded-lg px-3 py-1.5 text-base transition " + (tab === id ? "bg-surface2 text-ink" : "text-faint hover:text-muted")}>
               {id === "mine" ? `我的${tasks?.length ? ` · ${tasks.length}` : ""}` : "模板"}</button>)}
           </div>
           <div className="ml-auto flex items-center gap-1">
@@ -95,7 +95,7 @@ export function TasksPage({ onOpenConversation, onToggleSidebar, initialDraft, o
               <label className="relative">
                 <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint"><Icon name="search" size={14} /></span>
                 <input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索任务" aria-label="搜索任务"
-                  className="h-8 w-36 rounded-lg border border-border bg-surface pl-8 pr-2 text-[13px] text-ink outline-none transition focus:w-48 focus:border-accent/60 sm:w-44 sm:focus:w-56" />
+                  className="h-8 w-36 rounded-lg border border-border bg-surface pl-8 pr-2 text-sm text-ink outline-none transition focus:w-48 focus:border-accent/60 sm:w-44 sm:focus:w-56" />
               </label>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="筛选" className={filtered && (kind !== "all" || status !== "all") ? "text-accent" : ""}><Icon name="filter" size={15} /></Button></DropdownMenuTrigger>
@@ -130,14 +130,14 @@ export function TasksPage({ onOpenConversation, onToggleSidebar, initialDraft, o
           : tasks.length === 0 ? <>
             <div className="flex flex-col items-center py-16 text-center">
               <Stopwatch />
-              <p className="mt-5 text-[14px] text-muted">暂无定时任务。</p>
-              <p className="mt-1 max-w-sm text-[13px] text-faint">按时间、网页变化或外部事件自动运行 Orka，结果和文件都保存在任务自己的对话里。</p>
+              <p className="mt-5 text-base text-muted">暂无定时任务。</p>
+              <p className="mt-1 max-w-sm text-sm text-faint">按时间、网页变化或外部事件自动运行 Orka，结果和文件都保存在任务自己的对话里。</p>
               <Button className="mt-5" onClick={() => setEditing(blankDraft())}><Icon name="plus" size={14} />新建任务</Button>
             </div>
             <Divider />
             <TemplateGrid onPick={t => setEditing(draftFromTemplate(t))} />
           </> : visible.length === 0
-            ? <p className="py-16 text-center text-[14px] text-muted">没有符合条件的任务。<button className="text-accent hover:underline" onClick={() => { setQuery(""); setKind("all"); setStatus("all"); }}>清除筛选</button></p>
+            ? <p className="py-16 text-center text-base text-muted">没有符合条件的任务。<button className="text-accent hover:underline" onClick={() => { setQuery(""); setKind("all"); setStatus("all"); }}>清除筛选</button></p>
             : <ul className="mt-6 flex flex-col gap-3">{visible.map(t => <TaskRow key={t.task_id} task={t} pending={!!pending[t.task_id]}
               onToggle={v => void toggle(t, v)} onEdit={() => setEditing(draftFromTask(t))} onRun={() => void runNow(t)}
               onOpen={() => onOpenConversation(t.conversation_id)} onDelete={() => void remove(t)} />)}</ul>)}
@@ -168,9 +168,9 @@ function TaskRow({ task, pending, onToggle, onEdit, onRun, onOpen, onDelete }: {
     <span className="mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-surface2 text-muted"><Icon name={KIND_ICON[kindOf(task)]} size={18} /></span>
     <div className="min-w-0 flex-1">
     <button onClick={onEdit} className="w-full min-w-0 text-left" aria-label={`编辑 ${titleOf(task)}`}>
-      <h3 className="truncate text-[15px] font-medium text-ink">{titleOf(task)}</h3>
-      <p className="mt-0.5 line-clamp-1 text-[13px] text-muted">{promptOf(task)}</p>
-      <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-faint">
+      <h3 className="truncate text-md font-medium text-ink">{titleOf(task)}</h3>
+      <p className="mt-0.5 line-clamp-1 text-sm text-muted">{promptOf(task)}</p>
+      <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-faint">
         <span className="inline-flex items-start gap-1"><Icon name="clock" size={12} className="mt-[3px] shrink-0" />{describeTrigger(task.trigger, task.interval_sec)}</span>
         {status.text && <span className={status.tone === "warn" ? "text-accent" : status.tone === "ok" ? "text-ok" : ""}>{status.text}</span>}
       </p>
@@ -180,7 +180,7 @@ function TaskRow({ task, pending, onToggle, onEdit, onRun, onOpen, onDelete }: {
     <div className="flex shrink-0 items-center gap-1 pt-1">
       <Switch checked={on} disabled={pending} onChange={onToggle} label={`${on ? "停用" : "启用"} ${titleOf(task)}`} />
       <DropdownMenu>
-        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label={`${titleOf(task)} 的更多操作`}><span aria-hidden className="text-[18px] leading-none">⋯</span></Button></DropdownMenuTrigger>
+        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label={`${titleOf(task)} 的更多操作`}><span aria-hidden className="text-xl leading-none">⋯</span></Button></DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={onRun}><Icon name="play" size={14} />立即运行</DropdownMenuItem>
           <DropdownMenuItem onSelect={onEdit}><Icon name="rename" size={14} />编辑</DropdownMenuItem>
@@ -209,7 +209,7 @@ function TaskRuns({ task }: { task: TaskMeta }) {
   const succeeded = finished.filter(r => r.status === "done").length;
   const last = runs[0];
   const when = (r: RunRecord) => formatDateTime(r.finished_at || r.created_at);
-  return <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12px] text-faint">
+  return <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-faint">
     <ol aria-label="最近运行" className="flex items-center gap-1">
       {[...runs].reverse().map(r => <li key={r.run_id} title={`${RUN_LABEL[r.status] || r.status} · ${when(r)}`} aria-label={`${RUN_LABEL[r.status] || r.status} · ${when(r)}`}
         className={"h-2.5 w-2.5 rounded-full " + (RUN_DOT[r.status] || "bg-border")} />)}
@@ -224,9 +224,9 @@ function TemplateGrid({ onPick }: { onPick: (t: TaskTemplate) => void }) {
     <li key={t.id}><button onClick={() => onPick(t)} aria-label={`使用模板：${t.title}`} className="flex w-full items-start gap-4 rounded-2xl px-3 py-3.5 text-left transition hover:bg-surface">
       <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-surface2 text-muted"><Icon name={t.icon} size={18} /></span>
       <span className="min-w-0">
-        <span className="block text-[15px] font-medium text-ink">{t.title}</span>
-        <span className="mt-0.5 block text-[13px] text-muted">{t.description}</span>
-        <span className="mt-1.5 inline-flex items-start gap-1 text-[12px] text-faint"><Icon name={KIND_ICON[t.trigger.kind]} size={12} className="mt-[3px] shrink-0" />{describeTrigger(t.trigger).replace(/^ /, "")}</span>
+        <span className="block text-md font-medium text-ink">{t.title}</span>
+        <span className="mt-0.5 block text-sm text-muted">{t.description}</span>
+        <span className="mt-1.5 inline-flex items-start gap-1 text-xs text-faint"><Icon name={KIND_ICON[t.trigger.kind]} size={12} className="mt-[3px] shrink-0" />{describeTrigger(t.trigger).replace(/^ /, "")}</span>
       </span>
     </button></li>)}</ul>;
 }

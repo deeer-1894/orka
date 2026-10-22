@@ -5,6 +5,33 @@
   --font-serif: "Newsreader", ui-serif, Georgia, serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
+  /* One type scale for the whole UI. Every size in the app is one of these
+     steps (tests/typography.test.mjs keeps hand-written pixel sizes out):
+     2xs captions · xs secondary text · sm UI body · base controls ·
+     md reading text (chat) and titles · lg-5xl headings and display. */
+  --text-2xs: 11px;
+  --text-2xs--line-height: 1.45;
+  --text-xs: 12px;
+  --text-xs--line-height: 1.5;
+  --text-sm: 13px;
+  --text-sm--line-height: 1.5;
+  --text-base: 14px;
+  --text-base--line-height: 1.5;
+  --text-md: 15px;
+  --text-md--line-height: 1.6;
+  --text-lg: 16px;
+  --text-lg--line-height: 1.5;
+  --text-xl: 18px;
+  --text-xl--line-height: 1.4;
+  --text-2xl: 20px;
+  --text-2xl--line-height: 1.35;
+  --text-3xl: 26px;
+  --text-3xl--line-height: 1.25;
+  --text-4xl: 40px;
+  --text-4xl--line-height: 1.15;
+  --text-5xl: 52px;
+  --text-5xl--line-height: 1.1;
+
   /* warm paper light theme */
   --color-bg: #f7f6f3;
   --color-surface: #ffffff;
@@ -93,7 +120,7 @@ body {
   background-color: var(--color-bg);
   color: var(--color-ink);
   font-family: var(--font-sans);
-  font-size: 15px;
+  font-size: var(--text-base);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   transition: background-color 0.25s ease, color 0.25s ease; /* smooth theme flip */
@@ -142,7 +169,7 @@ body {
 /* assistant markdown prose */
 .md {
   line-height: 1.7;
-  font-size: 15.5px;
+  font-size: var(--text-md);
   color: var(--color-ink);
 }
 .md > :first-child { margin-top: 0; }
@@ -172,14 +199,14 @@ body {
   overflow-x: auto;
   margin: 0 0 0.9em;
 }
-.md pre code { background: none; padding: 0; font-size: 13px; }
+.md pre code { background: none; padding: 0; font-size: var(--text-sm); }
 .md blockquote {
   border-left: 3px solid var(--color-border);
   margin: 0 0 0.9em;
   padding-left: 1em;
   color: var(--color-muted);
 }
-.md table { border-collapse: collapse; margin: 0 0 0.9em; font-size: 14px; }
+.md table { border-collapse: collapse; margin: 0 0 0.9em; font-size: var(--text-base); }
 .md th, .md td { border: 1px solid var(--color-border); padding: 6px 10px; text-align: left; }
 .md hr { border: none; border-top: 1px solid var(--color-border); margin: 1.2em 0; }
 
@@ -215,12 +242,12 @@ body {
 /* Home: a quiet, scattered stack; transitions run only when selection changes. */
 .home-welcome { flex: 1; min-height: 0; overflow: auto; overflow-x: clip; padding: 32px 20px 120px; text-align: center; background: radial-gradient(ellipse at 20% 5%, color-mix(in srgb, var(--color-accent) 9%, transparent), transparent 55%), radial-gradient(ellipse at 85% 12%, color-mix(in srgb, var(--color-accent) 5%, transparent), transparent 50%); }
 .home-intro { animation: rise .6s ease both; }
-.home-badge { display: inline-flex; align-items: center; gap: 7px; padding: 7px 14px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); color: var(--color-muted); font-size: 12px; margin-bottom: 20px; }
+.home-badge { display: inline-flex; align-items: center; gap: 7px; padding: 7px 14px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); color: var(--color-muted); font-size: var(--text-xs); margin-bottom: 20px; }
 .home-badge svg { color: var(--color-accent); }
 .home-logo { display: grid; place-items: center; width: 60px; height: 60px; margin: 0 auto 17px; border-radius: 17px; color: white; font: 28px var(--font-serif); background: linear-gradient(155deg, color-mix(in srgb, var(--color-accent) 72%, white), var(--color-accent)); animation: home-breathe 4.5s ease-in-out infinite; }
 @keyframes home-breathe { 50% { transform: scale(1.035); } }
 .home-intro h1 { font-size: clamp(26px, 3vw, 34px); font-weight: 600; color: var(--color-accent); margin: 0 0 12px; letter-spacing: -.035em; }
-.home-intro p { color: var(--color-muted); font-size: 13.5px; line-height: 1.8; margin: 0; }
+.home-intro p { color: var(--color-muted); font-size: var(--text-sm); line-height: 1.8; margin: 0; }
 .home-stage { --scatter-factor: 1; position: relative; width: min(100%, 720px); height: 318px; margin: 12px auto 0; touch-action: pan-y; isolation: isolate; animation: rise .7s ease .15s both; }
 .home-card { position: absolute; left: 50%; top: 50%; width: 286px; min-height: 186px; padding: 19px 20px; display: flex; flex-direction: column; align-items: stretch; gap: 6px; border: 1px solid var(--color-border); border-radius: 18px; text-align: left; background: var(--color-surface); cursor: pointer; box-shadow: 0 10px 24px rgb(36 34 32 / .06); transform: translate(calc(-50% + var(--card-x) * var(--scatter-factor)), calc(-50% + var(--card-y))) rotate(var(--card-rotation)) scale(var(--card-scale)); filter: blur(var(--card-blur)); opacity: var(--card-opacity); transition: transform .65s cubic-bezier(.2,.75,.2,1), filter .5s ease, opacity .5s ease, box-shadow .3s, border-color .25s; }
 .home-card[data-tone="research"] { --card-color: #8064b9; }
@@ -231,20 +258,20 @@ body {
 .home-card::before { content: ''; position: absolute; left: 0; top: 16px; bottom: 16px; width: 3px; border-radius: 3px; background: var(--card-color); opacity: .55; }
 .home-card[aria-pressed="true"] { box-shadow: 0 22px 40px rgb(36 34 32 / .13); }
 .home-card:hover { border-color: color-mix(in srgb, var(--card-color) 35%, var(--color-border)); }
-.home-card-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; color: var(--card-color); font-size: 12px; font-weight: 500; }
+.home-card-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; color: var(--card-color); font-size: var(--text-xs); font-weight: 500; }
 .home-card-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: color-mix(in srgb, var(--card-color) 12%, var(--color-surface)); }
-.home-card-title { color: var(--color-ink); font-size: 15px; font-weight: 600; }
-.home-card-description { color: var(--color-muted); font-size: 12px; line-height: 1.6; }
+.home-card-title { color: var(--color-ink); font-size: var(--text-md); font-weight: 600; }
+.home-card-description { color: var(--color-muted); font-size: var(--text-xs); line-height: 1.6; }
 .home-card-flow { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
 .home-card-flow > span { display: inline-flex; align-items: center; gap: 5px; }
-.home-step { border-radius: 6px; padding: 3px 7px; color: var(--color-muted); background: var(--color-surface2); font-size: 10px; }
-.home-flow-arrow { color: var(--color-faint); font-size: 10px; }
+.home-step { border-radius: 6px; padding: 3px 7px; color: var(--color-muted); background: var(--color-surface2); font-size: var(--text-2xs); }
+.home-flow-arrow { color: var(--color-faint); font-size: var(--text-2xs); }
 .home-controls { position: relative; }
 .home-dots { display: flex; justify-content: center; gap: 1px; }
 .home-dots button { display: grid; place-items: center; min-width: 26px; height: 28px; cursor: pointer; }
 .home-dots span { height: 6px; width: 6px; border-radius: 9px; background: var(--color-border); transition: width .3s, background .3s; }
 .home-dots [aria-pressed="true"] span { background: var(--color-accent); width: 18px; }
-.home-hint { color: var(--color-faint); font-size: 12px; margin: 3px 0 14px; }
+.home-hint { color: var(--color-faint); font-size: var(--text-xs); margin: 3px 0 14px; }
 .composer-toolbar { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .composer-icon { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 40px; flex-shrink: 0; border-radius: 999px; color: var(--color-faint); transition: background .2s, color .2s; }
 .composer-icon:hover, .composer-icon[aria-expanded="true"] { color: var(--color-accent); background: var(--color-accentsoft); }

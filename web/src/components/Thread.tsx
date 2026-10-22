@@ -290,7 +290,7 @@ export function Thread({
           <div className="mb-6 text-center">
             <button
               onClick={() => setShowAll(true)}
-              className="rounded-full border border-border bg-surface px-3 py-1.5 text-[12.5px] text-muted transition hover:border-accent/40 hover:text-accent"
+              className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs text-muted transition hover:border-accent/40 hover:text-accent"
             >
               显示更早的 {startIdx} 条
             </button>
@@ -336,7 +336,7 @@ export function Thread({
         )}
         {failed && (
           <div className="mb-6 ml-[42px] space-y-2" role="status">
-            {autoResume && <p className="text-[13px] text-ink" data-testid="auto-resume">{autoResume}</p>}
+            {autoResume && <p className="text-sm text-ink" data-testid="auto-resume">{autoResume}</p>}
             <div className="flex flex-wrap items-center gap-3">
               {(recovery.recoverable || recovery.busy) && (
                 <ActionChip onClick={onContinue} disabled={recovery.busy} icon="refresh">
@@ -347,7 +347,7 @@ export function Thread({
                 <ActionChip onClick={onCancelAutoResume}>取消自动继续</ActionChip>
               )}
             </div>
-            <p className="text-[12px] text-faint">
+            <p className="text-xs text-faint">
               {recovery.error || (recovery.busy ? "正在连接续跑，请稍候。" : autoResume ? "已完成的进度会保留，自动继续不会重做已完成的步骤。" : recovery.recoverable ? "继续任务会保留已完成的进度。" : recovery.checking ? "正在检查是否可以继续任务…" : "本次执行未完成。")}
             </p>
           </div>
@@ -383,13 +383,13 @@ function SessionFiles({ files, onOpen }: { files: string[]; onOpen: (name: strin
   useEffect(() => setExpanded(false), [scope.conversationID]);
   return (
     <div className="mb-6 ml-[42px] rounded-xl border border-border bg-surface2/40 p-3">
-      <div className="mb-2 flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-faint"><Icon name="paperclip" size={12} />本对话文件 · {files.length}</div>
+      <div className="mb-2 flex items-center gap-1 text-2xs font-medium uppercase tracking-wide text-faint"><Icon name="paperclip" size={12} />本对话文件 · {files.length}</div>
       <div className="flex max-h-64 flex-wrap gap-1.5 overflow-y-auto">
         {(expanded ? files : files.slice(0, 8)).map((f) => (
           <div key={f} className="flex max-w-full items-center rounded-full border border-border bg-surface">
           <button
             onClick={() => onOpen(f)}
-            className="flex min-w-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[12.5px] text-ink hover:border-accent/40 hover:text-accent transition"
+            className="flex min-w-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs text-ink hover:border-accent/40 hover:text-accent transition"
             title={"预览 " + f}
           >
             <Icon name={fileIconName(f)} size={13} className="shrink-0 text-muted" />
@@ -431,14 +431,14 @@ function ThreadOutline({ turns }: { turns: { id: string; text: string }[] }) {
       </button>
       {open && (
         <div className="absolute right-0 mt-1.5 max-h-[60vh] w-64 overflow-y-auto rounded-xl border border-border bg-surface p-1.5 shadow-lg">
-          <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-faint">
+          <div className="px-2 py-1 text-2xs font-medium uppercase tracking-wide text-faint">
             Outline · {turns.length} turns
           </div>
           {turns.map((t, i) => (
             <button
               key={t.id}
               onClick={() => go(t.id)}
-              className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] text-muted hover:bg-surface2 hover:text-ink"
+              className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-muted hover:bg-surface2 hover:text-ink"
             >
               <span className="mt-0.5 shrink-0 text-faint">{i + 1}.</span>
               <span className="line-clamp-2">{trunc(t.text, 60)}</span>
@@ -488,9 +488,9 @@ function ThreadFind({
             if (e.key === "Escape") { e.preventDefault(); onClose(); }
           }}
           placeholder="在对话中查找…"
-          className="w-40 bg-transparent text-[13px] outline-none placeholder:text-faint"
+          className="w-40 bg-transparent text-sm outline-none placeholder:text-faint"
         />
-        <span className="min-w-[36px] text-center text-[11px] text-faint">{query ? (count ? `${idx + 1}/${count}` : "0") : ""}</span>
+        <span className="min-w-[36px] text-center text-2xs text-faint">{query ? (count ? `${idx + 1}/${count}` : "0") : ""}</span>
         <button onClick={() => onStep(-1)} disabled={!count} aria-label="上一个匹配" className="grid h-6 w-6 place-items-center rounded text-faint hover:bg-surface2 disabled:opacity-30"><Icon name="chevron" size={13} className="rotate-180" /></button>
         <button onClick={() => onStep(1)} disabled={!count} aria-label="下一个匹配" className="grid h-6 w-6 place-items-center rounded text-faint hover:bg-surface2 disabled:opacity-30"><Icon name="chevron" size={13} /></button>
         <button onClick={onClose} aria-label="关闭查找" className="grid h-6 w-6 place-items-center rounded text-faint hover:bg-surface2"><Icon name="close" size={13} /></button>
@@ -524,9 +524,9 @@ function UserBubble({ m, onEdit, onFork }: { m: Message; onEdit?: (text: string)
               if (e.key === "Escape") setEditing(false);
             }}
             rows={Math.min(8, draft.split("\n").length + 1)}
-            className="w-full resize-none rounded-lg bg-surface px-3 py-2 text-[15px] text-ink outline-none focus:border-accent/50"
+            className="w-full resize-none rounded-lg bg-surface px-3 py-2 text-md text-ink outline-none focus:border-accent/50"
           />
-          <div className="mt-1.5 flex justify-end gap-2 text-[12px]">
+          <div className="mt-1.5 flex justify-end gap-2 text-xs">
             <button onClick={() => setEditing(false)} className="px-2 py-1 text-faint hover:text-ink">取消</button>
             <button onClick={submit} className="rounded-lg bg-accent px-2.5 py-1 text-white">重新发送</button>
           </div>
@@ -536,10 +536,10 @@ function UserBubble({ m, onEdit, onFork }: { m: Message; onEdit?: (text: string)
   }
   return (
     <div className="group mb-6 flex flex-col items-end gap-1">
-      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-userbubble px-4 py-2.5 text-[15px] leading-relaxed text-ink whitespace-pre-wrap">
+      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-userbubble px-4 py-2.5 text-md leading-relaxed text-ink whitespace-pre-wrap">
         {m.content}
       </div>
-      {receipt && <span className="text-[11px] text-faint">{receipt}</span>}
+      {receipt && <span className="text-2xs text-faint">{receipt}</span>}
       {(onEdit || onFork) && (
         <div className="flex gap-1 opacity-0 transition group-hover:opacity-100">
           <CopyButton text={m.content || ""} />
@@ -562,7 +562,7 @@ function StructuredPlan({ plan, live }: { plan: PlanPayload; live: boolean }) {
   const allDone = done === steps.length;
   return (
     <div className="my-2 ml-[42px] rounded-xl border border-border bg-surface2/40 p-3">
-      <div className="mb-2 flex items-center gap-2 text-[12.5px] font-medium text-ink">
+      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-ink">
         <Icon name="sparkle" size={14} className="text-accent" />
         <span>执行计划</span>
         <span className="text-faint">· {done}/{steps.length}</span>
@@ -577,10 +577,10 @@ function StructuredPlan({ plan, live }: { plan: PlanPayload; live: boolean }) {
       </div>
       <ol className="space-y-1.5">
         {steps.map((s, i) => (
-          <li key={i} className="flex items-start gap-2 text-[13px]">
+          <li key={i} className="flex items-start gap-2 text-sm">
             <span
               className={
-                "mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full text-[9px] font-medium " +
+                "mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full text-2xs font-medium " +
                 (s.status === "done"
                   ? "bg-ok text-white"
                   : s.status === "active"
@@ -632,7 +632,7 @@ function Citations({ text }: { text: string }) {
     <div className="mt-2.5">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-[12px] text-muted transition hover:border-accent/40 hover:text-accent"
+        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-xs text-muted transition hover:border-accent/40 hover:text-accent"
       >
         <Icon name="book" size={13} /> 来源 · {cites.length}
         <Icon name="chevron" size={12} className={"text-faint transition-transform " + (open ? "" : "-rotate-90")} />
@@ -640,8 +640,8 @@ function Citations({ text }: { text: string }) {
       {open && (
         <ol className="mt-2 space-y-1">
           {cites.map((c, i) => (
-            <li key={c.url} className="flex items-start gap-2 text-[12.5px]">
-              <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-surface2 text-[10px] text-faint">{i + 1}</span>
+            <li key={c.url} className="flex items-start gap-2 text-xs">
+              <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-surface2 text-2xs text-faint">{i + 1}</span>
               <a href={c.url} target="_blank" rel="noreferrer" className="min-w-0 truncate text-accent hover:underline" title={c.url}>
                 <span className="text-ink">{c.host}</span>
                 <span className="text-faint"> · {c.url.replace(/^https?:\/\//, "")}</span>
@@ -674,7 +674,7 @@ function Assistant({ m, live, onRegenerate, onSchedule }: { m: Message; live?: b
   }, [scope.conversationID, scope.ownerEmail, snapshotFor]);
   return (
     <div className="group mb-7 flex gap-3.5">
-      <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent text-white font-serif text-[13px] leading-none">
+      <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent text-white font-serif text-sm leading-none">
         O
       </div>
       <div className="min-w-0 flex-1 pt-0.5">
@@ -696,7 +696,7 @@ function ActionButton({ label, onClick, children }: { label: string; onClick: ()
       onClick={onClick}
       aria-label={label}
       title={label}
-      className="grid h-6 w-6 place-items-center rounded-md text-[13px] text-faint hover:bg-surface2 hover:text-ink"
+      className="grid h-6 w-6 place-items-center rounded-md text-sm text-faint hover:bg-surface2 hover:text-ink"
     >
       {children}
     </button>
@@ -731,7 +731,7 @@ function InlineComputer({ live, frames }: { live: boolean; frames: BrowserPayloa
     <div className="mb-2 overflow-hidden rounded-xl border border-border bg-surface">
       <div className="flex items-center gap-1.5 border-b border-border bg-surface2 px-2.5 py-1.5">
         <span className={"h-1.5 w-1.5 rounded-full " + (live ? "animate-pulse bg-ok" : "bg-faint")} />
-        <span className="text-[12px] text-muted">
+        <span className="text-xs text-muted">
           {live ? "本次运行 · 截图证据更新中" : "本次运行 · 截图证据"}{frames.length ? ` · ${frames.length} 帧` : ""}
         </span>
         <button onClick={() => setOpen((o) => !o)} aria-label={open ? "收起画面" : "展开画面"} className="ml-auto text-faint hover:text-accent">
@@ -742,10 +742,10 @@ function InlineComputer({ live, frames }: { live: boolean; frames: BrowserPayloa
         latest?.data ? (
           <img src={"data:image/png;base64," + latest.data} alt="本次运行截图" className="block w-full" />
         ) : (
-          <div className="px-3 py-6 text-center text-[12px] text-faint">本次运行未捕获画面</div>
+          <div className="px-3 py-6 text-center text-xs text-faint">本次运行未捕获画面</div>
         )
       )}
-      <p className="px-3 py-2 text-[11px] text-faint">需要人工接管时，请由本地管理员单独打开 noVNC；此处仅展示运行证据。</p>
+      <p className="px-3 py-2 text-2xs text-faint">需要人工接管时，请由本地管理员单独打开 noVNC；此处仅展示运行证据。</p>
     </div>
   );
 }
@@ -779,7 +779,7 @@ function Steps({ all, items, live }: { all: Message[]; items: Message[]; live?: 
     <div className="mb-6 ml-[42px]">
       <button
         onClick={() => setPinned(!open)}
-        className="flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-[13px] text-muted hover:border-accent/40 transition"
+        className="flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-sm text-muted hover:border-accent/40 transition"
       >
         {live ? <Spinner /> : <Icon name="gear" size={13} className="text-faint" />}
         <span>
@@ -795,7 +795,7 @@ function Steps({ all, items, live }: { all: Message[]; items: Message[]; live?: 
         <div className="mt-2 border-l-2 border-border pl-4">
           <OwnSteps all={all} items={own} live={!!live} />
           {live && (
-            <div className="flex items-center gap-2 py-1 text-[12px] text-muted">
+            <div className="flex items-center gap-2 py-1 text-xs text-muted">
               <span className="-ml-[21px] h-2 w-2 animate-pulse rounded-full bg-ok ring-2 ring-surface" />
               进行中…
             </div>
@@ -828,7 +828,7 @@ function PlanStepGroup({ title, index, items, current }: { title: string; index:
   const summary = stepSummary(items) || `${items.length} 步`;
   const latest = items[items.length - 1];
   return <div className="py-0.5">
-    <button onClick={() => setOpen(o => !o)} aria-expanded={open} className="relative flex w-full items-start gap-2 text-left text-[13px]">
+    <button onClick={() => setOpen(o => !o)} aria-expanded={open} className="relative flex w-full items-start gap-2 text-left text-sm">
       <span className={"-ml-[21px] mt-1.5 h-2 w-2 shrink-0 rounded-full ring-2 ring-surface " + (failed.length ? "bg-accent" : current ? "animate-pulse bg-accent" : "bg-ok/70")} />
       <span className="min-w-0 flex-1">
         <span className="text-ink">{index >= 0 ? `步骤 ${index + 1} · ` : ""}{title}</span>
@@ -874,14 +874,14 @@ function CollapsedRun({ items }: { items: Message[] }) {
         {items.map((m) => (
           <TimelineRow key={m.id} m={m} />
         ))}
-        <button onClick={() => setOpen(false)} className="ml-1 py-0.5 text-[11.5px] text-faint hover:text-accent">收起这 {items.length} 步</button>
+        <button onClick={() => setOpen(false)} className="ml-1 py-0.5 text-xs text-faint hover:text-accent">收起这 {items.length} 步</button>
       </>
     );
   }
   return (
     <div className="relative flex items-start gap-2 py-0.5">
       <span className="-ml-[21px] mt-1.5 h-2 w-2 shrink-0 rounded-full bg-ok/70 ring-2 ring-surface" title={`${items.length} 步,全部成功`} />
-      <button onClick={() => setOpen(true)} className="group flex items-center gap-1.5 text-left text-[13px]">
+      <button onClick={() => setOpen(true)} className="group flex items-center gap-1.5 text-left text-sm">
         <Icon name={first.icon} size={14} className="shrink-0 text-muted" />
         <span className="text-ink">{first.label.replace(/\s*“[^”]*”\s*$/, "")}</span>
         <span className="text-muted">· {items.length} 次</span>
@@ -905,7 +905,7 @@ function TimelineRow({ m }: { m: Message }) {
         title={err ? "失败" : "完成"}
       />
       <div className="min-w-0 flex-1"><Step m={m} /></div>
-      {dur !== undefined && dur > 400 && <span className="shrink-0 pt-0.5 text-[10px] text-faint">{(dur / 1000).toFixed(1)}s</span>}
+      {dur !== undefined && dur > 400 && <span className="shrink-0 pt-0.5 text-2xs text-faint">{(dur / 1000).toFixed(1)}s</span>}
     </div>
   );
 }
@@ -917,7 +917,7 @@ function AgentLane({ agent, items }: { agent: string; items: Message[] }) {
     <div className="rounded-lg border border-border bg-surface2/40">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-[13px]"
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-sm"
       >
         <Icon name={AGENT_ICON[agent] || "users"} size={15} className="text-muted" />
         <span className="font-medium text-ink">{agent}</span>
@@ -945,7 +945,7 @@ function RememberUndo({ result }: { result: string }) {
   return <button disabled={state === "busy"} onClick={async () => {
     setState("busy");
     try { await api.deleteMemory(id); setState("undone"); } catch { setState(""); }
-  }} className="ml-1 text-[12px] text-accent hover:underline disabled:opacity-50">撤销</button>;
+  }} className="ml-1 text-xs text-accent hover:underline disabled:opacity-50">撤销</button>;
 }
 
 // toolReceipt turns a tool payload into a readable {icon,label,detail} receipt,
@@ -1044,9 +1044,9 @@ function FileWriteActions({ file: rawFile, onOpenDiff }: { file: string; onOpenD
   if (readOnly || !conversationID || !file) return null;
   return (
     <span className="ml-1.5 inline-flex items-center gap-1.5 align-middle">
-      <button onClick={(e) => { e.stopPropagation(); onOpenDiff(); }} className="text-[12px] text-faint hover:text-accent" title="查看这次写入的改动">查看改动</button>
+      <button onClick={(e) => { e.stopPropagation(); onOpenDiff(); }} className="text-xs text-faint hover:text-accent" title="查看这次写入的改动">查看改动</button>
       {hadPrior && (
-        <button onClick={undo} disabled={busy || undone} className="text-[12px] text-faint hover:text-accent disabled:opacity-50" title="恢复到写入前的内容">
+        <button onClick={undo} disabled={busy || undone} className="text-xs text-faint hover:text-accent disabled:opacity-50" title="恢复到写入前的内容">
           {undone ? "已撤销" : busy ? "撤销中…" : "撤销"}
         </button>
       )}
@@ -1062,7 +1062,7 @@ function Step({ m }: { m: Message }) {
     const p = { ...raw, error: executionError(raw) };
     const r = toolReceipt(p);
     return (
-      <div className="text-[13px]">
+      <div className="text-sm">
         <span className="inline-flex items-center gap-1.5 align-middle text-ink"><Icon name={r.icon} size={14} className="shrink-0 text-muted" /> {r.label} </span>
         {r.file ? (
           <button
@@ -1094,7 +1094,7 @@ function Step({ m }: { m: Message }) {
       screenshot: "截图", observe: "观察", done: "完成", action: "操作",
     };
     return (
-      <div className="flex items-start gap-2 text-[13px] text-muted">
+      <div className="flex items-start gap-2 text-sm text-muted">
         {p?.data && !shotBroken ? (
           <img
             src={"data:image/png;base64," + p.data}
@@ -1115,10 +1115,10 @@ function Step({ m }: { m: Message }) {
     );
   }
   if (m.type === "skill") {
-    return <div className="flex items-center gap-1.5 text-[13px] text-muted"><Icon name="sparkle" size={14} /> 采纳技能</div>;
+    return <div className="flex items-center gap-1.5 text-sm text-muted"><Icon name="sparkle" size={14} /> 采纳技能</div>;
   }
   return (
-    <div className="text-[13px] text-muted">
+    <div className="text-sm text-muted">
       <span className="font-mono">{m.type}</span> {m.action} {trunc(m.content, 80)}
     </div>
   );
@@ -1157,22 +1157,22 @@ function ConfirmCard({ m, active, onResumed }: { m: Message; active: boolean; on
   </span>;
   return (
     <div className="mb-6 ml-[42px] rounded-xl border border-accent/40 bg-accentsoft/40 p-3.5">
-      <div className="mb-1 flex items-center gap-1.5 text-[13px] font-medium text-ink">
+      <div className="mb-1 flex items-center gap-1.5 text-sm font-medium text-ink">
         <Icon name="shield" size={14} className="text-accent" /> {active && !done ? "需要你确认" : "操作确认记录"} · {TOOL_LABEL[p.tool] || p.tool}
       </div>
-      <div className="mb-2.5 break-words rounded-lg bg-surface/70 px-2.5 py-1.5 font-mono text-[12px] text-muted">{p.summary}</div>
+      <div className="mb-2.5 break-words rounded-lg bg-surface/70 px-2.5 py-1.5 font-mono text-xs text-muted">{p.summary}</div>
       {done ? (
-        <div className="text-[12.5px] text-faint">{doneLabel}</div>
+        <div className="text-xs text-faint">{doneLabel}</div>
       ) : !active ? (
-        <div className="text-[12.5px] text-faint">此确认已不再待处理</div>
+        <div className="text-xs text-faint">此确认已不再待处理</div>
       ) : (
         <div className="flex flex-wrap gap-2">
-          <button disabled={submitting} onClick={() => decide(true, false)} className="rounded-lg bg-accent px-3 py-1.5 text-[12.5px] text-white hover:opacity-90 disabled:opacity-50">{submitting ? "处理中…" : "允许一次"}</button>
-          <button disabled={submitting} onClick={() => decide(true, true)} className="rounded-lg border border-accent/40 bg-surface px-3 py-1.5 text-[12.5px] text-ink hover:bg-accentsoft/60 disabled:opacity-50" title={`本对话内不再询问“${TOOL_LABEL[p.tool] || p.tool}”`}>本对话始终允许</button>
-          <button disabled={submitting} onClick={() => decide(false, false)} className="rounded-lg border border-border bg-surface px-3 py-1.5 text-[12.5px] text-muted hover:border-accent/40 disabled:opacity-50">拒绝</button>
+          <button disabled={submitting} onClick={() => decide(true, false)} className="rounded-lg bg-accent px-3 py-1.5 text-xs text-white hover:opacity-90 disabled:opacity-50">{submitting ? "处理中…" : "允许一次"}</button>
+          <button disabled={submitting} onClick={() => decide(true, true)} className="rounded-lg border border-accent/40 bg-surface px-3 py-1.5 text-xs text-ink hover:bg-accentsoft/60 disabled:opacity-50" title={`本对话内不再询问“${TOOL_LABEL[p.tool] || p.tool}”`}>本对话始终允许</button>
+          <button disabled={submitting} onClick={() => decide(false, false)} className="rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted hover:border-accent/40 disabled:opacity-50">拒绝</button>
         </div>
       )}
-      {active && error && <p role="alert" className="mt-2 text-[12px] text-accent">{error}</p>}
+      {active && error && <p role="alert" className="mt-2 text-xs text-accent">{error}</p>}
     </div>
   );
 }
@@ -1188,17 +1188,17 @@ function Clarify({ m, onResume }: { m: Message; onResume: (k: string, a: string)
   };
   return (
     <div className="mb-7 ml-[42px] rounded-2xl border border-accent/30 bg-accentsoft/50 px-4 py-3.5">
-      <div className="mb-2 text-[12px] font-medium uppercase tracking-wide text-accent">
+      <div className="mb-2 text-xs font-medium uppercase tracking-wide text-accent">
         Needs your input
       </div>
-      <p className="mb-3 text-[15px] text-ink">{p.question}</p>
+      <p className="mb-3 text-md text-ink">{p.question}</p>
       <div className="flex flex-wrap gap-2">
         {(p.options ?? []).map((o) => (
           <button
             key={o}
             disabled={sent}
             onClick={() => send(o)}
-            className="rounded-lg border border-accent/40 bg-surface px-3 py-1.5 text-[14px] text-ink hover:bg-accentsoft disabled:opacity-40 transition"
+            className="rounded-lg border border-accent/40 bg-surface px-3 py-1.5 text-base text-ink hover:bg-accentsoft disabled:opacity-40 transition"
           >
             {o}
           </button>
@@ -1210,7 +1210,7 @@ function Clarify({ m, onResume }: { m: Message; onResume: (k: string, a: string)
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && send(text)}
         placeholder="或直接输入回复…"
-        className="mt-2.5 w-full rounded-lg border border-border bg-surface px-3 py-2 text-[14px] outline-none focus:border-accent/50 disabled:opacity-40"
+        className="mt-2.5 w-full rounded-lg border border-border bg-surface px-3 py-2 text-base outline-none focus:border-accent/50 disabled:opacity-40"
       />
     </div>
   );
@@ -1219,7 +1219,7 @@ function Clarify({ m, onResume }: { m: Message; onResume: (k: string, a: string)
 function Thinking() {
   return (
     <div className="mb-7 flex items-center gap-3.5">
-      <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent text-white font-serif text-[13px]">
+      <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent text-white font-serif text-sm">
         O
       </div>
       <div className="flex gap-1" role="status">
@@ -1247,13 +1247,13 @@ function Reasoning({ m }: { m: Message }) {
   }, [text, open]);
   return (
     <div className="mb-4 ml-[42px]">
-      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-[12px] text-faint hover:text-muted">
+      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-xs text-faint hover:text-muted">
         <span className="dot h-1.5 w-1.5 rounded-full bg-accent" />
         <span>思考中{open ? "" : "…"}</span>
         <Icon name="chevron" size={11} className={"transition-transform " + (open ? "" : "-rotate-90")} />
       </button>
       {open && text && (
-        <div className="mt-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-surface2/40 px-2.5 py-2 text-[11.5px] leading-relaxed text-faint">
+        <div className="mt-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-surface2/40 px-2.5 py-2 text-xs leading-relaxed text-faint">
           {text}
           <div ref={endRef} />
         </div>

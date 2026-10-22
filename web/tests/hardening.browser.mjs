@@ -713,6 +713,28 @@ test('one-click connectors: authorize in a popup, list the grant, offer re-autho
  a.check();
 });
 
+test('projects lifecycle: create through a named dialog, rename and delete from the sidebar menu',async t=>{
+ let projects=[];
+ const a=await app(t,{handle:async({path,body,json})=>{
+  if(path==='/project/list'){await json(projects);return true;}
+  if(path==='/project/save'){const p={owner_email:'test@example.invalid',created_at:1,updated_at:2,...body,project_id:body.project_id||'prj_new'};projects=[p,...projects.filter(x=>x.project_id!==p.project_id)];await json(p);return true;}
+  if(path==='/project/delete'){projects=projects.filter(x=>x.project_id!==body.project_id);await json(body);return true;}
+ }});
+ await a.page.getByRole('button',{name:'新建项目'}).click();
+ const dialog=a.page.getByRole('dialog',{name:'新建项目'});await dialog.getByLabel(/名称/).fill('竞品研究');await dialog.getByRole('button',{name:'创建'}).click();
+ await a.page.getByRole('main',{name:'项目 竞品研究'}).waitFor();
+ assert.equal(a.requests.find(r=>r.path==='/project/save').body.name,'竞品研究');
+ await a.page.getByRole('button',{name:'竞品研究',exact:true}).hover();await a.page.getByRole('button',{name:'竞品研究 的项目操作'}).click();
+ await a.page.getByRole('menuitem',{name:'重命名'}).click();
+ const rename=a.page.getByRole('dialog',{name:'重命名项目'});await rename.getByLabel(/名称/).fill('竞品研究 2026');await rename.getByRole('button',{name:'保存'}).click();
+ await a.page.getByRole('main',{name:'项目 竞品研究 2026'}).waitFor();
+ await a.page.getByRole('button',{name:'竞品研究 2026',exact:true}).hover();await a.page.getByRole('button',{name:'竞品研究 2026 的项目操作'}).click();
+ await a.page.getByRole('menuitem',{name:'删除项目'}).click();await a.page.getByRole('button',{name:'删除项目'}).last().click();
+ await expectEventually(()=>a.requests.some(r=>r.path==='/project/delete'&&r.body.project_id==='prj_new'));
+ await a.page.getByText('把同一课题的对话、文件和要求放在一起。').waitFor();
+ a.check();
+});
+
 test('first-run guide tracks real progress, records the tour and can be skipped for good',async t=>{
  const a=await app(t,{onboarding:[],handle:async({path,json})=>{if(path==='/models'){await json([{version:'auto',label:'自动选择',hint:''}]);return true;}}});
  const guide=a.page.getByRole('region',{name:'开始使用'});await guide.waitFor();

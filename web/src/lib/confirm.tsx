@@ -34,16 +34,16 @@ function ConfirmModal({ opts, onDone }: { opts: ConfirmOpts; onDone: (ok: boolea
   return (
     <div className="overlay-in fixed inset-0 z-[70] flex items-center justify-center bg-black/30 p-6" onClick={() => onDone(false)}>
       <div ref={ref} role="dialog" aria-modal="true" className="pop-in w-full max-w-sm rounded-2xl border border-border bg-surface p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="text-[15px] font-medium text-ink">{opts.title}</div>
-        {opts.body && <div className="mt-1 text-[13px] text-muted">{opts.body}</div>}
+        <div className="text-md font-medium text-ink">{opts.title}</div>
+        {opts.body && <div className="mt-1 text-sm text-muted">{opts.body}</div>}
         <div className="mt-4 flex justify-end gap-2">
-          <button onClick={() => onDone(false)} className="rounded-lg border border-border px-3 py-1.5 text-[13px] text-muted hover:bg-surface2">
+          <button onClick={() => onDone(false)} className="rounded-lg border border-border px-3 py-1.5 text-sm text-muted hover:bg-surface2">
             {opts.cancelText || "取消"}
           </button>
           <button
             autoFocus
             onClick={() => onDone(true)}
-            className={"rounded-lg px-3 py-1.5 text-[13px] text-white hover:opacity-90 " + (opts.danger ? "bg-[#d06363]" : "bg-accent")}
+            className={"rounded-lg px-3 py-1.5 text-sm text-white hover:opacity-90 " + (opts.danger ? "bg-[#d06363]" : "bg-accent")}
           >
             {opts.confirmText || "确定"}
           </button>

@@ -120,7 +120,7 @@ export function ArtifactDrawer({
         role="tab"
         aria-selected={on}
         className={
-          "relative inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] transition " +
+          "relative inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition " +
           (on ? "bg-accentsoft text-accent" : "text-muted hover:bg-surface2") +
           (live && !on ? " ring-1 ring-accent/50" : "")
         }
@@ -141,7 +141,7 @@ export function ArtifactDrawer({
       onClick={() => setTab(t)}
       title={TAB_META[t].tip}
       className={
-        "relative inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[12px] transition " +
+        "relative inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs transition " +
         (tab === t ? "bg-surface2 text-ink" : "text-faint hover:text-muted")
       }
     >

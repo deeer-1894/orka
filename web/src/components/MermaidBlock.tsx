@@ -36,7 +36,7 @@ export function MermaidBlock({ src }: { src: string }) {
 
   if (err) {
     return (
-      <pre className="overflow-x-auto rounded-xl border border-border bg-surface2/40 p-3 font-mono text-[12px] text-muted">{src}</pre>
+      <pre className="overflow-x-auto rounded-xl border border-border bg-surface2/40 p-3 font-mono text-xs text-muted">{src}</pre>
     );
   }
   return <div ref={ref} className="overflow-x-auto rounded-xl border border-border bg-surface2/30 p-3 text-center [&_svg]:mx-auto [&_svg]:max-w-full" />;

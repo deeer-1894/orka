@@ -47,7 +47,7 @@ function Block({ block }: { block: ArtifactBlock }) {
   switch (block.type) {
     case "heading": {
       const level = Math.min(3, Math.max(1, Number(d.level) || 1));
-      const cls = level === 1 ? "text-[22px] font-semibold" : level === 2 ? "text-[18px] font-semibold" : "text-[15px] font-medium";
+      const cls = level === 1 ? "text-2xl font-semibold" : level === 2 ? "text-xl font-semibold" : "text-md font-medium";
       return <div className={cls + " text-ink"}>{s(d.text)}</div>;
     }
     case "markdown":
@@ -74,7 +74,7 @@ function Block({ block }: { block: ArtifactBlock }) {
       return <HtmlBlock html={s(d.src || d.html)} height={Number(d.height) || 300} />;
     default:
       return (
-        <div className="rounded-lg border border-border bg-surface2/40 p-3 text-[12px] text-muted">
+        <div className="rounded-lg border border-border bg-surface2/40 p-3 text-xs text-muted">
           <span className="text-faint">未知区块 “{block.type}”</span>
           <pre className="mt-1 overflow-x-auto whitespace-pre-wrap">{JSON.stringify(d, null, 2)}</pre>
         </div>
@@ -87,10 +87,10 @@ function MetricBlock({ label, value, delta, full }: { label: string; value: stri
   const down = delta.startsWith("-");
   return (
     <div className={(full ? "flex w-full" : "inline-flex min-w-[140px]") + " flex-col rounded-xl border border-border bg-surface2/40 px-4 py-3"}>
-      <span className="truncate text-[11px] uppercase tracking-wide text-faint">{label}</span>
-      <span className="mt-1 text-[26px] font-semibold leading-none text-ink">{value}</span>
+      <span className="truncate text-2xs uppercase tracking-wide text-faint">{label}</span>
+      <span className="mt-1 text-3xl font-semibold leading-none text-ink">{value}</span>
       {delta && (
-        <span className={"mt-1 inline-flex items-center gap-0.5 text-[12px] " + (up ? "text-ok" : down ? "text-accent" : "text-muted")}>
+        <span className={"mt-1 inline-flex items-center gap-0.5 text-xs " + (up ? "text-ok" : down ? "text-accent" : "text-muted")}>
           {up ? "▲" : down ? "▼" : ""}{delta.replace(/^[+-]/, "")}
         </span>
       )}
@@ -105,7 +105,7 @@ function BadgeRow({ items }: { items: Record<string, unknown>[] }) {
   return (
     <div className="flex flex-wrap gap-1.5">
       {items.map((it, i) => (
-        <span key={i} className={"rounded-full px-2.5 py-1 text-[12px] " + (BADGE_TONE[s(it.tone)] || "bg-surface2 text-muted")}>
+        <span key={i} className={"rounded-full px-2.5 py-1 text-xs " + (BADGE_TONE[s(it.tone)] || "bg-surface2 text-muted")}>
           {s(it.label)}
         </span>
       ))}
@@ -128,14 +128,14 @@ function Checklist({ items }: { items: ChecklistItem[] }) {
           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface2">
             <div className="h-full rounded-full bg-ok transition-all" style={{ width: pct + "%" }} />
           </div>
-          <span className="shrink-0 text-[11px] text-faint">{done}/{items.length} 完成</span>
+          <span className="shrink-0 text-2xs text-faint">{done}/{items.length} 完成</span>
         </div>
       )}
       <div className="flex flex-col gap-1">
         {items.map((it, i) => (
           <div key={i} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface2/50">
             {(() => { const st = STATUS_ICON[s(it.status) || "todo"] || STATUS_ICON.todo; return <Icon name={st.name} size={14} className={"shrink-0 " + st.color} />; })()}
-            <span className={"text-[13.5px] " + (s(it.status) === "done" ? "text-muted line-through" : "text-ink")}>{it.label}</span>
+            <span className={"text-sm " + (s(it.status) === "done" ? "text-muted line-through" : "text-ink")}>{it.label}</span>
           </div>
         ))}
       </div>
@@ -152,7 +152,7 @@ function Table({ columns, rows }: { columns: string[]; rows: unknown[][] }) {
   });
   return (
     <div className="max-h-[60vh] overflow-auto rounded-xl border border-border">
-      <table className="w-full text-[13px]">
+      <table className="w-full text-sm">
         <thead className="sticky top-0 z-10">
           <tr className="border-b border-border bg-surface2">
             {columns.map((c, i) => (
@@ -181,9 +181,9 @@ function Timeline({ events }: { events: TimelineEvent[] }) {
       {events.map((e, i) => (
         <li key={i} className="mb-4 ml-4">
           <span className="absolute -left-[5px] mt-1 h-2.5 w-2.5 rounded-full border border-surface bg-accent" />
-          {e.time && <div className="text-[11px] text-faint">{e.time}</div>}
-          <div className="text-[14px] font-medium text-ink">{s(e.title)}</div>
-          {e.detail && <div className="text-[12.5px] text-muted">{e.detail}</div>}
+          {e.time && <div className="text-2xs text-faint">{e.time}</div>}
+          <div className="text-base font-medium text-ink">{s(e.title)}</div>
+          {e.detail && <div className="text-xs text-muted">{e.detail}</div>}
         </li>
       ))}
     </ol>
@@ -195,8 +195,8 @@ function DiffBlock({ path, patch }: { path: string; patch: string }) {
   const lines = patch.split("\n");
   return (
     <div className="overflow-hidden rounded-xl border border-border">
-      {path && <div className="border-b border-border bg-surface2/50 px-3 py-1.5 font-mono text-[12px] text-ink">{path}</div>}
-      <pre className="overflow-x-auto bg-[#161513] py-1 font-mono text-[12px] leading-relaxed">
+      {path && <div className="border-b border-border bg-surface2/50 px-3 py-1.5 font-mono text-xs text-ink">{path}</div>}
+      <pre className="overflow-x-auto bg-[#161513] py-1 font-mono text-xs leading-relaxed">
         {lines.map((ln, i) => {
           const tone = ln.startsWith("+") && !ln.startsWith("+++") ? "text-[#7fd18b] bg-ok/10"
             : ln.startsWith("-") && !ln.startsWith("---") ? "text-[#e8927c] bg-accent/10"
@@ -220,9 +220,9 @@ function ChartBlock({ kind, title, data }: { kind: string; title: string; data: 
   const pts = data.map((p) => ({ label: s(p.label), value: Number(p.value) || 0 }));
   return (
     <div className="rounded-xl border border-border bg-surface2/30 p-3">
-      {title && <div className="mb-2 text-[12.5px] font-medium text-ink">{title}</div>}
+      {title && <div className="mb-2 text-xs font-medium text-ink">{title}</div>}
       {pts.length === 0 ? (
-        <div className="py-6 text-center text-[12px] text-faint">(无数据)</div>
+        <div className="py-6 text-center text-xs text-faint">(无数据)</div>
       ) : kind === "pie" ? (
         <PieChart pts={pts} />
       ) : kind === "line" ? (
@@ -290,7 +290,7 @@ function PieChart({ pts }: { pts: { label: string; value: number }[] }) {
           return <path key={i} d={`M${C},${C} L${x0},${y0} A${R},${R} 0 ${large} 1 ${x1},${y1} Z`} fill={CHART_COLORS[i % CHART_COLORS.length]} />;
         })}
       </svg>
-      <div className="flex flex-col gap-1 text-[12px]">
+      <div className="flex flex-col gap-1 text-xs">
         {pts.map((p, i) => (
           <div key={i} className="flex items-center gap-1.5">
             <span className="h-2.5 w-2.5 rounded-sm" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />

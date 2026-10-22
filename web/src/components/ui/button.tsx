@@ -7,12 +7,12 @@ import { cn } from "@/lib/utils";
 // existing warm-paper tokens instead of shadcn's parallel --primary/--accent
 // layer — so it inherits the current look and there's a single source of truth.
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-[13px] font-medium transition outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:pointer-events-none disabled:opacity-40 [&_svg]:shrink-0",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium transition outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:pointer-events-none disabled:opacity-40 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        pill: "gap-1.5 rounded-full border border-border bg-surface text-[12.5px] font-normal text-muted hover:bg-surface2 hover:text-ink aria-pressed:bg-surface2 aria-selected:bg-surface2",
-        headerChip: "gap-1.5 rounded-full border border-border bg-transparent text-[12px] font-normal text-faint hover:bg-surface2 hover:text-ink aria-pressed:border-accent/40 aria-pressed:bg-accentsoft aria-pressed:text-accent",
+        pill: "gap-1.5 rounded-full border border-border bg-surface text-xs font-normal text-muted hover:bg-surface2 hover:text-ink aria-pressed:bg-surface2 aria-selected:bg-surface2",
+        headerChip: "gap-1.5 rounded-full border border-border bg-transparent text-xs font-normal text-faint hover:bg-surface2 hover:text-ink aria-pressed:border-accent/40 aria-pressed:bg-accentsoft aria-pressed:text-accent",
         default: "bg-accent text-white hover:brightness-105",
         soft: "bg-accentsoft text-accent hover:brightness-[1.02]",
         outline: "border border-border bg-surface text-muted hover:bg-surface2 hover:text-ink",

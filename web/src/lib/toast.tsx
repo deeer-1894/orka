@@ -48,7 +48,7 @@ export function Toaster() {
       {items.map((t) => (
         <div
           key={t.id}
-          className={"rise pointer-events-auto flex max-w-sm items-start gap-2 rounded-xl border px-3.5 py-2.5 text-[13px] shadow-lg " + STYLE[t.kind]}
+          className={"rise pointer-events-auto flex max-w-sm items-start gap-2 rounded-xl border px-3.5 py-2.5 text-sm shadow-lg " + STYLE[t.kind]}
         >
           <Icon name={ICON[t.kind]} size={15} className="mt-0.5 shrink-0" />
           <span className="min-w-0 break-words">{t.msg}</span>

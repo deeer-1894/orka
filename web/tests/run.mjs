@@ -9,7 +9,7 @@ try {
   if (built.status !== 0) process.exitCode = built.status ?? 1;
   else {
     writeFileSync(join(output, 'package.json'), '{"type":"commonjs"}');
-    const run = spawnSync(process.execPath, ['--test', 'tests/executionResult.test.mjs', 'tests/steeringReceipt.test.mjs', 'tests/recovery.test.mjs', 'tests/runActions.test.mjs', 'tests/sessionFiles.test.mjs', 'tests/filePreview.test.mjs', 'tests/modelSettings.test.mjs', 'tests/modelProfiles.test.mjs', 'tests/api.test.mjs', 'tests/sessionRecovery.test.mjs', 'tests/workbenchWidth.test.mjs', 'tests/htmlPreviewNavigation.test.mjs', 'tests/taskTrigger.test.mjs', 'tests/copy.test.mjs', 'tests/runProgress.test.mjs', 'tests/planReview.test.mjs', 'tests/view.test.mjs'], { cwd: root, stdio: 'inherit', env: { ...process.env, ORKA_TEST_BUILD: output } });
+    const run = spawnSync(process.execPath, ['--test', 'tests/executionResult.test.mjs', 'tests/steeringReceipt.test.mjs', 'tests/recovery.test.mjs', 'tests/runActions.test.mjs', 'tests/sessionFiles.test.mjs', 'tests/filePreview.test.mjs', 'tests/modelSettings.test.mjs', 'tests/modelProfiles.test.mjs', 'tests/api.test.mjs', 'tests/sessionRecovery.test.mjs', 'tests/workbenchWidth.test.mjs', 'tests/htmlPreviewNavigation.test.mjs', 'tests/taskTrigger.test.mjs', 'tests/copy.test.mjs', 'tests/runProgress.test.mjs', 'tests/planReview.test.mjs', 'tests/view.test.mjs', 'tests/typography.test.mjs'], { cwd: root, stdio: 'inherit', env: { ...process.env, ORKA_TEST_BUILD: output } });
     process.exitCode = run.status ?? 1;
   }
 } finally { rmSync(output, { recursive: true, force: true }); }

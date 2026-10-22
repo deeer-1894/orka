@@ -108,13 +108,13 @@ export function FilesPanel({ email, conversationID }: { email: string; conversat
     <div key={it.name} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface2">
       <Icon name={meta.icon} size={15} className={"shrink-0 " + meta.color} />
       {it.dir ? (
-        <button onClick={() => navigate(fullPath(it.name))} className="min-w-0 flex-1 whitespace-normal break-all text-left text-[14px] text-ink hover:text-accent">{it.name}</button>
+        <button onClick={() => navigate(fullPath(it.name))} className="min-w-0 flex-1 whitespace-normal break-all text-left text-base text-ink hover:text-accent">{it.name}</button>
       ) : (
-        <button onClick={() => setPreview(fullPath(it.name))} className="min-w-0 flex-1 whitespace-normal break-all text-left text-[14px] text-ink hover:text-accent" title="预览">
+        <button onClick={() => setPreview(fullPath(it.name))} className="min-w-0 flex-1 whitespace-normal break-all text-left text-base text-ink hover:text-accent" title="预览">
           {it.name}
         </button>
       )}
-      <span className="text-[11px] text-faint">{fmtBytes(it.size)}</span>
+      <span className="text-2xs text-faint">{fmtBytes(it.size)}</span>
       {!it.dir && (
         <a href={fileApi.downloadURL(fullPath(it.name), conversationID)} className="text-accent opacity-0 group-hover:opacity-100" aria-label={"下载 " + it.name}>
           <Icon name="download" size={13} />
@@ -133,7 +133,7 @@ export function FilesPanel({ email, conversationID }: { email: string; conversat
       {deliveriesOpen && <Suspense fallback={<p role="status">正在加载快照…</p>}><DeliverySnapshots key={conversationID} conversationID={conversationID} /></Suspense>}</>}
       <h3 className="mb-2 text-sm font-medium">当前工作区</h3>
       <div className="mb-2 flex items-center justify-between gap-2">
-        <nav aria-label="文件夹路径" className="flex min-w-0 flex-wrap items-center gap-1 text-[12px] text-faint" title={email}>
+        <nav aria-label="文件夹路径" className="flex min-w-0 flex-wrap items-center gap-1 text-xs text-faint" title={email}>
           <Icon name="folder" size={13} />
           <button onClick={() => navigate(".")} className="hover:text-accent">本对话文件</button>
           {dir !== "." && dir.split("/").map((part, i, parts) => <span key={i} className="inline-flex min-w-0 items-center gap-1"> / <button className="truncate hover:text-accent" onClick={() => navigate(parts.slice(0, i + 1).join("/"))}>{part}</button></span>)}
@@ -141,27 +141,27 @@ export function FilesPanel({ email, conversationID }: { email: string; conversat
         <button
           onClick={() => inputRef.current?.click()}
           disabled={!conversationID || pct !== null}
-          className="shrink-0 rounded-lg border border-border px-2.5 py-1 text-[12px] text-muted hover:border-accent/40"
+          className="shrink-0 rounded-lg border border-border px-2.5 py-1 text-xs text-muted hover:border-accent/40"
         >
           上传
         </button>
         <input ref={inputRef} type="file" hidden onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])} />
       </div>
-      {dir !== "." && <button onClick={() => navigate(dir.includes("/") ? dir.slice(0, dir.lastIndexOf("/")) : ".")} className="mb-2 text-[12px] text-muted hover:text-accent">← 返回上级</button>}
-      {error && <div role="alert" className="mb-2 text-[12px] text-accent">无法读取文件：{error} <button onClick={() => setRevision(n => n + 1)} className="underline">重试</button></div>}
-      {loading && <p role="status" className="py-4 text-[13px] text-faint">加载中…</p>}
+      {dir !== "." && <button onClick={() => navigate(dir.includes("/") ? dir.slice(0, dir.lastIndexOf("/")) : ".")} className="mb-2 text-xs text-muted hover:text-accent">← 返回上级</button>}
+      {error && <div role="alert" className="mb-2 text-xs text-accent">无法读取文件：{error} <button onClick={() => setRevision(n => n + 1)} className="underline">重试</button></div>}
+      {loading && <p role="status" className="py-4 text-sm text-faint">加载中…</p>}
       {items.length > 6 && (
         <div className="mb-2 flex items-center gap-1.5">
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="筛选文件…"
-            className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[12.5px] outline-none focus:border-accent/50"
+            className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs outline-none focus:border-accent/50"
           />
           <select
             value={sort}
             onChange={(e) => setSort(e.target.value as SortKey)}
-            className="shrink-0 rounded-lg border border-border bg-surface px-1.5 py-1.5 text-[12px] text-muted outline-none"
+            className="shrink-0 rounded-lg border border-border bg-surface px-1.5 py-1.5 text-xs text-muted outline-none"
             title="排序方式"
           >
             <option value="name">名称</option>
@@ -173,7 +173,7 @@ export function FilesPanel({ email, conversationID }: { email: string; conversat
       {hiddenCount > 0 && (
         <button
           onClick={() => setShowHidden((v) => !v)}
-          className="mb-2 text-[11.5px] text-faint hover:text-accent"
+          className="mb-2 text-xs text-faint hover:text-accent"
           title="系统缓存 / 隐藏文件(__pycache__、.cache 等)"
         >
           {showHidden ? "隐藏" : "显示"}系统文件 · {hiddenCount}
@@ -191,7 +191,7 @@ export function FilesPanel({ email, conversationID }: { email: string; conversat
       )}
       {grouped.map((g) => (
         <div key={g.id} className="mb-3">
-          <div className="mb-1 px-1 text-[11px] font-medium uppercase tracking-wide text-faint">
+          <div className="mb-1 px-1 text-2xs font-medium uppercase tracking-wide text-faint">
             <Icon name={g.icon} size={12} className="inline-block align-[-2px]" /> {g.label} · {g.files.length}
           </div>
           <div className="space-y-0.5">{g.files.map(Row)}</div>

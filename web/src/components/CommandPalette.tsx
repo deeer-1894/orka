@@ -54,13 +54,13 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
           onChange={(e) => { setQ(e.target.value); setSel(0); }}
           onKeyDown={onKey}
           placeholder="搜索命令、对话、面板…"
-          className="border-b border-border bg-transparent px-4 py-3 text-[15px] outline-none placeholder:text-faint"
+          className="border-b border-border bg-transparent px-4 py-3 text-md outline-none placeholder:text-faint"
         />
         <div ref={listRef} className="flex-1 overflow-y-auto py-1.5">
-          {flat.length === 0 && <div className="px-4 py-6 text-center text-[13px] text-faint">没有匹配的命令</div>}
+          {flat.length === 0 && <div className="px-4 py-6 text-center text-sm text-faint">没有匹配的命令</div>}
           {groups.map((g) => (
             <div key={g.name} className="mb-1">
-              <div className="px-4 pb-0.5 pt-1.5 text-[10.5px] uppercase tracking-wider text-faint/80">{g.name}</div>
+              <div className="px-4 pb-0.5 pt-1.5 text-2xs uppercase tracking-wider text-faint/80">{g.name}</div>
               {g.items.map((c) => {
                 idx++;
                 const active = idx === sel;
@@ -73,15 +73,15 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
                     className={"flex w-full items-center gap-2.5 px-4 py-2 text-left " + (active ? "bg-accentsoft" : "hover:bg-surface2")}
                   >
                     <span className="grid w-5 shrink-0 place-items-center text-muted">{c.icon && <Icon name={c.icon} size={15} />}</span>
-                    <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink">{c.label}</span>
-                    {c.hint && <span className="shrink-0 truncate text-[11.5px] text-faint">{c.hint}</span>}
+                    <span className="min-w-0 flex-1 truncate text-sm text-ink">{c.label}</span>
+                    {c.hint && <span className="shrink-0 truncate text-xs text-faint">{c.hint}</span>}
                   </button>
                 );
               })}
             </div>
           ))}
         </div>
-        <div className="flex items-center gap-3 border-t border-border px-4 py-1.5 text-[11px] text-faint">
+        <div className="flex items-center gap-3 border-t border-border px-4 py-1.5 text-2xs text-faint">
           <span>↑↓ 选择</span><span>↵ 执行</span><span>esc 关闭</span>
         </div>
       </div>

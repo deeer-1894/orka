@@ -34,11 +34,11 @@ export function Login({ onAuthed }: { onAuthed: (s: Session) => void }) {
     <div className="grid h-screen place-items-center px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-accent text-white font-serif text-[22px]">
+          <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-accent text-white font-serif text-2xl">
             O
           </div>
-          <h1 className="font-serif text-[26px] text-ink">欢迎使用 Orka</h1>
-          <p className="mt-1 text-[14px] text-muted">
+          <h1 className="font-serif text-3xl text-ink">欢迎使用 Orka</h1>
+          <p className="mt-1 text-base text-muted">
             {mode === "login" ? "登录你的工作区" : "创建一个新账号"}
           </p>
         </div>
@@ -56,7 +56,7 @@ export function Login({ onAuthed }: { onAuthed: (s: Session) => void }) {
             type="password"
             onEnter={submit}
           />
-          {err && <p className="mb-2 text-[13px] text-accent">{err}</p>}
+          {err && <p className="mb-2 text-sm text-accent">{err}</p>}
           <button
             onClick={submit}
             disabled={busy}
@@ -66,7 +66,7 @@ export function Login({ onAuthed }: { onAuthed: (s: Session) => void }) {
           </button>
         </div>
 
-        <p className="mt-4 text-center text-[13px] text-muted">
+        <p className="mt-4 text-center text-sm text-muted">
           {mode === "login" ? "还没有账号?" : "已有账号?"}{" "}
           <button
             onClick={() => {
@@ -100,14 +100,14 @@ function Field({
 }) {
   return (
     <label className="mb-3 block">
-      <span className="mb-1 block text-[12px] text-faint">{label}</span>
+      <span className="mb-1 block text-xs text-faint">{label}</span>
       <input
         type={type}
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && onEnter?.()}
-        className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-[14px] outline-none focus:border-accent/50"
+        className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-base outline-none focus:border-accent/50"
       />
     </label>
   );

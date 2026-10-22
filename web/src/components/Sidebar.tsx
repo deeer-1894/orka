@@ -46,13 +46,13 @@ function highlight(text: string, q: string): React.ReactNode {
 // SectionHeader titles a part of the conversation list; with onToggle it folds
 // the part away and shows how many it holds.
 function SectionHeader({ label, count, open, onToggle, children }: { label: string; count?: number; open?: boolean; onToggle?: () => void; children?: React.ReactNode }) {
-  const text = <>{label}{count !== undefined && <span className="ml-1 normal-case tracking-normal">· {count}</span>}</>;
+  const text = <>{label}{count !== undefined && <span className="ml-1 font-normal text-faint">· {count}</span>}</>;
   return <div className="mt-3 flex items-center justify-between px-1 first:mt-0">
     {onToggle ? (
-      <button onClick={onToggle} aria-expanded={open} className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] uppercase tracking-wider text-faint hover:text-ink">
+      <button onClick={onToggle} aria-expanded={open} className="flex items-center gap-1 rounded-md px-2 py-0.5 text-sm font-medium text-muted hover:text-ink">
         <Icon name="chevron" size={11} className={"transition-transform " + (open ? "" : "-rotate-90")} />{text}
       </button>
-    ) : <span className="px-2 text-[11px] uppercase tracking-wider text-faint">{text}</span>}
+    ) : <span className="px-2 text-sm font-medium text-muted">{text}</span>}
     {children}
   </div>;
 }
@@ -88,6 +88,8 @@ export function Sidebar({
   activeProjectID,
   onOpenProject,
   onNewProject,
+  onRenameProject,
+  onDeleteProject,
   onMove,
   name,
   email,
@@ -113,6 +115,8 @@ export function Sidebar({
   activeProjectID: string;
   onOpenProject: (id: string) => void;
   onNewProject: () => void;
+  onRenameProject: (id: string) => void;
+  onDeleteProject: (id: string) => void;
   onMove: (id: string) => void;
   name: string;
   email: string;
@@ -194,7 +198,7 @@ export function Sidebar({
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             if (e.key === "Escape") setEditing("");
           }}
-          className="w-full rounded-lg border border-accent/50 bg-surface px-3 py-2 text-[14px] outline-none"
+          className="w-full rounded-lg border border-accent/50 bg-surface px-3 py-2 text-base outline-none"
         />
       );
     }
@@ -213,9 +217,9 @@ export function Sidebar({
       >
         {isBranch && <Icon name="share" size={12} className="shrink-0 rotate-90 text-faint" />}
         {running && <span className="inline-flex shrink-0 items-center" role="status"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ok" title="运行中" /><span className="sr-only">运行中</span></span>}
-        <span className="flex-1 truncate text-[14px]">{c.title}</span>
+        <span className="flex-1 truncate text-base">{c.title}</span>
         {/* disambiguate same-titled conversations with a timestamp */}
-        {dup && <span className="shrink-0 text-[10px] text-faint group-hover:hidden">{relTime(c.created_at)}</span>}
+        {dup && <span className="shrink-0 text-2xs text-faint group-hover:hidden">{relTime(c.created_at)}</span>}
         {(c.shares?.length ?? 0) > 0 && <span className="shrink-0 text-faint group-hover:hidden" title={`已分享给 ${c.shares!.length} 人`}><Icon name="link" size={12} /></span>}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -245,23 +249,23 @@ export function Sidebar({
     >
       <div className="w-[264px] flex flex-col h-full">
         <div className="flex items-center gap-2 px-4 h-14">
-          <span className="grid h-7 w-7 place-items-center rounded-lg bg-accent text-white font-serif text-[15px] leading-none">
+          <span className="grid h-7 w-7 place-items-center rounded-lg bg-accent text-white font-serif text-md leading-none">
             O
           </span>
-          <span className="font-serif text-[18px] text-ink">Orka</span>
+          <span className="font-serif text-xl text-ink">Orka</span>
         </div>
 
         <div className="px-3">
           <button
             onClick={onNew}
-            className="w-full flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2.5 text-[14px] text-ink hover:bg-surface transition hover:border-accent/40"
+            className="w-full flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2.5 text-base text-ink hover:bg-surface transition hover:border-accent/40"
           >
             <Icon name="plus" size={16} className="text-accent" /> {COPY.newChat}
           </button>
           <button
             onClick={() => { onOpenTasks(); onSelectClose?.(); }}
             aria-current={tasksActive ? "page" : undefined}
-            className={"mt-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[14px] transition " + (tasksActive ? "bg-accentsoft text-ink" : "text-muted hover:bg-surface")}
+            className={"mt-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-base transition " + (tasksActive ? "bg-accentsoft text-ink" : "text-muted hover:bg-surface")}
           >
             <Icon name="clock" size={15} /> {COPY.tasks}
           </button>
@@ -274,7 +278,7 @@ export function Sidebar({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="搜索对话…"
-              className="w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 pl-7 text-[12.5px] outline-none focus:border-accent/50"
+              className="w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 pl-7 text-xs outline-none focus:border-accent/50"
             />
           </div>
         </div>
@@ -284,7 +288,7 @@ export function Sidebar({
             <SectionHeader label={COPY.project}>
               <button onClick={onNewProject} aria-label="新建项目" title="新建项目" className="grid h-6 w-6 place-items-center rounded-md text-faint hover:bg-surface hover:text-ink"><Icon name="plus" size={14} /></button>
             </SectionHeader>
-            {projects.length === 0 && <p className="px-3 pb-1 text-[12px] leading-relaxed text-faint">把同一课题的对话、文件和要求放在一起。</p>}
+            {projects.length === 0 && <p className="px-3 pb-1 text-xs leading-relaxed text-faint">把同一课题的对话、文件和要求放在一起。</p>}
             {projects.map(p => {
               const convs = conversations.filter(c => c.project_id === p.project_id);
               const expanded = openProjects.has(p.project_id);
@@ -294,13 +298,24 @@ export function Sidebar({
                   <button onClick={toggle} aria-expanded={expanded} aria-label={(expanded ? "收起 " : "展开 ") + p.name} className="grid h-8 w-7 shrink-0 place-items-center text-faint hover:text-ink">
                     <Icon name="chevron" size={11} className={"transition-transform " + (expanded ? "" : "-rotate-90")} />
                   </button>
-                  <button onClick={() => { onOpenProject(p.project_id); onSelectClose?.(); }} aria-current={activeProjectID === p.project_id ? "page" : undefined} className="flex min-w-0 flex-1 items-center gap-1.5 py-2 text-left text-[14px]">
+                  <button onClick={() => { onOpenProject(p.project_id); onSelectClose?.(); }} aria-current={activeProjectID === p.project_id ? "page" : undefined} className="flex min-w-0 flex-1 items-center gap-1.5 py-2 text-left text-base">
                     <Icon name="folder" size={14} className="shrink-0" /><span className="truncate">{p.name}</span>
                   </button>
-                  {convs.length > 0 && <span className="shrink-0 text-[11px] text-faint">{convs.length}</span>}
+                  {convs.length > 0 && <span className="shrink-0 text-2xs text-faint group-hover:hidden">{convs.length}</span>}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger aria-label={`${p.name} 的项目操作`} title="项目操作"
+                      className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-faint opacity-0 outline-none hover:bg-surface2 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100">
+                      <Icon name="more" size={15} />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-40">
+                      <DropdownMenuItem onSelect={() => onRenameProject(p.project_id)}><Icon name="rename" size={14} className="text-muted" />重命名</DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={() => onDeleteProject(p.project_id)} className="text-accent"><Icon name="trash" size={14} />删除项目</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
                 {expanded && <div className="ml-5 border-l border-border pl-1">
-                  {convs.length === 0 ? <p className="px-3 py-1.5 text-[12px] text-faint">暂无对话</p> : convs.map(ConvRow)}
+                  {convs.length === 0 ? <p className="px-3 py-1.5 text-xs text-faint">暂无对话</p> : convs.map(ConvRow)}
                 </div>}
               </div>;
             })}
@@ -316,14 +331,14 @@ export function Sidebar({
             </DropdownMenu>}
           </SectionHeader>
           {conversations.length === 0 && (
-            <div className="px-2 py-4 text-[12.5px] leading-relaxed text-muted">
+            <div className="px-2 py-4 text-xs leading-relaxed text-muted">
               还没有对话。点上面的<span className="text-ink">新对话</span>，描述一个目标，Orka 会自己拆步骤并执行。
             </div>
           )}
-          {conversations.length > 0 && filtered.length === 0 && <div className="px-2 py-2 text-[13px] text-faint">无匹配对话</div>}
+          {conversations.length > 0 && filtered.length === 0 && <div className="px-2 py-2 text-sm text-faint">无匹配对话</div>}
           {groups.map((g) => (
             <div key={g.label}>
-              <div className="px-3 pb-0.5 pt-2 text-[10.5px] uppercase tracking-wider text-faint/80">{g.label}</div>
+              <div className="px-3 pb-0.5 pt-2 text-xs text-faint">{g.label}</div>
               {g.items.map(ConvRow)}
             </div>
           ))}
@@ -336,7 +351,7 @@ export function Sidebar({
           {/* Cross-conversation message matches (body text), below title matches. */}
           {q && (msgHits.length > 0 || searching) && (
             <div>
-              <div className="px-3 pb-0.5 pt-3 text-[10.5px] uppercase tracking-wider text-faint/80">
+              <div className="px-3 pb-0.5 pt-3 text-xs text-faint">
                 消息匹配{searching && msgHits.length === 0 ? " · 搜索中…" : msgHits.length ? ` · ${msgHits.length}` : ""}
               </div>
               {msgHits.map((h) => (
@@ -346,8 +361,8 @@ export function Sidebar({
                   className="group cursor-pointer rounded-lg px-3 py-1.5 text-muted transition hover:bg-surface"
                   title={h.title}
                 >
-                  <div className="truncate text-[13px] text-ink">{h.title || "未命名对话"}</div>
-                  <div className="line-clamp-2 text-[11.5px] text-faint">{highlight(h.snippet, q)}</div>
+                  <div className="truncate text-sm text-ink">{h.title || "未命名对话"}</div>
+                  <div className="line-clamp-2 text-xs text-faint">{highlight(h.snippet, q)}</div>
                 </div>
               ))}
             </div>
@@ -373,8 +388,8 @@ export function Sidebar({
                     title={`由 ${c.owner_email} 分享`}
                   >
                     <span className="shrink-0 text-faint" title={role === "editor" ? "可编辑" : "只读"}><Icon name={role === "editor" ? "rename" : "eye"} size={13} /></span>
-                    <span className="flex-1 truncate text-[14px]" title={c.title}>{c.title}</span>
-                    <span className="shrink-0 truncate text-[10.5px] text-faint">{c.owner_email?.split("@")[0]}</span>
+                    <span className="flex-1 truncate text-base" title={c.title}>{c.title}</span>
+                    <span className="shrink-0 truncate text-2xs text-faint">{c.owner_email?.split("@")[0]}</span>
                   </div>
                 );
               })}
@@ -383,12 +398,12 @@ export function Sidebar({
         </div>
 
         <div className="flex items-center gap-2.5 border-t border-border px-3 py-3">
-          <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent/90 text-[12px] text-white">
+          <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent/90 text-xs text-white">
             {(name || email || "?").slice(0, 1).toUpperCase()}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[13px] text-ink">{name || email}</div>
-            <div className="truncate text-[11px] text-faint">{email}</div>
+            <div className="truncate text-sm text-ink">{name || email}</div>
+            <div className="truncate text-2xs text-faint">{email}</div>
           </div>
           <button
             onClick={onOpenSettings}

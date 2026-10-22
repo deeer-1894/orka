@@ -42,15 +42,15 @@ export function RunSettingsMenu({ value }: { value: RunSettingsValue }) {
           className="flex cursor-pointer select-none items-start gap-2.5 rounded-lg px-2.5 py-2 outline-none data-[highlighted]:bg-surface2">
           <Icon name={s.icon} size={15} className="mt-0.5 shrink-0 text-muted" />
           <span className="min-w-0 flex-1">
-            <span className="block text-[13px] text-ink">{s.label}</span>
-            <span className="block text-[11.5px] leading-snug text-faint">{s.detail}</span>
+            <span className="block text-sm text-ink">{s.label}</span>
+            <span className="block text-xs leading-snug text-faint">{s.detail}</span>
           </span>
           <span aria-hidden className={"relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full transition " + (s.on ? "bg-accent" : "bg-border")}>
             <span className={"inline-block h-4 w-4 rounded-full bg-white shadow transition " + (s.on ? "translate-x-[18px]" : "translate-x-0.5")} />
           </span>
         </DropdownMenuPrimitive.CheckboxItem>
       ))}
-      <p className="px-2.5 pb-1 pt-1.5 text-[11px] text-faint">对之后发送的消息生效</p>
+      <p className="px-2.5 pb-1 pt-1.5 text-2xs text-faint">对之后发送的消息生效</p>
     </DropdownMenuContent>
   </DropdownMenu>;
 }
@@ -60,7 +60,7 @@ export function RunSettingsMenu({ value }: { value: RunSettingsValue }) {
 export function RunSettingsChips({ value }: { value: RunSettingsValue }) {
   const changed = settingsOf(value).filter(s => s.on !== s.defaultOn);
   return <>{changed.map(s => (
-    <span key={s.key} className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accentsoft px-2 py-1 text-[12px] text-accent">
+    <span key={s.key} className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accentsoft px-2 py-1 text-xs text-accent">
       <Icon name={s.icon} size={13} />{s.chip}
       <button onClick={s.toggle} aria-label={"恢复默认：" + s.label} title="恢复默认" className="hover:text-ink"><Icon name="close" size={12} /></button>
     </span>

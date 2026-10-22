@@ -27,30 +27,30 @@ export function WeatherCard({ data }: { data: WeatherCardData }) {
     <div className="mb-7 ml-[42px] max-w-md overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-[#5b8def] to-[#7aa7f0] text-white shadow-sm">
       <div className="flex items-center justify-between px-5 pt-4">
         <div>
-          <div className="text-[13px] opacity-90">{location}</div>
+          <div className="text-sm opacity-90">{location}</div>
           <div className="mt-1 flex items-end gap-2">
-            <span className="text-[40px] font-light leading-none">{current.temp_c}°</span>
-            <span className="pb-1 text-[14px] opacity-90">{current.desc}</span>
+            <span className="text-4xl font-light leading-none">{current.temp_c}°</span>
+            <span className="pb-1 text-base opacity-90">{current.desc}</span>
           </div>
-          <div className="mt-1 text-[12px] opacity-85">
+          <div className="mt-1 text-xs opacity-85">
             体感 {current.feels_c}° · 湿度 {current.humidity}% · 风 {current.wind_kmph} km/h
           </div>
         </div>
-        <div className="text-[52px] leading-none">{weatherIcon(current.desc)}</div>
+        <div className="text-5xl leading-none">{weatherIcon(current.desc)}</div>
       </div>
 
       {forecast && forecast.length > 0 && (
         <div className="mt-3 flex gap-1 bg-black/10 px-3 py-3">
           {forecast.map((f, i) => (
             <div key={f.date} className="flex flex-1 flex-col items-center gap-1">
-              <span className="text-[12px] opacity-90">{weekday(f.date, i)}</span>
-              <span className="text-[22px] leading-none">{weatherIcon(f.desc)}</span>
-              <span className="text-[12px]">
+              <span className="text-xs opacity-90">{weekday(f.date, i)}</span>
+              <span className="text-2xl leading-none">{weatherIcon(f.desc)}</span>
+              <span className="text-xs">
                 <span className="font-medium">{f.max_c}°</span>
                 <span className="opacity-70"> / {f.min_c}°</span>
               </span>
               {f.rain && f.rain !== "0" && (
-                <span className="text-[10px] opacity-80">💧{f.rain}%</span>
+                <span className="text-2xs opacity-80">💧{f.rain}%</span>
               )}
             </div>
           ))}

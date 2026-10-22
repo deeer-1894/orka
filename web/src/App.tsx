@@ -36,6 +36,8 @@ import { ProjectPage } from "./components/projects/ProjectPage";
 import { MoveToProjectDialog } from "./components/projects/MoveToProjectDialog";
 import type { Section as SettingsSection } from "./components/settings/SettingsDialog";
 import { COPY } from "./lib/copy";
+import { ProjectDialog } from "./components/projects/ProjectDialog";
+import { confirmDialog } from "./lib/confirm";
 const TasksPage = lazy(() => import("./components/tasks/TasksPage").then(m => ({ default: m.TasksPage })));
 const SettingsDialog = lazy(() => import("./components/settings/SettingsDialog").then(m => ({ default: m.SettingsDialog })));
 
@@ -302,8 +304,28 @@ function Workbench({
   }, []);
 
   const [projects, setProjects] = useState<Project[]>([]);
-  const refreshProjects = useCallback(() => { api.listProjects().then(p => setProjects(p || [])).catch(() => {}); }, []);
-  useEffect(() => { refreshProjects(); }, [refreshProjects]);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
+  const refreshProjects = useCallback(() => {
+    return api.listProjects().then(p => { setProjects(p || []); setProjectsLoaded(true); }).catch(() => setProjectsLoaded(true));
+  }, []);
+  // Projects change in other tabs and devices too: reload on mount and
+  // whenever this tab comes back into view.
+  useEffect(() => {
+    void refreshProjects();
+    const onVisible = () => { if (document.visibilityState === "visible") void refreshProjects(); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => { document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", onVisible); };
+  }, [refreshProjects]);
+  const [projectDialog, setProjectDialog] = useState<null | { project?: Project }>(null);
+  // A link to a project this tab has not seen yet (made elsewhere): look again once.
+  const checkedProject = useRef("");
+  useEffect(() => {
+    if (view.kind !== "project" || !projectsLoaded || projects.some(p => p.project_id === view.id) || checkedProject.current === view.id) return;
+    checkedProject.current = view.id;
+    setProjectsLoaded(false);
+    void refreshProjects();
+  }, [view, projects, projectsLoaded, refreshProjects]);
   // A new conversation started from a project page is created inside it, lazily
   // like any other, on its first message.
   const [draftProject, setDraftProject] = useState("");
@@ -351,13 +373,23 @@ function Workbench({
   // never accumulates empty "新对话" placeholders.
   const newConversation = useCallback(() => { setActiveID(""); setDraftProject(""); setView(CHAT); }, []);
   const newConversationInProject = useCallback((projectID: string) => { setActiveID(""); setDraftProject(projectID); setView(CHAT); }, []);
-  const newProject = useCallback(async () => {
+  // Project lifecycle: create and rename through a dialog, delete after
+  // confirmation. Deleting returns its conversations to the general list.
+  const saveProject = useCallback(async (v: { name: string; description: string }, existing?: Project) => {
+    const p = await api.saveProject(existing ? { ...existing, ...v } : v);
+    setProjects(ps => existing ? ps.map(x => x.project_id === p.project_id ? p : x) : [p, ...ps]);
+    if (!existing) setView({ kind: "project", id: p.project_id });
+  }, [setView]);
+  const deleteProject = useCallback(async (project: Project) => {
+    if (!await confirmDialog({ title: `删除项目“${project.name}”？`, body: "项目里的对话会回到对话列表，对话里的文件不会被删除。", confirmText: "删除项目", danger: true })) return;
     try {
-      const p = await api.saveProject({ name: "未命名项目" });
-      setProjects(ps => [p, ...ps]);
-      setView({ kind: "project", id: p.project_id });
-    } catch (e) { toast((e as Error).message || "创建失败", "error"); }
-  }, []);
+      await api.deleteProject(project.project_id);
+      setProjects(ps => ps.filter(x => x.project_id !== project.project_id));
+      setConversations(cs => cs.map(c => c.project_id === project.project_id ? { ...c, project_id: undefined } : c));
+      setView(CHAT);
+      toast("项目已删除", "success");
+    } catch (e) { toast((e as Error).message || "删除失败", "error"); }
+  }, [setView]);
 
   const onPrune = useCallback(async () => {
     await api.pruneConversations().catch(() => {});
@@ -596,7 +628,9 @@ function Workbench({
         projects={projects}
         activeProjectID={view.kind === "project" ? view.id : ""}
         onOpenProject={(id) => setView({ kind: "project", id })}
-        onNewProject={() => void newProject()}
+        onNewProject={() => setProjectDialog({})}
+        onRenameProject={(id) => setProjectDialog({ project: projects.find(p => p.project_id === id) })}
+        onDeleteProject={(id) => { const p = projects.find(x => x.project_id === id); if (p) void deleteProject(p); }}
         onMove={(id) => setMoveFor(conversations.find((c) => c.conversation_id === id) || null)}
         name={user.name}
         email={user.email}
@@ -608,14 +642,15 @@ function Workbench({
 
       {view.kind === "project" ? (() => {
         const project = projects.find(p => p.project_id === view.id);
-        if (!project) return <main className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 text-[13px] text-muted">
-          <p>{projects.length ? "这个项目不存在或已被删除。" : "正在加载项目…"}</p>
+        if (!project) return <main className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 text-sm text-muted">
+          <p>{projectsLoaded ? "这个项目不存在或已被删除。" : "正在加载项目…"}</p>
           <button onClick={() => setView(CHAT)} className="text-accent hover:underline">返回对话</button>
         </main>;
         return <ProjectPage project={project} email={user.email}
           conversations={conversations.filter(c => c.project_id === project.project_id)}
           onSaved={p => setProjects(ps => ps.map(x => x.project_id === p.project_id ? p : x))}
-          onDeleted={id => { setProjects(ps => ps.filter(x => x.project_id !== id)); setConversations(cs => cs.map(c => c.project_id === id ? { ...c, project_id: undefined } : c)); setView(CHAT); }}
+          onRename={() => setProjectDialog({ project })}
+          onDelete={() => void deleteProject(project)}
           onNewConversation={() => newConversationInProject(project.project_id)}
           onOpenConversation={id => { void selectConversation(id); }}
           onToggleSidebar={() => setSidebarOpen(o => !o)} />;
@@ -639,15 +674,15 @@ function Workbench({
               redundant brand — "Orka" already lives in the sidebar. */}
           <div className="flex min-w-0 items-center gap-1.5">
             {status === "streaming" && <span className="inline-flex shrink-0 items-center" role="status"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ok" title="运行中" /><span className="sr-only">运行中</span></span>}
-            <span className="max-w-[40vw] truncate text-[15px] text-ink md:max-w-[260px]" title={activeConv?.title || COPY.newChat}>
+            <span className="max-w-[40vw] truncate text-md text-ink md:max-w-[260px]" title={activeConv?.title || COPY.newChat}>
               {activeConv?.title || COPY.newChat}
             </span>
-            {isShared && <span className="shrink-0 text-[11px] text-faint" title={`由 ${activeConv?.owner_email} 分享`}>· 共享</span>}
+            {isShared && <span className="shrink-0 text-2xs text-faint" title={`由 ${activeConv?.owner_email} 分享`}>· 共享</span>}
             {(() => {
               const pid = activeID ? activeConv?.project_id : draftProject;
               const project = pid ? projects.find(p => p.project_id === pid) : undefined;
               return project && <button onClick={() => setView({ kind: "project", id: project.project_id })} title="打开项目"
-                className="inline-flex max-w-[30vw] shrink-0 items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[11.5px] text-muted hover:text-ink">
+                className="inline-flex max-w-[30vw] shrink-0 items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs text-muted hover:text-ink">
                 <Icon name="folder" size={12} /><span className="truncate">{project.name}</span>
               </button>;
             })()}
@@ -702,7 +737,7 @@ function Workbench({
             {activeID && <div className="px-5"><ArtifactBanner conversationId={activeID} onOpen={openArtifactInDrawer} /></div>}
             {readOnly ? (
               <div className="mx-auto mb-4 w-full max-w-3xl px-5">
-                <div className="flex items-center justify-center gap-1.5 rounded-xl border border-border bg-surface2/50 px-4 py-3 text-center text-[13px] text-muted">
+                <div className="flex items-center justify-center gap-1.5 rounded-xl border border-border bg-surface2/50 px-4 py-3 text-center text-sm text-muted">
                   <Icon name="eye" size={14} />只读对话 · 由 {activeConv?.owner_email} 分享 · 你无法发送消息
                 </div>
               </div>
@@ -734,6 +769,8 @@ function Workbench({
 
 
       {modelSettingsOpen && <ModelSettings onClose={() => setModelSettingsOpen(false)} onSaved={() => { setVersion("auto"); api.models().then(m => setModels(m.length ? m : MODELS_FALLBACK)).catch(() => {}); }} />}
+      {projectDialog && <ProjectDialog project={projectDialog.project} onClose={() => setProjectDialog(null)}
+        onSubmit={v => saveProject(v, projectDialog.project)} />}
       {moveFor && <MoveToProjectDialog conv={moveFor} projects={projects} onClose={() => setMoveFor(null)}
         onMoved={(id, projectID) => setConversations(cs => cs.map(c => c.conversation_id === id ? { ...c, project_id: projectID || undefined } : c))} />}
       {shareFor && (
@@ -772,7 +809,7 @@ function NotificationBell({ onJump }: { onJump: (cid: string) => void }) {
       >
         <Icon name="bell" />
         {unread > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-[16px] place-items-center rounded-full bg-accent px-1 text-[10px] text-white">{unread > 9 ? "9+" : unread}</span>
+          <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-[16px] place-items-center rounded-full bg-accent px-1 text-2xs text-white">{unread > 9 ? "9+" : unread}</span>
         )}
       </button>
       {open && (
@@ -780,13 +817,13 @@ function NotificationBell({ onJump }: { onJump: (cid: string) => void }) {
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute right-0 z-20 mt-1 w-80 rounded-xl border border-border bg-surface p-1.5 shadow-lg">
             <div className="flex items-center justify-between px-2 py-1">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-faint">通知</span>
-              {items.length > 0 && <button onClick={() => api.readNotifications().then(() => { load(); refreshResource("notifications"); })} className="text-[11px] text-faint hover:text-accent">全部已读</button>}
+              <span className="text-2xs font-medium uppercase tracking-wide text-faint">通知</span>
+              {items.length > 0 && <button onClick={() => api.readNotifications().then(() => { load(); refreshResource("notifications"); })} className="text-2xs text-faint hover:text-accent">全部已读</button>}
             </div>
             {items.length === 0 && (
               <div className="px-3 py-6 text-center">
-                <div className="text-[13px] text-ink">没有新通知</div>
-                <p className="mt-1 text-[12px] text-muted">后台任务跑完、定时任务触发或有人分享对话时,会在这里提醒你。</p>
+                <div className="text-sm text-ink">没有新通知</div>
+                <p className="mt-1 text-xs text-muted">后台任务跑完、定时任务触发或有人分享对话时,会在这里提醒你。</p>
               </div>
             )}
             <div className="max-h-[60vh] overflow-y-auto">
@@ -796,15 +833,15 @@ function NotificationBell({ onJump }: { onJump: (cid: string) => void }) {
                 return (
                   <div key={n.notification_id} className={"rounded-lg px-2 py-1.5 hover:bg-surface2 " + (n.read ? "opacity-60" : "")}>
                     <button onClick={jump} className="flex w-full flex-col items-start gap-0.5 text-left">
-                      <span className="text-[13px] text-ink">
+                      <span className="text-sm text-ink">
                         {!n.read && <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-accent align-middle" />}
                         {n.title}
                       </span>
-                      <span className="line-clamp-2 text-[12px] text-muted">{n.body}</span>
+                      <span className="line-clamp-2 text-xs text-muted">{n.body}</span>
                     </button>
                     {/* Actionable: a failed unattended run can be re-fired or opened
                         without digging through the 运行 panel. */}
-                    <div className="mt-1 flex items-center gap-3 text-[11px]">
+                    <div className="mt-1 flex items-center gap-3 text-2xs">
                       {n.run_id && (
                         <button
                           onClick={(e) => { e.stopPropagation(); markRead(); api.rerunRun(n.run_id).then(() => toast("已重新触发", "success")).catch(() => toast("重跑失败,请重试", "error")); }}
@@ -839,7 +876,7 @@ function ModelSelect({ value, onChange, models, onManage }: { value: string; onC
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label="选择模型"
-        className="flex min-w-0 items-center gap-1 rounded-full bg-surface2 px-2.5 py-1 text-[12px] text-muted outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-accent/50"
+        className="flex min-w-0 items-center gap-1 rounded-full bg-surface2 px-2.5 py-1 text-xs text-muted outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-accent/50"
       >
         <span className="hidden sm:inline">模型：</span><span className="max-w-[120px] truncate">{cur.label}</span>
         <Icon name="chevron" size={12} className="shrink-0 text-faint" />
@@ -852,7 +889,7 @@ function ModelSelect({ value, onChange, models, onManage }: { value: string; onC
             className={"justify-between " + (m.version === value ? "bg-accentsoft text-accent data-[highlighted]:bg-accentsoft" : "")}
           >
             <span className="truncate">{m.label}</span>
-            <span className="shrink-0 text-[11px] text-faint">{m.hint}</span>
+            <span className="shrink-0 text-2xs text-faint">{m.hint}</span>
           </DropdownMenuItem>
         ))}
         <DropdownMenuSeparator />
@@ -910,7 +947,7 @@ function ShortcutSheet({ onClose }: { onClose: () => void }) {
       >
         <div className="mb-3 flex items-center gap-2">
           <Icon name="keyboard" size={16} className="text-muted" />
-          <span className="flex-1 text-[15px] font-medium text-ink">键盘快捷键</span>
+          <span className="flex-1 text-md font-medium text-ink">键盘快捷键</span>
           <button onClick={onClose} aria-label="关闭" className="text-faint hover:text-ink"><Icon name="close" size={15} /></button>
         </div>
         <div className="flex flex-col">
@@ -918,10 +955,10 @@ function ShortcutSheet({ onClose }: { onClose: () => void }) {
             <div key={s.label} className="flex items-center gap-3 border-b border-border/60 py-2 last:border-0">
               <span className="flex shrink-0 gap-1">
                 {s.keys.map((k) => (
-                  <kbd key={k} className="min-w-[24px] rounded-md border border-border bg-surface2 px-1.5 py-0.5 text-center font-mono text-[11.5px] text-ink">{k}</kbd>
+                  <kbd key={k} className="min-w-[24px] rounded-md border border-border bg-surface2 px-1.5 py-0.5 text-center font-mono text-xs text-ink">{k}</kbd>
                 ))}
               </span>
-              <span className="text-[13px] text-muted">{s.label}</span>
+              <span className="text-sm text-muted">{s.label}</span>
             </div>
           ))}
         </div>

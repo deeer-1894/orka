@@ -256,7 +256,7 @@ function ComposerForm({
       <div className="relative mx-auto max-w-3xl">
         {menu && (
           <div ref={menuRef} className="absolute bottom-[calc(100%+8px)] left-0 z-20 w-80 rounded-2xl border border-border bg-surface p-1.5 shadow-lg">
-            <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-faint">
+            <div className="px-2 py-1 text-2xs font-medium uppercase tracking-wide text-faint">
               技能 · 让 Orka 切换专长
             </div>
             <div className="max-h-[40vh] overflow-y-auto">
@@ -272,11 +272,11 @@ function ComposerForm({
                       >
                         <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface2 text-muted"><Icon name={meta?.icon || "sparkle"} size={18} /></span>
                         <span className="min-w-0">
-                          <span className="block text-[13px] text-ink">
+                          <span className="block text-sm text-ink">
                             {meta?.label || s.name} <span className="text-faint">/{s.name}</span>
-                            {!builtin && <span className="ml-1 rounded bg-surface2 px-1 text-[10px] text-faint">已安装</span>}
+                            {!builtin && <span className="ml-1 rounded bg-surface2 px-1 text-2xs text-faint">已安装</span>}
                           </span>
-                          <span className="block truncate text-[12px] text-muted">{s.description}</span>
+                          <span className="block truncate text-xs text-muted">{s.description}</span>
                         </span>
                       </button>
                       <button
@@ -285,7 +285,7 @@ function ComposerForm({
                         aria-label={"查看技能 " + s.name + " 的内容"}
                         aria-expanded={previewName === s.name}
                         className={
-                          "shrink-0 rounded-md px-1.5 py-1 text-[13px] transition group-hover:opacity-100 " +
+                          "shrink-0 rounded-md px-1.5 py-1 text-sm transition group-hover:opacity-100 " +
                           (previewName === s.name ? "text-accent opacity-100" : "text-faint opacity-0 hover:bg-surface hover:text-ink")
                         }
                       >
@@ -293,7 +293,7 @@ function ComposerForm({
                       </button>
                     </div>
                     {previewName === s.name && (
-                      <div className="mx-2 mb-1 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-surface2/50 px-2.5 py-2 text-[11.5px] leading-relaxed text-muted">
+                      <div className="mx-2 mb-1 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-surface2/50 px-2.5 py-2 text-xs leading-relaxed text-muted">
                         {previewCache[s.name] ?? "加载中…"}
                       </div>
                     )}
@@ -301,7 +301,7 @@ function ComposerForm({
                 );
               })}
             </div>
-            {onManageSkills && <button onClick={() => { setMenu(false); onManageSkills(); }} className="mt-1 flex w-full items-center gap-1.5 border-t border-border px-2 pb-1 pt-2 text-left text-[12px] text-muted hover:text-ink">
+            {onManageSkills && <button onClick={() => { setMenu(false); onManageSkills(); }} className="mt-1 flex w-full items-center gap-1.5 border-t border-border px-2 pb-1 pt-2 text-left text-xs text-muted hover:text-ink">
               <Icon name="gear" size={13} />管理技能…
             </button>}
           </div>
@@ -309,7 +309,7 @@ function ComposerForm({
 
         {atOpen && (
           <div className="absolute bottom-[calc(100%+8px)] left-0 z-20 w-80 rounded-2xl border border-border bg-surface p-1.5 shadow-lg">
-            <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-faint">引用工作区文件作为上下文 · {atDir}</div>
+            <div className="px-2 py-1 text-2xs font-medium uppercase tracking-wide text-faint">引用工作区文件作为上下文 · {atDir}</div>
             {atDir !== "." && <button onClick={() => { setAtDir(atDir.includes("/") ? atDir.slice(0, atDir.lastIndexOf("/")) : "."); setAtListing({ conversationID, items: [] }); }}>返回上级目录</button>}
             {atError && <p role="alert">{atError}</p>}
             <div className="max-h-[40vh] overflow-y-auto">
@@ -322,19 +322,19 @@ function ComposerForm({
                   className={"flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left " + (i === atSel ? "bg-surface2" : "hover:bg-surface2")}
                 >
                   <Icon name={fileIconName(f.name)} size={15} className="shrink-0 text-muted" />
-                  <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{f.name}</span>
-                  <span className="shrink-0 text-[11px] text-faint">{(f.size / 1024).toFixed(1)}KB</span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-ink">{f.name}</span>
+                  <span className="shrink-0 text-2xs text-faint">{(f.size / 1024).toFixed(1)}KB</span>
                 </button>
               ))}
             </div>
-            <div className="px-2 pt-1 text-[10.5px] text-faint">↑↓ 选择 · Enter 引用 · Esc 取消</div>
+            <div className="px-2 pt-1 text-2xs text-faint">↑↓ 选择 · Enter 引用 · Esc 取消</div>
           </div>
         )}
 
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
           <RunSettingsChips value={runSettings} />
           {skill && (
-            <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-accentsoft px-2 py-1 text-[12px] text-accent">
+            <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-accentsoft px-2 py-1 text-xs text-accent">
               <Icon name={skill.icon} size={13} /> {skill.label} 模式
               <button onClick={() => onPickSkill(null)} aria-label="退出技能模式" className="hover:text-ink"><Icon name="close" size={12} /></button>
             </span>
@@ -345,13 +345,13 @@ function ComposerForm({
         {(attachments.length > 0 || uploading > 0) && (
           <div className="mb-2 flex flex-wrap gap-1.5">
             {attachments.map((a) => (
-              <span key={a.path} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface2/60 px-2 py-1 text-[12px] text-ink">
+              <span key={a.path} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface2/60 px-2 py-1 text-xs text-ink">
                 <Icon name={a.image ? "image" : "file"} size={13} className="shrink-0" />
                 <span className="max-w-[160px] truncate">{a.name}</span>
                 <button onClick={() => setAttachments(xs => xs.filter(item => item !== a))} aria-label={"移除 " + a.name} className="text-faint hover:text-accent"><Icon name="close" size={12} /></button>
               </span>
             ))}
-            {uploading > 0 && <span className="rounded-lg bg-surface2/60 px-2 py-1 text-[12px] text-faint">上传中 {uploading}…</span>}
+            {uploading > 0 && <span className="rounded-lg bg-surface2/60 px-2 py-1 text-xs text-faint">上传中 {uploading}…</span>}
           </div>
         )}
 
@@ -365,7 +365,7 @@ function ComposerForm({
           }
         >
           {dragging && (
-            <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-[26px] bg-accentsoft/60 text-[13px] font-medium text-accent backdrop-blur-sm">
+            <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-[26px] bg-accentsoft/60 text-sm font-medium text-accent backdrop-blur-sm">
               松开即可上传文件 / 图片
             </div>
           )}
@@ -439,7 +439,7 @@ function ComposerForm({
             }}
             rows={1}
             placeholder={busy ? "运行中 · 发消息可以立即插入当前任务" : "给 Orka 发消息…"}
-            className="block min-w-0 max-h-[200px] flex-1 resize-none bg-transparent px-1 py-2 text-[15px] outline-none placeholder:text-faint"
+            className="block min-w-0 max-h-[200px] flex-1 resize-none bg-transparent px-1 py-2 text-md outline-none placeholder:text-faint"
           />
           {busy && !text.trim() && attachments.length === 0 ? (
             <button

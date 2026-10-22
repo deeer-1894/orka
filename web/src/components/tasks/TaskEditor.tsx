@@ -41,15 +41,15 @@ export function draftFromTask(t: TaskMeta): TaskDraft {
 
 export const KIND_ICON: Record<TriggerKind, IconName> = { schedule: "clock", condition: "eye", event: "plug" };
 
-const field = "w-full rounded-lg border border-border bg-bg px-3 py-2 text-[14px] text-ink outline-none transition focus:border-accent/60";
+const field = "w-full rounded-lg border border-border bg-bg px-3 py-2 text-base text-ink outline-none transition focus:border-accent/60";
 const chip = (on: boolean) =>
-  "rounded-lg border px-3 py-1.5 text-[13px] transition " + (on ? "border-accent/40 bg-accentsoft text-accent" : "border-border text-muted hover:bg-surface2");
+  "rounded-lg border px-3 py-1.5 text-sm transition " + (on ? "border-accent/40 bg-accentsoft text-accent" : "border-border text-muted hover:bg-surface2");
 
 function Field({ label, hint, htmlFor, children }: { label: string; hint?: string; htmlFor?: string; children: ReactNode }) {
   return <div className="flex flex-col gap-1.5">
-    <label htmlFor={htmlFor} className="text-[13px] font-medium text-ink">{label}</label>
+    <label htmlFor={htmlFor} className="text-sm font-medium text-ink">{label}</label>
     {children}
-    {hint && <p className="text-[12px] leading-relaxed text-faint">{hint}</p>}
+    {hint && <p className="text-xs leading-relaxed text-faint">{hint}</p>}
   </div>;
 }
 
@@ -111,12 +111,12 @@ export function TaskEditor({ draft: initial, onClose, onSaved }: { draft: TaskDr
       <Dialog.Overlay className="overlay-in fixed inset-0 z-50 bg-black/40" />
       <Dialog.Content className="pop-in fixed left-1/2 top-1/2 z-50 flex max-h-[92vh] w-[min(620px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl">
         <div className="flex items-center justify-between gap-4 border-b border-border px-6 py-4">
-          <Dialog.Title className="font-serif text-[20px] text-ink">{created ? "任务已创建" : draft.task_id ? "编辑任务" : "新建任务"}</Dialog.Title>
+          <Dialog.Title className="font-serif text-2xl text-ink">{created ? "任务已创建" : draft.task_id ? "编辑任务" : "新建任务"}</Dialog.Title>
           <Dialog.Close asChild><Button variant="ghost" size="icon" disabled={busy} aria-label="关闭"><Icon name="close" size={16} /></Button></Dialog.Close>
         </div>
         <Dialog.Description className="sr-only">设置任务内容与触发条件</Dialog.Description>
         {created ? <div className="flex flex-col gap-4 px-6 py-5">
-          <p className="text-[14px] text-muted">把下面的地址配置到外部系统（例如 GitHub 仓库的 Settings → Webhooks，Content type 选 application/json）。收到{event.trim() ? `“${event.trim()}”` : "任意"}事件时，Orka 会运行这个任务。</p>
+          <p className="text-base text-muted">把下面的地址配置到外部系统（例如 GitHub 仓库的 Settings → Webhooks，Content type 选 application/json）。收到{event.trim() ? `“${event.trim()}”` : "任意"}事件时，Orka 会运行这个任务。</p>
           <WebhookAddress token={created.webhook_token!} />
           <div className="flex justify-end"><Button onClick={() => { toast("任务已创建", "success"); onClose(); }}>完成</Button></div>
         </div> : <>
@@ -129,15 +129,15 @@ export function TaskEditor({ draft: initial, onClose, onSaved }: { draft: TaskDr
             </Field>
 
             <div className="flex flex-col gap-2">
-              <span className="text-[13px] font-medium text-ink">什么时候运行</span>
+              <span className="text-sm font-medium text-ink">什么时候运行</span>
               <div role="radiogroup" aria-label="触发方式" className="grid grid-cols-3 gap-2">
                 {TRIGGER_KINDS.map(k => <button key={k.id} type="button" role="radio" aria-checked={kind === k.id}
                   onClick={() => patch({ trigger: { ...draft.trigger, kind: k.id } })}
-                  className={"flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-[13px] transition " + (kind === k.id ? "border-accent/50 bg-accentsoft text-accent" : "border-border text-muted hover:bg-surface2")}>
+                  className={"flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-sm transition " + (kind === k.id ? "border-accent/50 bg-accentsoft text-accent" : "border-border text-muted hover:bg-surface2")}>
                   <Icon name={KIND_ICON[k.id]} size={14} />{k.label}
                 </button>)}
               </div>
-              <p className="text-[12px] text-faint">{TRIGGER_KINDS.find(k => k.id === kind)?.hint}</p>
+              <p className="text-xs text-faint">{TRIGGER_KINDS.find(k => k.id === kind)?.hint}</p>
             </div>
 
             {kind === "schedule" && <div className="flex flex-col gap-4 rounded-xl border border-border bg-bg/40 p-4">
@@ -147,7 +147,7 @@ export function TaskEditor({ draft: initial, onClose, onSaved }: { draft: TaskDr
               {schedule.frequency === "once" && <Field label="执行时间" htmlFor="task-once"><input id="task-once" type="datetime-local" className={field} value={schedule.onceAt} onChange={e => patchSchedule({ onceAt: e.target.value })} /></Field>}
               {schedule.frequency === "hourly" && <Field label="每小时的第几分钟" htmlFor="task-minute"><input id="task-minute" type="number" min={0} max={59} className={field + " w-28"} value={schedule.minute} onChange={e => patchSchedule({ minute: Number(e.target.value) })} /></Field>}
               {schedule.frequency === "weekly" && <div className="flex flex-col gap-1.5">
-                <span className="text-[13px] font-medium text-ink">星期</span>
+                <span className="text-sm font-medium text-ink">星期</span>
                 <div className="flex flex-wrap gap-1.5">{WEEKDAYS.map(w => {
                   const on = schedule.weekdays.includes(w.day);
                   return <button key={w.day} type="button" aria-pressed={on} aria-label={"星期" + w.label} className={chip(on) + " w-10 px-0"}
@@ -166,7 +166,7 @@ export function TaskEditor({ draft: initial, onClose, onSaved }: { draft: TaskDr
                 <input id="task-url" className={field} inputMode="url" value={condition.watch_url} placeholder="https://example.com/page" onChange={e => { setCondition(c => ({ ...c, watch_url: e.target.value })); setError(""); }} />
               </Field>
               <div className="flex flex-col gap-1.5">
-                <span className="text-[13px] font-medium text-ink">满足什么条件</span>
+                <span className="text-sm font-medium text-ink">满足什么条件</span>
                 <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="条件">
                   <button type="button" role="radio" aria-checked={condition.mode === "change"} className={chip(condition.mode === "change")} onClick={() => setCondition(c => ({ ...c, mode: "change" }))}>页面内容变化</button>
                   <button type="button" role="radio" aria-checked={condition.mode === "contains"} className={chip(condition.mode === "contains")} onClick={() => setCondition(c => ({ ...c, mode: "contains" }))}>出现指定文字</button>
@@ -187,18 +187,18 @@ export function TaskEditor({ draft: initial, onClose, onSaved }: { draft: TaskDr
                 <input id="task-event" className={field + " font-mono"} value={event} maxLength={100} placeholder="pull_request.closed" onChange={e => { setEvent(e.target.value); setError(""); }} />
               </Field>
               <div className="flex flex-wrap gap-1.5">{["pull_request.closed", "push", "issues.opened", "release.published"].map(e =>
-                <button key={e} type="button" className={chip(event === e) + " font-mono text-[12px]"} onClick={() => setEvent(e)}>{e}</button>)}</div>
-              {token ? <WebhookAddress token={token} /> : <p className="text-[12px] text-faint">保存后生成专属 Webhook 地址。</p>}
+                <button key={e} type="button" className={chip(event === e) + " font-mono text-xs"} onClick={() => setEvent(e)}>{e}</button>)}</div>
+              {token ? <WebhookAddress token={token} /> : <p className="text-xs text-faint">保存后生成专属 Webhook 地址。</p>}
             </div>}
 
             <fieldset className="flex flex-col gap-2">
-              <legend className="mb-2 text-[13px] font-medium text-ink">自动运行时允许</legend>
-              <p className="text-[12px] leading-relaxed text-faint">触发时没人确认操作，且{kind === "event" ? "请求内容" : "网页内容"}可能夹带指令。读取文件和网页始终可以；下面的操作只在勾选后才提供给任务。当前：<span data-testid="task-policy-summary" className="text-muted">{describeToolPolicy(policy)}</span></p>
+              <legend className="mb-2 text-sm font-medium text-ink">自动运行时允许</legend>
+              <p className="text-xs leading-relaxed text-faint">触发时没人确认操作，且{kind === "event" ? "请求内容" : "网页内容"}可能夹带指令。读取文件和网页始终可以；下面的操作只在勾选后才提供给任务。当前：<span data-testid="task-policy-summary" className="text-muted">{describeToolPolicy(policy)}</span></p>
               {TASK_CAPABILITIES.map(c => {
                 const on = policy.allow.includes(c.id);
                 return <label key={c.id} className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border px-3 py-2 transition hover:bg-surface2">
                   <input type="checkbox" className="mt-0.5 h-4 w-4 accent-[var(--color-accent)]" checked={on} onChange={e => patch({ tool_policy: toggleCapability(policy, c.id, e.target.checked) })} />
-                  <span className="flex flex-col"><span className="text-[13px] text-ink">{c.label}</span><span className="text-[12px] text-faint">{c.hint}</span></span>
+                  <span className="flex flex-col"><span className="text-sm text-ink">{c.label}</span><span className="text-xs text-faint">{c.hint}</span></span>
                 </label>;
               })}
             </fieldset>
@@ -209,17 +209,17 @@ export function TaskEditor({ draft: initial, onClose, onSaved }: { draft: TaskDr
               </select>
             </Field>
             <div className="flex flex-col gap-2">
-              <span className="text-[13px] font-medium text-ink">结果通知</span>
-              <p className="flex items-start gap-1.5 text-[12px] text-faint"><Icon name="bell" size={12} className="mt-[3px] shrink-0" />每次运行结束都会在右上角的通知里提醒你，点开直达任务对话。</p>
+              <span className="text-sm font-medium text-ink">结果通知</span>
+              <p className="flex items-start gap-1.5 text-xs text-faint"><Icon name="bell" size={12} className="mt-[3px] shrink-0" />每次运行结束都会在右上角的通知里提醒你，点开直达任务对话。</p>
               <Field label="同时推送到群机器人（可选）" htmlFor="task-notify" hint="飞书、企业微信、钉钉或 Slack 群机器人的 Webhook 地址。推送任务名、运行结果、回答开头几行和对话链接。">
                 <input id="task-notify" className={field} inputMode="url" value={draft.notify_webhook || ""} maxLength={2048} placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…" onChange={e => patch({ notify_webhook: e.target.value })} />
               </Field>
             </div>
-            {error && <p role="alert" className="rounded-lg bg-accentsoft px-3 py-2 text-[13px] text-accent">{error}</p>}
+            {error && <p role="alert" className="rounded-lg bg-accentsoft px-3 py-2 text-sm text-accent">{error}</p>}
           </form>
           <div className="flex flex-wrap items-center gap-3 border-t border-border px-6 py-4">
-            <label className="flex items-center gap-2 text-[13px] text-muted"><Switch checked={draft.enabled} onChange={v => patch({ enabled: v })} label="启用任务" />启用</label>
-            {preview && <span className="min-w-0 flex-1 truncate text-[12px] text-faint" title={preview}>{preview}{kind === "schedule" && localTimezone() ? ` · ${localTimezone()}` : ""}</span>}
+            <label className="flex items-center gap-2 text-sm text-muted"><Switch checked={draft.enabled} onChange={v => patch({ enabled: v })} label="启用任务" />启用</label>
+            {preview && <span className="min-w-0 flex-1 truncate text-xs text-faint" title={preview}>{preview}{kind === "schedule" && localTimezone() ? ` · ${localTimezone()}` : ""}</span>}
             <div className="ml-auto flex gap-2">
               <Button type="button" variant="ghost" disabled={busy} onClick={onClose}>取消</Button>
               <Button type="submit" form="task-editor" disabled={busy}>{busy ? "保存中…" : "保存"}</Button>
@@ -235,11 +235,11 @@ export function WebhookAddress({ token }: { token: string }) {
   const url = webhookURL(token);
   const copy = () => navigator.clipboard?.writeText(url).then(() => toast("已复制 Webhook 地址", "success"), () => toast("复制失败，请手动选择", "error"));
   return <div className="flex flex-col gap-1.5">
-    <span className="text-[13px] font-medium text-ink">Webhook 地址</span>
+    <span className="text-sm font-medium text-ink">Webhook 地址</span>
     <div className="flex items-center gap-2">
-      <code className="min-w-0 flex-1 truncate rounded-lg border border-border bg-bg px-3 py-2 text-[12px] text-muted" title={url}>{url}</code>
+      <code className="min-w-0 flex-1 truncate rounded-lg border border-border bg-bg px-3 py-2 text-xs text-muted" title={url}>{url}</code>
       <Button type="button" variant="outline" size="sm" onClick={copy}><Icon name="copy" size={14} />复制</Button>
     </div>
-    <p className="text-[12px] text-faint">地址本身即凭证，请勿公开。用 POST 调用即可触发。</p>
+    <p className="text-xs text-faint">地址本身即凭证，请勿公开。用 POST 调用即可触发。</p>
   </div>;
 }

@@ -63,11 +63,11 @@ export function ArtifactGallery({ onOpen }: { onOpen: (id: string) => void }) {
     return arr;
   }, [list, q, sort]);
 
-  if (list === null) return <div className="p-4 text-[13px] text-faint">加载…</div>;
+  if (list === null) return <div className="p-4 text-sm text-faint">加载…</div>;
   if (list.length === 0)
     return (
       <div className="p-4">
-        <div className="rounded-xl border border-dashed border-border p-6 text-center text-[13px] text-muted">
+        <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted">
           还没有 Artifact。<br />
           <span className="text-faint">让 Orka 把工作整理成一个可分享的实时页面 —— 它会随对话进展自动更新。</span>
         </div>
@@ -81,9 +81,9 @@ export function ArtifactGallery({ onOpen }: { onOpen: (id: string) => void }) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="搜索页面…"
-            className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[12.5px] outline-none focus:border-accent/50"
+            className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs outline-none focus:border-accent/50"
           />
-          <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} className="shrink-0 rounded-lg border border-border bg-surface px-1.5 py-1.5 text-[12px] text-muted outline-none" title="排序">
+          <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} className="shrink-0 rounded-lg border border-border bg-surface px-1.5 py-1.5 text-xs text-muted outline-none" title="排序">
             <option value="updated">最近更新</option>
             <option value="name">名称</option>
           </select>
@@ -101,10 +101,10 @@ export function ArtifactGallery({ onOpen }: { onOpen: (id: string) => void }) {
               <span aria-hidden className="absolute left-0 top-0 h-full w-[3px]" style={{ background: km.color }} />
               <div className="flex w-full items-center gap-2">
                 {kindIcon(a.kind)}
-                <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-ink">{a.title}</span>
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">{a.title}</span>
                 {a.visibility === "public" ? <Icon name="globe" size={13} className="shrink-0 text-accent" /> : a.visibility === "shared" ? <Icon name="link" size={13} className="shrink-0 text-muted" /> : null}
               </div>
-              <div className="mt-1.5 flex w-full items-center gap-1.5 text-[11px] text-faint">
+              <div className="mt-1.5 flex w-full items-center gap-1.5 text-2xs text-faint">
                 <span className="rounded-full px-1.5 py-px" style={{ color: km.color, background: km.color + "1a" }}>{km.label}</span>
                 <span>v{a.current_version}</span>
                 <span>·</span>
@@ -122,7 +122,7 @@ export function ArtifactGallery({ onOpen }: { onOpen: (id: string) => void }) {
             </div>
           );
         })}
-        {shown.length === 0 && <div className="col-span-full py-6 text-center text-[12px] text-faint">无匹配页面</div>}
+        {shown.length === 0 && <div className="col-span-full py-6 text-center text-xs text-faint">无匹配页面</div>}
       </div>
     </div>
   );
@@ -159,11 +159,11 @@ export function ArtifactBanner({ conversationId, onOpen }: { conversationId: str
     >
       {kindIcon(art.kind, 18)}
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13.5px] font-medium text-ink">{art.title}</span>
-        <span className="text-[11px] text-faint">实时页面 · v{art.current_version} · {art.visibility === "public" ? "公开" : art.visibility === "shared" ? "已分享" : "私有"}</span>
+        <span className="block truncate text-sm font-medium text-ink">{art.title}</span>
+        <span className="text-2xs text-faint">实时页面 · v{art.current_version} · {art.visibility === "public" ? "公开" : art.visibility === "shared" ? "已分享" : "私有"}</span>
       </span>
-      {bump && <span className="rounded-full bg-ok/15 px-2 py-0.5 text-[11px] text-ok">● 已更新</span>}
-      <span className="text-[12px] text-accent">打开 →</span>
+      {bump && <span className="rounded-full bg-ok/15 px-2 py-0.5 text-2xs text-ok">● 已更新</span>}
+      <span className="text-xs text-accent">打开 →</span>
     </button>
   );
 }
@@ -204,17 +204,17 @@ function ArtifactBody({ artifactId, onClose, inline, backLabel }: { artifactId: 
     >
       <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
         {inline ? (
-          <button onClick={onClose} className="shrink-0 text-[12px] text-muted hover:text-accent" title="返回画廊">← {backLabel || "画廊"}</button>
+          <button onClick={onClose} className="shrink-0 text-xs text-muted hover:text-accent" title="返回画廊">← {backLabel || "画廊"}</button>
         ) : (
           kindIcon(art?.kind || "")
         )}
-        <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink">{art?.title || "未命名页面"}</span>
-        {live && <span className="rounded-full bg-ok/15 px-2 py-0.5 text-[11px] text-ok">● 已更新</span>}
+        <span className="min-w-0 flex-1 truncate text-base font-medium text-ink">{art?.title || "未命名页面"}</span>
+        {live && <span className="rounded-full bg-ok/15 px-2 py-0.5 text-2xs text-ok">● 已更新</span>}
         {art && art.current_version > 1 && (
           <select
             value={viewing}
             onChange={(e) => setViewing(Number(e.target.value))}
-            className="rounded-lg border border-border bg-surface2 px-1.5 py-1 text-[12px] text-muted outline-none"
+            className="rounded-lg border border-border bg-surface2 px-1.5 py-1 text-xs text-muted outline-none"
             title="版本"
           >
             <option value={0}>最新 v{art.current_version}</option>
@@ -226,21 +226,21 @@ function ArtifactBody({ artifactId, onClose, inline, backLabel }: { artifactId: 
         {ver && (
           <button
             onClick={() => { navigator.clipboard?.writeText(blocksToMarkdown(art?.title || "", ver.blocks)); toast("已复制为 Markdown"); }}
-            className="text-[12px] text-muted hover:text-accent hover:underline"
+            className="text-xs text-muted hover:text-accent hover:underline"
             title="把这个页面复制为 Markdown 文本"
           >
             复制 MD
           </button>
         )}
-        <button onClick={() => setShowShare((x) => !x)} className={"text-[12px] hover:underline " + (showShare ? "text-accent font-medium" : "text-muted")}>分享</button>
+        <button onClick={() => setShowShare((x) => !x)} className={"text-xs hover:underline " + (showShare ? "text-accent font-medium" : "text-muted")}>分享</button>
         {!inline && <button onClick={onClose} className="ml-1 text-faint hover:text-ink"><Icon name="close" size={14} /></button>}
       </div>
 
       {showShare && art && <ShareBar art={art} onChange={(a) => setArt(a)} />}
 
       <div className="flex-1 overflow-y-auto px-5 py-4">
-        {ver ? <Suspense fallback={<p role="status">正在加载成果…</p>}><ArtifactRenderer blocks={ver.blocks} /></Suspense> : <div className="text-[13px] text-faint">加载…</div>}
-        {ver?.note && <div className="mt-4 border-t border-border pt-2 text-[11px] text-faint">本版更新: {ver.note}</div>}
+        {ver ? <Suspense fallback={<p role="status">正在加载成果…</p>}><ArtifactRenderer blocks={ver.blocks} /></Suspense> : <div className="text-sm text-faint">加载…</div>}
+        {ver?.note && <div className="mt-4 border-t border-border pt-2 text-2xs text-faint">本版更新: {ver.note}</div>}
       </div>
     </div>
   );
@@ -281,13 +281,13 @@ function ShareBar({ art, onChange }: { art: Artifact; onChange: (a: Artifact) =>
     toast("链接已复制");
   };
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface2/30 px-4 py-2 text-[12.5px]">
+    <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface2/30 px-4 py-2 text-xs">
       <button onClick={togglePublic} disabled={busy} className={"rounded-lg px-2.5 py-1 " + (isPublic ? "bg-accentsoft text-accent" : "border border-border text-muted hover:border-accent/40")}>
         <span className="inline-flex items-center gap-1"><Icon name="globe" size={13} />{isPublic ? "公开链接已开启" : "生成公开链接"}</span>
       </button>
       {isPublic && art.share_token && (
         <>
-          <input readOnly value={artApi.publicURL(art.slug, art.share_token)} className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2 py-1 text-[11.5px] text-muted outline-none" />
+          <input readOnly value={artApi.publicURL(art.slug, art.share_token)} className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2 py-1 text-xs text-muted outline-none" />
           <button onClick={copy} className="rounded-lg border border-border px-2 py-1 text-muted hover:border-accent/40">复制</button>
         </>
       )}
@@ -389,16 +389,16 @@ export function PublicArtifactPage({ slug, token }: { slug: string; token: strin
     /* eslint-disable-next-line */
   }, [slug, token]);
 
-  if (err) return <div className="grid min-h-screen place-items-center text-[14px] text-muted">页面不存在或链接已失效。</div>;
-  if (!data) return <div className="grid min-h-screen place-items-center text-[14px] text-faint">加载…</div>;
+  if (err) return <div className="grid min-h-screen place-items-center text-base text-muted">页面不存在或链接已失效。</div>;
+  if (!data) return <div className="grid min-h-screen place-items-center text-base text-faint">加载…</div>;
   return (
     <div className="min-h-screen bg-bg">
       <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-surface/90 px-5 py-3 backdrop-blur">
-        <span className="grid h-6 w-6 place-items-center rounded-md bg-accent text-[12px] text-white">O</span>
-        <span className="text-[15px] font-medium text-ink">{data.artifact.title}</span>
-        <span className="text-[11px] text-faint">v{data.version.version}</span>
-        {live && <span className="rounded-full bg-ok/15 px-2 py-0.5 text-[11px] text-ok">● 实时更新</span>}
-        <span className="ml-auto text-[11px] text-faint">由 Orka 生成 · 实时</span>
+        <span className="grid h-6 w-6 place-items-center rounded-md bg-accent text-xs text-white">O</span>
+        <span className="text-md font-medium text-ink">{data.artifact.title}</span>
+        <span className="text-2xs text-faint">v{data.version.version}</span>
+        {live && <span className="rounded-full bg-ok/15 px-2 py-0.5 text-2xs text-ok">● 实时更新</span>}
+        <span className="ml-auto text-2xs text-faint">由 Orka 生成 · 实时</span>
       </header>
       <main className="mx-auto max-w-3xl px-5 py-8">
         <ArtifactRenderer blocks={data.version.blocks} />

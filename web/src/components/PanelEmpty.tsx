@@ -8,7 +8,7 @@ export function PanelEmpty({
   action?: { label: string; onClick: () => void };
 }) {
   // Legacy single-string usage still renders as a plain hint.
-  if (!title) return <div className="p-6 text-center text-[13px] text-faint">{children}</div>;
+  if (!title) return <div className="p-6 text-center text-sm text-faint">{children}</div>;
   return (
     <div className="flex flex-col items-center px-6 py-10 text-center">
       {icon && (
@@ -16,12 +16,12 @@ export function PanelEmpty({
           <Icon name={icon} size={20} />
         </div>
       )}
-      <div className="text-[14px] font-medium text-ink">{title}</div>
-      <p className="mt-1.5 max-w-[34ch] text-[12.5px] leading-relaxed text-muted">{children}</p>
+      <div className="text-base font-medium text-ink">{title}</div>
+      <p className="mt-1.5 max-w-[34ch] text-xs leading-relaxed text-muted">{children}</p>
       {action && (
         <button
           onClick={action.onClick}
-          className="mt-4 rounded-lg border border-border px-3 py-1.5 text-[12.5px] text-ink hover:border-accent/40 hover:bg-surface2"
+          className="mt-4 rounded-lg border border-border px-3 py-1.5 text-xs text-ink hover:border-accent/40 hover:bg-surface2"
         >
           {action.label}
         </button>

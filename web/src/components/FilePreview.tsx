@@ -95,17 +95,17 @@ function FilePreviewContent({ name, onClose, conv, readOnly = false, initialHist
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
           <Icon name={fileIconName(name)} size={15} className="shrink-0 text-faint" />
-          <span className="flex-1 truncate text-[14px] text-ink">{name}</span>
+          <span className="flex-1 truncate text-base text-ink">{name}</span>
           {canHistory && (
             <button
               onClick={() => setShowHistory((v) => !v)}
-              className={"inline-flex items-center gap-1 text-[12px] hover:underline " + (showHistory ? "text-accent font-medium" : "text-muted")}
+              className={"inline-flex items-center gap-1 text-xs hover:underline " + (showHistory ? "text-accent font-medium" : "text-muted")}
               title="版本历史"
             >
               <Icon name="history" size={13} />历史{hasHistory ? ` · ${versions!.length}` : ""}
             </button>
           )}
-          <a href={url} className="text-[12px] text-accent hover:underline">下载</a>
+          <a href={url} className="text-xs text-accent hover:underline">下载</a>
           <button onClick={onClose} aria-label="关闭预览" title="关闭" className="ml-1 grid h-7 w-7 place-items-center rounded-lg text-faint hover:bg-surface2 hover:text-ink"><Icon name="close" size={15} /></button>
         </div>
         {isHtml && !showHistory && <div className="flex items-center gap-2 border-b border-border px-4 py-2" role="group" aria-label="HTML 视图">
@@ -123,15 +123,15 @@ function FilePreviewContent({ name, onClose, conv, readOnly = false, initialHist
           ) : !isText ? (
             <div className="px-4 py-10 text-center">
               <Icon name="file" size={34} className="mx-auto text-faint" strokeWidth={1.4} />
-              <div className="mt-2 text-[13px] text-muted">这是二进制文件,无法在此预览。</div>
-              <a href={url} className="mt-3 inline-block rounded-lg bg-accentsoft px-3 py-1.5 text-[12.5px] text-accent hover:underline">
+              <div className="mt-2 text-sm text-muted">这是二进制文件,无法在此预览。</div>
+              <a href={url} className="mt-3 inline-block rounded-lg bg-accentsoft px-3 py-1.5 text-xs text-accent hover:underline">
                 下载 {name}
               </a>
             </div>
           ) : err ? (
-            <div className="text-[13px] text-accent">无法预览:{err}</div>
+            <div className="text-sm text-accent">无法预览:{err}</div>
           ) : content === null ? (
-            <div className="text-[13px] text-faint">加载中…</div>
+            <div className="text-sm text-faint">加载中…</div>
           ) : isHtml && htmlMode === "preview" ? (
             truncated ? <p role="status" className="p-4 text-sm text-muted">HTML 超出页面预览大小，请下载完整文件查看，或切换源码。</p> : <HtmlPreview text={content} name={name} conv={conv} />
           ) : isCsv ? (
@@ -141,7 +141,7 @@ function FilePreviewContent({ name, onClose, conv, readOnly = false, initialHist
           ) : (
             <CodePreview text={content} name={name} />
           )}
-          {truncated && <p role="status" className="mt-2 text-[12px] text-muted">预览已截断：最多读取 {maxBytes.toLocaleString()} 字节。下载查看完整文件。</p>}
+          {truncated && <p role="status" className="mt-2 text-xs text-muted">预览已截断：最多读取 {maxBytes.toLocaleString()} 字节。下载查看完整文件。</p>}
         </div>
         )}
       </div>
@@ -188,57 +188,57 @@ function FileHistory({
     }
   };
 
-  if (versions === null) return <div className="px-4 py-6 text-[13px] text-faint">加载历史…</div>;
+  if (versions === null) return <div className="px-4 py-6 text-sm text-faint">加载历史…</div>;
   if (versions.length === 0)
-    return <div className="px-4 py-8 text-center text-[13px] text-muted">暂无历史版本。文件被覆盖时会自动保存上一版。</div>;
+    return <div className="px-4 py-8 text-center text-sm text-muted">暂无历史版本。文件被覆盖时会自动保存上一版。</div>;
 
   const stats = diff ? diffStats(diff) : null;
   return (
     <div className="flex min-h-0 flex-1">
       {/* version list */}
       <div className="w-48 shrink-0 overflow-y-auto border-r border-border py-2">
-        <div className="px-3 pb-1 text-[11px] uppercase tracking-wide text-faint">版本 · {versions.length}</div>
+        <div className="px-3 pb-1 text-2xs uppercase tracking-wide text-faint">版本 · {versions.length}</div>
         {versions.map((v) => (
           <button
             key={v.ts}
             onClick={() => setSel(v)}
             className={"flex w-full flex-col items-start gap-0.5 px-3 py-1.5 text-left hover:bg-surface2 " + (sel?.ts === v.ts ? "bg-accentsoft" : "")}
           >
-            <span className="text-[12.5px] text-ink">{fmtWhen(v.when) || v.ts}</span>
-            <span className="text-[11px] text-faint">{v.size} B</span>
+            <span className="text-xs text-ink">{fmtWhen(v.when) || v.ts}</span>
+            <span className="text-2xs text-faint">{v.size} B</span>
           </button>
         ))}
       </div>
       {/* diff / actions */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {error && <p role="alert" className="p-3 text-[12px] text-accent">{error}</p>}
-        {diffTruncated && <p role="status" className="p-3 text-[12px] text-muted">差异预览已截断：每个版本最多 500 行、100,000 字节。</p>}
+        {error && <p role="alert" className="p-3 text-xs text-accent">{error}</p>}
+        {diffTruncated && <p role="status" className="p-3 text-xs text-muted">差异预览已截断：每个版本最多 500 行、100,000 字节。</p>}
         {!sel ? (
-          <div className="grid flex-1 place-items-center px-4 text-center text-[13px] text-faint">选择左侧某个版本查看差异并恢复</div>
+          <div className="grid flex-1 place-items-center px-4 text-center text-sm text-faint">选择左侧某个版本查看差异并恢复</div>
         ) : (
           <>
-            <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-[12px]">
+            <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs">
               <span className="text-muted">{fmtWhen(sel.when) || sel.ts} → 当前</span>
               {stats && <span className="text-ok">+{stats.add}</span>}
               {stats && <span className="text-accent">−{stats.del}</span>}
               <button
                 onClick={() => restore(sel)}
                 disabled={busy}
-                className="ml-auto rounded-lg bg-accentsoft px-2.5 py-1 text-[12px] text-accent hover:underline disabled:opacity-50"
+                className="ml-auto rounded-lg bg-accentsoft px-2.5 py-1 text-xs text-accent hover:underline disabled:opacity-50"
               >
                 {busy ? "恢复中…" : <span className="inline-flex items-center gap-1"><Icon name="undo" size={13} />恢复此版本</span>}
               </button>
             </div>
-            <div className="min-h-0 flex-1 overflow-auto px-1 py-1 font-mono text-[12px]">
+            <div className="min-h-0 flex-1 overflow-auto px-1 py-1 font-mono text-xs">
               {!isText ? (
-                <div className="px-3 py-6 text-center text-[12.5px] text-muted">
+                <div className="px-3 py-6 text-center text-xs text-muted">
                   二进制文件不支持差异对比。
                   <a href={fileApi.downloadURL(sel.path, conv)} className="ml-1 text-accent hover:underline">下载此版本</a>
                 </div>
               ) : diff === null ? (
-                <div className="px-3 py-4 text-[12.5px] text-faint">计算差异…</div>
+                <div className="px-3 py-4 text-xs text-faint">计算差异…</div>
               ) : diff.length === 0 ? (
-                <div className="px-3 py-4 text-[12.5px] text-muted">两个版本内容相同。</div>
+                <div className="px-3 py-4 text-xs text-muted">两个版本内容相同。</div>
               ) : (
                 diff.map((r, i) => (
                   <div
@@ -264,16 +264,16 @@ function FileHistory({
 export function CsvPreview({ text, delimiter = "," }: { text: string; delimiter?: string }) {
   const result = useMemo(() => parseDelimited(text, delimiter), [text, delimiter]);
   const columns = Math.max(0, ...result.rows.map(row => row.length));
-  if (!result.rows.length) return <p className="text-[13px] text-muted">空文件</p>;
+  if (!result.rows.length) return <p className="text-sm text-muted">空文件</p>;
   return <div>
     <div className="max-h-[55vh] overflow-auto rounded-lg border border-border" role="region" aria-label="CSV 表格" tabIndex={0}>
-      <table className="w-full border-collapse text-left font-mono text-[12px]">
+      <table className="w-full border-collapse text-left font-mono text-xs">
         <thead className="sticky top-0 bg-surface2"><tr>{Array.from({ length: columns }, (_, i) => <th key={i} scope="col" className="border-b border-border px-3 py-2 font-semibold"><div className="max-w-xs whitespace-pre-wrap break-words">{result.rows[0][i] ?? `列 ${i + 1}`}</div></th>)}</tr></thead>
         <tbody>{result.rows.slice(1).map((row, r) => <tr key={r} className="even:bg-surface2/40">{Array.from({ length: columns }, (_, c) => <td key={c} className="border-b border-border px-3 py-2 align-top"><div className="max-w-xs whitespace-pre-wrap break-words">{row[c] ?? ""}</div></td>)}</tr>)}</tbody>
       </table>
     </div>
-    {result.truncated && <p role="status" className="mt-2 text-[12px] text-muted">表格预览已截断：最多 {CSV_MAX_ROWS} 行数据、{CSV_MAX_COLUMNS} 列。下载查看完整文件。</p>}
-    {result.incomplete && <p role="status" className="mt-2 text-[12px] text-muted">CSV 引号未闭合或格式不完整，已显示可读取的内容。</p>}
+    {result.truncated && <p role="status" className="mt-2 text-xs text-muted">表格预览已截断：最多 {CSV_MAX_ROWS} 行数据、{CSV_MAX_COLUMNS} 列。下载查看完整文件。</p>}
+    {result.incomplete && <p role="status" className="mt-2 text-xs text-muted">CSV 引号未闭合或格式不完整，已显示可读取的内容。</p>}
   </div>;
 }
 
@@ -282,7 +282,7 @@ export function CodePreview({ text, name }: { text: string; name: string }) {
   const language = languageForFile(name);
   const tokens = useMemo(() => highlightCode(text, language), [text, language]);
   return <div>
-    {language && <div className="mb-1 text-[11px] text-faint">{language}</div>}
-    <pre className="overflow-auto rounded-lg bg-surface2/40 p-3 font-mono text-[12.5px] text-ink"><code>{tokens.map((token, i) => token.kind ? <span key={i} className={TOKEN_CLASS[token.kind]}>{token.text}</span> : token.text)}</code></pre>
+    {language && <div className="mb-1 text-2xs text-faint">{language}</div>}
+    <pre className="overflow-auto rounded-lg bg-surface2/40 p-3 font-mono text-xs text-ink"><code>{tokens.map((token, i) => token.kind ? <span key={i} className={TOKEN_CLASS[token.kind]}>{token.text}</span> : token.text)}</code></pre>
   </div>;
 }
