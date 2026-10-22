@@ -9,6 +9,9 @@ import (
 // measured 296k to 1.7M tokens across runs of an unchanged build. The result
 // passes only if every run passed and reports median cost with its range.
 func (c *client) runRepeated(t task, n int) result {
+	if t.MaxRepeat > 0 && n > t.MaxRepeat {
+		n = t.MaxRepeat
+	}
 	if n <= 1 {
 		return c.runTask(t)
 	}

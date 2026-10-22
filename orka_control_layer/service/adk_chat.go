@@ -732,8 +732,14 @@ func (s *ChatService) loadChatHistory(ctx context.Context, convID string, meta m
 	// What earlier runs DID goes in front of what they SAID. Chat turns alone
 	// carry only the assistant's closing prose, which is a small fraction of the
 	// work and the reason follow-up questions used to hit an amnesiac agent.
+	var shown []string
+	for _, r := range rows {
+		if r.Role == messages.RoleAssistant {
+			shown = append(shown, r.Content)
+		}
+	}
 	if ds, derr := s.Msg.Store.GetRunDigests(ctx, convID); derr == nil {
-		if pre := digestPreamble(ds); pre != "" {
+		if pre := digestPreamble(ds, shown...); pre != "" {
 			memory := messages.Chat(messages.RoleUser, pre, meta)
 			memory.Action = runtimeContextAction
 			out = append(out, memory)

@@ -23,23 +23,26 @@ const planToolName = "update_plan"
 
 func (planTool) Name() string { return planToolName }
 func (planTool) Description() string {
-	return "Maintain the task checklist. For multi-step work declare all pending steps and all required output file paths up front. Give every multi-step item a short stable id and keep that id unchanged while updating its title or status. Update actual progress with pending/active/done/blocked; omitted steps remain outstanding. For legacy title-only items, keep the title stable; renaming without an id is treated as a new obligation. Read the returned canonical steps, unfinished and omitted_unfinished fields. After verifying the original work, explicitly update its original title; never mark it done merely to clear the checklist. Output requirements are additive and cannot be removed by rewriting the plan. Browser actions belong to the active step (use plan_step_id on browser calls when ambiguous). After a failed browser action, cite later successful receipt ids in evidence_ids and describe the observed result in reason. Mark unavailable requirements blocked, explain the limitation, and continue independent work. Changing a title or using another data source cannot resolve missing browser interaction. Only mark a step done after its work and relevant checks succeed. A fallback source or API does not complete a step that specifically requires opening or interacting with a browser page when that browser attempt failed; keep that step pending or record the fallback as a separate partial step. For requested file deliveries call check_delivery; run task-specific tests only for software or computed data. For news summaries and qualitative research, verify source/date/support and answer directly; do not invent files, scripts, acceptance specs or tests. Include plan updates with actual work when possible; do not repeat unchanged plans. For requested implementation projects, research and unrelated computation can progress independently; produce working artifacts early and complete only the requested report, documentation and packaging."
-
+	return "Maintain the task checklist for larger work. Declare all steps (pending) and every required output file up front; give each step a short stable id and keep it when renaming. " +
+		"Update status as work happens: pending/active/done/blocked. Omitted steps stay outstanding, and outputs are additive. " +
+		"Mark a step done only after its work and checks succeeded — never to clear the list; mark what cannot be done blocked with the concrete limitation and continue independent work. " +
+		"A fallback source does not complete a step that required interacting with a browser page; after a failed browser action cite later successful receipt ids in evidence_ids and say what was observed in reason. " +
+		"Send each update in the same response as real work, never alone. For requested files call check_delivery; run tests only for software or computed data. Read the returned unfinished fields."
 }
 func (planTool) Schema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"final_response": map[string]any{"type": "string", "enum": []string{"answer", "file_receipt"}, "description": "Default answer preserves the normal chat answer. Choose file_receipt only when the user requests files plus download links and brief acceptance, with substantive findings and ALL limitations in the files, and does not require a separate substantive chat answer. Once files pass checks and all original steps are done, the runtime publishes file links and structural check scope; do not regenerate statistics in chat. Omission preserves the previous mode."},
-			"outputs":        map[string]any{"type": "array", "maxItems": 128, "description": "All required workspace-relative output file paths, including reports, README, manifest and archive when requested. Additive across updates.", "items": map[string]any{"type": "string"}},
+			"final_response": map[string]any{"type": "string", "enum": []string{"answer", "file_receipt"}, "description": "answer (default): a normal chat answer. file_receipt: the user wanted files plus links and a brief acceptance, with all findings and limitations inside the files; the runtime then publishes the links."},
+			"outputs":        map[string]any{"type": "array", "maxItems": 128, "description": "Every required output file (workspace-relative); additive across updates.", "items": map[string]any{"type": "string"}},
 			"steps": map[string]any{
 				"type":        "array",
 				"description": "the full ordered checklist",
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"reason":       map[string]any{"type": "string", "maxLength": 1200, "description": "Observed result supporting completion, or concrete blocker/limitation; never an invented check."},
-						"evidence_ids": map[string]any{"type": "array", "maxItems": 32, "items": map[string]any{"type": "string"}, "description": "Successful Plan browser evidence receipt ids for this step, observed after its failed actions."},
+						"reason":       map[string]any{"type": "string", "maxLength": 1200, "description": "Observed result supporting done, or the concrete blocker."},
+						"evidence_ids": map[string]any{"type": "array", "maxItems": 32, "items": map[string]any{"type": "string"}, "description": "Successful browser receipt ids observed after this step's failed actions."},
 						"id":           map[string]any{"type": "string", "description": "stable identifier; keep unchanged when renaming this step"},
 						"title":        map[string]any{"type": "string", "description": "short imperative step description"},
 						"status":       map[string]any{"type": "string", "enum": []string{"pending", "active", "done", "blocked"}, "description": "pending | active | blocked | done"},

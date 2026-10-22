@@ -11,28 +11,29 @@ import (
 	"github.com/orka-oss/orka_core/pathsafe"
 )
 
-const WriteDescription = "Write a UTF-8 text file (creates dirs). mode=create is the default and refuses an existing file without changing it. Use mode=append to add only new text at the end (no automatic newline); use file_read then mode=replace with the complete new content to overwrite. replace and append retain prior-version backups when available. Clients that previously overwrote without a mode must explicitly pass mode=replace."
+const WriteDescription = "Write a UTF-8 text file (creates dirs). mode=create is the default and refuses an existing file without changing it. To change part of an existing file use mode=edit: old_text is the exact current text (it must appear exactly once; include a few surrounding lines to make it unique) and content is what replaces it — far cheaper than rewriting the file. mode=append adds only new text at the end (no automatic newline); mode=replace overwrites with the complete new content (file_read first). edit, replace and append keep the prior version in history. Clients that previously overwrote without a mode must explicitly pass mode=replace."
 
 // WriteProperties returns a fresh schema so callers cannot mutate shared state.
 func WriteProperties() map[string]any {
 	return map[string]any{
-		"path":    map[string]any{"type": "string", "description": "relative file path"},
-		"content": map[string]any{"type": "string", "description": "complete content for create/replace; only new text for append"},
-		"mode":    map[string]any{"type": "string", "enum": []string{"create", "replace", "append"}, "default": "create", "description": "create: new file only; replace: complete overwrite; append: add text"},
+		"path":     map[string]any{"type": "string", "description": "relative file path"},
+		"content":  map[string]any{"type": "string", "description": "complete content for create/replace; only new text for append; the replacement for old_text in edit"},
+		"mode":     map[string]any{"type": "string", "enum": []string{"create", "edit", "replace", "append"}, "default": "create", "description": "create: new file only; edit: replace old_text once; replace: complete overwrite; append: add text"},
+		"old_text": map[string]any{"type": "string", "description": "mode=edit only: exact text currently in the file, appearing exactly once"},
 	}
 }
 
 // Intent is validated before any directory creation or version backup.
 // Apply validates it again so direct callers cannot bypass the contract.
-type Intent struct{ Mode, Content string }
+type Intent struct{ Mode, Content, OldText string }
 
 func ParseIntent(args map[string]any) (Intent, error) {
 	mode := "create"
 	if value, present := args["mode"]; present {
 		var ok bool
 		mode, ok = value.(string)
-		if !ok || (mode != "create" && mode != "replace" && mode != "append") {
-			return Intent{}, fmt.Errorf("mode must be create, replace, or append; omit it for create. No file was changed")
+		if !ok || (mode != "create" && mode != "edit" && mode != "replace" && mode != "append") {
+			return Intent{}, fmt.Errorf("mode must be create, edit, replace, or append; omit it for create. No file was changed")
 		}
 	}
 	content, ok := args["content"].(string)
@@ -45,7 +46,15 @@ func ParseIntent(args map[string]any) (Intent, error) {
 			return Intent{}, fmt.Errorf("content is a context compression pointer, not file data. Use file_read to recover the content and retry with actual text; no file was changed")
 		}
 	}
-	return Intent{mode, content}, nil
+	intent := Intent{Mode: mode, Content: content}
+	if mode == "edit" {
+		old, _ := args["old_text"].(string)
+		if old == "" {
+			return Intent{}, fmt.Errorf("mode=edit needs old_text: the exact text to replace. No file was changed")
+		}
+		intent.OldText = old
+	}
+	return intent, nil
 }
 
 // NormalizePath retains the historical remote adapter's absolute-name fallback.
@@ -75,7 +84,7 @@ func (r WriteResult) String() string {
 // cannot escape that workspace. create uses O_EXCL and append uses O_APPEND.
 // Arbitrary scripts and atomic artifact publication are separate contracts.
 func Apply(rootPath, rel string, intent Intent) (WriteResult, error) {
-	checked, err := ParseIntent(map[string]any{"mode": intent.Mode, "content": intent.Content})
+	checked, err := ParseIntent(map[string]any{"mode": intent.Mode, "content": intent.Content, "old_text": intent.OldText})
 	if err != nil {
 		return WriteResult{}, err
 	}
@@ -98,6 +107,9 @@ func Apply(rootPath, rel string, intent Intent) (WriteResult, error) {
 		return WriteResult{}, err
 	}
 	result := WriteResult{Mode: checked.Mode, Path: rel}
+	if checked.Mode == "edit" {
+		return applyEdit(root, rel, checked, result)
+	}
 	flags := os.O_WRONLY | os.O_CREATE
 	switch checked.Mode {
 	case "create":
@@ -127,5 +139,31 @@ func Apply(rootPath, rel string, intent Intent) (WriteResult, error) {
 	if err != nil {
 		return result, fmt.Errorf("mode=%s wrote %d bytes to %s before error: %v; use file_read to inspect the file before retrying", checked.Mode, result.Bytes, rel, err)
 	}
+	return result, nil
+}
+
+// applyEdit replaces the one occurrence of OldText. Zero or several matches
+// change nothing: guessing which one was meant is how edits corrupt files.
+func applyEdit(root *os.Root, rel string, intent Intent, result WriteResult) (WriteResult, error) {
+	old, err := root.ReadFile(rel)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return result, fmt.Errorf("mode=edit needs an existing file; %s does not exist. Use mode=create for a new file", rel)
+		}
+		return result, err
+	}
+	switch n := strings.Count(string(old), intent.OldText); n {
+	case 0:
+		return result, fmt.Errorf("old_text was not found in %s; no file was changed. Use file_read to copy the current text exactly (including whitespace)", rel)
+	case 1:
+	default:
+		return result, fmt.Errorf("old_text appears %d times in %s; no file was changed. Include more surrounding lines so it matches exactly once", n, rel)
+	}
+	updated := strings.Replace(string(old), intent.OldText, intent.Content, 1)
+	result.Version, _ = Snapshot(root, rel, old)
+	if err := root.WriteFile(rel, []byte(updated), pathsafe.WorkspaceFileMode); err != nil {
+		return result, fmt.Errorf("mode=edit failed on %s: %v; use file_read to inspect the file before retrying", rel, err)
+	}
+	result.Bytes = len(updated)
 	return result, nil
 }

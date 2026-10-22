@@ -329,6 +329,9 @@ func BuildEinoDeepOrchestrator(ctx context.Context, client llm.Client, model, in
 			EmitInternalEvents: true,
 		},
 		MaxIteration: maxIters,
+		// eino's default text for the delegation tool is ~4,500 characters of
+		// generic usage notes and a worked example, resent on every model call.
+		TaskToolDescriptionGenerator: delegationToolDescription,
 		// See the doc comment: ours drives the UI and the completion check.
 		WithoutWriteTodos: true,
 		// The whole point. A step that matches no specialist still has somewhere

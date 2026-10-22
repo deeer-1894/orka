@@ -127,3 +127,17 @@ func TestBuildDigestEmptyTranscript(t *testing.T) {
 		t.Fatalf("empty transcript produced %+v", d)
 	}
 }
+
+func TestDigestPreambleSkipsAnswersAlreadyInHistory(t *testing.T) {
+	ds := []db.RunDigest{
+		{Prompt: "第一轮", Facts: []string{"file_write: a.py"}, Learned: "已经写好 a.py，实现了令牌桶。"},
+		{Prompt: "很早的一轮", Learned: "旧结论：用滑动窗口。"},
+	}
+	pre := digestPreamble(ds, "已经写好 a.py，实现了令牌桶。\n\n还可以继续加测试。")
+	if strings.Contains(pre, "已经写好 a.py") {
+		t.Fatalf("an answer still in the history must not be repeated:\n%s", pre)
+	}
+	if !strings.Contains(pre, "file_write: a.py") || !strings.Contains(pre, "旧结论：用滑动窗口") {
+		t.Fatalf("facts and answers outside the history stay:\n%s", pre)
+	}
+}

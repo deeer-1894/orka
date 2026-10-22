@@ -334,6 +334,7 @@ func (m *gateMiddleware) BeforeModelRewriteState(ctx context.Context, state *adk
 			"registered", len(g.allInfos()), "visible", len(state.ToolInfos), "state_before", before,
 			"schema_tok_all", schemaTokens(g.allInfos()),
 			"schema_tok_visible", schemaTokens(state.ToolInfos),
+			"visible_by_tool", toolTokenBreakdown(state.ToolInfos),
 		)
 	}
 	return ctx, state, nil

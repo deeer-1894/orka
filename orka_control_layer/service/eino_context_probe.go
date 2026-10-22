@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -165,6 +167,27 @@ func schemaTokens(tools []*schema.ToolInfo) int64 {
 		n += int64(len(b) / 4)
 	}
 	return n
+}
+
+// toolTokenBreakdown lists each tool's schema cost, largest first, so tuning
+// can see which definitions dominate the table ("name=tokens" pairs).
+func toolTokenBreakdown(tools []*schema.ToolInfo) string {
+	type cost struct {
+		name string
+		tok  int64
+	}
+	var costs []cost
+	for _, tl := range tools {
+		if tl != nil {
+			costs = append(costs, cost{tl.Name, schemaTokens([]*schema.ToolInfo{tl})})
+		}
+	}
+	sort.Slice(costs, func(i, j int) bool { return costs[i].tok > costs[j].tok })
+	parts := make([]string, len(costs))
+	for i, c := range costs {
+		parts[i] = fmt.Sprintf("%s=%d", c.name, c.tok)
+	}
+	return strings.Join(parts, " ")
 }
 
 func pct(v int64, of int) int {

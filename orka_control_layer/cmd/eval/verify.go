@@ -22,7 +22,7 @@ type verifier struct {
 func resolveVerifierScripts(tasks []task, suiteDir string) {
 	for _, t := range tasks {
 		// t is a copy, but Verify is a pointer shared with the suite.
-		for _, e := range []*expectation{&t.Expect, followupExpect(t)} {
+		for _, e := range append([]*expectation{&t.Expect}, laterExpects(t)...) {
 			if e != nil && e.Verify != nil && !filepath.IsAbs(e.Verify.Script) {
 				e.Verify.Script = filepath.Join(suiteDir, e.Verify.Script)
 			}
@@ -30,11 +30,14 @@ func resolveVerifierScripts(tasks []task, suiteDir string) {
 	}
 }
 
-func followupExpect(t task) *expectation {
-	if t.Followup == nil {
-		return nil
+func laterExpects(t task) []*expectation {
+	// Verify is a pointer shared with the suite, so copies resolve it too.
+	turns := t.laterTurns()
+	out := make([]*expectation, len(turns))
+	for i := range turns {
+		out[i] = &turns[i].Expect
 	}
-	return &t.Followup.Expect
+	return out
 }
 
 func runVerifier(c *client, conv string, v *verifier) []string {

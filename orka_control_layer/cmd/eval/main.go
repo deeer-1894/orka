@@ -80,6 +80,21 @@ type task struct {
 	Timeout  int         `yaml:"timeout_s"`
 	Expect   expectation `yaml:"expect"`
 	Followup *followup   `yaml:"followup"`
+	// Turns continue the same conversation, each checked on its own: the
+	// shape of real work, where turn eight leans on what turn two decided.
+	// Timeout applies per turn.
+	Turns []followup `yaml:"turns"`
+	// MaxRepeat caps --repeat for a task too expensive to run N times.
+	MaxRepeat int `yaml:"max_repeat"`
+}
+
+// laterTurns are the turns after the first, in order.
+func (t task) laterTurns() []followup {
+	var out []followup
+	if t.Followup != nil {
+		out = append(out, *t.Followup)
+	}
+	return append(out, t.Turns...)
 }
 
 type suite struct {
@@ -101,6 +116,9 @@ type result struct {
 	Runs       int     `json:"runs,omitempty"`
 	Passes     int     `json:"passes,omitempty"`
 	TokenRange *[2]int `json:"token_range,omitempty"`
+	// Multi-turn tasks: cost of each turn, to see context growth turn by turn.
+	TurnTokens  []int     `json:"turn_tokens,omitempty"`
+	TurnSeconds []float64 `json:"turn_seconds,omitempty"`
 }
 
 type scorecard struct {
@@ -207,11 +225,22 @@ func run(base, email, password, token, tasksFile, only, model string, repeat int
 		} else {
 			fmt.Printf("FAIL%s  %.0fs  %s\n", repeatSummary(r), r.Seconds, strings.Join(r.Reasons, "; "))
 		}
+		if len(r.TurnTokens) > 1 {
+			fmt.Printf("    per turn: tokens %v · seconds %v\n", r.TurnTokens, roundAll(r.TurnSeconds))
+		}
 	}
 	return sc, nil
 }
 
-// runTask executes one task (plus its follow-up turn, when it has one) in a
+func roundAll(xs []float64) []int {
+	out := make([]int, len(xs))
+	for i, x := range xs {
+		out[i] = int(x + 0.5)
+	}
+	return out
+}
+
+// runTask executes one task (plus its later turns, when it has them) in a
 // fresh conversation, so tasks cannot contaminate each other's memory.
 func (c *client) runTask(t task) result {
 	timeout := time.Duration(t.Timeout) * time.Second
@@ -237,18 +266,32 @@ func (c *client) runTask(t task) result {
 	}
 	r.Status, r.Tools, r.Tokens = turn.status, turn.tools, turn.tokens
 	r.Reasons = check(c, conv, t.Expect, turn)
-
-	if t.Followup != nil && len(r.Reasons) == 0 {
-		f, ferr := c.turn(conv, t.Followup.Prompt, timeout)
+	later := t.laterTurns()
+	if len(later) > 0 {
+		r.TurnTokens, r.TurnSeconds = []int{turn.tokens}, []float64{turn.seconds}
+	}
+	// A single follow-up only makes sense once the first turn passed; a long
+	// conversation keeps going, so one weak turn does not hide how the rest
+	// of the conversation holds up.
+	for i, f := range later {
+		if len(later) == 1 && len(r.Reasons) > 0 {
+			break
+		}
+		label := "followup: "
+		if len(t.Turns) > 0 {
+			label = fmt.Sprintf("turn %d: ", i+2)
+		}
+		res, ferr := c.turn(conv, f.Prompt, timeout)
 		r.Seconds = time.Since(started).Seconds()
 		if ferr != nil {
-			r.Reasons = append(r.Reasons, "followup: "+ferr.Error())
-		} else {
-			r.Tools += f.tools
-			r.Tokens += f.tokens
-			for _, why := range check(c, conv, t.Followup.Expect, f) {
-				r.Reasons = append(r.Reasons, "followup: "+why)
-			}
+			r.Reasons = append(r.Reasons, label+ferr.Error())
+			break // the conversation may still be busy; later turns would not mean anything
+		}
+		r.Tools += res.tools
+		r.Tokens += res.tokens
+		r.TurnTokens, r.TurnSeconds = append(r.TurnTokens, res.tokens), append(r.TurnSeconds, res.seconds)
+		for _, why := range check(c, conv, f.Expect, res) {
+			r.Reasons = append(r.Reasons, label+why)
 		}
 	}
 	r.Pass = len(r.Reasons) == 0
@@ -534,8 +577,8 @@ func (c *client) clearExpected(t task, conv string) {
 	if t.Expect.Verify != nil {
 		paths = append(paths, t.Expect.Verify.Files...)
 	}
-	if t.Followup != nil {
-		paths = append(paths, t.Followup.Expect.Files...)
+	for _, f := range t.laterTurns() {
+		paths = append(paths, f.Expect.Files...)
 	}
 	for _, p := range paths {
 		var out any

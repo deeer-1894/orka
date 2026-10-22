@@ -1,6 +1,12 @@
 package service
 
 import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/cloudwego/eino/adk"
+
 	"github.com/orka-oss/orka_control_layer/service/middlewares"
 	"github.com/orka-oss/orka_core/agent"
 	"github.com/orka-oss/orka_core/config"
@@ -125,6 +131,19 @@ func (s *ChatService) deepAgentEnabled() bool {
 // deepSubAgentSpecs makes Eino's general worker explicit so it can share the
 // same run-scoped concurrency limiter as every specialist. The built-in general
 // worker is otherwise created inside Eino and cannot be wrapped.
+// delegationToolDescription is the delegation ("task") tool's description:
+// what it is for, how to brief a specialist, and who is available.
+func delegationToolDescription(ctx context.Context, agents []adk.Agent) (string, error) {
+	var b strings.Builder
+	b.WriteString("Delegate an independent multi-step subtask to a specialist that works in its own context and returns one compact report. " +
+		"The report is not shown to the user: summarize what matters yourself. Brief it completely — goal, inputs, what to return, and whether to write files — because it cannot ask you anything. " +
+		"Run independent delegations in parallel (several task calls in one response). Specialists:\n")
+	for _, a := range agents {
+		fmt.Fprintf(&b, "- %s: %s\n", a.Name(ctx), a.Description(ctx))
+	}
+	return b.String(), nil
+}
+
 func deepSubAgentSpecs(tools []agent.BaseTool, specs []config.SubAgentConfig) []config.SubAgentConfig {
 	if len(specs) == 0 {
 		specs = DefaultSubAgents()

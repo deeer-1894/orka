@@ -4,15 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"net/url"
 	"path"
 	"strings"
 )
 
 func toolSchema() map[string]any {
-	str := func(description string, limit int) map[string]any {
-		return map[string]any{"type": "string", "description": description, "maxLength": limit}
+	// Length limits are enforced by parseRequest; repeating them in the schema
+	// only added tokens to every model call.
+	str := func(description string, _ int) map[string]any {
+		return map[string]any{"type": "string", "description": description}
 	}
 	props := map[string]any{
 		"view":        map[string]any{"type": "string", "enum": []string{"auto", "full"}, "description": "auto: actions return changed text and current controls; snapshot always returns full text. full: complete bounded observation after an action."},
@@ -34,7 +35,10 @@ func toolSchema() map[string]any {
 		"mode":        map[string]any{"type": "string", "enum": []string{"create", "replace"}, "description": "File write mode; default create, replace preserves history."},
 		"timeout_ms":  map[string]any{"type": "integer", "minimum": 1, "maximum": 60000, "description": "Bound this operation; open defaults to 15000 ms, other actions to 45000 ms, maximum 60000 ms."},
 	}
-	stepProps := maps.Clone(props)
+	// A batch step takes the same fields as a single action. They are listed
+	// bare (type and allowed values only): repeating every description doubled
+	// the tool's schema, the largest in the table, on every model call.
+	stepProps := bareProps(props)
 	batchable := make([]string, 0, len(batchableActions))
 	for _, action := range props["action"].(map[string]any)["enum"].([]string) {
 		if batchableActions[action] {
@@ -46,9 +50,39 @@ func toolSchema() map[string]any {
 	props["steps"] = map[string]any{
 		"type": "array", "minItems": 1, "maxItems": maxBatchSteps,
 		"description": "batch only: in-page actions run in order in one call, stopping at the first failure; completed steps are never replayed. The result is the last executed step's observation plus a per-step summary. open, preview and download are not batchable. A batch-level snapshot_id applies to steps that use ref without their own.",
-		"items":       map[string]any{"type": "object", "properties": stepProps, "required": []string{"action"}, "additionalProperties": false},
+		"items":       map[string]any{"type": "object", "description": "One step: the same fields as a single action.", "properties": stepProps, "required": []string{"action"}, "additionalProperties": false},
 	}
 	return map[string]any{"type": "object", "properties": props, "required": []string{"action"}, "additionalProperties": false}
+}
+
+// bareProps copies a property map keeping only what a schema needs to type a
+// value: type, enum, and the same for array items and nested objects.
+func bareProps(props map[string]any) map[string]any {
+	out := make(map[string]any, len(props))
+	for name, raw := range props {
+		out[name] = bareSchema(raw)
+	}
+	return out
+}
+
+func bareSchema(raw any) any {
+	in, ok := raw.(map[string]any)
+	if !ok {
+		return raw
+	}
+	out := map[string]any{}
+	for _, k := range []string{"type", "enum", "additionalProperties"} {
+		if v, ok := in[k]; ok {
+			out[k] = v
+		}
+	}
+	if items, ok := in["items"]; ok {
+		out["items"] = bareSchema(items)
+	}
+	if nested, ok := in["properties"].(map[string]any); ok {
+		out["properties"] = bareProps(nested)
+	}
+	return out
 }
 
 func parseRequest(args map[string]any) (Request, error) {

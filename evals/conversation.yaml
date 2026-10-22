@@ -1,0 +1,48 @@
+# One long conversation, ten turns, each leaning on earlier ones: build a
+# small library, test it, research, plan, change it, document it — and twice
+# answer from memory alone. It measures what single-turn tasks cannot: whether
+# turn 9 still knows what turn 1 decided, and how the cost of a turn grows as
+# the conversation does (per-turn tokens are in the scorecard).
+#
+# Run on its own; it takes about half an hour:
+#   eval --live --tasks evals/conversation.yaml --out evals/results/<date>-conversation.json
+tasks:
+  - id: long_conversation
+    max_repeat: 1
+    timeout_s: 420
+    prompt: "我们来做一个小项目，项目代号是 FALCON-93，请记住它。用 Python 写一个限流库 ratelimit.py，先实现令牌桶类 TokenBucket(rate, capacity)，提供 allow() 方法，写到工作区。"
+    expect:
+      files: ["ratelimit.py"]
+    turns:
+      - prompt: "给它写单元测试 test_ratelimit.py，并实际运行，告诉我通过了几个测试。"
+        expect:
+          files: ["test_ratelimit.py"]
+          tools_any_of: ["python", "shell"]
+      - prompt: "在同一个文件里再加一个滑动窗口限流类 SlidingWindow(limit, window_seconds)，补上测试并运行。"
+        expect:
+          tools_any_of: ["python", "shell"]
+          contains: ["SlidingWindow"]
+      - prompt: "联网查一下业界还有哪些常见的限流算法，至少列出三种，附来源链接。"
+        expect:
+          tools_any_of: ["web_search", "fetch_url", "search_evidence", "browser", "http_request"]
+          contains: ["http"]
+      - prompt: "根据刚才的调研，把我们还没实现的算法整理成 TODO.md，每项写一句实现要点。"
+        expect:
+          files: ["TODO.md"]
+      - prompt: "不要读文件，也不要调用任何工具，凭记忆回答：这个项目的代号是什么？第一轮实现的类叫什么？"
+        expect:
+          contains: ["FALCON-93", "TokenBucket"]
+          max_tools: 0
+      - prompt: "把 TokenBucket 改成：不传 capacity 时默认等于 rate 的 2 倍。更新测试并重新运行。"
+        expect:
+          tools_any_of: ["python", "shell"]
+      - prompt: "写一份 README.md：介绍两个限流类、各给一个用法示例，并附上 TODO 列表。"
+        expect:
+          files: ["README.md"]
+      - prompt: "不要读文件，也不要调用任何工具：README 里介绍了哪两个类？我们在第七轮改了什么默认值？"
+        expect:
+          contains: ["TokenBucket", "SlidingWindow", "capacity"]
+          max_tools: 0
+      - prompt: "按时间顺序，总结这次对话我们一共做了哪些事、产出了哪些文件。"
+        expect:
+          contains: ["ratelimit.py", "test_ratelimit.py", "TODO.md", "README.md"]

@@ -248,10 +248,13 @@ func TestGateway_FileWriteIntentSchemaAndModes(t *testing.T) {
 			t.Errorf("wrong default: %+v", mode)
 		}
 		enum, ok := mode["enum"].([]any)
-		if !ok || len(enum) != 3 || enum[0] != "create" || enum[1] != "replace" || enum[2] != "append" {
+		if !ok || len(enum) != 4 || enum[0] != "create" || enum[1] != "edit" || enum[2] != "replace" || enum[3] != "append" {
 			t.Errorf("wrong enum: %+v", mode)
 		}
-		for _, word := range []string{"create", "append", "replace", "existing"} {
+		if _, ok := tool.InputSchema.Properties["old_text"]; !ok {
+			t.Errorf("edit mode needs old_text in the schema: %+v", tool.InputSchema.Properties)
+		}
+		for _, word := range []string{"create", "edit", "old_text", "append", "replace", "existing"} {
 			if !strings.Contains(tool.Description, word) {
 				t.Errorf("description omits %q", word)
 			}

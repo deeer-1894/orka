@@ -19,7 +19,7 @@ func (d *deliveryTracker) noteUndeclaredWrites(paths []string) string {
 			continue
 		}
 		d.missingOutputsNotified = true
-		return "\n[Workspace files changed, but no delivery outputs are registered. If the user requested files, register only the intended final deliverables in update_plan.outputs so final delivery checks and snapshots include them. Temporary files are not automatically deliverables. For prose-only tasks, do not invent file deliverables.]"
+		return "\n[Workspace files changed, but no delivery outputs are registered. If the user requested files, register only the intended final deliverables in update_plan.outputs (in the same response as your next work call, not on its own) so final delivery checks and snapshots include them. Temporary files are not automatically deliverables. For prose-only tasks, do not invent file deliverables.]"
 	}
 	return ""
 }
