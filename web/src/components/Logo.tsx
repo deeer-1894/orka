@@ -1,8 +1,9 @@
 import { useId } from "react";
 
 // The Orka mark: an orca's swept-back dorsal fin rising from the curve of its
-// back, white on the terracotta tile. Drawn on a 24-unit grid so it stays crisp from the 16px
-// favicon to the 60px home tile; public/favicon.svg is the same drawing.
+// back, white on the terracotta tile, with about four units of margin on every
+// side of the 24-unit grid. One drawing serves every size — the 16px favicon
+// (public/favicon.svg), message avatars, the sidebar and the 60px home tile.
 export function Logo({ size = 28, className = "", title }: { size?: number; className?: string; title?: string }) {
   const id = useId().replace(/:/g, "");
   return <svg width={size} height={size} viewBox="0 0 24 24" className={className} role={title ? "img" : undefined} aria-label={title} aria-hidden={title ? undefined : true}>
@@ -13,7 +14,7 @@ export function Logo({ size = 28, className = "", title }: { size?: number; clas
       </linearGradient>
     </defs>
     <rect width="24" height="24" rx="6.5" fill={`url(#orka-${id})`} />
-    <path d="M6.9 17.3C9.4 14.2 9.9 8.8 8.5 3.9c5 2.4 8.3 7.5 8.9 13.4Z" fill="#fff" />
-    <path d="M3.2 19.2C7.9 16.2 16.1 16.2 20.8 19.2" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" />
+    <path d="M7.6 16.8C9.8 14 10.3 9.4 9.2 5.2c4.6 2.2 7.6 6.6 8.2 11.6Z" fill="#fff" />
+    <path d="M4.4 18.7C8.6 16 15.4 16 19.6 18.7" fill="none" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" />
   </svg>;
 }

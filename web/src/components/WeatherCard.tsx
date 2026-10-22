@@ -24,7 +24,7 @@ function weekday(date: string, idx: number): string {
 export function WeatherCard({ data }: { data: WeatherCardData }) {
   const { location, current, forecast } = data;
   return (
-    <div className="mb-7 ml-[42px] max-w-md overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-[#5b8def] to-[#7aa7f0] text-white shadow-sm">
+    <div className="mb-7 max-w-md overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-[#5b8def] to-[#7aa7f0] text-white shadow-sm">
       <div className="flex items-center justify-between px-5 pt-4">
         <div>
           <div className="text-sm opacity-90">{location}</div>

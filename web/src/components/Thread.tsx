@@ -335,7 +335,7 @@ export function Thread({
           />
         )}
         {failed && (
-          <div className="mb-6 ml-[42px] space-y-2" role="status">
+          <div className="mb-6 space-y-2" role="status">
             {autoResume && <p className="text-sm text-ink" data-testid="auto-resume">{autoResume}</p>}
             <div className="flex flex-wrap items-center gap-3">
               {(recovery.recoverable || recovery.busy) && (
@@ -382,7 +382,7 @@ function SessionFiles({ files, onOpen }: { files: string[]; onOpen: (name: strin
   const [expanded, setExpanded] = useState(false);
   useEffect(() => setExpanded(false), [scope.conversationID]);
   return (
-    <div className="mb-6 ml-[42px] rounded-xl border border-border bg-surface2/40 p-3">
+    <div className="mb-6 rounded-xl border border-border bg-surface2/40 p-3">
       <div className="mb-2 flex items-center gap-1 text-2xs font-medium uppercase tracking-wide text-faint"><Icon name="paperclip" size={12} />本对话文件 · {files.length}</div>
       <div className="flex max-h-64 flex-wrap gap-1.5 overflow-y-auto">
         {(expanded ? files : files.slice(0, 8)).map((f) => (
@@ -425,9 +425,7 @@ function ThreadOutline({ turns }: { turns: { id: string; text: string }[] }) {
           (open ? "border-accent/40 bg-accentsoft text-accent" : "border-border bg-surface hover:bg-surface2")
         }
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-          <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-        </svg>
+        <Icon name="list" size={16} />
       </button>
       {open && (
         <div className="absolute right-0 mt-1.5 max-h-[60vh] w-64 overflow-y-auto rounded-xl border border-border bg-surface p-1.5 shadow-lg">
@@ -561,7 +559,7 @@ function StructuredPlan({ plan, live }: { plan: PlanPayload; live: boolean }) {
   const blocked = steps.filter((s) => s.status === "blocked").length;
   const allDone = done === steps.length;
   return (
-    <div className="my-2 ml-[42px] rounded-xl border border-border bg-surface2/40 p-3">
+    <div className="my-2 rounded-xl border border-border bg-surface2/40 p-3">
       <div className="mb-2 flex items-center gap-2 text-xs font-medium text-ink">
         <Icon name="sparkle" size={14} className="text-accent" />
         <span>执行计划</span>
@@ -673,11 +671,8 @@ function Assistant({ m, live, onRegenerate, onSchedule }: { m: Message; live?: b
     return snapshot ? `交付快照 · 版本 ${snapshot.version}` : "当前工作区 · 未关联交付快照";
   }, [scope.conversationID, scope.ownerEmail, snapshotFor]);
   return (
-    <div className="group mb-7 flex gap-3.5">
-      <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent text-white font-serif text-sm leading-none">
-        O
-      </div>
-      <div className="min-w-0 flex-1 pt-0.5">
+    <div className="group mb-7">
+      <div className="min-w-0">
         <Markdown resolveLink={resolveLink} linkLabel={linkLabel}>{m.content ?? ""}</Markdown>
         {!live && <Citations text={m.content ?? ""} />}
         <div className="mt-1 flex gap-1 opacity-0 transition group-hover:opacity-100">
@@ -776,7 +771,7 @@ function Steps({ all, items, live }: { all: Message[]; items: Message[]; live?: 
   }
 
   return (
-    <div className="mb-6 ml-[42px]">
+    <div className="mb-6">
       <button
         onClick={() => setPinned(!open)}
         className="flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-sm text-muted hover:border-accent/40 transition"
@@ -1156,7 +1151,7 @@ function ConfirmCard({ m, active, onResumed }: { m: Message; active: boolean; on
     {done === "always" ? "本对话始终允许 · 继续执行" : done === "once" ? "已允许一次 · 继续执行" : "已拒绝，跳过该操作"}
   </span>;
   return (
-    <div className="mb-6 ml-[42px] rounded-xl border border-accent/40 bg-accentsoft/40 p-3.5">
+    <div className="mb-6 rounded-xl border border-accent/40 bg-accentsoft/40 p-3.5">
       <div className="mb-1 flex items-center gap-1.5 text-sm font-medium text-ink">
         <Icon name="shield" size={14} className="text-accent" /> {active && !done ? "需要你确认" : "操作确认记录"} · {TOOL_LABEL[p.tool] || p.tool}
       </div>
@@ -1187,7 +1182,7 @@ function Clarify({ m, onResume }: { m: Message; onResume: (k: string, a: string)
     onResume(p.resume_key, a.trim());
   };
   return (
-    <div className="mb-7 ml-[42px] rounded-2xl border border-accent/30 bg-accentsoft/50 px-4 py-3.5">
+    <div className="mb-7 rounded-2xl border border-accent/30 bg-accentsoft/50 px-4 py-3.5">
       <div className="mb-2 text-xs font-medium uppercase tracking-wide text-accent">
         Needs your input
       </div>
@@ -1246,7 +1241,7 @@ function Reasoning({ m }: { m: Message }) {
     if (open) endRef.current?.scrollIntoView({ block: "nearest" });
   }, [text, open]);
   return (
-    <div className="mb-4 ml-[42px]">
+    <div className="mb-4">
       <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-xs text-faint hover:text-muted">
         <span className="dot h-1.5 w-1.5 rounded-full bg-accent" />
         <span>思考中{open ? "" : "…"}</span>

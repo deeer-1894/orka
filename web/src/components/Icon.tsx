@@ -12,7 +12,7 @@ export type IconName =
   | "copy" | "refresh" | "gear" | "chevron" | "trash" | "eye" | "check"
   | "download" | "play" | "plug" | "keyboard" | "hand" | "sort" | "filter"
   | "logout" | "more" | "chat" | "history" | "alert" | "info" | "ban" | "thought"
-  | "external" | "undo" | "sliders" | "layers" | "dot" | "panel";
+  | "external" | "undo" | "sliders" | "layers" | "dot" | "panel" | "menu" | "list" | "arrowUp";
 
 const PATHS: Record<IconName, React.ReactNode> = {
   logout: <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 8l-4 4 4 4M6 12h10" />,
@@ -28,6 +28,9 @@ const PATHS: Record<IconName, React.ReactNode> = {
   sliders: <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0M14 4v4M8 10v4M16 16v4" />,
   layers: <path d="m12 3 9 5-9 5-9-5 9-5ZM3 13l9 5 9-5" />,
   dot: <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />,
+  menu: <path d="M4 7h16M4 12h16M4 17h16" />,
+  list: <path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" />,
+  arrowUp: <path d="M12 19V5M6 11l6-6 6 6" />,
   panel: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>,
   sort: <path d="M7 4v16M4 7l3-3 3 3M17 20V4M14 17l3 3 3-3" />,
   filter: <path d="M4 6h16M7 12h10M10 18h4" />,

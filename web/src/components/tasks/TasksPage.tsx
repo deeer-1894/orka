@@ -77,8 +77,8 @@ export function TasksPage({ onOpenConversation, onToggleSidebar, initialDraft, o
   const filtered = kind !== "all" || status !== "all" || query.trim() !== "";
   return <div className="flex h-full min-h-0 flex-col">
     <header className="flex h-14 shrink-0 items-center px-2 sm:px-4">
-      <button onClick={onToggleSidebar} className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-surface2" aria-label={COPY.toggleSidebar}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
+      <button onClick={onToggleSidebar} className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-surface2" title={COPY.sidebarHint} aria-label={COPY.toggleSidebar}>
+        <Icon name="menu" size={18} />
       </button>
     </header>
     <div className="min-h-0 flex-1 overflow-y-auto">

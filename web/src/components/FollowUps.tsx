@@ -64,7 +64,7 @@ function AutomaticSuggestions({ ownerEmail, conversationID, runID, prompt, answe
     return () => clearTimeout(timer);
   }, [result?.retryAfter]);
   if (!result?.items.length) return null;
-  return <div className="mb-6 ml-[42px] flex flex-wrap gap-2" aria-label="追问建议">
+  return <div className="mb-6 flex flex-wrap gap-2" aria-label="追问建议">
     {result.items.map(question => <ActionChip key={question} icon="sparkle" onClick={() => onPick(question)} title={question} className="max-w-full">
       <span className="truncate">{question}</span>
     </ActionChip>)}

@@ -46,7 +46,7 @@ const STATUS_LABEL: Record<DeliverySummary["status"], string> = { done: RUN_STAT
 // to deliver, and every step left open with the reason the run gave.
 export function DeliveryCard({ summary, onOpenFile }: { summary: DeliverySummary; onOpenFile: (name: string) => void }) {
   const complete = summary.status === "done" && summary.unfinished.length === 0;
-  return <section aria-label="交付摘要" className={"mb-6 ml-[42px] rounded-xl border p-3.5 " + (complete ? "border-ok/30 bg-ok/5" : "border-accent/40 bg-accentsoft/40")}>
+  return <section aria-label="交付摘要" className={"mb-6 rounded-xl border p-3.5 " + (complete ? "border-ok/30 bg-ok/5" : "border-accent/40 bg-accentsoft/40")}>
     <div className="flex items-center gap-2 text-sm font-medium text-ink">
       <Icon name={complete ? "check" : "alert"} size={15} className={complete ? "text-ok" : "text-accent"} />
       交付摘要 · {STATUS_LABEL[summary.status]}

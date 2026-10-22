@@ -666,9 +666,7 @@ function Workbench({
             title={COPY.sidebarHint}
             aria-label={COPY.toggleSidebar}
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
+            <Icon name="menu" size={18} />
           </button>
           {/* Show the active conversation (with live status) instead of a
               redundant brand — "Orka" already lives in the sidebar. */}

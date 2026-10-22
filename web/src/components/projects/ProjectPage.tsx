@@ -37,7 +37,7 @@ export function ProjectPage({ project, conversations, email, onSaved, onRename, 
   };
   return <main aria-label={"项目 " + project.name} className="relative flex min-w-0 flex-1 flex-col overflow-y-auto">
     <header className="flex h-14 shrink-0 items-center gap-2 px-2 sm:px-4">
-      <button onClick={onToggleSidebar} className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-surface2" title={COPY.sidebarHint} aria-label={COPY.toggleSidebar}><Icon name="panel" size={18} /></button>
+      <button onClick={onToggleSidebar} className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-surface2" title={COPY.sidebarHint} aria-label={COPY.toggleSidebar}><Icon name="menu" size={18} /></button>
       <Icon name="folder" size={16} className="text-muted" />
       <span className="min-w-0 flex-1 truncate text-md text-ink">{project.name}</span>
       <button onClick={onNewConversation} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm text-white hover:opacity-90"><Icon name="plus" size={14} />{COPY.newChat}</button>

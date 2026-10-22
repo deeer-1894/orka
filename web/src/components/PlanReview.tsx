@@ -16,7 +16,7 @@ export function PlanReviewCard({ resumeKey, proposed, active, onResume }: {
   const live = active && !sent;
   const ready = approvedSteps(steps);
   const set = (i: number, v: string) => setSteps(s => s.map((x, k) => (k === i ? v : x)));
-  return <section aria-label="执行计划审阅" className="mb-6 ml-[42px] rounded-xl border border-accent/40 bg-accentsoft/30 p-3.5">
+  return <section aria-label="执行计划审阅" className="mb-6 rounded-xl border border-accent/40 bg-accentsoft/30 p-3.5">
     <div className="mb-2 flex items-center gap-2 text-sm font-medium text-ink">
       <Icon name="check" size={14} className="text-accent" />
       执行计划{live ? " · 等待你确认" : sent === "approved" ? " · 已确认" : sent === "declined" ? " · 已取消" : ""}
