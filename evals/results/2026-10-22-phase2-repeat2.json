@@ -1,0 +1,181 @@
+{
+  "at": "2026-10-22T01:58:50+08:00",
+  "model": "",
+  "passed": 11,
+  "total": 12,
+  "results": [
+    {
+      "id": "plain_answer",
+      "pass": true,
+      "status": "done",
+      "tools": 0,
+      "tokens": 1310,
+      "seconds": 5.679955083,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        1243,
+        1310
+      ]
+    },
+    {
+      "id": "arithmetic",
+      "pass": true,
+      "status": "done",
+      "tools": 0,
+      "tokens": 1955,
+      "seconds": 13.334190917,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        1656,
+        1955
+      ]
+    },
+    {
+      "id": "file_write_read",
+      "pass": true,
+      "status": "done",
+      "tools": 2,
+      "tokens": 35712,
+      "seconds": 12.258955667,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        35705,
+        35712
+      ]
+    },
+    {
+      "id": "file_multi_step",
+      "pass": true,
+      "status": "done",
+      "tools": 3,
+      "tokens": 23906,
+      "seconds": 9.046305666,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        23871,
+        23906
+      ]
+    },
+    {
+      "id": "plan_completion",
+      "pass": true,
+      "status": "done",
+      "tools": 7,
+      "tokens": 62988,
+      "seconds": 34.891638208,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        62108,
+        62988
+      ]
+    },
+    {
+      "id": "web_search_basic",
+      "pass": false,
+      "reasons": [
+        "run 2: called none of web_search/fetch_url/http_request"
+      ],
+      "status": "done",
+      "tools": 4,
+      "tokens": 53241,
+      "seconds": 23.987815708,
+      "runs": 2,
+      "passes": 1,
+      "token_range": [
+        25921,
+        53241
+      ]
+    },
+    {
+      "id": "refuses_to_invent",
+      "pass": true,
+      "status": "done",
+      "tools": 1,
+      "tokens": 23662,
+      "seconds": 12.181786709,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        23633,
+        23662
+      ]
+    },
+    {
+      "id": "research_cites_sources",
+      "pass": true,
+      "status": "done",
+      "tools": 26,
+      "tokens": 309464,
+      "seconds": 171.828830125,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        176542,
+        309464
+      ]
+    },
+    {
+      "id": "parallel_writes",
+      "pass": true,
+      "status": "done",
+      "tools": 3,
+      "tokens": 23875,
+      "seconds": 7.368249125,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        23871,
+        23875
+      ]
+    },
+    {
+      "id": "memory_recall",
+      "pass": true,
+      "status": "done",
+      "tools": 1,
+      "tokens": 35526,
+      "seconds": 13.39485225,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        35503,
+        35526
+      ]
+    },
+    {
+      "id": "long_sales_report",
+      "pass": true,
+      "status": "done",
+      "tools": 41,
+      "tokens": 561969,
+      "seconds": 454.514727333,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        494586,
+        561969
+      ]
+    },
+    {
+      "id": "long_ratelimit_delivery",
+      "pass": true,
+      "status": "done",
+      "tools": 50,
+      "tokens": 569293,
+      "seconds": 368.548147167,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        384998,
+        569293
+      ]
+    }
+  ],
+  "total_tools": 138,
+  "total_tokens": 1702901
+}

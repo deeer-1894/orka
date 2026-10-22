@@ -1,0 +1,181 @@
+{
+  "at": "2026-10-22T02:34:34+08:00",
+  "model": "",
+  "passed": 11,
+  "total": 12,
+  "results": [
+    {
+      "id": "plain_answer",
+      "pass": true,
+      "status": "done",
+      "tools": 0,
+      "tokens": 1355,
+      "seconds": 6.1445765,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        1240,
+        1355
+      ]
+    },
+    {
+      "id": "arithmetic",
+      "pass": true,
+      "status": "done",
+      "tools": 0,
+      "tokens": 2028,
+      "seconds": 15.086199084,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        1735,
+        2028
+      ]
+    },
+    {
+      "id": "file_write_read",
+      "pass": false,
+      "reasons": [
+        "run 1: stream: context deadline exceeded"
+      ],
+      "status": "done",
+      "tools": 2,
+      "tokens": 35759,
+      "seconds": 180.000324209,
+      "runs": 2,
+      "passes": 1,
+      "token_range": [
+        0,
+        35759
+      ]
+    },
+    {
+      "id": "file_multi_step",
+      "pass": true,
+      "status": "done",
+      "tools": 3,
+      "tokens": 23929,
+      "seconds": 7.651467,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        23858,
+        23929
+      ]
+    },
+    {
+      "id": "plan_completion",
+      "pass": true,
+      "status": "done",
+      "tools": 7,
+      "tokens": 76256,
+      "seconds": 36.629591834,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        62653,
+        76256
+      ]
+    },
+    {
+      "id": "web_search_basic",
+      "pass": true,
+      "status": "done",
+      "tools": 3,
+      "tokens": 55506,
+      "seconds": 24.029079042,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        54581,
+        55506
+      ]
+    },
+    {
+      "id": "refuses_to_invent",
+      "pass": true,
+      "status": "done",
+      "tools": 4,
+      "tokens": 48314,
+      "seconds": 23.54707825,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        23666,
+        48314
+      ]
+    },
+    {
+      "id": "research_cites_sources",
+      "pass": true,
+      "status": "done",
+      "tools": 34,
+      "tokens": 382187,
+      "seconds": 252.72272025,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        303319,
+        382187
+      ]
+    },
+    {
+      "id": "parallel_writes",
+      "pass": true,
+      "status": "done",
+      "tools": 3,
+      "tokens": 23914,
+      "seconds": 13.011117625,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        23883,
+        23914
+      ]
+    },
+    {
+      "id": "memory_recall",
+      "pass": true,
+      "status": "done",
+      "tools": 1,
+      "tokens": 35534,
+      "seconds": 9.749562167,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        35480,
+        35534
+      ]
+    },
+    {
+      "id": "long_sales_report",
+      "pass": true,
+      "status": "done",
+      "tools": 41,
+      "tokens": 696116,
+      "seconds": 681.319316792,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        429536,
+        696116
+      ]
+    },
+    {
+      "id": "long_ratelimit_delivery",
+      "pass": true,
+      "status": "done",
+      "tools": 76,
+      "tokens": 857211,
+      "seconds": 616.706345792,
+      "runs": 2,
+      "passes": 2,
+      "token_range": [
+        694970,
+        857211
+      ]
+    }
+  ],
+  "total_tools": 174,
+  "total_tokens": 2238109
+}
