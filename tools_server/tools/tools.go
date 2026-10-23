@@ -99,7 +99,7 @@ func Register(s *mcpserver.MCPServer, baseStorage string, blacklist map[string]b
 	add(mcp.NewTool("file_write", mcp.WithDescription(workspaceio.WriteDescription),
 		func(t *mcp.Tool) {
 			t.InputSchema.Properties = workspaceio.WriteProperties()
-			t.InputSchema.Required = []string{"path", "content"}
+			t.InputSchema.Required = []string{"path"} // content or new_text, checked per mode by ParseIntent
 		},
 	), fileWrite(baseStorage))
 

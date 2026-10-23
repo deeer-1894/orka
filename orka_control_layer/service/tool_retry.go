@@ -77,6 +77,14 @@ func classifyToolError(msg string) toolFailureKind {
 	case strings.Contains(msg, "permission denied"), strings.Contains(msg, "missing scope"):
 		return failDenied
 	}
+	// A command that RAN and then failed or hit its own timeout reports an
+	// exit_code / timed_out envelope. Its failure is the program's — a
+	// deadlocked test hangs again on retry, and re-running a command repeats its
+	// side effects — even though the envelope may mention "context deadline
+	// exceeded" for the sandbox's own clock.
+	if strings.Contains(msg, `"exit_code":`) || strings.Contains(msg, `"timed_out":true`) {
+		return failOther
+	}
 	low := strings.ToLower(msg)
 	for _, m := range transientMarkers {
 		if strings.Contains(low, strings.ToLower(m)) {

@@ -1,0 +1,66 @@
+# A long project in one conversation, built to make the context compress
+# several times: 24 turns, so the first turns fall out of the 20-turn chat
+# window and out of the 8-run digest, and heavy turns that pass the
+# in-run summary threshold when the server runs with ORKA_SUMMARY_TOKENS
+# lowered (count `"agent":"summarizer"` model calls in the server log).
+#
+# Decisions are made early and checked late, from memory alone: the code
+# name, the money unit, the port and the low-stock threshold (turns 1 and 12),
+# the reason for the version column (turn 8).
+#
+#   ORKA_SUMMARY_TOKENS=32000 (server) ;
+#   eval --live --tasks evals/project.yaml --out evals/results/<date>-project.json
+tasks:
+  - id: long_project
+    max_repeat: 1
+    timeout_s: 600
+    prompt: "我们开始一个库存管理服务项目，代号 ORCA-STOCK-7。几条约定请一直遵守：所有金额一律用整数“分”存储；服务端口固定 8765；代码都放在 stock/ 目录下；只用 Python 标准库。先建好目录结构和 README 骨架。"
+    expect:
+      files: ["stock/README.md"]
+    turns:
+      - prompt: "实现 stock/models.py：Product(sku, name, price_cents, qty)，带基本校验。"
+        expect: {files: ["stock/models.py"]}
+      - prompt: "实现 stock/storage.py：用 sqlite3 持久化 Product，提供增删改查。"
+        expect: {files: ["stock/storage.py"]}
+      - prompt: "给 storage 写测试 stock/test_storage.py 并运行，告诉我结果。"
+        expect: {files: ["stock/test_storage.py"], tools_any_of: ["python", "shell"]}
+      - prompt: "实现 stock/api.py：基于 http.server 的 JSON 接口，GET /products 和 POST /products。"
+        expect: {files: ["stock/api.py"]}
+      - prompt: "给 API 写测试 stock/test_api.py（在测试里启动服务）并运行。"
+        expect: {files: ["stock/test_api.py"], tools_any_of: ["python", "shell"]}
+      - prompt: "联网调研：库存系统扣减库存时常见的并发问题和解决方案，至少三种，附来源链接。"
+        expect: {tools_any_of: ["web_search", "fetch_url", "search_evidence", "browser", "http_request"], contains: ["http"]}
+      - prompt: "根据调研，用乐观锁给 storage 加 version 字段，扣减库存时检查版本冲突；更新测试并运行。"
+        expect: {tools_any_of: ["python", "shell"], contains: ["version"]}
+      - prompt: "加 CSV 导入导出（stock/csv_io.py），补测试并运行。"
+        expect: {files: ["stock/csv_io.py"], tools_any_of: ["python", "shell"]}
+      - prompt: "生成 1000 条示例商品数据导入数据库，计算总库存价值，按“元”显示两位小数。"
+        expect: {tools_any_of: ["python", "shell"]}
+      - prompt: "不要读文件，也不要调用任何工具：项目代号、端口、金额单位分别是什么？"
+        expect: {contains: ["ORCA-STOCK-7", "8765", "分"], max_tools: 0}
+      - prompt: "加低库存告警：库存低于 5 件的商品要能查出来，阈值先定为 5。补测试并运行。"
+        expect: {tools_any_of: ["python", "shell"]}
+      - prompt: "写 stock/docs/ARCHITECTURE.md：模块关系、数据流，以及到目前为止的设计决策和原因。"
+        expect: {files: ["stock/docs/ARCHITECTURE.md"]}
+      - prompt: "重构：把 api.py 里的路由处理拆到 stock/routes.py，所有测试保持通过。"
+        expect: {files: ["stock/routes.py"], tools_any_of: ["python", "shell"]}
+      - prompt: "加 GET /stats 接口，返回总库存价值（分）和低库存商品数，补测试并运行。"
+        expect: {tools_any_of: ["python", "shell"]}
+      - prompt: "对 1 万条数据跑一次查询和扣减的基准测试，结果写到 stock/docs/bench.md。"
+        expect: {files: ["stock/docs/bench.md"], tools_any_of: ["python", "shell"]}
+      - prompt: "需求变更：低库存阈值改成可以用环境变量 STOCK_LOW 配置，没设置时保持原来的默认值。更新测试并运行。"
+        expect: {tools_any_of: ["python", "shell"]}
+      - prompt: "给 POST /products 加输入校验：价格必须是非负整数分，数量必须是非负整数；补测试并运行。"
+        expect: {tools_any_of: ["python", "shell"]}
+      - prompt: "运行全部测试，报告通过和失败的数量。"
+        expect: {tools_any_of: ["python", "shell"]}
+      - prompt: "写 stock/CHANGELOG.md，按时间顺序记录到目前为止的所有变更。"
+        expect: {files: ["stock/CHANGELOG.md"]}
+      - prompt: "把 README 补完整：功能列表、启动方式、接口说明、配置项。"
+        expect: {files: ["stock/README.md"]}
+      - prompt: "检查一遍代码里有没有用浮点数存金额的地方，有就改掉并跑测试。"
+        expect: {tools_any_of: ["python", "shell", "file_read"]}
+      - prompt: "不要读文件，也不要调用任何工具，凭记忆回答：项目代号、服务端口、金额单位、低库存的默认阈值、并发问题用了什么方案以及为什么。"
+        expect: {contains: ["ORCA-STOCK-7", "8765", "分", "5", "乐观锁"], max_tools: 0}
+      - prompt: "不要读文件，也不要调用任何工具：按时间顺序列出这个项目里我们做过的主要设计决策。"
+        expect: {contains: ["分", "8765", "version", "STOCK_LOW"], max_tools: 0}

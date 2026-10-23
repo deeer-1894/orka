@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/cloudwego/eino/adk"
@@ -91,7 +93,13 @@ func (g *budgetGuard) BeforeModelRewriteState(ctx context.Context, state *adk.Ch
 // the cheap layer and must get its chance first, or a model call is paying to do
 // a placeholder's job.
 func summarizationTrigger() *summarization.TriggerCondition {
-	return &summarization.TriggerCondition{ContextMessages: 48, ContextTokens: 120_000}
+	tokens := 120_000
+	// ORKA_SUMMARY_TOKENS lowers the trigger for tuning and evals: trimming keeps
+	// real runs far below 120k, so without it the summary path is never exercised.
+	if v, err := strconv.Atoi(os.Getenv("ORKA_SUMMARY_TOKENS")); err == nil && v >= 8_000 {
+		tokens = v
+	}
+	return &summarization.TriggerCondition{ContextMessages: 48, ContextTokens: tokens}
 }
 
 func summarizationHandlers(ctx context.Context, client llm.Client, model string) []adk.ChatModelAgentMiddleware {

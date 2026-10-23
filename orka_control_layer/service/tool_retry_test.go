@@ -25,6 +25,11 @@ func TestClassifyToolError(t *testing.T) {
 		// classified as one — that confusion is what this work started from.
 		{"auth failed (retryable — the caller should refresh its context token): token expired", failAuth},
 		{`tool "file_write" error: permission denied: missing scope file:write`, failDenied},
+		// A command that ran: its own timeout or failure is not infrastructure,
+		// even when the envelope mentions the sandbox's deadline. Retrying a
+		// deadlocked test only hangs again (measured: 3 x 30s per call).
+		{`tool "shell" error: {"ok":false,"exit_code":-1,"timed_out":true,"error":"context deadline exceeded"}`, failOther},
+		{`tool "python" error: {"ok":false,"exit_code":1,"stdout":"Traceback ... EOF"}`, failOther},
 		{"no such file or directory", failOther},
 		{"invalid arguments", failOther},
 	}

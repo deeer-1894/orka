@@ -11,15 +11,16 @@ import (
 	"github.com/orka-oss/orka_core/pathsafe"
 )
 
-const WriteDescription = "Write a UTF-8 text file (creates dirs). mode=create is the default and refuses an existing file without changing it. To change part of an existing file use mode=edit: old_text is the exact current text (it must appear exactly once; include a few surrounding lines to make it unique) and content is what replaces it — far cheaper than rewriting the file. mode=append adds only new text at the end (no automatic newline); mode=replace overwrites with the complete new content (file_read first). edit, replace and append keep the prior version in history. Clients that previously overwrote without a mode must explicitly pass mode=replace."
+const WriteDescription = "Write a UTF-8 text file (creates dirs). mode=create is the default and refuses an existing file without changing it. To change part of an existing file use mode=edit with old_text (the exact current text, appearing exactly once; include a few surrounding lines to make it unique) and new_text (what replaces it) — far cheaper than rewriting the file. mode=append adds only new text at the end (no automatic newline); mode=replace overwrites with the complete new content (file_read first). edit, replace and append keep the prior version in history. Clients that previously overwrote without a mode must explicitly pass mode=replace."
 
 // WriteProperties returns a fresh schema so callers cannot mutate shared state.
 func WriteProperties() map[string]any {
 	return map[string]any{
 		"path":     map[string]any{"type": "string", "description": "relative file path"},
-		"content":  map[string]any{"type": "string", "description": "complete content for create/replace; only new text for append; the replacement for old_text in edit"},
+		"content":  map[string]any{"type": "string", "description": "complete content for create/replace; only the new text for append"},
 		"mode":     map[string]any{"type": "string", "enum": []string{"create", "edit", "replace", "append"}, "default": "create", "description": "create: new file only; edit: replace old_text once; replace: complete overwrite; append: add text"},
 		"old_text": map[string]any{"type": "string", "description": "mode=edit only: exact text currently in the file, appearing exactly once"},
+		"new_text": map[string]any{"type": "string", "description": "mode=edit only: the text that replaces old_text (empty deletes it)"},
 	}
 }
 
@@ -37,6 +38,11 @@ func ParseIntent(args map[string]any) (Intent, error) {
 		}
 	}
 	content, ok := args["content"].(string)
+	// edit names its replacement new_text (content is accepted too): models
+	// pair old_text with new_text, and rejecting that cost whole-file rewrites.
+	if newText, isNew := args["new_text"].(string); mode == "edit" && isNew {
+		content, ok = newText, true
+	}
 	if !ok {
 		return Intent{}, fmt.Errorf("content must be an explicit string; historical calls may omit it. Use file_read to retrieve existing content before editing; no file was changed")
 	}

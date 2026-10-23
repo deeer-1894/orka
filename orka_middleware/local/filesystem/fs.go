@@ -51,7 +51,7 @@ type writeTool struct{ root string }
 func (writeTool) Name() string        { return "file_write" }
 func (writeTool) Description() string { return workspaceio.WriteDescription }
 func (writeTool) Schema() map[string]any {
-	return objSchema(workspaceio.WriteProperties(), "path", "content")
+	return objSchema(workspaceio.WriteProperties(), "path") // content or new_text, checked per mode
 }
 func (t writeTool) Invoke(_ context.Context, args map[string]any) (string, error) {
 	intent, err := workspaceio.ParseIntent(args)
