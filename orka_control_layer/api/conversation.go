@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -49,6 +50,10 @@ func (a *API) SearchConversations(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	hits, err := a.Store.SearchMessages(ctx, authEmail(c), q, req.Limit)
+	if errors.Is(err, db.ErrSearchTooBroad) {
+		fail(c, consts.StatusUnprocessableEntity, err.Error())
+		return
+	}
 	if err != nil {
 		a.Log.Error("search messages", "err", err)
 		fail(c, consts.StatusInternalServerError, "search failed")

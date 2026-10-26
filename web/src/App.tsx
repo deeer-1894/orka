@@ -3,7 +3,7 @@ import { useConversationDraft } from './hooks/useConversationDraft';
 import { SessionRecoveryStore } from './lib/sessionRecovery';
 import { useConversationSettings } from './hooks/useConversationSettings';
 import { Suspense, lazy, useCallback, useSyncExternalStore, useEffect, useRef, useState } from "react";
-import { api, auth, setOnUnauthorized } from "./api";
+import { api, auth, ensureMediaToken, setOnUnauthorized } from "./api";
 import { useChatStreams } from "./hooks/useChatStream";
 import { useRunRecovery } from "./hooks/useRunRecovery";
 import { useEventStream } from "./hooks/useEventStream";
@@ -99,7 +99,7 @@ export default function App() {
     }
     api
       .me()
-      .then((u) => setUser({ email: u.email, name: u.name }))
+      .then(async (u) => { await ensureMediaToken(); setUser({ email: u.email, name: u.name }); })
       .catch(() => auth.clear())
       .finally(() => setAuthReady(true));
   }, []);
@@ -109,9 +109,16 @@ export default function App() {
       {!authReady ? (
         <div className="h-screen" />
       ) : !user ? (
-        <Login onAuthed={(s) => setUser({ email: s.email, name: s.name })} />
+        <Login onAuthed={(s) => { void ensureMediaToken().then(() => setUser({ email: s.email, name: s.name })); }} />
       ) : (
-        <Workbench key={user.email} user={user} onSignOut={() => { auth.clear(); clearFollowUps(); setUser(null); }} />
+        <Workbench key={user.email} user={user} onSignOut={() => {
+          // Revoke on the server (every device). The request carries the token
+          // as it starts, so local drafts can be forgotten at once instead of
+          // surviving until the server answers.
+          const revoke = api.logout();
+          auth.clear(); clearFollowUps(); setUser(null);
+          void revoke.catch(() => {});
+        }} />
       )}
       <Toaster />
       <ConfirmHost />

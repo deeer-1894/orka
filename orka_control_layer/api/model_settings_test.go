@@ -217,16 +217,16 @@ func TestDiscoverModelsMetadata(t *testing.T) {
 		{"custom remote", "https://custom.test/v1", `{"data":[]}`, "remote", 200, []string{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			prior := http.DefaultTransport
+			prior := modelsettings.DiscoverTransport
 			calls := 0
-			http.DefaultTransport = settingsDiscoveryTransport(func(r *http.Request) (*http.Response, error) {
+			modelsettings.DiscoverTransport = settingsDiscoveryTransport(func(r *http.Request) (*http.Response, error) {
 				calls++
 				if r.URL.String() != tc.base+"/models" || r.Header.Get("Authorization") != "Bearer fake-test-key" {
 					t.Fatalf("unexpected request %s", r.URL)
 				}
 				return &http.Response{StatusCode: tc.status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(tc.body)), Request: r}, nil
 			})
-			t.Cleanup(func() { http.DefaultTransport = prior })
+			t.Cleanup(func() { modelsettings.DiscoverTransport = prior })
 			a := settingsAPI(t)
 			payload, _ := json.Marshal(map[string]string{"base_url": tc.base, "api_key": "fake-test-key"})
 			c := settingsRequest("alice", string(payload))

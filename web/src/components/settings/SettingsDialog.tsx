@@ -8,13 +8,15 @@ import { Button } from "../ui/button";
 import { Icon, type IconName } from "../Icon";
 import { MemorySettings, PersonalSettings } from "./PersonalSettings";
 import { SkillSettings } from "./SkillSettings";
+import { AccountSettings } from "./AccountSettings";
 
-export type Section = "personal" | "memory" | "skills" | "connectors" | "about";
+export type Section = "personal" | "memory" | "skills" | "connectors" | "account" | "about";
 const SECTIONS: { id: Section; label: string; icon: IconName }[] = [
   { id: "personal", label: "个性化", icon: "users" },
   { id: "memory", label: "记忆", icon: "sparkle" },
   { id: "skills", label: "技能", icon: "book" },
   { id: "connectors", label: "连接器", icon: "plug" },
+  { id: "account", label: "账号", icon: "shield" },
   { id: "about", label: "关于", icon: "gear" },
 ];
 const TRANSPORTS: { id: string; label: string }[] = [
@@ -41,7 +43,7 @@ export function SettingsDialog({ onClose, initial = "personal" }: { onClose: () 
         <div className="relative min-h-0 flex-1 overflow-y-auto px-6 py-5">
           <Dialog.Close asChild><Button variant="ghost" size="icon" aria-label="关闭设置" className="absolute right-3 top-3"><Icon name="close" size={16} /></Button></Dialog.Close>
           <Dialog.Description className="sr-only">个性化、记忆、连接器和服务信息</Dialog.Description>
-          {section === "personal" ? <PersonalSettings /> : section === "memory" ? <MemorySettings /> : section === "skills" ? <SkillSettings /> : section === "connectors" ? <Connectors /> : <About />}
+          {section === "personal" ? <PersonalSettings /> : section === "memory" ? <MemorySettings /> : section === "skills" ? <SkillSettings /> : section === "connectors" ? <Connectors /> : section === "account" ? <AccountSettings /> : <About />}
         </div>
       </Dialog.Content>
     </Dialog.Portal>

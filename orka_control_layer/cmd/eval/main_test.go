@@ -64,6 +64,10 @@ func TestOfflineEvalSessionScopedFileContract(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Write([]byte("data: {\"type\":\"chat\",\"role\":\"assistant\",\"content\":\"fixture ready\"}\n\ndata: {\"type\":\"task\",\"action\":\"done\"}\n\n"))
+		case "models":
+			w.Write([]byte(`{"code":0,"data":[{"version":"auto"},{"version":"fixture-model"}]}`))
+		case "system/status":
+			w.Write([]byte(`{"code":0,"data":{"version":"abc123","modified":true}}`))
 		case "run/list":
 			w.Write([]byte(`{"code":0,"data":{"runs":[{"status":"done","tokens":12}]}}`))
 		default:
@@ -78,6 +82,9 @@ func TestOfflineEvalSessionScopedFileContract(t *testing.T) {
 	}
 	if counts["conversation/create-conversation"] != 1 || counts["file/download"] != 2 || counts["file/list"] != 2 || counts["file/delete"] == 0 || counts["chat/run"] != 2 {
 		t.Fatalf("fixture paths not covered: %v", counts)
+	}
+	if sc.ResolvedModel != "fixture-model" || sc.ServerVersion != "abc123" || !sc.ServerModified {
+		t.Fatalf("scorecard must say what ran: %+v", sc)
 	}
 }
 func TestOfflineEvalRejectsPartialAsDone(t *testing.T) {

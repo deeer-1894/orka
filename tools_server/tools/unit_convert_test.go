@@ -60,6 +60,11 @@ func TestGuardedDialBlocksLoopback(t *testing.T) {
 }
 
 func TestIsPublicIP(t *testing.T) {
+	for _, internal := range []string{"100.64.0.1", "100.100.100.200", "::ffff:10.0.0.1", "64:ff9b::a00:1"} {
+		if isPublicIP(net.ParseIP(internal)) {
+			t.Errorf("%s must be refused like the watcher and model endpoints refuse it", internal)
+		}
+	}
 	if isPublicIP(net.ParseIP("127.0.0.1")) {
 		t.Error("loopback should not be public")
 	}

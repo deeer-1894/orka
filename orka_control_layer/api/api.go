@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"github.com/orka-oss/orka_control_layer/connectoroauth"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
@@ -32,6 +33,8 @@ type API struct {
 	authLimiter    *rateLimiter  // throttles login/register attempts
 	hub            *streamHub    // SSE replay buffer for reconnects
 	events         *eventHub     // per-user UI-invalidation event bus
+	versionsMu     sync.Mutex
+	versions       map[string]cachedVersion // token versions, briefly cached
 }
 
 // authEmail returns the authenticated user's email set by AuthMiddleware.

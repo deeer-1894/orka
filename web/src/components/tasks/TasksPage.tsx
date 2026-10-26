@@ -29,7 +29,7 @@ const kindOf = (t: TaskMeta): TriggerKind => t.trigger?.kind || "schedule";
 export function blankDraft(prompt = ""): TaskDraft {
   return { title: "", prompt, trigger: { kind: "schedule", cron: "0 9 * * 1-5" }, enabled: true, retry_count: 0 };
 }
-const draftFromTemplate = (t: TaskTemplate): TaskDraft => ({ title: t.title, prompt: t.prompt, trigger: { ...t.trigger }, enabled: true, retry_count: 0 });
+const draftFromTemplate = (t: TaskTemplate): TaskDraft => ({ title: t.title, prompt: t.prompt, trigger: { ...t.trigger }, enabled: true, retry_count: 0, ...(t.tool_policy ? { tool_policy: { allow: [...t.tool_policy.allow] } } : {}) });
 
 // TasksPage is the full-page home of triggered tasks: the user's tasks with
 // search, filters and sort, and templates to start from.

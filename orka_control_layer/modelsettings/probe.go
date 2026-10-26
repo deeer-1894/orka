@@ -20,7 +20,7 @@ import (
 )
 
 var ErrProtocolUnsupported = errors.New("native protocol is not implemented; use an explicit OpenAI-compatible connection")
-var probeProviderTransport = llm.NewOpenAIClient("", "").HTTP.Transport
+var probeProviderTransport = Guard(llm.NewOpenAIClient("", "").HTTP.Transport)
 
 var ErrProfileChanged = errors.New("profile changed during probe; run the probe again")
 

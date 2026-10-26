@@ -1,6 +1,8 @@
 package scheduled_task
 
 import (
+	"github.com/orka-oss/orka_core/netguard"
+
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -117,9 +119,4 @@ func WatchClient() *http.Client {
 	}
 }
 
-var sharedAddressSpace = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
-
-func publicIP(ip net.IP) bool {
-	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() || sharedAddressSpace.Contains(ip))
-}
+func publicIP(ip net.IP) bool { return netguard.IsPublic(ip) }

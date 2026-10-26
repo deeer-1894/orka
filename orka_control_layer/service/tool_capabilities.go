@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"os"
 	"strings"
 
 	"github.com/orka-oss/orka_core/agent"
@@ -10,14 +11,26 @@ import (
 
 type quantCapabilityKey struct{}
 
+// QuantEnabled reports whether the deployment opted into the quant tools and
+// API (ORKA_QUANT=1).
+func QuantEnabled() bool { return os.Getenv("ORKA_QUANT") == "1" }
+
+// WorkflowsEnabled reports whether the deployment opted into the workflow API
+// (ORKA_WORKFLOWS=1); the web app no longer has a screen for it.
+func WorkflowsEnabled() bool { return os.Getenv("ORKA_WORKFLOWS") == "1" }
+
 // WithQuantCapability includes quant tools for a dedicated workflow with a restricted range.
 func WithQuantCapability(ctx context.Context) context.Context {
 	return context.WithValue(ctx, quantCapabilityKey{}, true)
 }
 func localCapabilityTools(ctx context.Context, req ChatRunRequest) []agent.BaseTool {
 	tools := append(SkillTools(), ArtifactTools...)
-	enabled, _ := ctx.Value(quantCapabilityKey{}).(bool)
-	enabled = enabled || len(req.EnabledTools) == 0
+	// Quant tools are off unless the deployment opts in (ORKA_QUANT=1) or a
+	// dedicated pipeline asks: their backtests are not trustworthy enough to
+	// hand an agent by default (look-ahead, unevaluated expressions, random
+	// metrics for unknown ones) and no review screen gates them any more.
+	pipeline, _ := ctx.Value(quantCapabilityKey{}).(bool)
+	enabled := QuantEnabled() && len(req.EnabledTools) == 0
 	for _, name := range req.EnabledTools {
 		if name == "quant" {
 			enabled = true
@@ -28,7 +41,7 @@ func localCapabilityTools(ctx context.Context, req ChatRunRequest) []agent.BaseT
 			}
 		}
 	}
-	if enabled {
+	if pipeline || (enabled && QuantEnabled()) {
 		tools = append(tools, QuantTools...)
 	}
 	return tools

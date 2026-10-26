@@ -39,6 +39,8 @@ async function app(t, { history = async () => [], runs = [] } = {}) {
       case '/task/get-tasks': return json({ tasks: [], owners: {} });
       case '/skill/list': return json({ skills: [] });
       case '/project/list': return json([]);
+      case '/auth/media-token': return json({ token: 'media-fixture', expires_at: Date.now() + 3600e3 });
+      case '/auth/logout': return json({ logged_out: true });
       case '/notification/list': return json({ notifications: [], unread: 0 });
       case '/metrics': return json({ total_tokens: 0 });
       case '/artifact/list': return json({ artifacts: [] });

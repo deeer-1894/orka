@@ -63,6 +63,10 @@ export function MemorySettings() {
     try { await api.deleteMemory(id); setMemories(ms => (ms || []).filter(m => m.memory_id !== id)); }
     catch (e) { toast((e as Error).message || "删除失败", "error"); }
   };
+  const confirm = async (id: string) => {
+    try { await api.confirmMemory(id); setMemories(ms => (ms || []).map(m => m.memory_id === id ? { ...m, pending: false } : m)); }
+    catch (e) { toast((e as Error).message || "操作失败", "error"); }
+  };
   const q = query.trim().toLowerCase();
   const shown = (memories || []).filter(m => !q || m.content.toLowerCase().includes(q));
   return <section aria-label="记忆" className="space-y-4">
@@ -86,7 +90,8 @@ export function MemorySettings() {
         : memories.length === 0 ? <p className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-faint">还没有保存任何记忆。</p>
           : <ul className="divide-y divide-border rounded-xl border border-border">
             {shown.map(m => <li key={m.memory_id} className="flex items-start gap-2 px-4 py-2.5">
-              <span className="min-w-0 flex-1 text-sm text-ink">{m.content}{m.project_id && <span className="ml-1.5 rounded bg-surface2 px-1.5 py-0.5 text-2xs text-faint">仅项目</span>}</span>
+<span className="min-w-0 flex-1 text-sm text-ink">{m.content}{m.project_id && <span className="ml-1.5 rounded bg-surface2 px-1.5 py-0.5 text-2xs text-faint">仅项目</span>}{m.pending && <span className="ml-1.5 rounded bg-accentsoft px-1.5 py-0.5 text-2xs text-accent">待确认</span>}</span>
+              {m.pending && <button onClick={() => void confirm(m.memory_id)} className="shrink-0 rounded-md px-2 py-1 text-xs text-accent hover:bg-surface2">记住</button>}
               <button onClick={() => void remove(m.memory_id)} aria-label={"删除记忆：" + m.content} title="删除" className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-faint hover:bg-surface2 hover:text-accent"><Icon name="trash" size={14} /></button>
             </li>)}
           </ul>}

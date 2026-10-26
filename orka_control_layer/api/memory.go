@@ -49,6 +49,22 @@ func (a *API) ListMemories(ctx context.Context, c *app.RequestContext) {
 	ok(c, out)
 }
 
+// ConfirmMemory accepts a memory a run proposed.
+func (a *API) ConfirmMemory(ctx context.Context, c *app.RequestContext) {
+	var req struct {
+		MemoryID string `json:"memory_id"`
+	}
+	if err := bind(c, &req); err != nil || req.MemoryID == "" {
+		fail(c, consts.StatusBadRequest, "memory_id required")
+		return
+	}
+	if err := a.Store.ConfirmMemory(ctx, authEmail(c), req.MemoryID); err != nil {
+		fail(c, consts.StatusNotFound, "memory not found")
+		return
+	}
+	ok(c, map[string]string{"memory_id": req.MemoryID})
+}
+
 // DeleteMemory permanently removes one of the caller's memories.
 func (a *API) DeleteMemory(ctx context.Context, c *app.RequestContext) {
 	var req struct {

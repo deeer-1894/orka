@@ -930,17 +930,24 @@ function AgentLane({ agent, items }: { agent: string; items: Message[] }) {
   );
 }
 
-// RememberUndo lets the user take back a memory the moment it is saved.
-function RememberUndo({ result }: { result: string }) {
-  const [state, setState] = useState<"" | "busy" | "undone">("");
-  let id = "";
-  try { id = (JSON.parse(result) as { memory_id?: string }).memory_id || ""; } catch { /* not a saved memory */ }
+// RememberReceipt is where a memory a run proposed waits for the user: it is
+// used in later conversations only after 记住.
+function RememberReceipt({ result }: { result: string }) {
+  const [state, setState] = useState<"" | "busy" | "kept" | "dropped">("");
+  let id = "", pending = false;
+  try { const r = JSON.parse(result) as { memory_id?: string; pending?: boolean }; id = r.memory_id || ""; pending = !!r.pending; } catch { /* not a saved memory */ }
   if (!id) return null;
-  if (state === "undone") return <span className="text-faint"> · 已撤销</span>;
-  return <button disabled={state === "busy"} onClick={async () => {
+  if (state === "kept") return <span className="text-faint"> · 已记住</span>;
+  if (state === "dropped") return <span className="text-faint"> · 已忽略</span>;
+  const act = async (keep: boolean) => {
     setState("busy");
-    try { await api.deleteMemory(id); setState("undone"); } catch { setState(""); }
-  }} className="ml-1 text-xs text-accent hover:underline disabled:opacity-50">撤销</button>;
+    try { await (keep ? api.confirmMemory(id) : api.deleteMemory(id)); setState(keep ? "kept" : "dropped"); } catch { setState(""); }
+  };
+  return <span className="ml-1 inline-flex items-center gap-2">
+    {pending && <span className="text-faint">待确认</span>}
+    {pending && <button disabled={state === "busy"} onClick={() => void act(true)} className="text-xs text-accent hover:underline disabled:opacity-50">记住</button>}
+    <button disabled={state === "busy"} onClick={() => void act(false)} className="text-xs text-muted hover:underline disabled:opacity-50">{pending ? "忽略" : "撤销"}</button>
+  </span>;
 }
 
 // toolReceipt turns a tool payload into a readable {icon,label,detail} receipt,
@@ -955,7 +962,7 @@ function toolReceipt(p: ToolPayload): { icon: IconName; label: string; detail: s
     file_read: { icon: "file", label: "读取", detail: trunc(res, 70) },
     file_list: { icon: "folder", label: `列目录 ${s("path") || "/"}`, detail: trunc(res, 70) },
     web_search: { icon: "search", label: `搜索 “${s("query")}”`, detail: trunc(res, 70) },
-    remember: { icon: "sparkle", label: "已记住", detail: trunc(s("content"), 80) },
+    remember: { icon: "sparkle", label: "提议记住", detail: trunc(s("content"), 80) },
     fetch_url: { icon: "link", label: "读取网页", detail: trunc(s("url") || res, 70) },
     weather: { icon: "sun", label: `天气 ${s("location")}`, detail: "" },
     current_time: { icon: "clock", label: "当前时间", detail: trunc(res, 60) },
@@ -1077,7 +1084,7 @@ function Step({ m }: { m: Message }) {
           <span className="text-muted"> · {r.detail}</span>
         ) : null}
         {!p.error && p.tool === "file_write" && r.file && <FileWriteActions file={r.file} onOpenDiff={() => openFile(r.file!, { history: true })} />}
-        {!p.error && p.tool === "remember" && <RememberUndo result={p.result || ""} />}
+        {!p.error && p.tool === "remember" && <RememberReceipt result={p.result || ""} />}
       </div>
     );
   }

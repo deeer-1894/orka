@@ -14,6 +14,11 @@ import (
 // ErrEscapes is returned when a path would resolve outside the root.
 var ErrEscapes = errors.New("pathsafe: path escapes the allowed root")
 
+// ErrSymlink is returned when the root or a component below it is a symbolic
+// link. It matches ErrEscapes (errors.Is) so callers keep treating it as an
+// escape, but says why — a bare "escapes the root" sent people hunting for "..".
+var ErrSymlink = fmt.Errorf("%w: a symbolic link inside the workspace", ErrEscapes)
+
 // Resolve joins rel onto root and returns the cleaned absolute path, but only
 // if it stays within root. filepath.Join naturally absorbs a leading separator
 // (so an absolute-looking rel is confined to root rather than escaping), while
@@ -32,7 +37,11 @@ func Resolve(root, rel string) (string, error) {
 	if r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
 		return "", ErrEscapes
 	}
-	// Refuse symlinks in every existing component, including the root itself.
+	// Refuse symlinks in every existing component from the target up to and
+	// including root: code in the sandbox can create links inside a workspace.
+	// Directories ABOVE root belong to the deployment and are trusted; checking
+	// them added no safety and broke every store under a linked directory
+	// (macOS /var -> /private/var, a Linux /data -> /mnt/volume mount).
 	// Callers needing protection against concurrent renames must also use os.Root.
 	for p := joined; ; p = filepath.Dir(p) {
 		st, err := os.Lstat(p)
@@ -40,9 +49,9 @@ func Resolve(root, rel string) (string, error) {
 			return "", err
 		}
 		if err == nil && st.Mode()&os.ModeSymlink != 0 {
-			return "", ErrEscapes
+			return "", fmt.Errorf("%w (%s)", ErrSymlink, p)
 		}
-		if parent := filepath.Dir(p); parent == p {
+		if p == absRoot || filepath.Dir(p) == p {
 			break
 		}
 	}

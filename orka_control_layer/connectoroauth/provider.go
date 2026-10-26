@@ -65,7 +65,7 @@ func Providers() []Provider {
 		tokenURL:     "https://open.feishu.cn/open-apis/authen/v2/oauth/token",
 		scopes:       "offline_access",
 		clientID:     env("ORKA_FEISHU_APP_ID"), clientSecret: env("ORKA_FEISHU_APP_SECRET"),
-		tokenStyle:   jsonToken, ScanToLogin: true,
+		tokenStyle: jsonToken, ScanToLogin: true,
 	}
 	feishu.Ready, feishu.Missing = ready(feishu, "飞书企业自建应用（ORKA_FEISHU_APP_ID / ORKA_FEISHU_APP_SECRET）和飞书 MCP 服务地址（ORKA_FEISHU_MCP_URL）")
 

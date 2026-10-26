@@ -26,7 +26,9 @@ type User struct {
 	Email        string `bson:"email" json:"email"`
 	Name         string `bson:"name" json:"name"`
 	PasswordHash string `bson:"password_hash" json:"-"`
-	CreatedAt    int64  `bson:"created_at" json:"created_at"`
+	// TokenVersion invalidates every session issued before it was bumped.
+	TokenVersion int64 `bson:"token_version,omitempty" json:"-"`
+	CreatedAt    int64 `bson:"created_at" json:"created_at"`
 	// Onboarding lists the first-run steps the user finished or skipped
 	// (OnboardingTour, OnboardingDismissed); kept server-side so a new device
 	// does not show the guide again.

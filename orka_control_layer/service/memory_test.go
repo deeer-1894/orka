@@ -39,7 +39,7 @@ func TestPersonalContextOnlyRemembersWhileAutoMemoryIsOn(t *testing.T) {
 	if _, err := tools[0].Invoke(context.Background(), map[string]any{"content": "周报用表格", "scope": "project"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(store.saved) != 1 || store.saved[0].ProjectID != "prj_1" || store.saved[0].SourceConversationID != "c1" {
+	if len(store.saved) != 1 || store.saved[0].ProjectID != "prj_1" || store.saved[0].SourceConversationID != "c1" || !store.saved[0].Pending {
 		t.Fatalf("saved %+v", store.saved)
 	}
 	var nilPersonal *runPersonal

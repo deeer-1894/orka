@@ -5,6 +5,7 @@ import (
 
 	"github.com/orka-oss/orka_control_layer/api"
 	"github.com/orka-oss/orka_control_layer/cors"
+	"github.com/orka-oss/orka_control_layer/service"
 )
 
 // registerRoutes wires CORS, health, public auth and the protected API group.
@@ -30,11 +31,15 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.Use(a.AuthMiddleware())
 
 	g.POST("/auth/me", a.Me)
+	g.POST("/auth/logout", a.Logout)
+	g.POST("/auth/password", a.ChangePassword)
+	g.POST("/auth/media-token", a.MediaToken)
 	g.POST("/auth/onboarding", a.MarkOnboarding)
 	g.POST("/personal/get", a.GetPersonal)
 	g.POST("/personal/save", a.SavePersonal)
 	g.POST("/memory/list", a.ListMemories)
 	g.POST("/memory/delete", a.DeleteMemory)
+	g.POST("/memory/confirm", a.ConfirmMemory)
 
 	g.POST("/conversation/create-conversation", a.CreateConversation)
 	g.POST("/conversation/move", a.MoveConversation) // file under a project, or take out
@@ -120,15 +125,21 @@ func registerRoutes(h *server.Hertz, a *api.API, corsHosts []string) {
 	g.POST("/notification/list", a.ListNotifications)
 	g.POST("/notification/read", a.ReadNotifications)
 
-	g.GET("/workflows/runs/:run_id", a.WorkflowRunStatus)
-	g.POST("/workflow/list", a.ListWorkflows) // definable multi-step pipelines
-	g.POST("/workflow/create", a.CreateWorkflow)
-	g.POST("/workflow/delete", a.DeleteWorkflow)
-	g.POST("/workflow/run", a.RunWorkflow)
-	g.POST("/quant/pipeline/run", a.RunFactorPipeline) // research-report → quant-factor pipeline (batch over reports/)
-	g.POST("/quant/factors", a.ListFactors)            // the factor library (pipeline output)
-	g.POST("/quant/portfolios", a.ListPortfolios)      // weighted portfolios
-	g.POST("/quant/factor/status", a.SetFactorStatus)  // human review: approve / reject a factor
+	// No screen uses these any more; they stay reachable only where a
+	// deployment opts in, instead of serving every account by default.
+	if service.WorkflowsEnabled() {
+		g.GET("/workflows/runs/:run_id", a.WorkflowRunStatus)
+		g.POST("/workflow/list", a.ListWorkflows) // definable multi-step pipelines
+		g.POST("/workflow/create", a.CreateWorkflow)
+		g.POST("/workflow/delete", a.DeleteWorkflow)
+		g.POST("/workflow/run", a.RunWorkflow)
+	}
+	if service.QuantEnabled() {
+		g.POST("/quant/pipeline/run", a.RunFactorPipeline) // research-report → quant-factor pipeline (batch over reports/)
+		g.POST("/quant/factors", a.ListFactors)            // the factor library (pipeline output)
+		g.POST("/quant/portfolios", a.ListPortfolios)      // weighted portfolios
+		g.POST("/quant/factor/status", a.SetFactorStatus)  // human review: approve / reject a factor
+	}
 
 	g.POST("/skill/list", a.ListSkills)      // catalog (builtin + installed)
 	g.POST("/skill/get", a.GetSkill)         // one skill's full content (for preview)

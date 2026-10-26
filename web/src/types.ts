@@ -132,6 +132,7 @@ export interface Memory {
   project_id?: string;
   source_conversation_id?: string;
   created_at: number;
+  pending?: boolean; // proposed by a run, not used until the user confirms
 }
 
 export interface Project {

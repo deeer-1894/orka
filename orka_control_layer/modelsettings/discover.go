@@ -1,6 +1,8 @@
 package modelsettings
 
 import (
+	"github.com/orka-oss/orka_core/netguard"
+
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +24,9 @@ type DiscoverResult struct {
 
 // Discover preserves the list-only interface for existing callers. Callers that
 // display discovery results should use DiscoverWithMetadata to disclose presets.
+// DiscoverTransport carries model discovery; replaced only by tests.
+var DiscoverTransport = Guard(http.DefaultTransport.(*http.Transport).Clone())
+
 func (s *Store) Discover(ctx context.Context, owner, base, key string) ([]string, error) {
 	result, err := s.DiscoverWithMetadata(ctx, owner, base, key)
 	return result.Models, err
@@ -70,8 +75,11 @@ func (s *Store) discover(ctx context.Context, owner, base, key string, useActive
 	if key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
-	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Transport: DiscoverTransport, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
+	if errors.Is(err, netguard.ErrBlocked) {
+		return DiscoverResult{}, ErrInternalAddress
+	}
 	if err != nil {
 		return DiscoverResult{}, errors.New("model discovery failed or timed out")
 	}

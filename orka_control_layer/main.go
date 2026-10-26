@@ -143,6 +143,7 @@ func main() {
 	// background scheduler at the bottom of this function detaches for the same
 	// reason.
 	chat.StartRunReaper(context.Background())
+	(&service.Retention{Store: store, Base: cfg.Storage.BaseStoragePath, Log: logger, ConversationDays: service.RetentionDaysFromEnv()}).Start(context.Background())
 
 	// Artifact tools (publish/get a live shareable page) are local tools with DB
 	// access; the providers append them to every run's tool set.

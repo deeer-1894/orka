@@ -1,0 +1,39 @@
+{
+  "at": "2026-10-26T22:40:21+08:00",
+  "model": "",
+  "passed": 0,
+  "total": 1,
+  "results": [
+    {
+      "id": "long_project",
+      "pass": false,
+      "reasons": [
+        "turn 8: stream: context deadline exceeded"
+      ],
+      "status": "done",
+      "tools": 88,
+      "tokens": 1058292,
+      "seconds": 2128.392071042,
+      "turn_tokens": [
+        41671,
+        92942,
+        120754,
+        81905,
+        431026,
+        90444,
+        199550
+      ],
+      "turn_seconds": [
+        131.906359375,
+        73.890013125,
+        182.731756292,
+        91.979571833,
+        571.599375208,
+        115.172516083,
+        361.020283792
+      ]
+    }
+  ],
+  "total_tools": 88,
+  "total_tokens": 1058292
+}

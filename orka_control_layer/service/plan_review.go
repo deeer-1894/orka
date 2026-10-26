@@ -44,8 +44,10 @@ func planReviewActive(req ChatRunRequest) bool {
 // planReviewTools keeps the read-only tools; the plan tool itself is added to
 // every main agent by mainAgentTools.
 func planReviewTools(tools []agent.BaseTool) []agent.BaseTool {
+	// Interactive, with the user watching: read the workspace and the web,
+	// change nothing.
 	allowed := map[string]bool{}
-	for _, name := range policyTools(db.TaskToolPolicy{}) {
+	for _, name := range append(policyTools(db.TaskToolPolicy{}), capabilityTools[db.CapWorkspaceRead]...) {
 		allowed[name] = true
 	}
 	out := make([]agent.BaseTool, 0, len(tools))

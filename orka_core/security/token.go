@@ -26,6 +26,9 @@ type ContextToken struct {
 	UserEmail      string   `json:"user_email"`
 	Scopes         []string `json:"scopes"` // capability allowlist (RBAC)
 	Exp            int64    `json:"exp"`    // unix seconds; 0 = no expiry
+	// Version is the account's token version when issued; bumping it (logout,
+	// password change) revokes every token issued before.
+	Version int64 `json:"ver,omitempty"`
 }
 
 // NewToken builds a token valid for ttl from now.

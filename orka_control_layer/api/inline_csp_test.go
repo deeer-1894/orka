@@ -14,6 +14,10 @@ func TestRenderedHTMLIsSandboxed(t *testing.T) {
 	if !strings.Contains(got, "sandbox") {
 		t.Fatalf("policy = %q, want a sandbox", got)
 	}
+	// A rendered page may not send data anywhere.
+	if !strings.Contains(got, "connect-src 'none'") || !strings.Contains(got, "form-action 'none'") {
+		t.Fatalf("policy = %q, want network sends blocked", got)
+	}
 	// allow-same-origin would hand the document our origin back and undo all of it.
 	if strings.Contains(got, "allow-same-origin") {
 		t.Fatalf("policy = %q — allow-same-origin defeats the sandbox", got)

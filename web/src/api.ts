@@ -26,8 +26,40 @@ const TOKEN_KEY = "orka.token";
 export const auth = {
   token: () => localStorage.getItem(TOKEN_KEY) || "",
   set: (t: string) => localStorage.setItem(TOKEN_KEY, t),
-  clear: () => { clearSessionRecovery(); localStorage.removeItem(TOKEN_KEY); },
+  clear: () => { clearSessionRecovery(); localStorage.removeItem(TOKEN_KEY); media = null; },
+  // mediaToken is what URLs carry (download links, previews): short-lived and
+  // GET-only, so a link copied into a log or history is not a session.
+  mediaToken: () => media?.token || "",
 };
+
+let media: { token: string; expiresAt: number } | null = null;
+let mediaRefresh: ReturnType<typeof setTimeout> | null = null;
+
+// ensureMediaToken fetches the URL token and keeps it fresh (renewed at half
+// its life). Call once a session exists, before rendering links.
+export async function ensureMediaToken(): Promise<void> {
+  if (!auth.token()) return;
+  try {
+    const res = await fetch(BASE + "/auth/media-token", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + auth.token() }, body: "{}" });
+    const j = await res.json();
+    if (j?.code !== 0 || !j.data?.token) return;
+    media = { token: j.data.token, expiresAt: j.data.expires_at };
+    if (mediaRefresh) clearTimeout(mediaRefresh);
+    mediaRefresh = setTimeout(() => { void ensureMediaToken(); }, Math.max(60_000, (media.expiresAt - Date.now()) / 2));
+  } catch { /* links fall back to failing with 401; the next refresh retries */ }
+}
+
+// A link rendered earlier still names the token it was rendered with. Swap in
+// the current one at the moment it is followed, so a page left open for hours
+// keeps working downloads.
+if (typeof document !== "undefined") {
+  document.addEventListener("click", e => {
+    const a = (e.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+    if (!a || !media || !a.href.includes(BASE) || !a.href.includes("token=")) return;
+    const u = new URL(a.href, location.href);
+    if (u.searchParams.has("token")) { u.searchParams.set("token", media.token); a.href = u.toString(); }
+  }, true);
+}
 
 let unauthorizedHandler: (() => void) | null = null;
 let unauthorizedProbe: { token: string; promise: Promise<boolean> } | null = null;
@@ -230,6 +262,8 @@ export const webhookURL = (token: string) => `${location.origin}${BASE}/hook/${t
 
 export const api = {
   me: () => post<{ email: string; name: string; onboarding?: string[] }>("/auth/me", {}),
+  logout: () => post<{ logged_out: boolean }>("/auth/logout", {}, true),
+  changePassword: (old_password: string, new_password: string) => post<{ token: string }>("/auth/password", { old_password, new_password }),
   markOnboarding: (step: "tour" | "dismissed") => post<{ step: string }>("/auth/onboarding", { step }),
   listConversations: () => post<Conversation[]>("/conversation/list", {}),
   createConversation: (title: string, projectID?: string) =>
@@ -241,6 +275,7 @@ export const api = {
   savePersonal: (p: Personalization) => post<Personalization>("/personal/save", p),
   listMemories: () => post<Memory[]>("/memory/list", {}),
   deleteMemory: (memory_id: string) => post("/memory/delete", { memory_id }),
+  confirmMemory: (memory_id: string) => post("/memory/confirm", { memory_id }),
   saveProject: (p: { project_id?: string; name: string; description?: string; instructions?: string; default_skill?: string }) =>
     post<Project>("/project/save", p),
   deleteProject: (project_id: string) => post("/project/delete", { project_id }),
@@ -296,7 +331,7 @@ export const api = {
   runBudget: (run_id: string) => get<import("./lib/runBudget").RunBudget>(`/run/${encodeURIComponent(run_id)}/budget`),
   runAcceptance: (run_id: string) => post<import('./lib/runEvidence').RunAcceptance>("/run/acceptance", { run_id }),
   listDeliveries: (conversation_id: string) => post<{ deliveries: import('./lib/runEvidence').DeliverySnapshot[] }>("/delivery/list", { conversation_id }),
-  deliveryDownloadURL: (conversation_id: string, run_id: string, path: string) => `${BASE}/delivery/download?${new URLSearchParams({ conversation_id, run_id, path, token: auth.token() })}`,
+  deliveryDownloadURL: (conversation_id: string, run_id: string, path: string) => `${BASE}/delivery/download?${new URLSearchParams({ conversation_id, run_id, path, token: auth.mediaToken() })}`,
   metrics: async (): Promise<MetricsSnapshot> => {
     const res = await fetch(BASE + "/metrics", { headers: headers(false) });
     const j = await res.json();
@@ -348,11 +383,11 @@ export const files = {
   restore: (path: string, ts: string, conversation_id: string) => post<{ restored: string }>("/file/restore", { path, ts, ...fileScope(conversation_id) }),
   // Every file URL is scoped to the selected conversation, including owner views.
   downloadURL: (path: string, conv: string) =>
-    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}${fileQuery(conv)}`,
+    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.mediaToken())}${fileQuery(conv)}`,
   // previewURL serves the same bytes with Content-Disposition: inline so the
   // browser renders them in-page (PDF in an <iframe>) instead of downloading.
   previewURL: (path: string, conv: string) =>
-    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.token())}&inline=1${fileQuery(conv)}`,
+    `${BASE}/file/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(auth.mediaToken())}&inline=1${fileQuery(conv)}`,
   upload: async (file: File, dir: string, onProgress: ((pct: number) => void) | undefined, conversation_id: string) => {
     fileScope(conversation_id);
     const CHUNK = 256 * 1024;

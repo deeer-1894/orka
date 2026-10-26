@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -243,6 +244,7 @@ func Load(path string) (*Config, error) {
 	}
 	c.applyEnv()
 	c.applyDefaults()
+	c.Storage.BaseStoragePath = realStoragePath(c.Storage.BaseStoragePath)
 	if err := c.Agent.ValidateBudget(); err != nil {
 		return nil, err
 	}
@@ -284,6 +286,25 @@ func (c *Config) applyEnv() {
 	if v := os.Getenv("CORS_ALLOWED_HOSTS"); v != "" {
 		c.Server.CORSAllowedHosts = splitComma(v)
 	}
+}
+
+// realStoragePath resolves the storage root once, at startup, to its real
+// absolute path. A deployment may well reach its volume through a link
+// (/data -> /mnt/volume, macOS /var -> /private/var); resolving it here means
+// every later path comparison sees one spelling. A path that does not exist
+// yet is left for the caller to create.
+func realStoragePath(p string) string {
+	if p == "" {
+		return p
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return p
+	}
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		return real
+	}
+	return abs
 }
 
 func (c *Config) applyDefaults() {

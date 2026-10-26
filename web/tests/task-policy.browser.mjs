@@ -33,39 +33,47 @@ async function openEditor(t, task) {
 
 const box = (page, label) => page.getByRole('checkbox', { name: new RegExp('^' + label) });
 
-test('a new event task defaults to read-only plus workspace writes and saves what the user picks', async t => {
+test('a new event task defaults to web search plus workspace writes and saves what the user picks', async t => {
   const { page, saved } = await openEditor(t);
   assert.equal(await box(page, '写入工作区文件').isChecked(), true);
   assert.equal(await box(page, '执行代码').isChecked(), false);
   assert.equal(await box(page, '操作浏览器').isChecked(), false);
-  assert.equal(await page.getByTestId('task-policy-summary').textContent(), '只读 + 写入工作区文件');
+  assert.equal(await box(page, '读取工作区文件').isChecked(), false);
+  assert.equal(await page.getByTestId('task-policy-summary').textContent(), '联网检索 + 写入工作区文件');
   assert.match(await page.getByRole('group', { name: '自动运行时允许' }).textContent(), /请求内容可能夹带指令/);
 
   await box(page, '写入工作区文件').uncheck();
-  assert.equal(await page.getByTestId('task-policy-summary').textContent(), '只读');
+  assert.equal(await page.getByTestId('task-policy-summary').textContent(), '联网检索');
   await page.getByRole('button', { name: '保存' }).click();
   await page.getByRole('heading', { name: '任务已创建' }).waitFor();
   assert.equal(saved.length, 1);
   assert.deepEqual(saved[0].tool_policy, { allow: [] });
 });
 
-test('an existing task shows its stored policy and keeps capabilities in a stable order', async t => {
+test('reading private data and reaching the network exclude each other, and the order stays stable', async t => {
   const task = { task_id: 't1', variables: { title: 'Deploy', prompt_template: '部署后检查' }, cron_status: 'on', retry_count: 0,
     trigger: { kind: 'schedule', cron: '0 9 * * *' }, tool_policy: { allow: ['browser'] } };
   const { page, saved } = await openEditor(t, task);
   assert.equal(await box(page, '写入工作区文件').isChecked(), false);
   assert.equal(await box(page, '操作浏览器').isChecked(), true);
   assert.match(await page.getByRole('group', { name: '自动运行时允许' }).textContent(), /网页内容可能夹带指令/);
+  // Code reads the workspace, so it takes the browser (the network) away.
   await box(page, '执行代码').check();
+  assert.equal(await box(page, '操作浏览器').isChecked(), false);
   await box(page, '写入工作区文件').check();
-  assert.equal(await page.getByTestId('task-policy-summary').textContent(), '只读 + 写入工作区文件、执行代码、操作浏览器');
+  await box(page, '读取工作区文件').check();
+  assert.equal(await page.getByTestId('task-policy-summary').textContent(), '不联网 + 写入工作区文件、读取工作区文件、执行代码');
+  // And the browser takes both private reads away again.
+  await box(page, '操作浏览器').check();
+  assert.equal(await box(page, '执行代码').isChecked(), false);
+  assert.equal(await box(page, '读取工作区文件').isChecked(), false);
   await page.getByRole('button', { name: '保存' }).click();
   await page.waitForFunction(() => document.title === 'closed');
-  assert.deepEqual(saved[0].tool_policy, { allow: ['workspace_write', 'code', 'browser'] });
+  assert.deepEqual(saved[0].tool_policy, { allow: ['workspace_write', 'browser'] });
 });
 
 test('a task saved before policies existed shows the default the server enforces', async t => {
   const task = { task_id: 't2', variables: { prompt_template: '旧任务' }, cron_status: 'off', trigger: { kind: 'event' } };
   const { page } = await openEditor(t, task);
-  assert.equal(await page.getByTestId('task-policy-summary').textContent(), '只读 + 写入工作区文件');
+  assert.equal(await page.getByTestId('task-policy-summary').textContent(), '联网检索 + 写入工作区文件');
 });

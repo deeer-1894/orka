@@ -36,6 +36,7 @@ type Storage struct {
 	ArtifactVers  *mongo.Collection
 	Projects      *mongo.Collection
 	Memories      *mongo.Collection
+	OAuthPending  *mongo.Collection
 }
 
 // NewStorage connects to Mongo and pings it.
@@ -70,6 +71,7 @@ func NewStorage(ctx context.Context, uri, dbName string) (*Storage, error) {
 		ArtifactVers:  d.Collection("artifact_versions"),
 		Projects:      d.Collection("projects"),
 		Memories:      d.Collection("memories"),
+		OAuthPending:  d.Collection("oauth_pending"),
 	}
 	if err := s.EnsureIndexes(cctx); err != nil {
 		return nil, fmt.Errorf("mongo indexes: %w", err)
@@ -155,6 +157,11 @@ func (s *Storage) EnsureIndexes(ctx context.Context) error {
 			Keys:    bson.D{{Key: "artifact_id", Value: 1}, {Key: "version", Value: -1}},
 			Options: options.Index().SetUnique(true).SetName("artifact_version"),
 		}},
+		// pending OAuth: expire on their own; state is the lookup key.
+		{s.OAuthPending, pendingOAuthIndex},
+		{s.OAuthPending, mongo.IndexModel{Keys: bson.D{{Key: "state", Value: 1}}, Options: options.Index().SetUnique(true).SetName("oauth_state")}},
+		{s.Projects, mongo.IndexModel{Keys: bson.D{{Key: "owner_email", Value: 1}, {Key: "updated_at", Value: -1}}, Options: options.Index().SetName("project_owner")}},
+		{s.Memories, mongo.IndexModel{Keys: bson.D{{Key: "owner_email", Value: 1}, {Key: "created_at", Value: -1}}, Options: options.Index().SetName("memory_owner")}},
 	}
 	for _, sp := range specs {
 		if _, err := sp.col.Indexes().CreateOne(ctx, sp.model); err != nil {
@@ -183,6 +190,35 @@ func (s *Storage) GetUser(ctx context.Context, email string) (*User, error) {
 		return nil, fmt.Errorf("get user: %w", err)
 	}
 	return &out, nil
+}
+
+// BumpTokenVersion revokes every token the user holds and returns the new version.
+func (s *Storage) BumpTokenVersion(ctx context.Context, email string) (int64, error) {
+	var out User
+	err := s.Users.FindOneAndUpdate(ctx, bson.M{"email": email}, bson.M{"$inc": bson.M{"token_version": 1}},
+		options.FindOneAndUpdate().SetReturnDocument(options.After)).Decode(&out)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("bump token version: %w", err)
+	}
+	return out.TokenVersion, nil
+}
+
+// SetPassword replaces the user's password hash and revokes their tokens.
+func (s *Storage) SetPassword(ctx context.Context, email, hash string) (int64, error) {
+	var out User
+	err := s.Users.FindOneAndUpdate(ctx, bson.M{"email": email},
+		bson.M{"$set": bson.M{"password_hash": hash}, "$inc": bson.M{"token_version": 1}},
+		options.FindOneAndUpdate().SetReturnDocument(options.After)).Decode(&out)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("set password: %w", err)
+	}
+	return out.TokenVersion, nil
 }
 
 // MarkOnboarding records a finished first-run step for the user.
@@ -434,13 +470,24 @@ func (s *Storage) readableConvIDs(ctx context.Context, owner string) ([]string, 
 	return ids, titles, nil
 }
 
+// ErrSearchTooBroad means a search ran past its time budget.
+var ErrSearchTooBroad = errors.New("搜索范围太大，请换一个更具体的词")
+
+// searchBudget bounds one search. A substring match cannot use an index
+// (and Mongo's text index does not segment Chinese), so the scan is limited
+// in time instead of being allowed to grow with the user's history.
+const searchBudget = 3 * time.Second
+
 // SearchMessages finds chat/stream messages whose text contains query across all
 // conversations the user can read — the backend half of cross-conversation
 // full-text search. Returns matches newest-first with the owning title attached.
 func (s *Storage) SearchMessages(ctx context.Context, owner, query string, limit int64) ([]MessageSearchHit, error) {
-	q := query
+	q := strings.TrimSpace(query)
 	if len(q) > 200 {
-		q = q[:200]
+		q = strings.ToValidUTF8(q[:200], "")
+	}
+	if q == "" {
+		return []MessageSearchHit{}, nil
 	}
 	ids, titles, err := s.readableConvIDs(ctx, owner)
 	if err != nil {
@@ -459,14 +506,20 @@ func (s *Storage) SearchMessages(ctx context.Context, owner, query string, limit
 		"role":            bson.M{"$in": bson.A{"user", "assistant"}},
 		"content":         bson.M{"$regex": rx},
 	}
-	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(limit)
+	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(limit).
+		SetMaxTime(searchBudget).SetProjection(bson.M{"conversation_id": 1, "content": 1, "role": 1, "created_at": 1})
 	cur, err := s.Messages.Find(ctx, filter, opts)
+	if mongo.IsTimeout(err) {
+		return nil, ErrSearchTooBroad
+	}
 	if err != nil {
 		return nil, fmt.Errorf("search messages: %w", err)
 	}
 	defer cur.Close(ctx)
 	var msgs []MessagesTable
-	if err := cur.All(ctx, &msgs); err != nil {
+	if err := cur.All(ctx, &msgs); mongo.IsTimeout(err) {
+		return nil, ErrSearchTooBroad
+	} else if err != nil {
 		return nil, fmt.Errorf("search decode: %w", err)
 	}
 	hits := make([]MessageSearchHit, 0, len(msgs))

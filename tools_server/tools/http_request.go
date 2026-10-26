@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"github.com/orka-oss/orka_core/netguard"
+
 	"context"
 	"fmt"
 	"io"
@@ -156,14 +158,6 @@ func guardURL(u *url.URL) error {
 	return nil
 }
 
-func isPublicIP(ip net.IP) bool {
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
-		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {
-		return false
-	}
-	// Block the cloud metadata endpoint explicitly (defense in depth).
-	if ip.Equal(net.ParseIP("169.254.169.254")) {
-		return false
-	}
-	return true
-}
+// isPublicIP is the shared rule (also used for watched pages and model
+// endpoints), so carrier-grade NAT and the other reserved ranges are refused here too.
+func isPublicIP(ip net.IP) bool { return netguard.IsPublic(ip) }

@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"mime"
@@ -13,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
@@ -243,7 +241,10 @@ func inlineCSP(disp, contentType string) string {
 	}
 	// No allow-same-origin: that is the whole point. With it, the document would
 	// run as this app and could read the session token out of localStorage.
-	return "sandbox allow-scripts"
+	// connect-src and form-action 'none' as defence in depth: even a page that
+	// came by data it should not have cannot send it anywhere (scripts, styles
+	// and images from CDNs still load).
+	return "sandbox allow-scripts; connect-src 'none'; form-action 'none'"
 }
 
 // contentDisposition builds an RFC 6266 header. HTTP header values are ASCII, so
@@ -442,8 +443,9 @@ func (a *API) FileUploadChunk(ctx context.Context, c *app.RequestContext) {
 		fail(c, 400, "invalid or oversized chunk")
 		return
 	}
-	key := uploadKey(authEmail(c), conv, req.UploadID)
-	complete, received, data, err := a.chunks.accept(key, filename, req.Total, req.Index, raw)
+	email := authEmail(c)
+	key := uploadKey(email, conv, req.UploadID)
+	complete, received, err := a.chunks.accept(a.BaseStorage, email, key, filename, req.Total, req.Index, raw)
 	if err != nil {
 		fail(c, 400, err.Error())
 		return
@@ -452,16 +454,12 @@ func (a *API) FileUploadChunk(ctx context.Context, c *app.RequestContext) {
 		ok(c, map[string]any{"received": received, "total": req.Total, "complete": false})
 		return
 	}
-	if err := root.MkdirAll(filepath.Dir(filename), pathsafe.WorkspaceDirMode); err != nil {
+	size, err := a.chunks.assemble(a.BaseStorage, email, key, root, filename)
+	if err != nil {
 		workspaceFail(c, err)
 		return
 	}
-	if err := root.WriteFile(filename, data, pathsafe.WorkspaceFileMode); err != nil {
-		workspaceFail(c, err)
-		return
-	}
-	a.chunks.drop(key)
-	ok(c, map[string]any{"path": filename, "size": len(data), "complete": true})
+	ok(c, map[string]any{"path": filename, "size": size, "complete": true})
 }
 
 func uploadKey(email, conv, id string) string {
@@ -477,7 +475,7 @@ func (a *API) FileUploadProgress(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	key := uploadKey(authEmail(c), conv, string(c.Query("upload_id")))
-	received, total, found := a.chunks.progress(key)
+	received, total, found := a.chunks.progress(a.BaseStorage, authEmail(c), key)
 	if !found {
 		fail(c, 404, "unknown upload_id")
 		return
@@ -486,57 +484,3 @@ func (a *API) FileUploadProgress(ctx context.Context, c *app.RequestContext) {
 }
 
 // chunkManager tracks in-flight resumable uploads in memory.
-type chunkManager struct {
-	mu sync.Mutex
-	m  map[string]*chunkAgg
-}
-
-type chunkAgg struct {
-	filename string
-	total    int
-	parts    map[int][]byte
-}
-
-func newChunkManager() *chunkManager { return &chunkManager{m: map[string]*chunkAgg{}} }
-
-// accept validates immutable upload metadata and assembles under the same lock.
-func (cm *chunkManager) accept(id, filename string, total, index int, data []byte) (bool, int, []byte, error) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	if total <= 0 || index < 0 || index >= total {
-		return false, 0, nil, fmt.Errorf("invalid chunk index")
-	}
-	agg, found := cm.m[id]
-	if !found {
-		agg = &chunkAgg{filename: filename, total: total, parts: map[int][]byte{}}
-		cm.m[id] = agg
-	}
-	if agg.filename != filename || agg.total != total {
-		return false, len(agg.parts), nil, fmt.Errorf("upload metadata changed")
-	}
-	agg.parts[index] = data
-	if len(agg.parts) != agg.total {
-		return false, len(agg.parts), nil, nil
-	}
-	var out []byte
-	for i := 0; i < agg.total; i++ {
-		out = append(out, agg.parts[i]...)
-	}
-	return true, len(agg.parts), out, nil
-}
-
-func (cm *chunkManager) progress(id string) (int, int, bool) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	agg, ok := cm.m[id]
-	if !ok {
-		return 0, 0, false
-	}
-	return len(agg.parts), agg.total, true
-}
-
-func (cm *chunkManager) drop(id string) {
-	cm.mu.Lock()
-	delete(cm.m, id)
-	cm.mu.Unlock()
-}

@@ -36,10 +36,13 @@ async function app(t, options = {}) {
    case '/skill/list': return json({skills:[]});
    case '/project/list': return json(options.projects||[]);
    case '/connector/oauth/providers': return json([]);
+   case '/auth/media-token': return json({token:'media-fixture',expires_at:Date.now()+3600e3});
+   case '/auth/logout': return json({logged_out:true});
    case '/personal/get': return json(options.personal||{about_me:'',reply_style:'',auto_memory:false});
    case '/personal/save': return json(body);
    case '/memory/list': return json(options.memories||[]);
    case '/memory/delete': return json({memory_id:body.memory_id});
+   case '/memory/confirm': return json({memory_id:body.memory_id});
    case '/notification/list': return json({notifications:[],unread:0});
    case '/system/status': return json({version:'fixture',build_time:'',started_at:'2026-09-15T10:00:00Z',ready:true,services:[],model_probe:'not_run'});
    case '/metrics': return json({total_tokens:0});
@@ -209,7 +212,7 @@ test('acceptance evidence stays in workbench history and distinguishes unchecked
 test('delivery snapshots stay separate from current workspace and download with conversation authentication',async t=>{
  const a=await app(t,{handle:async({path,body,json,route,url})=>{
   if(path==='/delivery/list'){assert.equal(body.conversation_id,'a');await json({deliveries:[{version:1,conversation_id:'a',run_id:'run-a',created_at:'2026-09-15T10:00:00Z',files:[{path:'reports/final.txt',size:6,sha256:'fixture-checksum'}]}]});return true;}
-  if(path==='/delivery/download'){assert.equal(url.searchParams.get('conversation_id'),'a');assert.equal(url.searchParams.get('run_id'),'run-a');assert.equal(url.searchParams.get('path'),'reports/final.txt');assert.equal(url.searchParams.get('token'),'isolated-hardening-test');await route.fulfill({headers:{'content-disposition':'attachment; filename="final.txt"'},body:'frozen'});return true;}
+  if(path==='/delivery/download'){assert.equal(url.searchParams.get('conversation_id'),'a');assert.equal(url.searchParams.get('run_id'),'run-a');assert.equal(url.searchParams.get('path'),'reports/final.txt');assert.equal(url.searchParams.get('token'),'media-fixture','downloads carry the media token, never the session');await route.fulfill({headers:{'content-disposition':'attachment; filename="final.txt"'},body:'frozen'});return true;}
  }});await a.select('a');await a.page.getByRole('button',{name:'切换工作台面板'}).click();await a.page.getByRole('tab',{name:'成果'}).click();await a.page.getByText('当前工作区',{exact:true}).waitFor();await a.page.getByRole('button',{name:'交付快照'}).click();await a.page.getByText('fixture-checksum',{exact:false}).waitFor();const download=a.page.waitForEvent('download');await a.page.getByRole('link',{name:'下载快照 reports/final.txt'}).click();assert.equal((await download).suggestedFilename(),'final.txt');a.check();
 });
 
@@ -652,12 +655,12 @@ test('projects: sidebar section, project page with instructions, new chats start
 });
 
 test('personalization and memory: saved once in settings, memories deletable, a fresh memory can be undone in the thread',async t=>{
- const remembered=msg('t2','tool','',{payload:{tool:'remember',args:{content:'周报用表格'},result:JSON.stringify({saved:true,memory_id:'mem_1',content:'周报用表格'})}});
+ const remembered=msg('t2','tool','',{payload:{tool:'remember',args:{content:'周报用表格'},result:JSON.stringify({saved:true,pending:true,memory_id:'mem_1',content:'周报用表格'})}});
  const a=await app(t,{history:[msg('u1','chat','以后周报都用表格'),remembered,msg('a3','chat','好的，已记住。',{role:'assistant'})],memories:[{memory_id:'mem_0',content:'用中文回复',created_at:1}]});
  await a.select('a');await a.page.getByRole('button',{name:/查看 · 1 步/}).click();
- await a.page.getByText('已记住',{exact:false}).first().waitFor();
- await a.page.getByRole('button',{name:'撤销'}).click();await a.page.getByText('· 已撤销').waitFor();
- assert.ok(a.requests.some(r=>r.path==='/memory/delete'&&r.body.memory_id==='mem_1'));
+ await a.page.getByText('提议记住',{exact:false}).first().waitFor();await a.page.getByText('待确认').first().waitFor();
+ await a.page.getByRole('button',{name:'记住',exact:true}).click();await a.page.getByText('· 已记住').waitFor();
+ assert.ok(a.requests.some(r=>r.path==='/memory/confirm'&&r.body.memory_id==='mem_1'),'a proposed memory is used only after the user confirms');
  await a.page.getByRole('button',{name:'设置',exact:true}).click();
  const dialog=a.page.getByRole('dialog');await dialog.getByRole('region',{name:'个性化'}).waitFor();
  await dialog.getByLabel('回复偏好').fill('先给结论');await dialog.getByRole('button',{name:'保存',exact:true}).click();

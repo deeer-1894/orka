@@ -87,6 +87,7 @@ services:
     depends_on:
       - browser-proxy-bridge
     environment:
+      - GUI_HOST=0.0.0.0 # inside the container; published on 127.0.0.1 above
       - GUI_PORT=8100
       - GUI_PLANNER=${GUI_PLANNER:-vlm}
       - MACRO_ENABLE=0

@@ -129,6 +129,28 @@ curl -s $B/metrics
 | `CDP_URL=` | (gui_agent) attach to a remote Chromium over CDP instead of launching one |
 | `GUI_PLANNER=uitars` | (gui_agent) plan with a UI-TARS GUI-agent model: coordinate-grounded click/type/drag from raw screenshots (`UITARS_BASE_URL`/`UITARS_API_KEY`/`UITARS_MODEL`, e.g. vLLM serving `UI-TARS-1.5-7B`) |
 | `VLM_ENABLE=1` | (gui_agent) use a generic multimodal model via Set-of-Marks as DOM-first fallback (legacy; superseded by `GUI_PLANNER=uitars`) |
+| `GUI_HOST=` | (gui_agent) bind address; defaults to `127.0.0.1` (the container sets `0.0.0.0` and publishes on the host's loopback) |
+| `ORKA_QUANT=1` | offer the quant tools and `/quant/*` routes; off by default |
+| `ORKA_WORKFLOWS=1` | expose the `/workflow/*` routes; off by default |
+| `ORKA_SUMMARY_TOKENS=` | in-run context size (tokens) at which older steps are summarized; default 120000, minimum 8000 |
+| `ORKA_RETENTION_DAYS=` | delete conversations with no message for this many days (with their runs and workspace), except those in a project or behind a scheduled task; unset keeps them forever |
+| `ORKA_MODEL_ALLOWED_NETWORKS=` | comma-separated CIDRs/addresses that user-configured model endpoints may reach besides the public internet, e.g. `10.0.0.0/8,127.0.0.1` for an internal model server |
+
+Retention that always runs: notifications are kept 90 days, unfinished-run
+journals 30 days, and each artifact keeps its newest 20 versions (plus the one
+it currently shows).
+
+### Connector one-click authorization (env)
+
+| Env | Effect |
+|-----|--------|
+| `CONNECTOR_SECRET=` | key that seals connector tokens at rest; required for one-click authorization |
+| `ORKA_PUBLIC_URL=` | the origin users reach, used for OAuth callback URLs |
+| `ORKA_GITHUB_CLIENT_ID=` / `ORKA_GITHUB_CLIENT_SECRET=` | enable the GitHub preset |
+| `ORKA_FEISHU_APP_ID=` / `ORKA_FEISHU_APP_SECRET=` / `ORKA_FEISHU_MCP_URL=` | enable the Feishu preset (QR-code login on its authorize page) |
+
+Pending authorizations and grants live in Mongo, so any instance can take the
+callback or refresh a token.
 
 ### Eval (regression / reproducibility)
 
@@ -169,3 +191,23 @@ synthetic panel (used by tests).
 - Downstream trust requires a signed `ContextToken` (HMAC), not raw headers; the
   gateway applies RBAC scopes + a tool blacklist + ToolGroup isolation.
 - Clarify checkpoints use version CAS + atomic claim (resume is idempotent) + TTL.
+- Sessions: a session token is sent only in the `Authorization` header, carries
+  a version that logout and password change bump (revoking every copy within 30 seconds on every instance), and is
+  never put in a URL; downloads and previews use a separate 4-hour media token.
+  Passwords need 8+ characters with a letter and a digit.
+- Outbound requests made for a user (`http_request`/`fetch_url`, watched
+  pages, OAuth discovery, user-configured model endpoints) refuse loopback,
+  private, link-local, carrier-grade NAT (100.64/10) and other reserved
+  addresses at dial time (`orka_core/netguard`).
+- Unattended runs (schedules, webhooks) never get private file reads and
+  network tools together, so a run steered by fetched content cannot send
+  workspace files out. Memories the agent proposes wait for the user's
+  confirmation before they reach any prompt, and are never loaded into
+  unattended runs.
+- Files under `project/` are published back only where this run changed them;
+  a file someone else changed meanwhile is kept, and the run's version is
+  saved next to it as `name.conflict-<time>.ext`.
+- Multiple instances: OAuth state, grants, chunked uploads (on shared disk)
+  and token versions are shared. Live SSE streams and the in-process run
+  registry are not, so route a user's requests to one instance (sticky
+  sessions) when running more than one.

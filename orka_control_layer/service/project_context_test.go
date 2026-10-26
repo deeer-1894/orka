@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_core/workspaceio"
@@ -37,7 +38,7 @@ func TestProjectFilesMirrorInAndOnlyProjectWritesPublishBackWithHistory(t *testi
 		t.Fatal(err)
 	}
 
-	files, err := mirrorProjectIn(project, session)
+	files, base, err := mirrorProjectIn(project, session)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +56,7 @@ func TestProjectFilesMirrorInAndOnlyProjectWritesPublishBackWithHistory(t *testi
 	writeFile(t, filepath.Join(session, "project", "brief.md"), "v2")
 	writeFile(t, filepath.Join(session, "project", "notes.md"), "new")
 	writeFile(t, filepath.Join(session, "private.md"), "mine")
-	changed, err := publishProjectOut(session, project)
+	changed, _, err := publishProjectOut(session, project, base, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +73,8 @@ func TestProjectFilesMirrorInAndOnlyProjectWritesPublishBackWithHistory(t *testi
 	if len(stamps) != 1 || readFile(t, filepath.Join(project, workspaceio.TrashDir, stamps[0].Name(), "brief.md")) != "v1" {
 		t.Fatal("the overwritten project file must keep its previous version")
 	}
-	if again, _ := publishProjectOut(session, project); len(again) != 0 {
+	_, base, _ = mirrorProjectIn(project, session)
+	if again, _, _ := publishProjectOut(session, project, base, time.Now()); len(again) != 0 {
 		t.Fatalf("an unchanged mirror publishes nothing, got %v", again)
 	}
 
@@ -81,7 +83,7 @@ func TestProjectFilesMirrorInAndOnlyProjectWritesPublishBackWithHistory(t *testi
 	if err := os.Remove(filepath.Join(project, "notes.md")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mirrorProjectIn(project, session); err != nil {
+	if _, _, err := mirrorProjectIn(project, session); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(session, "project", "notes.md")); !os.IsNotExist(err) {
@@ -96,5 +98,48 @@ func TestProjectPromptCarriesInstructionsAndFiles(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, got)
 		}
+	}
+}
+
+// Two runs (or a run and the user) work on one project at once. A run must
+// publish only what IT changed: comparing its mirror with the project's
+// current state would put back the other side's edits and deletions.
+func TestProjectPublishLeavesOthersEditsAndReportsRealConflicts(t *testing.T) {
+	project := t.TempDir()
+	writeFile(t, filepath.Join(project, "a.md"), "a1")
+	writeFile(t, filepath.Join(project, "b.md"), "b1")
+	writeFile(t, filepath.Join(project, "gone.md"), "g1")
+	runA, runB := t.TempDir(), t.TempDir()
+	_, baseA, _ := mirrorProjectIn(project, runA)
+	_, baseB, _ := mirrorProjectIn(project, runB)
+
+	// Run A edits a.md and finishes first; meanwhile the user deletes gone.md.
+	writeFile(t, filepath.Join(runA, "project", "a.md"), "a2")
+	if changed, conflicts, err := publishProjectOut(runA, project, baseA, time.Now()); err != nil || len(changed) != 1 || len(conflicts) != 0 {
+		t.Fatalf("run A: changed %v conflicts %v err %v", changed, conflicts, err)
+	}
+	if err := os.Remove(filepath.Join(project, "gone.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run B touched only b.md, and also edited a.md from its stale copy.
+	writeFile(t, filepath.Join(runB, "project", "b.md"), "b2")
+	writeFile(t, filepath.Join(runB, "project", "a.md"), "a-from-b")
+	now := time.Date(2026, 10, 26, 23, 1, 2, 0, time.UTC)
+	changed, conflicts, err := publishProjectOut(runB, project, baseB, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(changed, ",") != "b.md" {
+		t.Fatalf("run B published %v, want only b.md", changed)
+	}
+	if readFile(t, filepath.Join(project, "a.md")) != "a2" {
+		t.Fatal("run A's edit must survive run B")
+	}
+	if len(conflicts) != 1 || conflicts[0] != "a.conflict-20261026-230102.md" || readFile(t, filepath.Join(project, conflicts[0])) != "a-from-b" {
+		t.Fatalf("run B's competing edit is kept as a conflict copy, got %v", conflicts)
+	}
+	if _, err := os.Stat(filepath.Join(project, "gone.md")); !os.IsNotExist(err) {
+		t.Fatal("a file deleted during the run must not come back")
 	}
 }

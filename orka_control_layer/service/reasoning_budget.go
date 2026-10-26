@@ -38,24 +38,56 @@ import (
 // the response stream. The middleware reads the stream, and when a turn has
 // reasoned past its budget without producing any content or tool call, it
 // cancels the provider call — a real cancel, so the provider stops generating
-// and stops billing — and ends the turn. The reasoning is kept as the plan it
-// is, and the run's continuation hands it back with one instruction: the plan
-// is made, act on it.
+// and stops billing — and ends the turn. The opening of the reasoning is kept,
+// and the run's continuation hands it back with an instruction to take a SMALL
+// first step (see reasoningBudgetNudgePrefix for why "act on your plan" was not
+// enough).
 //
 // It stands down when the user switched deep thinking ON: a hard proof may
 // legitimately need a long think with nothing to call.
 
-// reasoningBudgetNudgePrefix introduces the plan handed back. Blunt for the same
-// reason as the other continuation nudges: the failure is that the model
-// believed it still had planning to do.
-const reasoningBudgetNudgePrefix = "[系统] 你已经规划了很久,但还没有产出任何内容、也没有调用任何工具。" +
-	"你下面的规划已经足够了——不要重新规划,不要在回复里起草文件内容。" +
-	"现在直接调用第一个工具开始做:复杂任务先调 update_plan,然后立刻用 file_write 写出第一个能运行的版本,再运行、查看、改进。\n\n" +
-	"你到目前为止的规划:\n"
+// reasoningBudgetNudgePrefix introduces the plan handed back.
+//
+// Its first version said "your plan is enough — act on it", and on the task it
+// was built for that did not work. Watched live, the continuation turn read the
+// instruction, repeated it back — "the system reminder says I've planned enough
+// and should now act: call update_plan first, then write a working version
+// with file_write" — and then began designing the whole scene again, from
+// "viewBox: 0 0 1200 675", until the budget stopped it a second time. Twice.
+//
+// Its own reasoning says why. The action it had chosen was to write the ENTIRE
+// file, and a tool call's arguments come after the reasoning — so to act at
+// all, it believed it first had to design everything. "Act now" was heard as
+// "start preparing to act". And the plan handed back was not in fact complete:
+// the budget had cut the design mid-bicycle.
+//
+// So the instruction is not "you have planned enough" but "make the step
+// small": a minimal runnable skeleton first, then one part at a time. A small
+// next action needs little design, which is the only thing that shortens the
+// think in front of it. On the same task that turned a 97-second, 10,000-rune
+// think with no output into a 17-second turn with 73 reasoning tokens.
+//
+// Its second version said to write the skeleton "and end this turn". The model
+// did exactly that — and for an agent a reply with no tool call IS the end of
+// the run, so it delivered a 47-line skeleton with no animation, promised the
+// waves "next turn", and the run was filed as done. There is no next turn after
+// a final answer. Now the parts go into update_plan first: if the model stops
+// early again, the unfinished-plan continuation that already exists pushes it
+// back, instead of this nudge having to hope it does not.
+const reasoningBudgetNudgePrefix = "[系统] 你已经想了很久,但还没有任何产出。问题不在于规划不够,而在于你打算一次性写出完整结果——" +
+	"那就必须先在脑子里把全部内容设计完,所以你停不下来。换一种做法:把产出拆成很小的步骤,边写边做。\n" +
+	"1. 在同一次回复里同时调用 update_plan 和 file_write:update_plan 把要做的部分逐项列出来(每项是一个能单独写进文件的部分),\n" +
+	"   file_write 写出一个最小的、能运行的骨架(不超过 60 行),不要在这一步设计其他部分。\n" +
+	"2. 然后一项一项往文件里加(用 file_write mode=edit 或 append),每加完一项连同 update_plan 一起发出,需要时运行检查。\n" +
+	"用户要的是完整结果:在清单全部完成之前,不要给出最终回复。\n\n" +
+	"你之前的思路(只作参考,不必先想完):\n"
 
-// maxPlanCarried caps how much of the reasoning is handed back. The budget
-// already bounds it; this only guards against a single oversized final chunk.
-const maxPlanCarried = 40_000
+// maxPlanCarried caps how much of the reasoning is handed back. Short on
+// purpose: the full design notes invited the model to re-read and re-derive
+// them before doing anything, which is the loop this is meant to break. The
+// opening of a think is where the approach is settled; the rest is detail that
+// belongs in the file, written a part at a time.
+const maxPlanCarried = 4_000
 
 type reasoningBudget struct {
 	*adk.BaseChatModelAgentMiddleware

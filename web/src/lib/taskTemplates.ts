@@ -1,5 +1,6 @@
 import type { IconName } from "../components/Icon";
 import type { TaskTrigger } from "./taskTrigger";
+import type { TaskToolPolicy } from "./taskToolPolicy";
 
 // Starting points limited to what Orka can actually do unattended: search and
 // read the web, watch pages, run code, write workspace files, react to webhooks.
@@ -11,6 +12,7 @@ export interface TaskTemplate {
   description: string;
   prompt: string;
   trigger: TaskTrigger;
+  tool_policy?: TaskToolPolicy;
 }
 
 export const TASK_TEMPLATES: TaskTemplate[] = [
@@ -53,5 +55,7 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
     id: "weekly-report", icon: "book", title: "周报整理", description: "汇总本周工作区里的产出，生成结构化周报。",
     prompt: "汇总本任务工作区里本周新增或修改的文件，整理成结构化周报：完成事项、进展、风险与下周计划，保存为 weekly-report.md。",
     trigger: { kind: "schedule", cron: "0 17 * * 5" },
+    // Reads the workspace, so it runs without the network.
+    tool_policy: { allow: ["workspace_read", "workspace_write"] },
   },
 ];

@@ -245,14 +245,21 @@ func (s *ChatService) Run(parent context.Context, req ChatRunRequest, raw func(m
 	if project != nil {
 		projectID = project.ProjectID
 	}
-	personal := s.loadPersonal(ctx, req.UserEmail, projectID)
+	// A task's runs carry no personal context: they may hold text an outsider
+	// wrote and run with nobody watching, so "about me" and memories would be
+	// one injected instruction away from leaving the account.
+	var personal *runPersonal
+	if req.TaskID == "" {
+		personal = s.loadPersonal(ctx, req.UserEmail, projectID)
+	}
 	if project != nil {
 		if req.ActiveSkill == "" {
 			req.ActiveSkill = project.DefaultSkill
 		}
 		defer func() {
-			if changed, err := project.publish(); (err != nil || len(changed) > 0) && s.Log != nil {
-				s.Log.Info("project files published", "project_id", project.ProjectID, "files", changed, "err", err)
+			changed, conflicts, err := project.publish()
+			if (err != nil || len(changed)+len(conflicts) > 0) && s.Log != nil {
+				s.Log.Info("project files published", "project_id", project.ProjectID, "files", changed, "conflict_copies", conflicts, "err", err)
 			}
 		}()
 	}

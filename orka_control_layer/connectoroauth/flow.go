@@ -20,10 +20,19 @@ import (
 	"github.com/orka-oss/orka_core/messages"
 )
 
-// Store is what the flow needs from persistence.
+// Store is what the flow needs from persistence. Pending authorizations and
+// grants live there, not in this process, so any instance can take a callback
+// or refresh a token.
 type Store interface {
 	CreateConnector(ctx context.Context, c *db.Connector) error
+	GetConnector(ctx context.Context, id, owner string) (*db.Connector, error)
 	SaveConnectorOAuth(ctx context.Context, id, owner string, grant *db.ConnectorOAuth) error
+	// SaveConnectorOAuthIf stores grant only while the stored refresh token
+	// is still expectRefresh, and reports whether it did.
+	SaveConnectorOAuthIf(ctx context.Context, id, owner, expectRefresh string, grant *db.ConnectorOAuth) (bool, error)
+	SavePendingOAuth(ctx context.Context, p *db.OAuthPending) error
+	TakePendingOAuth(ctx context.Context, state string) (*db.OAuthPending, error)
+	CountPendingOAuth(ctx context.Context, owner string) (int64, error)
 }
 
 // Manager runs one-click authorization: Start hands the browser an
@@ -39,25 +48,15 @@ type Manager struct {
 	Now    func() time.Time
 
 	mu      sync.Mutex
-	pending map[string]*pendingAuth
-	grants  map[string]*db.ConnectorOAuth // latest grant per connector (refresh rotates tokens)
-	refresh map[string]*sync.Mutex
-}
-
-type pendingAuth struct {
-	owner, provider, name, mcpURL, connectorID string
-	redirect, verifier                         string
-	clientID, clientSecret, tokenURL, resource string
-	scopes                                     string
-	style                                      tokenStyle
-	created                                    time.Time
+	grants  map[string]*db.ConnectorOAuth // latest grant this process saw per connector
+	refresh map[string]*sync.Mutex        // one refresh per connector in this process
 }
 
 const (
-	pendingTTL     = 10 * time.Minute
-	refreshLeeway  = 2 * time.Minute
-	maxPending     = 1000
-	tokenBodyLimit = 64 << 10
+	pendingTTL      = 10 * time.Minute
+	refreshLeeway   = 2 * time.Minute
+	maxPendingOwner = 20
+	tokenBodyLimit  = 64 << 10
 )
 
 func (m *Manager) now() time.Time {
@@ -93,8 +92,14 @@ func (m *Manager) Start(ctx context.Context, r StartRequest) (string, error) {
 		}
 		mcpURL = u.String()
 	}
-	pa := &pendingAuth{owner: r.Owner, provider: p.ID, name: p.Name, mcpURL: mcpURL, connectorID: r.ConnectorID, redirect: r.Redirect,
-		verifier: randomToken(48), clientID: p.clientID, clientSecret: p.clientSecret, tokenURL: p.tokenURL, scopes: p.scopes, style: p.tokenStyle, created: m.now()}
+	if n, err := m.Store.CountPendingOAuth(ctx, r.Owner); err != nil {
+		return "", err
+	} else if n >= maxPendingOwner {
+		return "", errors.New("授权请求过多，请稍后再试")
+	}
+	verifier, clientSecret := randomToken(48), p.clientSecret
+	pa := &db.OAuthPending{Owner: r.Owner, Provider: p.ID, Name: p.Name, MCPURL: mcpURL, ConnectorID: r.ConnectorID, Redirect: r.Redirect,
+		ClientID: p.clientID, TokenURL: p.tokenURL, Scopes: p.scopes, JSONToken: p.tokenStyle == jsonToken, ExpiresAt: m.now().Add(pendingTTL)}
 	authorize := p.authorizeURL
 	if p.discover {
 		ep, err := discover(ctx, m.Client, mcpURL)
@@ -108,40 +113,35 @@ func (m *Manager) Start(ctx context.Context, r StartRequest) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		authorize, pa.tokenURL, pa.clientID, pa.clientSecret, pa.scopes, pa.resource = ep.authorize, ep.token, id, secret, ep.scopes, mcpURL
+		authorize, pa.TokenURL, pa.ClientID, clientSecret, pa.Scopes, pa.Resource = ep.authorize, ep.token, id, secret, ep.scopes, mcpURL
 		if p.ID == ProviderMCP {
 			if u, err := url.Parse(mcpURL); err == nil {
-				pa.name = u.Host
+				pa.Name = u.Host
 			}
 		}
 	}
-	state := randomToken(32)
-	m.mu.Lock()
-	if m.pending == nil {
-		m.pending = map[string]*pendingAuth{}
+	var err error
+	if pa.Verifier, err = m.Sealer.Seal(verifier); err != nil {
+		return "", err
 	}
-	for k, v := range m.pending {
-		if m.now().Sub(v.created) > pendingTTL {
-			delete(m.pending, k)
-		}
+	if pa.ClientSecret, err = m.Sealer.Seal(clientSecret); err != nil {
+		return "", err
 	}
-	if len(m.pending) >= maxPending {
-		m.mu.Unlock()
-		return "", errors.New("授权请求过多，请稍后再试")
+	pa.State = randomToken(32)
+	if err := m.Store.SavePendingOAuth(ctx, pa); err != nil {
+		return "", err
 	}
-	m.pending[state] = pa
-	m.mu.Unlock()
 
-	sum := sha256.Sum256([]byte(pa.verifier))
+	sum := sha256.Sum256([]byte(verifier))
 	q := url.Values{
-		"response_type": {"code"}, "client_id": {pa.clientID}, "redirect_uri": {r.Redirect}, "state": {state},
+		"response_type": {"code"}, "client_id": {pa.ClientID}, "redirect_uri": {r.Redirect}, "state": {pa.State},
 		"code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "code_challenge_method": {"S256"},
 	}
-	if pa.scopes != "" {
-		q.Set("scope", pa.scopes)
+	if pa.Scopes != "" {
+		q.Set("scope", pa.Scopes)
 	}
-	if pa.resource != "" {
-		q.Set("resource", pa.resource)
+	if pa.Resource != "" {
+		q.Set("resource", pa.Resource)
 	}
 	sep := "?"
 	if strings.Contains(authorize, "?") {
@@ -153,31 +153,46 @@ func (m *Manager) Start(ctx context.Context, r StartRequest) (string, error) {
 // Complete exchanges the callback's code and stores the grant. The state is
 // single-use and bound to the user who started the flow.
 func (m *Manager) Complete(ctx context.Context, state, code string) (*db.Connector, error) {
-	m.mu.Lock()
-	pa := m.pending[state]
-	delete(m.pending, state)
-	m.mu.Unlock()
-	if pa == nil || m.now().Sub(pa.created) > pendingTTL {
+	if state == "" {
 		return nil, errors.New("授权已过期，请重新连接")
+	}
+	pa, err := m.Store.TakePendingOAuth(ctx, state)
+	if errors.Is(err, db.ErrNotFound) || (err == nil && !m.now().Before(pa.ExpiresAt)) {
+		return nil, errors.New("授权已过期，请重新连接")
+	}
+	if err != nil {
+		return nil, err
 	}
 	if code == "" {
 		return nil, errors.New("授权未完成")
 	}
-	tok, err := m.exchange(ctx, pa.style, pa.tokenURL, url.Values{
-		"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {pa.redirect},
-		"client_id": {pa.clientID}, "code_verifier": {pa.verifier},
-	}, pa.clientSecret, pa.resource)
+	verifier, err := m.Sealer.Open(pa.Verifier)
 	if err != nil {
 		return nil, err
 	}
-	grant := &db.ConnectorOAuth{Provider: pa.provider, TokenURL: pa.tokenURL, ClientID: pa.clientID, Resource: pa.resource, Scopes: tok.Scope}
-	if err := m.seal(grant, tok, pa.clientSecret); err != nil {
+	clientSecret, err := m.Sealer.Open(pa.ClientSecret)
+	if err != nil {
 		return nil, err
 	}
-	grant.Account = m.account(ctx, pa.provider, tok.AccessToken)
-	cn := &db.Connector{ConnectorID: pa.connectorID, OwnerEmail: pa.owner, Name: pa.name, Transport: "streamable_http", URL: pa.mcpURL, Enabled: true, CreatedAt: m.now().UnixMilli(), OAuth: grant}
-	if pa.connectorID != "" {
-		if err := m.Store.SaveConnectorOAuth(ctx, pa.connectorID, pa.owner, grant); err != nil {
+	style := formToken
+	if pa.JSONToken {
+		style = jsonToken
+	}
+	tok, err := m.exchange(ctx, style, pa.TokenURL, url.Values{
+		"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {pa.Redirect},
+		"client_id": {pa.ClientID}, "code_verifier": {verifier},
+	}, clientSecret, pa.Resource)
+	if err != nil {
+		return nil, err
+	}
+	grant := &db.ConnectorOAuth{Provider: pa.Provider, TokenURL: pa.TokenURL, ClientID: pa.ClientID, Resource: pa.Resource, Scopes: tok.Scope}
+	if err := m.seal(grant, tok, clientSecret); err != nil {
+		return nil, err
+	}
+	grant.Account = m.account(ctx, pa.Provider, tok.AccessToken)
+	cn := &db.Connector{ConnectorID: pa.ConnectorID, OwnerEmail: pa.Owner, Name: pa.Name, Transport: "streamable_http", URL: pa.MCPURL, Enabled: true, CreatedAt: m.now().UnixMilli(), OAuth: grant}
+	if pa.ConnectorID != "" {
+		if err := m.Store.SaveConnectorOAuth(ctx, pa.ConnectorID, pa.Owner, grant); err != nil {
 			return nil, err
 		}
 	} else {
@@ -193,6 +208,11 @@ func (m *Manager) Complete(ctx context.Context, state, code string) (*db.Connect
 // Authorize returns the headers a connector's MCP requests carry: its
 // current access token, refreshed when close to expiry. A refresh that fails
 // marks the grant so the UI can ask the user to authorize again.
+//
+// Several instances may hold the same connector. Before refreshing, the
+// grant is reloaded (another instance may already have done it), and the
+// refreshed grant is saved only if nobody rotated the refresh token in the
+// meantime; the loser adopts the winner's grant instead of overwriting it.
 func (m *Manager) Authorize(ctx context.Context, cn db.Connector) (map[string]string, error) {
 	if cn.OAuth == nil {
 		return nil, nil
@@ -201,20 +221,35 @@ func (m *Manager) Authorize(ctx context.Context, cn db.Connector) (map[string]st
 	lock.Lock()
 	defer lock.Unlock()
 	grant := m.latest(cn.ConnectorID, cn.OAuth)
+	if m.dueForRefresh(grant) {
+		if fresh, err := m.Store.GetConnector(ctx, cn.ConnectorID, cn.OwnerEmail); err == nil && fresh.OAuth != nil {
+			grant = fresh.OAuth
+			m.remember(cn.ConnectorID, grant)
+		}
+	}
 	if grant.AuthError != "" {
 		return nil, errors.New(grant.AuthError)
 	}
-	if grant.ExpiresAt > 0 && m.now().Add(refreshLeeway).UnixMilli() >= grant.ExpiresAt {
+	if m.dueForRefresh(grant) {
+		save := context.WithoutCancel(ctx)
 		next, err := m.refreshGrant(ctx, grant)
 		if err != nil {
 			failed := *grant
 			failed.AuthError = "授权已失效，请重新授权"
-			_ = m.Store.SaveConnectorOAuth(context.WithoutCancel(ctx), cn.ConnectorID, cn.OwnerEmail, &failed)
-			m.remember(cn.ConnectorID, &failed)
+			if ok, _ := m.Store.SaveConnectorOAuthIf(save, cn.ConnectorID, cn.OwnerEmail, grant.RefreshToken, &failed); ok {
+				m.remember(cn.ConnectorID, &failed)
+				return nil, err
+			}
+			// Someone else rotated the token while ours failed: use theirs.
+			if next, err = m.reload(save, cn); err != nil {
+				return nil, err
+			}
+		} else if ok, err := m.Store.SaveConnectorOAuthIf(save, cn.ConnectorID, cn.OwnerEmail, grant.RefreshToken, next); err != nil {
 			return nil, err
-		}
-		if err := m.Store.SaveConnectorOAuth(context.WithoutCancel(ctx), cn.ConnectorID, cn.OwnerEmail, next); err != nil {
-			return nil, err
+		} else if !ok {
+			if next, err = m.reload(save, cn); err != nil {
+				return nil, err
+			}
 		}
 		m.remember(cn.ConnectorID, next)
 		grant = next
@@ -224,6 +259,22 @@ func (m *Manager) Authorize(ctx context.Context, cn db.Connector) (map[string]st
 		return nil, err
 	}
 	return map[string]string{"Authorization": "Bearer " + token}, nil
+}
+
+func (m *Manager) dueForRefresh(g *db.ConnectorOAuth) bool {
+	return g.AuthError == "" && g.ExpiresAt > 0 && m.now().Add(refreshLeeway).UnixMilli() >= g.ExpiresAt
+}
+
+// reload takes the grant another instance stored after winning a refresh.
+func (m *Manager) reload(ctx context.Context, cn db.Connector) (*db.ConnectorOAuth, error) {
+	fresh, err := m.Store.GetConnector(ctx, cn.ConnectorID, cn.OwnerEmail)
+	if err != nil {
+		return nil, err
+	}
+	if fresh.OAuth == nil || fresh.OAuth.AuthError != "" {
+		return nil, errors.New("授权已失效，请重新授权")
+	}
+	return fresh.OAuth, nil
 }
 
 func (m *Manager) refreshGrant(ctx context.Context, grant *db.ConnectorOAuth) (*db.ConnectorOAuth, error) {

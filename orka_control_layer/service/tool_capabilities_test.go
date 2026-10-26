@@ -16,7 +16,7 @@ func TestQuantToolsDefaultAndExplicitRange(t *testing.T) {
 		ctx     context.Context
 		enabled []string
 		want    bool
-	}{{context.Background(), nil, true}, {context.Background(), []string{"web"}, false}, {WithQuantCapability(context.Background()), nil, true}, {context.Background(), []string{"quant"}, true}} {
+	}{{context.Background(), nil, false}, {context.Background(), []string{"quant"}, false}, {WithQuantCapability(context.Background()), nil, true}} {
 		found := false
 		for _, tool := range localCapabilityTools(tc.ctx, ChatRunRequest{EnabledTools: tc.enabled}) {
 			if tool.Name() == "validate_factor" {
@@ -28,6 +28,27 @@ func TestQuantToolsDefaultAndExplicitRange(t *testing.T) {
 		}
 	}
 }
+// With the deployment's opt-in, quant tools come back for ordinary runs and for
+// callers that ask for them by name.
+func TestQuantToolsFollowTheDeploymentSwitch(t *testing.T) {
+	prior := QuantTools
+	QuantTools = []agent.BaseTool{validateFactorTool{}}
+	defer func() { QuantTools = prior }()
+	t.Setenv("ORKA_QUANT", "1")
+	for _, tc := range []struct {
+		enabled []string
+		want    bool
+	}{{nil, true}, {[]string{"web"}, false}, {[]string{"quant"}, true}} {
+		found := false
+		for _, tool := range localCapabilityTools(context.Background(), ChatRunRequest{EnabledTools: tc.enabled}) {
+			found = found || tool.Name() == "validate_factor"
+		}
+		if found != tc.want {
+			t.Fatalf("enabled=%v quant visible=%v want %v", tc.enabled, found, tc.want)
+		}
+	}
+}
+
 func TestUnavailableGUINeverClaimsCompletion(t *testing.T) {
 	out, err := (guiUnavailableTool{}).Invoke(context.Background(), map[string]any{"instruction": "do work"})
 	if err == nil || out != "" {

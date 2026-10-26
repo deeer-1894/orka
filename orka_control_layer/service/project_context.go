@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/orka-oss/orka_control_layer/db"
 	"github.com/orka-oss/orka_core/pathsafe"
@@ -41,6 +43,9 @@ type runProject struct {
 	*db.Project
 	sessionRoot, projectRoot string
 	files                    []projectFile
+	// base is each mirrored file's content hash when the run started: the
+	// run changed a file only if the mirror no longer matches it.
+	base map[string][sha256.Size]byte
 }
 
 // openRunProject loads the run's project and mirrors its files in. nil when
@@ -68,11 +73,11 @@ func (s *ChatService) openRunProject(ctx context.Context, req ChatRunRequest) *r
 		return nil
 	}
 	rp := &runProject{Project: project, sessionRoot: sessionRoot, projectRoot: projectRoot}
-	files, err := mirrorProjectIn(projectRoot, sessionRoot)
+	files, started, err := mirrorProjectIn(projectRoot, sessionRoot)
 	if err != nil && s.Log != nil {
 		s.Log.Warn("project files not mirrored", "project_id", project.ProjectID, "err", err)
 	}
-	rp.files = files
+	rp.files, rp.base = files, started
 	return rp
 }
 
@@ -100,11 +105,12 @@ func (p *runProject) prompt() string {
 }
 
 // publish copies what the run changed under project/ back to the project.
-func (p *runProject) publish() ([]string, error) {
+// Files the run did not touch are left alone, whatever the project holds now.
+func (p *runProject) publish() (changed, conflicts []string, err error) {
 	if p == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return publishProjectOut(p.sessionRoot, p.projectRoot)
+	return publishProjectOut(p.sessionRoot, p.projectRoot, p.base, time.Now())
 }
 
 func sizeLabel(n int64) string {
@@ -148,23 +154,24 @@ func regularFiles(root *os.Root) ([]projectFile, error) {
 	return out, err
 }
 
-func mirrorProjectIn(projectRoot, sessionRoot string) ([]projectFile, error) {
+func mirrorProjectIn(projectRoot, sessionRoot string) ([]projectFile, map[string][sha256.Size]byte, error) {
+	base := map[string][sha256.Size]byte{}
 	src, err := os.OpenRoot(projectRoot)
 	if err != nil {
-		return nil, err
+		return nil, base, err
 	}
 	defer src.Close()
 	session, err := os.OpenRoot(sessionRoot)
 	if err != nil {
-		return nil, err
+		return nil, base, err
 	}
 	defer session.Close()
 	if err := session.MkdirAll(projectMirrorDir, pathsafe.WorkspaceDirMode); err != nil {
-		return nil, err
+		return nil, base, err
 	}
 	files, err := regularFiles(src)
 	if err != nil {
-		return files, err
+		return files, base, err
 	}
 	var errs []error
 	// The mirror starts each run equal to the project: a file deleted from the
@@ -190,6 +197,7 @@ func mirrorProjectIn(projectRoot, sessionRoot string) ([]projectFile, error) {
 			errs = append(errs, err)
 			continue
 		}
+		base[f.Rel] = sha256.Sum256(data)
 		dst := filepath.Join(projectMirrorDir, filepath.FromSlash(f.Rel))
 		if current, err := session.ReadFile(dst); err == nil && bytes.Equal(current, data) {
 			continue
@@ -202,30 +210,36 @@ func mirrorProjectIn(projectRoot, sessionRoot string) ([]projectFile, error) {
 			errs = append(errs, err)
 		}
 	}
-	return files, errors.Join(errs...)
+	return files, base, errors.Join(errs...)
 }
 
-func publishProjectOut(sessionRoot, projectRoot string) ([]string, error) {
+// publishProjectOut writes back the files this run changed (mirror differs
+// from base). Comparing against the project as it is NOW would publish every
+// file the run never touched whenever someone else changed it meanwhile —
+// silently reverting another run's or the user's edit, and resurrecting
+// deleted files. When the run and someone else both changed a file, the
+// project keeps theirs and the run's version is saved beside it as a
+// conflict copy for the user to reconcile.
+func publishProjectOut(sessionRoot, projectRoot string, base map[string][sha256.Size]byte, now time.Time) (changed, conflicts []string, err error) {
 	session, err := os.OpenRoot(sessionRoot)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer session.Close()
 	mirror, err := session.OpenRoot(projectMirrorDir)
 	if err != nil {
-		return nil, nil // nothing mirrored, nothing to publish
+		return nil, nil, nil // nothing mirrored, nothing to publish
 	}
 	defer mirror.Close()
 	dst, err := os.OpenRoot(projectRoot)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer dst.Close()
 	files, err := regularFiles(mirror)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var changed []string
 	var errs []error
 	for _, f := range files {
 		data, err := mirror.ReadFile(f.Rel)
@@ -234,8 +248,25 @@ func publishProjectOut(sessionRoot, projectRoot string) ([]string, error) {
 			continue
 		}
 		rel := filepath.FromSlash(f.Rel)
+		started, inBase := base[f.Rel]
+		if inBase && sha256.Sum256(data) == started {
+			continue // the run did not change it
+		}
 		old, readErr := dst.ReadFile(rel)
 		if readErr == nil && bytes.Equal(old, data) {
+			continue
+		}
+		// Someone else changed (or created, or deleted) it since the run began.
+		if concurrent := (inBase && (readErr != nil || sha256.Sum256(old) != started)) || (!inBase && readErr == nil); concurrent {
+			name := conflictName(rel, now)
+			if err := dst.MkdirAll(filepath.Dir(rel), pathsafe.WorkspaceDirMode); err == nil {
+				err = dst.WriteFile(name, data, pathsafe.WorkspaceFileMode)
+			}
+			if err != nil {
+				errs = append(errs, fmt.Errorf("save conflict copy of %s: %w", f.Rel, err))
+				continue
+			}
+			conflicts = append(conflicts, filepath.ToSlash(name))
 			continue
 		}
 		if readErr == nil {
@@ -254,5 +285,11 @@ func publishProjectOut(sessionRoot, projectRoot string) ([]string, error) {
 		}
 		changed = append(changed, f.Rel)
 	}
-	return changed, errors.Join(errs...)
+	return changed, conflicts, errors.Join(errs...)
+}
+
+// conflictName is report.md -> report.conflict-20261026-230102.md.
+func conflictName(rel string, now time.Time) string {
+	ext := filepath.Ext(rel)
+	return strings.TrimSuffix(rel, ext) + ".conflict-" + now.Format("20060102-150405") + ext
 }

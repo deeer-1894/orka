@@ -45,6 +45,10 @@ type Memory struct {
 	Content              string `bson:"content" json:"content"`
 	SourceConversationID string `bson:"source_conversation_id,omitempty" json:"source_conversation_id,omitempty"`
 	CreatedAt            int64  `bson:"created_at" json:"created_at"`
+	// Pending memories were proposed by a run and wait for the user. Only
+	// confirmed ones reach a prompt: a page the run read could otherwise plant
+	// a standing instruction in every future run.
+	Pending bool `bson:"pending,omitempty" json:"pending,omitempty"`
 }
 
 // sensitive matches what must never be stored as a memory: credentials,
@@ -142,7 +146,8 @@ func (s *Storage) MemoriesFor(ctx context.Context, owner, projectID string) ([]M
 	if projectID != "" {
 		scope = append(scope, bson.M{"project_id": projectID})
 	}
-	cur, err := s.Memories.Find(ctx, bson.M{"owner_email": owner, "$or": scope}, options.Find().SetSort(bson.M{"created_at": -1}).SetLimit(MemoriesInPrompt))
+	filter := bson.M{"owner_email": owner, "$or": scope, "pending": bson.M{"$ne": true}}
+	cur, err := s.Memories.Find(ctx, filter, options.Find().SetSort(bson.M{"created_at": -1}).SetLimit(MemoriesInPrompt))
 	if err != nil {
 		return nil, fmt.Errorf("memories for run: %w", err)
 	}
@@ -151,6 +156,18 @@ func (s *Storage) MemoriesFor(ctx context.Context, owner, projectID string) ([]M
 		return nil, fmt.Errorf("memories for run: %w", err)
 	}
 	return out, nil
+}
+
+// ConfirmMemory turns a run's proposed memory into one later runs read.
+func (s *Storage) ConfirmMemory(ctx context.Context, owner, id string) error {
+	res, err := s.Memories.UpdateOne(ctx, bson.M{"owner_email": owner, "memory_id": id}, bson.M{"$unset": bson.M{"pending": ""}})
+	if err != nil {
+		return fmt.Errorf("confirm memory: %w", err)
+	}
+	if res.MatchedCount == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // DeleteMemory removes one of the owner's memories for good.

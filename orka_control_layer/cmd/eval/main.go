@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -122,13 +123,20 @@ type result struct {
 }
 
 type scorecard struct {
-	At       string   `json:"at"`
-	Model    string   `json:"model"`
-	Passed   int      `json:"passed"`
-	Total    int      `json:"total"`
-	Results  []result `json:"results"`
-	TotTools int      `json:"total_tools"`
-	TotToks  int      `json:"total_tokens"`
+	At    string `json:"at"`
+	Model string `json:"model"`
+	// What actually ran, so two scorecards are comparable: the model an empty
+	// or "auto" selection resolved to, the server build, and this checkout.
+	ResolvedModel  string   `json:"resolved_model,omitempty"`
+	ServerVersion  string   `json:"server_version,omitempty"`
+	ServerModified bool     `json:"server_modified,omitempty"`
+	Commit         string   `json:"commit,omitempty"`
+	CommitDirty    bool     `json:"commit_dirty,omitempty"`
+	Passed         int      `json:"passed"`
+	Total          int      `json:"total"`
+	Results        []result `json:"results"`
+	TotTools       int      `json:"total_tools"`
+	TotToks        int      `json:"total_tokens"`
 }
 
 func main() {
@@ -209,6 +217,7 @@ func run(base, email, password, token, tasksFile, only, model string, repeat int
 	}
 
 	sc := scorecard{At: time.Now().Format(time.RFC3339), Model: model}
+	c.describe(&sc)
 	for _, t := range s.Tasks {
 		if only != "" && t.ID != only {
 			continue
@@ -625,6 +634,58 @@ func (c *client) fileExists(conv, path string) bool {
 		}
 	}
 	return false
+}
+
+// describe records the resolved model, the server build and the local
+// commit. Best effort: an eval still runs against a server that lacks them.
+func (c *client) describe(sc *scorecard) {
+	sc.ResolvedModel = sc.Model
+	if sc.Model == "" || sc.Model == "auto" {
+		var models struct {
+			Data []struct {
+				Version string `json:"version"`
+			} `json:"data"`
+		}
+		if c.getJSON("/api/v1/controller/models", &models) == nil {
+			for _, m := range models.Data {
+				if m.Version != "auto" {
+					sc.ResolvedModel = m.Version
+					break
+				}
+			}
+		}
+	}
+	var status struct {
+		Data struct {
+			Version  string `json:"version"`
+			Modified bool   `json:"modified"`
+		} `json:"data"`
+	}
+	if c.getJSON("/api/v1/controller/system/status", &status) == nil {
+		sc.ServerVersion, sc.ServerModified = status.Data.Version, status.Data.Modified
+	}
+	if out, err := exec.Command("git", "rev-parse", "--short=12", "HEAD").Output(); err == nil {
+		sc.Commit = strings.TrimSpace(string(out))
+	}
+	if out, err := exec.Command("git", "status", "--porcelain", "--untracked-files=no").Output(); err == nil {
+		sc.CommitDirty = len(bytes.TrimSpace(out)) > 0
+	}
+}
+
+func (c *client) getJSON(path string, out any) error {
+	req, _ := http.NewRequest("GET", c.base+path, nil)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("HTTP %d on %s", resp.StatusCode, path)
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out)
 }
 
 func (c *client) postJSON(path string, body, out any) error {

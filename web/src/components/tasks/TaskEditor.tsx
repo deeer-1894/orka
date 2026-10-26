@@ -193,7 +193,7 @@ export function TaskEditor({ draft: initial, onClose, onSaved }: { draft: TaskDr
 
             <fieldset className="flex flex-col gap-2">
               <legend className="mb-2 text-sm font-medium text-ink">自动运行时允许</legend>
-              <p className="text-xs leading-relaxed text-faint">触发时没人确认操作，且{kind === "event" ? "请求内容" : "网页内容"}可能夹带指令。读取文件和网页始终可以；下面的操作只在勾选后才提供给任务。当前：<span data-testid="task-policy-summary" className="text-muted">{describeToolPolicy(policy)}</span></p>
+              <p className="text-xs leading-relaxed text-faint">触发时没人确认操作，且{kind === "event" ? "请求内容" : "网页内容"}可能夹带指令。任务默认可以联网检索；读取工作区文件或执行代码会关闭联网，避免被诱导把数据发出去。当前：<span data-testid="task-policy-summary" className="text-muted">{describeToolPolicy(policy)}</span></p>
               {TASK_CAPABILITIES.map(c => {
                 const on = policy.allow.includes(c.id);
                 return <label key={c.id} className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border px-3 py-2 transition hover:bg-surface2">

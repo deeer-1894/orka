@@ -14,27 +14,32 @@ var unattendedTriggers = map[string]bool{"schedule": true, "condition": true, "w
 
 func unattendedRun(trigger string) bool { return unattendedTriggers[trigger] }
 
-// readOnlyTools are always available unattended: they read the workspace or
-// the web, or compute, and change nothing.
-var readOnlyTools = []string{
-	"file_read", "file_list",
-	"web_search", "fetch_url", "discover_docs", "read_section", "search_evidence", "weather",
+// computeTools are always available unattended: they neither read private
+// data nor reach the network.
+var computeTools = []string{
 	"current_time", "calculator", "unit_convert", "base64", "hash", "uuid", "json_format",
 	"text_stats", "regex_extract", "json_query", "datetime", "random",
-	"currency", "timezone", "csv_query", "csv_stats", "csv_to_json", "pdf_extract", "doc_read", "sql_query",
-	"find_skills", "apply_skill", "artifact_get",
+	"find_skills", "apply_skill",
+}
+
+// networkTools read the public web. Available unless the policy reads private
+// data: either leg alone is harmless, both together can leak.
+var networkTools = []string{
+	"web_search", "fetch_url", "discover_docs", "read_section", "search_evidence", "weather", "currency", "timezone",
 }
 
 // capabilityTools lists the tools each opt-in capability adds. Anything named
-// in neither list — http_request, run_agent, memory, skill installation,
-// ingest_factor, every external connector, and any tool added later — is
-// unavailable to unattended runs until it is classified here.
+// nowhere here — http_request, run_agent, memory, remember, skill
+// installation, quant tools, every external connector, and any tool added
+// later — is unavailable to unattended runs until it is classified.
 var capabilityTools = map[string][]string{
 	db.CapWorkspaceWrite: {
 		"file_write", "file_edit", "file_patch", "file_delete",
 		"render_report", "doc_export", "chart", "xlsx_to_csv", "csv_to_xlsx", "csv_join", "slides", "qrcode",
 		"artifact_publish",
-		"backtest", "gp_evolve", "validate_factor", "factor_agreement", "recall_similar_factors", "weight_portfolio",
+	},
+	db.CapWorkspaceRead: {
+		"file_read", "file_list", "csv_query", "csv_stats", "csv_to_json", "pdf_extract", "doc_read", "sql_query", "artifact_get",
 	},
 	db.CapCode:    {"shell", "python"},
 	db.CapBrowser: {"browser"},
@@ -46,8 +51,15 @@ const noTools = "\x00none"
 
 // policyTools is the explicit tool whitelist a policy grants.
 func policyTools(p db.TaskToolPolicy) []string {
-	out := append([]string(nil), readOnlyTools...)
+	out := append([]string(nil), computeTools...)
+	private := p.ReadsPrivate()
+	if !private {
+		out = append(out, networkTools...)
+	}
 	for _, c := range p.Allow {
+		if c == db.CapBrowser && private {
+			continue // network: a stored policy from before the rule may still combine them
+		}
 		out = append(out, capabilityTools[c]...)
 	}
 	return out

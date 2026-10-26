@@ -21,6 +21,11 @@ build:
 test:
 	go test $(MODS)
 
+# The race detector over every package, not a hand-picked few: the packages
+# that matter most (service, api) are exactly the concurrent ones.
+test-race:
+	go test -race $(MODS)
+
 tidy:
 	cd orka_core && go mod tidy
 	cd orka_middleware && go mod tidy

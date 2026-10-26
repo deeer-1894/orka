@@ -53,7 +53,7 @@ func (s *ChatService) modelsForContext(ctx context.Context) modelSnapshot {
 
 // Shared transport pools connections only. Credentials are request headers and
 // never stored on the transport; each snapshot owns its client and key.
-var userModelTransport = llm.NewOpenAIClient("", "").HTTP.Transport
+var userModelTransport = modelsettings.Guard(llm.NewOpenAIClient("", "").HTTP.Transport)
 
 func (s *ChatService) resolveModels(owner string) (modelSnapshot, error) {
 	m := s.defaultModels()

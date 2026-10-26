@@ -202,7 +202,10 @@ func TestGatewaySessionFilesShellPython(t *testing.T) {
 				t.Fatal(txt)
 			}
 			b, err := os.ReadFile(filepath.Join(base, "owner", "sessions", conv, "python.txt"))
-			if err != nil || string(b) != filepath.Join(base, "owner", "sessions", conv) {
+			// getcwd reports the resolved path (macOS: /private/var for /var).
+			want, _ := filepath.EvalSymlinks(filepath.Join(base, "owner", "sessions", conv))
+			got, _ := filepath.EvalSymlinks(string(b))
+			if err != nil || got != want {
 				t.Fatalf("python wrote wrong workspace: %s %v", b, err)
 			}
 		}

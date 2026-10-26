@@ -173,6 +173,9 @@ func TestOffloadRootRoundTrips(t *testing.T) {
 func TestOffloadPathIsReadableByFileRead(t *testing.T) {
 	base, email := t.TempDir(), "ctx@test.com"
 	be := newWorkspaceBackend(base, email, "test-session")
+	if be == nil {
+		t.Fatal("workspace backend not created; the storage path was refused")
+	}
 	root := filepath.Join(base, email, "sessions", "test-session")
 
 	gen := offloadPathFor(context.Background(), "clear")

@@ -16,9 +16,9 @@ type discoveryTransport func(*http.Request) (*http.Response, error)
 func (f discoveryTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 func mockDiscovery(t *testing.T, f discoveryTransport) {
 	t.Helper()
-	prior := http.DefaultTransport
-	http.DefaultTransport = f
-	t.Cleanup(func() { http.DefaultTransport = prior })
+	prior := DiscoverTransport
+	DiscoverTransport = f
+	t.Cleanup(func() { DiscoverTransport = prior })
 }
 func discoveryResponse(r *http.Request, status int, body string) *http.Response {
 	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}

@@ -20,13 +20,23 @@ jobs:
         with:
           go-version-file: go.work
           cache-dependency-path: '**/go.sum'
-      - run: make test lint test-launcher
-      - name: Durable workflow and schedule contracts with isolated test databases
+      - run: make lint test-launcher
+      # Every package under the race detector, with the Mongo contracts on.
+      - name: All Go tests with the race detector and isolated test databases
         env:
           ORKA_TEST_MONGO_URI: mongodb://127.0.0.1:27017
-        run: |
-          go test -race ./orka_control_layer/db ./orka_control_layer/workflow ./orka_control_layer/scheduled_task
-          go test -race ./orka_control_layer/service -run TestWorkflowPreparation
+        run: make test-race
+  go-macos:
+    # macOS reaches its temp dir through a link (/var -> /private/var). Path
+    # handling that only works on Linux hid behind a green CI for weeks.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+          cache-dependency-path: '**/go.sum'
+      - run: make test
   sandbox:
     # 22.04 permits the user namespaces exercised by the production bwrap runner.
     # A missing/blocked sandbox is a test failure, never an accepted skip.

@@ -17,8 +17,69 @@ import (
 )
 
 type memStore struct {
-	mu    sync.Mutex
-	conns map[string]*db.Connector
+	mu      sync.Mutex
+	conns   map[string]*db.Connector
+	pending map[string]db.OAuthPending
+}
+
+func (s *memStore) GetConnector(_ context.Context, id, owner string) (*db.Connector, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.conns[id]
+	if c == nil || c.OwnerEmail != owner {
+		return nil, db.ErrNotFound
+	}
+	cp := *c
+	if c.OAuth != nil {
+		g := *c.OAuth
+		cp.OAuth = &g
+	}
+	return &cp, nil
+}
+
+func (s *memStore) SaveConnectorOAuthIf(_ context.Context, id, owner, expect string, g *db.ConnectorOAuth) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.conns[id]
+	if c == nil || c.OwnerEmail != owner || c.OAuth == nil || c.OAuth.RefreshToken != expect {
+		return false, nil
+	}
+	cp := *g
+	c.OAuth = &cp
+	return true, nil
+}
+
+func (s *memStore) SavePendingOAuth(_ context.Context, p *db.OAuthPending) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pending == nil {
+		s.pending = map[string]db.OAuthPending{}
+	}
+	s.pending[p.State] = *p
+	return nil
+}
+
+func (s *memStore) TakePendingOAuth(_ context.Context, state string) (*db.OAuthPending, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.pending[state]
+	if !ok {
+		return nil, db.ErrNotFound
+	}
+	delete(s.pending, state)
+	return &p, nil
+}
+
+func (s *memStore) CountPendingOAuth(_ context.Context, owner string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int64
+	for _, p := range s.pending {
+		if p.Owner == owner {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (s *memStore) CreateConnector(_ context.Context, c *db.Connector) error {
@@ -47,6 +108,9 @@ type fakeAuthServer struct {
 	challenge   string
 	issued      int
 	failRefresh bool
+	rotate      bool  // issue a new refresh token each time; only the latest works
+	expiresIn   int64 // seconds; 60 (inside the refresh leeway) when zero
+	refresh     string
 }
 
 func newFakeAuthServer(t *testing.T) *fakeAuthServer {
@@ -84,13 +148,25 @@ func newFakeAuthServer(t *testing.T) *fakeAuthServer {
 				return
 			}
 		case "refresh_token":
-			if f.failRefresh || r.Form.Get("refresh_token") != "refresh-1" {
+			want := "refresh-1"
+			if f.refresh != "" {
+				want = f.refresh
+			}
+			if f.failRefresh || r.Form.Get("refresh_token") != want {
 				json.NewEncoder(w).Encode(map[string]any{"error": "invalid_grant"})
 				return
 			}
 		}
 		f.issued++
-		json.NewEncoder(w).Encode(map[string]any{"access_token": "access-" + string(rune('0'+f.issued)), "refresh_token": "refresh-1", "expires_in": 60, "token_type": "Bearer"})
+		refresh, expires := "refresh-1", f.expiresIn
+		if f.rotate {
+			refresh = "refresh-" + string(rune('0'+f.issued))
+			f.refresh = refresh
+		}
+		if expires == 0 {
+			expires = 60
+		}
+		json.NewEncoder(w).Encode(map[string]any{"access_token": "access-" + string(rune('0'+f.issued)), "refresh_token": refresh, "expires_in": expires, "token_type": "Bearer"})
 	})
 	t.Cleanup(f.Close)
 	return f
@@ -149,7 +225,7 @@ func TestMCPAuthorizationFlowStoresSealedGrantAndRefreshes(t *testing.T) {
 }
 
 func TestStartRefusesWhatCannotWork(t *testing.T) {
-	m := &Manager{Client: http.DefaultClient}
+	m := &Manager{Client: http.DefaultClient, Store: &memStore{conns: map[string]*db.Connector{}}}
 	if _, err := m.Start(context.Background(), StartRequest{Provider: ProviderMCP, MCPURL: "http://insecure.example/mcp", Redirect: "http://x/cb"}); err == nil {
 		t.Fatal("a generic MCP server must be https")
 	}
@@ -177,5 +253,68 @@ func TestSealerRoundTripAndRefusesPlaintext(t *testing.T) {
 	}
 	if _, err := NewSealer(" "); err == nil {
 		t.Fatal("an empty key is refused")
+	}
+}
+
+// staleStore hands out one outdated connector, as an instance that read it
+// just before another instance's refresh landed would see.
+type staleStore struct {
+	*memStore
+	stale *db.Connector
+}
+
+func (s *staleStore) GetConnector(ctx context.Context, id, owner string) (*db.Connector, error) {
+	if c := s.stale; c != nil {
+		s.stale = nil
+		return c, nil
+	}
+	return s.memStore.GetConnector(ctx, id, owner)
+}
+
+// Two instances serve the same user. The pending authorization is finished
+// by whichever gets the callback, and a refresh token rotated by one is
+// never clobbered, or the grant marked failed, by the other.
+func TestOAuthAcrossInstances(t *testing.T) {
+	srv := newFakeAuthServer(t)
+	sealer, _ := NewSealer("test-secret")
+	shared := &memStore{conns: map[string]*db.Connector{}}
+	a := &Manager{Store: shared, Sealer: sealer, Client: srv.Client()}
+	b := &Manager{Store: shared, Sealer: sealer, Client: srv.Client()}
+	ctx := context.Background()
+
+	link, err := a.Start(ctx, StartRequest{Owner: "a@x", Provider: ProviderMCP, MCPURL: srv.URL + "/mcp", Redirect: "http://localhost:5173/cb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(link)
+	srv.challenge = u.Query().Get("code_challenge")
+	cn, err := b.Complete(ctx, u.Query().Get("state"), "code-1")
+	if err != nil {
+		t.Fatalf("another instance must finish the authorization: %v", err)
+	}
+	for _, p := range shared.pending {
+		t.Fatalf("pending authorization left behind: %+v", p)
+	}
+
+	// Both instances hold the original (due) grant. A refreshes and rotates.
+	stale, _ := shared.GetConnector(ctx, cn.ConnectorID, "a@x")
+	srv.rotate, srv.expiresIn = true, 3600
+	if h, err := a.Authorize(ctx, *stale); err != nil || h["Authorization"] != "Bearer access-2" {
+		t.Fatalf("instance A: %v %v", h, err)
+	}
+
+	// B reloads before refreshing and finds A's fresh grant: no second refresh.
+	if h, err := b.Authorize(ctx, *stale); err != nil || h["Authorization"] != "Bearer access-2" || srv.issued != 2 {
+		t.Fatalf("instance B: %v %v (issued %d)", h, err, srv.issued)
+	}
+
+	// C read the grant just before A's refresh landed, so it refreshes with
+	// the old token, is refused, loses the conditional save and adopts A's.
+	c := &Manager{Store: &staleStore{memStore: shared, stale: stale}, Sealer: sealer, Client: srv.Client()}
+	if h, err := c.Authorize(ctx, *stale); err != nil || h["Authorization"] != "Bearer access-2" {
+		t.Fatalf("instance C: %v %v", h, err)
+	}
+	if g := shared.conns[cn.ConnectorID].OAuth; g.AuthError != "" {
+		t.Fatalf("the losing refresh must not mark the grant failed: %+v", g)
 	}
 }
